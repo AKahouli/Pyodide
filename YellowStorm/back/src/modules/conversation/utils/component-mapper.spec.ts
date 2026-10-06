@@ -3,6 +3,16 @@
 import { aggregateTextFromComponents, extractComponentData, getComponentType } from './component-mapper';
 
 describe('component-mapper text extraction', () => {
+  it('retains the actual text producer from chunk metadata', () => {
+    expect(extractComponentData({ id: 'answer', text: { content: 'Hello' } }, 'answer-agent').data)
+      .toMatchObject({ content: 'Hello', actorId: 'answer-agent' });
+  });
+
+  it('retains the configured producer name from initial activity', () => {
+    expect(extractComponentData({ id: 'initial', agent_activity: {
+      summary: '', status: 'completed', actor_id: 'answer-agent', actor_name: 'Guide Agent',
+    } }).data).toMatchObject({ actorId: 'answer-agent', actorName: 'Guide Agent' });
+  });
   it('extracts text content from proto oneof text field', () => {
     const result = extractComponentData({
       id: 'comp-1',

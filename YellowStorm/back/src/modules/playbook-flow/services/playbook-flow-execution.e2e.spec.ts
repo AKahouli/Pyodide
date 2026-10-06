@@ -47,7 +47,7 @@ interface E2EContext {
 }
 
 async function createE2EService(
-  streamEventsSequence?: Array<{ event_type: string; node_id?: string; iteration?: number; payload?: Record<string, unknown> }>,
+  streamEventsSequence?: { event_type: string; node_id?: string; iteration?: number; payload?: Record<string, unknown> }[],
   overrides?: {
     executionRepository?: Record<string, any>;
     taskResultRepository?: Record<string, any>;
@@ -59,13 +59,13 @@ async function createE2EService(
     accessService?: Record<string, any>;
   },
 ): Promise<E2EContext> {
-  const settleAsyncHandlers = async (cycles: number = 4) => {
+  const settleAsyncHandlers = async (cycles = 4) => {
     for (let i = 0; i < cycles; i += 1) {
       await new Promise((r) => setImmediate(r));
     }
   };
 
-  const waitFor = async (predicate: () => boolean, maxCycles: number = 40) => {
+  const waitFor = async (predicate: () => boolean, maxCycles = 40) => {
     for (let i = 0; i < maxCycles; i += 1) {
       if (predicate()) {
         return;

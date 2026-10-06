@@ -43,5 +43,5 @@ export interface ScopeStore {
   /** Deletes the given scopes; callers pass the whole subtree so parent FKs stay satisfied. */
   deleteByIdsAndProgram(scopeIds: string[], programId: string): Promise<void>;
   /** Every (id, parentScopeId) pair of a program, for in-memory subtree walks. */
-  listHierarchy(programId: string): Promise<Array<{ id: string; parentScopeId: string | null }>>;
+  listHierarchy(programId: string): Promise<{ id: string; parentScopeId: string | null }[]>;
 }

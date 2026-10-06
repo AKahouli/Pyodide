@@ -15,7 +15,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
 
   private buildHeaders(authHeaders: Record<string, string>): Record<string, string> {
     return {
-      Authorization: authHeaders['Authorization'] || '',
+      Authorization: authHeaders.Authorization || '',
       ...authHeaders,
     };
   }
@@ -45,7 +45,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     itemRef: Record<string, unknown>,
     authHeaders: Record<string, string>,
     options?: { recursive?: boolean },
-  ): Promise<Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }>> {
+  ): Promise<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }[]> {
     const recursive = options?.recursive ?? true;
     const headers = this.buildHeaders(authHeaders);
     const itemPath = this.buildItemPath(itemRef);
@@ -69,18 +69,18 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     if (!meta.folder) {
       const file = meta.file as Record<string, unknown> | undefined;
       return [{
-        itemRef: { driveId, itemId: meta.id as string },
+        itemRef: { driveId, itemId: meta.id },
         filename: itemName,
         mimeType: (file?.mimeType as string) || 'application/octet-stream',
         sourcePath,
       }];
     }
 
-    const queue: Array<{ itemId: string; prefix: string }> = [{
+    const queue: { itemId: string; prefix: string }[] = [{
       itemId: meta.id as string,
       prefix: sourcePath.replace(/^\//, ''),
     }];
-    const files: Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }> = [];
+    const files: { itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }[] = [];
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -96,7 +96,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
           throw new Error(`Failed to list folder children: ${childrenResp.status} ${text}`);
         }
 
-        const payload = (await childrenResp.json()) as { value?: Array<Record<string, unknown>>; '@odata.nextLink'?: string };
+        const payload = (await childrenResp.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
         for (const child of payload.value || []) {
           const childName = (child.name as string) || 'unknown';
           const childSourcePath = `/${current.prefix}/${childName}`.replace(/\/{2,}/g, '/');
@@ -109,7 +109,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
 
           const file = child.file as Record<string, unknown> | undefined;
           files.push({
-            itemRef: { driveId, itemId: child.id as string },
+            itemRef: { driveId, itemId: child.id },
             filename: childName,
             mimeType: (file?.mimeType as string) || 'application/octet-stream',
             sourcePath: childSourcePath,
@@ -184,7 +184,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     }
 
     const headers = {
-      Authorization: authHeaders['Authorization'] || '',
+      Authorization: authHeaders.Authorization || '',
       ...authHeaders,
     };
 

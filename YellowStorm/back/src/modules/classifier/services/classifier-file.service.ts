@@ -138,7 +138,7 @@ export class ClassifierFileService {
     runId: string;
     triggeredBy: string;
     overwrite: boolean;
-    mapping: Array<{ documentId: string; folderId: string }>;
+    mapping: { documentId: string; folderId: string }[];
   }): Promise<number> {
     let updated = 0;
     for (const entry of params.mapping) {
@@ -193,7 +193,7 @@ export class ClassifierFileService {
       indexingError: doc.indexingError,
       lastIndexedAt: doc.lastIndexedAt instanceof Date
         ? doc.lastIndexedAt.toISOString()
-        : (doc.lastIndexedAt as string | undefined) ?? undefined,
+        : (doc.lastIndexedAt) ?? undefined,
       type: (doc.type as 'doc' | 'url') ?? 'doc',
       sourceUrl: doc.sourceUrl,
       sourceRootUrl: doc.metadata?.sourceRootUrl,

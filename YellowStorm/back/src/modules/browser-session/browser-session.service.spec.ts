@@ -57,7 +57,7 @@ describe('BrowserSessionService', () => {
   it('creates a session and relays frames + navigations', async () => {
     const engine = new FakeEngine();
     const svc = await build(engine);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     const id = await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     expect(id).toBeTruthy();
     const s = engine.sessions[0];
@@ -71,7 +71,7 @@ describe('BrowserSessionService', () => {
   it('relays engine loading state to the client', async () => {
     const engine = new FakeEngine();
     const svc = await build(engine);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     engine.sessions[0].loadingCb!(true);
     engine.sessions[0].loadingCb!(false);
@@ -99,7 +99,7 @@ describe('BrowserSessionService', () => {
     const engine = new FakeEngine();
     const safety = async (u: string) => { if (u.includes('169.254')) throw new Error('blocked'); };
     const svc = await build(engine, safety);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     engine.sessions[0].navCb!({ url: 'http://169.254.169.254/', title: 'meta' });
     await Promise.resolve();

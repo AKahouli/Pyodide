@@ -186,7 +186,7 @@ export class ConnectedAppDefinitionService {
     return { deletedConnections: result.deletedConnections };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   private toAdminResponse(d: ConnectedAppDefinitionRow, connectedUserCount = 0): ConnectedAppAdminResponse {
     return {
       id: d.id,
@@ -215,7 +215,7 @@ export class ConnectedAppDefinitionService {
       const envValue = process.env.COMMON_APP_KEYS;
       if (!envValue) {
         this.logger.debug('COMMON_APP_KEYS not in env, using defaults');
-        return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+        return DEFAULT_COMMON_APP_KEYS;
       }
 
       const parsed = JSON.parse(envValue);
@@ -236,7 +236,7 @@ export class ConnectedAppDefinitionService {
       return parsed;
     } catch (error) {
       this.logger.error('Failed to parse COMMON_APP_KEYS from env, using defaults', String(error));
-      return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+      return DEFAULT_COMMON_APP_KEYS;
     }
   }
 

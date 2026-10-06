@@ -44,7 +44,7 @@ export function describeLiteLlmHttpError(error: unknown): string {
         detail = data.trim();
       } else if (data && typeof data === 'object') {
         const record = data as Record<string, unknown>;
-        const candidate = (record.error ?? record.detail ?? record.message) as unknown;
+        const candidate = (record.error ?? record.detail ?? record.message);
         if (typeof candidate === 'string') {
           detail = candidate;
         } else if (candidate && typeof candidate === 'object' && typeof (candidate as { message?: unknown }).message === 'string') {
@@ -104,9 +104,9 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
     this.reconnect = new ReconnectBackoff(this.reconnectConfig, {
       connect: () => this.connect(),
       label: () => 'LiteLLM',
-      log: (message) => this.logger.log(message, { display: true, save: false }),
-      warn: (message) => this.logger.warn(message),
-      error: (message) => this.logger.error(message),
+      log: (message) => { this.logger.log(message, { display: true, save: false }); },
+      warn: (message) => { this.logger.warn(message); },
+      error: (message) => { this.logger.error(message); },
     });
 
     this.healthCheckConfig = {

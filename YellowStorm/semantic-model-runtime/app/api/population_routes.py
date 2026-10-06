@@ -6,10 +6,14 @@ serving tuple. None of these write AGE or projections directly."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
+from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
@@ -18,13 +22,24 @@ from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, Idempot
                              ReviewResolveCommand)
 from app.persistence import manual_store
 from app.persistence import population_store as store
-from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
-                                             is_live_projection_ref, read_projection_graph)
+from app.population.age_projection import (ProjectionUnavailable, projection_graph,
+                                             drop_projection, ensure_revision_projection,
+                                             is_live_projection_ref, projection_exists,
+                                             graph_counts, is_typed_projection,
+                                             read_projection_graph, reproject_revision)
+from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
+logger = logging.getLogger(__name__)
 
+
+
+def _engine_key(idempotency_key: str) -> str:
+    """The caller's key for this runtime version; hashed when it would not fit the 200 characters."""
+    key = f"{idempotency_key}:{population_engine_version()}"
+    return key if len(key) <= 200 else "sha256:" + hashlib.sha256(key.encode()).hexdigest()
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 async def request_run(
@@ -41,7 +56,8 @@ async def request_run(
         admission = await service.admit(
             job_type="population.run",
             command=command,
-            idempotency_key=idempotency_key,
+            # A changed runtime is a new build, not the same one again.
+            idempotency_key=_engine_key(idempotency_key),
             task_name="semantic-model-population.run",
             queue_name=POPULATION_QUEUES[1],
         )
@@ -105,17 +121,37 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
+def _record_filters(raw: str | None) -> dict[str, str]:
+    """Per-field filters of the records table: at most 30 fields, each text at most 200 characters."""
+    if not raw:
+        return {}
+    import json
+
+    try:
+        parsed = json.loads(raw) if len(raw) <= 8000 else None
+    except ValueError:
+        parsed = None
+    if (not isinstance(parsed, dict) or len(parsed) > 30
+            or any(not isinstance(key, str) or not key or len(key) > 200
+                   or not isinstance(value, str) or len(value) > 200 for key, value in parsed.items())):
+        raise HTTPException(status_code=422, detail="invalid_record_filters")
+    return {key: value for key, value in parsed.items() if value.strip()}
+
+
 @router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_200_OK)
 async def search_concept_records(model_id: str, concept_id: str, request: Request,
                                  environment: str = "draft", q: str | None = None,
                                  limit: int = 50, offset: int = 0,
                                  data_revision_id: str | None = Query(default=None,
                                                                       alias="dataRevisionId"),
+                                 filters: str | None = None,
                                  ) -> dict[str, object]:
-    """Browse one concept's records in the data in use: searchable, a page at a time."""
+    """Browse one concept's records in the data in use: searchable, filterable per field
+    (``filters`` is a JSON object of field to text), a page at a time."""
     if (environment != "draft" or limit < 1 or limit > 200 or offset < 0 or offset > 1_000_000
             or (q is not None and len(q) > 200)):
         raise HTTPException(status_code=422, detail="invalid_read_scope")
+    field_filters = _record_filters(filters)
     pool = _population_read_pool(request)
     binding = await store.get_active_binding(pool, model_id, environment)
     if binding is None:
@@ -124,7 +160,7 @@ async def search_concept_records(model_id: str, concept_id: str, request: Reques
     if data_revision_id is not None and data_revision_id != revision_id:
         raise HTTPException(status_code=409, detail="active_binding_changed")
     total, entities = await store.search_revision_entities(
-        pool, revision_id, concept_id, query=q, limit=limit, offset=offset)
+        pool, revision_id, concept_id, query=q, limit=limit, offset=offset, filters=field_filters)
     origins = await store.list_entity_origins(pool, revision_id,
                                               sorted(entity["entityId"] for entity in entities))
     for entity in entities:
@@ -262,6 +298,230 @@ async def resolve_review(review_id: str, command: ReviewResolveCommand,
     if not resolved:
         raise HTTPException(status_code=409, detail="review_resolution_conflict")
     return {"reviewId": review_id, "state": "resolved", "reused": False}
+
+
+class PurgeModelDataCommand(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    forget_document_reading: bool = Field(default=False, alias="forgetDocumentReading")
+
+
+@router.post("/models/{model_id}/purge", status_code=status.HTTP_200_OK)
+async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
+                           request: Request) -> dict[str, object]:
+    """Clear a model's built data so the next build starts from nothing; its settings stay."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_pool(request)
+    try:
+        result = await store.purge_model_data(
+            pool, model_id, forget_document_reading=command.forget_document_reading,
+            emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    # The graphs of the cleared revisions go too; one left behind is only unused space.
+    age_pool = getattr(request.app.state, "age_pool", None)
+    dropped = 0
+    for ref in result.pop("projections"):
+        if age_pool is None or not is_live_projection_ref(ref):
+            continue
+        graph = projection_graph(ref)
+        try:
+            async with age_pool.acquire() as connection:
+                if await projection_exists(connection, graph):
+                    await drop_projection(connection, graph)
+                    dropped += 1
+        except Exception as exc:  # noqa: BLE001 - the data is already cleared
+            logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
+                           type(exc).__name__)
+    return {**result, "projectionsDropped": dropped}
+
+
+@router.post("/models/{model_id}/forget-readings", status_code=status.HTTP_200_OK)
+async def forget_document_readings(model_id: str, request: Request) -> dict[str, object]:
+    """Forget the model's earlier AI readings of documents so the next run reads every document
+    again. Records, links and the data in use stay as they are."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        forgotten = await store.forget_document_readings(_population_pool(request), model_id)
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    return {"modelId": model_id, "documentReadings": forgotten}
+
+
+@router.get("/models/{model_id}/graph-status", status_code=status.HTTP_200_OK)
+async def read_graph_status(model_id: str, request: Request) -> dict[str, object]:
+    """Which graph each environment serves (schema, revision, layout), what it holds compared
+    with the stored records and links, and the state of its search index. Read only."""
+    from app.graph_search.embeddings import profile_from_env
+    from app.persistence import graph_search_store as search_store
+
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_read_pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    profile = profile_from_env()
+    environments: list[dict[str, Any]] = []
+    for served in await store.served_graphs(pool, model_id):
+        ref = served["projection_ref"]
+        graph = projection_graph(ref) if is_live_projection_ref(ref) else None
+        counts = None
+        if graph and age_pool is not None:
+            try:
+                async with age_pool.acquire() as connection:
+                    counts = await graph_counts(connection, graph)
+            except Exception as exc:  # noqa: BLE001 - the status says the graph could not be read
+                logger.warning("Could not count graph %s: %s", graph, type(exc).__name__)
+        stored = {"records": int(served["records"]), "links": int(served["links"])}
+        if counts is None:
+            state = "missing"
+        elif counts["vertices"] != stored["records"] or counts["edges"] != stored["links"]:
+            state = "mismatch"
+        else:
+            state = "ok"
+        generation = (await search_store.latest_generation(pool, served["data_revision_id"], profile.fingerprint)
+                      if profile else None)
+        index = search_store.public_generation(generation)
+        created = served["created_at"]
+        environments.append({
+            "environment": served["environment"], "dataRevisionId": served["data_revision_id"],
+            "modelVersionId": served["model_version_id"], "projectionRef": ref, "graphSchema": graph,
+            "layout": "typed" if is_typed_projection(ref) else "entity",
+            "builtAt": created.isoformat() if hasattr(created, "isoformat") else created,
+            "stored": stored, "graph": counts, "state": state,
+            "index": {key: index.get(key) for key in ("state", "expectedCount", "indexedCount", "completedAt")},
+        })
+    return {"modelId": model_id, "environments": environments}
+
+
+@router.post("/models/{model_id}/reproject", status_code=status.HTTP_200_OK)
+async def reproject_model_graphs(model_id: str, request: Request) -> dict[str, object]:
+    """Rebuild the graphs of the data a model serves from its stored records and links: no
+    source is read again and no record changes. Refused while a build runs."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    if await store.population_running(pool, model_id):
+        raise HTTPException(status_code=409, detail="population_running")
+    rebuilt: list[dict[str, Any]] = []
+    for revision_id in await store.served_revisions(pool, model_id):
+        try:
+            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True))
+        except PopulationError as exc:
+            raise HTTPException(status_code=409, detail=exc.code) from exc
+        except ProjectionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Rebuilt the graphs of model %s: %s", model_id, rebuilt)
+    return {"modelId": model_id, "revisions": rebuilt}
+
+
+@router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(model_id: str, request: Request) -> Response:
+    """Delete everything the runtime holds for a model: data, review items, search index,
+    jobs, specifications and its graphs. Idempotent; refused while one of its jobs runs.
+    Source documents belong to workspaces and are never touched."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = getattr(request.app.state, "population_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="population_store_unavailable")
+    try:
+        result = await store.delete_model(pool, model_id)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    age_pool = getattr(request.app.state, "age_pool", None)
+    failed = 0
+    for ref in result["projections"]:
+        if age_pool is None or not is_live_projection_ref(ref):
+            continue
+        graph = projection_graph(ref)
+        try:
+            async with age_pool.acquire() as connection:
+                if await projection_exists(connection, graph):
+                    await drop_projection(connection, graph)
+        except Exception as exc:  # noqa: BLE001 - the rows are already gone
+            failed += 1
+            logger.warning("Could not drop graph %s of deleted model %s: %s", graph, model_id,
+                           type(exc).__name__)
+    logger.info("Deleted runtime data of model %s: %s (graphs not dropped: %d)",
+                model_id, result["deleted"], failed)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class CloneDataIdMap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concepts: dict[str, str] = Field(default_factory=dict)
+    attributes: dict[str, str] = Field(default_factory=dict)
+    relations: dict[str, str] = Field(default_factory=dict)
+    mappings: dict[str, str] = Field(default_factory=dict)
+
+
+class CloneDataCommand(BaseModel):
+    """Copy a model's draft data into a clone whose ids the back already remapped."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    target_model_id: str = Field(alias="targetModelId", min_length=1, max_length=200)
+    target_model_version_id: str = Field(alias="targetModelVersionId", min_length=1, max_length=200)
+    id_map: CloneDataIdMap = Field(alias="idMap", default_factory=CloneDataIdMap)
+    # The clone's own build plan, sent when the source data is current, so the copy reads as current.
+    home_workspace_id: str | None = Field(default=None, alias="homeWorkspaceId", max_length=200)
+    spec_hash: str | None = Field(default=None, alias="specHash", pattern=r"^sha256:[0-9a-f]{64}$")
+    specification: dict[str, Any] | None = None
+    execution_fingerprint: str | None = Field(default=None, alias="executionFingerprint", max_length=200)
+
+
+@router.post("/models/{model_id}/clone-data", status_code=status.HTTP_200_OK)
+async def clone_model_data(model_id: str, command: CloneDataCommand,
+                           request: Request) -> dict[str, object]:
+    """Copy the draft data revision of ``model_id`` into the (empty) clone, project its
+    graph and serve it as the clone's draft data. The search index is requested, not copied.
+    Refused (409) while a job of the source runs. Source documents are never copied."""
+    from app.persistence import model_clone_store as clone_store
+
+    if not model_id or len(model_id) > 200 or command.target_model_id == model_id:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    planned = None
+    if command.specification is not None or command.spec_hash is not None:
+        if (command.specification is None or command.spec_hash is None or not command.home_workspace_id
+                or canonical_spec_hash(command.specification) != command.spec_hash):
+            raise HTTPException(status_code=422, detail="spec_hash_mismatch")
+        planned = {"homeWorkspaceId": command.home_workspace_id, "specHash": command.spec_hash,
+                   "specification": command.specification,
+                   "executionFingerprint": command.execution_fingerprint}
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    id_map = {**command.id_map.concepts, **command.id_map.attributes,
+              **command.id_map.relations, **command.id_map.mappings}
+    try:
+        result = await clone_store.clone_model_data(
+            pool, source_model_id=model_id, target_model_id=command.target_model_id,
+            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    except clone_store.CloneTargetNotEmpty as exc:
+        raise HTTPException(status_code=409, detail="target_has_data") from exc
+    if not result["copied"]:
+        return result
+    try:
+        projection = await ensure_revision_projection(pool, age_pool, result["revisionId"])
+    except (PopulationError, ProjectionUnavailable) as exc:
+        # Leave no half-copied data behind: the clone simply has none.
+        await store.delete_model(pool, command.target_model_id)
+        logger.warning("Clone of %s into %s: graph not built (%s); copied data removed",
+                       model_id, command.target_model_id, getattr(exc, "code", type(exc).__name__))
+        raise HTTPException(status_code=503, detail="clone_projection_failed") from exc
+    await clone_store.activate_cloned_revision(
+        pool, model_id=command.target_model_id, model_version_id=command.target_model_version_id,
+        revision_id=result["revisionId"], projection_ref=projection["projectionRef"],
+        correction_sequence=result["correctionSequence"])
+    service = getattr(request.app.state, "job_service", None)
+    await request_index_quietly(pool, service.admit if service else None, result["revisionId"])
+    logger.info("Cloned data of model %s into %s: %s", model_id, command.target_model_id, result["counts"])
+    return {**result, "projectionRef": projection["projectionRef"]}
 
 
 @router.post("/revisions/{revision_id}/project", status_code=status.HTTP_200_OK)
@@ -422,6 +682,8 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     """Read one document's extracted fields exactly as a run would, and say for each one how it
     was read or why it was not. Nothing is stored and no cache is used or filled."""
     from app.population.document import read_document_values, resolve_indexed_document
+    from app.population.computed_fields import apply_computed, check_inputs, normalize_computed
+    from app.population.document import _metadata_value
     from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 
     actor = body.get("actorUserId")
@@ -436,6 +698,9 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     try:
         mappings = [{**item, "rules": normalize_rules(item.get("rules"))} for item in mappings
                     if item.get("mode") != "ignore"]
+        mappings = [{**item, "computed": normalize_computed(item.get("computed"))}
+                    if item.get("mode") == "computed" else item for item in mappings]
+        check_inputs(mappings)
         normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
     except RuleError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
@@ -458,5 +723,240 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         found = key in read["values"]
         evidence = read["evidence"].get(key) or {}
         fields[key] = {**outcome, **({"value": read["values"][key], "page": evidence.get("pageNumber"),
-                                      "quote": read["quotes"].get(key)} if found else {})}
-    return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+                                      "quote": read["quotes"].get(key)} if found else {}),
+                       **({"raw": read["raws"][key]} if key in read["raws"] else {})}
+    values = dict(read["values"])
+    values.update({m["targetAttribute"]: m.get("constantValue") for m in mappings if m.get("mode") == "constant"})
+    values.update({m["targetAttribute"]: _metadata_value(resolved["current"], m.get("sourceField"))
+                   for m in mappings if m.get("mode") == "metadata"})
+    computed = apply_computed(mappings, values, {"document_name": resolved["current"].get("originalName")})
+    for key, outcome in computed.items():
+        fields[key] = {**outcome, **({"value": values[key]} if outcome["reason"] == "found" else {})}
+    preview: dict[str, object] = {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+    if read["records"]:
+        # Several records per document: each with what is shared (read once) and its own values.
+        own = set(read.get("itemKeys") or []) | {m["targetAttribute"] for m in read["aiMappings"]}
+        shared = {key: value for key, value in values.items() if key not in own}
+        records = []
+        for record in read["records"][:MAX_PREVIEW_RECORDS]:
+            row = {**shared, **record["values"]}
+            apply_computed(mappings, row, {"document_name": resolved["current"].get("originalName")})
+            records.append({"values": row, "pages": {key: item.get("pageNumber") for key, item in record["evidence"].items()}})
+        preview.update({"records": records, "recordCount": len(read["records"]),
+                        "unevenFields": read.get("unevenFields") or []})
+    return preview
+
+
+# How many of a document's records its preview shows.
+MAX_PREVIEW_RECORDS = 50
+
+
+@router.post("/cell-preview", status_code=status.HTTP_200_OK)
+async def preview_cell_fields(body: dict) -> dict[str, object]:
+    """Read a few sheet rows' fields exactly as a run would: a column as it is, a value read out of a
+    cell with the document rules and/or AI (with the row, column and span it was found at), a recipe.
+    The rows are sample rows the person picked. Nothing is stored and no cache is used or filled."""
+    from app.population.cell_fields import (MAX_CELL_CHARS, MAX_PREVIEW_ROWS, CellReader, extraction_columns,
+                                            extractions_from_mappings, normalize_field_extractions)
+    from app.population.computed_fields import apply_row_recipes, normalize_row_recipes
+    from app.population.document_rules import RuleError, normalize_ai_settings
+
+    entry = body.get("entry")
+    rows = body.get("rows")
+    if (not isinstance(entry, dict) or not isinstance(rows, list) or not 0 < len(rows) <= MAX_PREVIEW_ROWS
+            or not all(isinstance(row, dict) and isinstance(row.get("values"), dict) and len(row["values"]) <= 200
+                       for row in rows)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    mappings = entry.get("fieldMappings")
+    if (not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    active = [item for item in mappings if item.get("mode") != "ignore" and isinstance(item.get("targetAttribute"), str)]
+    # A derived source expanding a field: each sample record gives one row per item, read like a record.
+    items_of: list[tuple[object, int | None, str | None]] = [(row.get("rowNumber"), None, None) for row in rows]
+    item_fields: list[str] | None = None
+    items_truncated = False
+    if body.get("expand") is not None:
+        from app.population.expand import ExpandError, item_attributes, item_paths, normalize_expand, split_value
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row["values"]})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        expanded: list[dict] = []
+        items_of = []
+        for row in rows:
+            for index, item in enumerate(split_value(row["values"].get(expand["field"]), expand), start=1):
+                if len(expanded) >= MAX_PREVIEW_ROWS * MAX_PREVIEW_ITEMS_PER_ROW:
+                    items_truncated = True
+                    break
+                attributes = item_attributes(item)
+                expanded.append({"rowNumber": len(expanded) + 1, "values": {**row["values"], **attributes}})
+                items_of.append((row.get("rowNumber"), index, str(attributes["@item"])[:300]))
+        item_fields = item_paths([{"entityId": str(row.get("rowNumber")), "attributes": row["values"]} for row in rows], expand)
+        rows = expanded
+    try:
+        extractions = normalize_field_extractions(extractions_from_mappings(active))
+        shaped = [item for item in active if item.get("mode") in ("direct", "computed") and item.get("computed") is not None]
+        recipes = normalize_row_recipes({item["targetAttribute"]: item["computed"] for item in shaped},
+                                        {item["targetAttribute"] for item in active if item.get("mode") in ("direct", "computed", "extract", "constant")})
+        settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
+    reader = CellReader(extractions, {
+        "conceptId": entry.get("conceptId") or "preview", "conceptLabel": entry.get("conceptLabel"),
+        "source": entry.get("source") or {}, "assetRef": {"assetId": (entry.get("source") or {}).get("assetId")},
+        "mappingVersion": "preview", "modelId": str(body.get("modelId") or ""),
+        "aiExtraction": body.get("aiExtraction"), "settings": settings,
+        # Rows of a sheet, or records of another concept (a derived source's sample records).
+        "unit": "record" if entry.get("unit") == "record" else "row"}, ai_rows=MAX_PREVIEW_ROWS)
+    texts = [{str(column): "" if value is None else str(value)[:MAX_CELL_CHARS] for column, value in row["values"].items()}
+             for row in rows]
+    columns = extraction_columns(extractions)
+    read = await reader.read_rows([(row.get("rowNumber"), {column: cells.get(column, "") for column in columns})
+                                   for row, cells in zip(rows, texts)]) if extractions and rows else [None] * len(rows)
+    results = []
+    for row, cells, outcome, (row_number, item_index, item_text) in zip(rows, texts, read, items_of):
+        values: dict[str, object] = {}
+        fields: dict[str, object] = {}
+        for item in active:
+            target = item["targetAttribute"]
+            if item.get("mode") == "direct" and isinstance(item.get("sourceField"), str):
+                value = row["values"].get(item["sourceField"])
+                values[target] = value
+                fields[target] = {"method": "direct", "column": item["sourceField"],
+                                  "reason": "no_input" if value is None or str(value).strip() == "" else "found",
+                                  **({"value": value} if value is not None and str(value).strip() else {})}
+            elif item.get("mode") == "constant":
+                values[target] = item.get("constantValue")
+        if outcome is not None:
+            for target in extractions:
+                values[target] = outcome["values"].get(target)
+                fields[target] = outcome["fields"].get(target) or {"method": "rules", "reason": "no_input"}
+        for target, recipe in apply_row_recipes(recipes, values, cells).items():
+            fields[target] = {"method": "computed", "reason": recipe["reason"], "input": recipe["input"],
+                              **({"value": values[target]} if recipe["reason"] == "found" else {})}
+        results.append({"rowNumber": row_number, "fields": fields,
+                        **({"item": item_index, "itemText": item_text} if item_index is not None else {})})
+    return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")},
+            **({"itemFields": item_fields, "itemsTruncated": items_truncated} if item_fields is not None else {})}
+
+
+MAX_SHAPED_ROWS = 500
+# How many items of each sample record a preview reads, on average, when a derived source expands a field.
+MAX_PREVIEW_ITEMS_PER_ROW = 5
+
+
+@router.post("/sheet-rows", status_code=status.HTTP_200_OK)
+async def shape_sheet_rows_route(body: dict) -> dict[str, object]:
+    """A sheet's sample rows with its fields read as a run reads them (columns, fixed values, rules on a
+    cell, recipes and joins), for the data preview. AI is not run. Nothing is stored."""
+    from app.workers.datasource_tasks import shape_sheet_rows
+
+    rows = body.get("rows")
+    mappings = body.get("fieldMappings")
+    if (not isinstance(rows, list) or len(rows) > MAX_SHAPED_ROWS
+            or not all(isinstance(row, dict) and len(row) <= 201 for row in rows)
+            or not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    if body.get("expand") is not None:
+        # Several records per row: each row gives one row per item of the expanded column.
+        from app.population.expand import ExpandError, expand_rows, normalize_expand
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        rows, gaps = expand_rows(rows, {**expand, "maxItems": min(expand.get("maxItems") or 1000, 50)},
+                                 lambda row: row.get(expand["field"]), lambda row: row.get("__sheetRow"))
+        return {**shape_sheet_rows(mappings, rows[:MAX_SHAPED_ROWS * 2]),
+                "itemsTruncated": bool(gaps) or len(rows) > MAX_SHAPED_ROWS * 2}
+    return shape_sheet_rows(mappings, rows)
+
+
+@router.post("/computed-preview", status_code=status.HTTP_200_OK)
+async def preview_computed_field(body: dict) -> dict[str, object]:
+    """Run one computed field on sample values (file names, values of the field it reads, or cells of
+    the column it reads), with the value at each step. ``inputRecipe`` first shapes each sample, for a
+    sheet field taken from another field that has its own recipe.
+
+    A recipe joining several parts is tried on ``partSamples`` instead: per sample, the value of each
+    part by ``"<kind>:<name>"``; ``partRecipes`` first shapes a part (a field with its own recipe)."""
+    from app.population.computed_fields import (MAX_JOIN_PARTS, MAX_PREVIEW_SAMPLES, compute, compute_from,
+                                                normalize_computed)
+    from app.population.document_rules import RuleError
+
+    try:
+        spec = normalize_computed(body.get("computed"))
+        before = normalize_computed(body["inputRecipe"]) if body.get("inputRecipe") is not None else None
+        part_recipes = body.get("partRecipes") or {}
+        if not isinstance(part_recipes, dict) or len(part_recipes) > MAX_JOIN_PARTS:
+            raise RuleError("partRecipes must map parts to recipes")
+        part_recipes = {str(key): normalize_computed(recipe) for key, recipe in part_recipes.items()}
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
+    if spec["input"]["kind"] == "join":
+        part_samples = body.get("partSamples")
+        if (not isinstance(part_samples, list) or not 0 < len(part_samples) <= MAX_PREVIEW_SAMPLES
+                or not all(isinstance(sample, dict) and len(sample) <= MAX_JOIN_PARTS * 2
+                           and all(isinstance(key, str) and len(key) <= 220 and isinstance(value, str) and len(value) <= 1000
+                                   for key, value in sample.items()) for sample in part_samples)):
+            raise HTTPException(status_code=422, detail="invalid_samples")
+        joined = []
+        for sample in part_samples:
+            def lookup(kind: str, name: str, sample: dict = sample) -> str | None:
+                key = f"{kind}:{name}"
+                value = sample.get(key)
+                if value is not None and key in part_recipes:
+                    value, _ = compute(part_recipes[key], value)
+                return value
+            steps: list[dict] = []
+            value, reason, text = compute_from(spec, lookup, steps)
+            joined.append({"input": text, "value": value, "reason": reason, "steps": steps})
+        return {"results": joined}
+    samples = body.get("samples")
+    if (not isinstance(samples, list) or not 0 < len(samples) <= MAX_PREVIEW_SAMPLES
+            or not all(isinstance(sample, str) and len(sample) <= 1000 for sample in samples)):
+        raise HTTPException(status_code=422, detail="invalid_samples")
+    results = []
+    for sample in samples:
+        source: str | None = sample
+        if before is not None:
+            source, _ = compute(before, sample)
+        steps: list[dict] = []
+        value, reason = compute(spec, source, steps)
+        results.append({"input": sample, "value": value, "reason": reason, "steps": steps})
+    return {"results": results}
+
+
+@router.post("/document-labels", status_code=status.HTTP_200_OK)
+async def suggest_document_labels(body: dict, request: Request) -> dict[str, object]:
+    """Headings and ``Label:`` texts that recur across a few of a source's documents, with how many
+    documents hold each one. Every document is reauthorized for the actor, as a run does."""
+    from app.datasource.section_reader import SectionReadError
+    from app.population.document import _whole_document, resolve_indexed_document
+    from app.population.document_labels import MAX_DOCUMENTS, labels_in_document, recurring_labels
+
+    actor = body.get("actorUserId")
+    sources = body.get("sources")
+    if (not isinstance(actor, str) or not actor or not isinstance(sources, list)
+            or not 0 < len(sources) <= MAX_DOCUMENTS
+            or not all(isinstance(item, dict) and item.get("assetId") for item in sources)):
+        raise HTTPException(status_code=422, detail="invalid_label_request")
+    pool = getattr(request.app.state, "index_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="index_unavailable")
+    per_document: list[list[dict]] = []
+    unread: list[dict[str, object]] = []
+    for source in sources:
+        entry = {"source": source, "conceptId": "labels", "fieldMappings": []}
+        resolved = await resolve_indexed_document(pool, entry, actor)
+        if "gap" in resolved:
+            unread.append({"assetId": source.get("assetId"), "status": resolved["gap"]["gaps"][0]["kind"]})
+            continue
+        try:
+            sections = await _whole_document(pool, resolved["candidate"]["documentPk"])
+        except SectionReadError:
+            unread.append({"assetId": source.get("assetId"), "status": "index_unavailable"})
+            continue
+        per_document.append(labels_in_document(sections))
+    return {"documentsRead": len(per_document), "unread": unread, "labels": recurring_labels(per_document)}

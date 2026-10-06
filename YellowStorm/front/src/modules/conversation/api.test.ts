@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, getArtifactDownloadUrl, getCitationViewUrl, rerunReliabilityEvaluation, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchRootInputs, fetchRootResult, fetchRootEvidence, fetchConversations, fetchMessages, getArtifactDownloadUrl, getCitationViewUrl, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -17,6 +17,9 @@ vi.mock('@/lib/api', () => ({
       branch: (id: string) => `/conversations/${id}/branches`,
       messages: (id: string) => `/conversations/${id}/messages`,
       activeStream: (id: string) => `/conversations/${id}/active-stream`,
+      rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
+      rootResult: (id: string, executionId: string) => `/conversations/${id}/root-results/${executionId}`,
+      rootEvidence: (id: string, executionId: string, evidenceId: string) => `/conversations/${id}/root-results/${executionId}/evidence/${evidenceId}`,
       messageById: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}`,
       feedback: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/feedback`,
       rerunReliabilityEvaluation: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/reliability-evaluation/rerun`,
@@ -41,6 +44,30 @@ vi.mock('@/lib/api', () => ({
 describe('conversation api', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('loads private native inputs using the shared client with cancellation', async () => {
+    const inputs = [{ executionId: 'execution', epoch: 2, inputs: [{ inputId: 'input', inputVersion: 1, kind: 'confirmation' }] }];
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: inputs } } as never);
+    const signal = new AbortController().signal;
+    expect(await fetchRootInputs('conversation', signal)).toEqual(inputs);
+    expect(apiClient.get).toHaveBeenCalledWith('/conversations/conversation/root-inputs', { signal });
+  });
+
+  it('loads an authorized full child result using the shared client', async () => {
+    const result = { executionId: 'child', text: 'full output', complete: true };
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: result } } as never);
+    const signal = new AbortController().signal;
+    expect(await fetchRootResult('conversation', 'child', signal)).toEqual(result);
+    expect(apiClient.get).toHaveBeenCalledWith('/conversations/conversation/root-results/child', { signal });
+  });
+
+  it('resolves a registered evidence location using the shared client', async () => {
+    const location = { evidenceId: 'evidence', kind: 'artifact', producerAgentId: 'worker', url: 'https://storage.test/file', fileName: 'file.txt' };
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: location } } as never);
+    const signal = new AbortController().signal;
+    expect(await fetchRootEvidence('conversation', 'child', 'evidence', signal)).toEqual(location);
+    expect(apiClient.get).toHaveBeenCalledWith('/conversations/conversation/root-results/child/evidence/evidence', { signal });
   });
 
   it('maps paginated conversations response', async () => {

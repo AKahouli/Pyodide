@@ -17,7 +17,6 @@ from starlette.responses import JSONResponse
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
 
 from src.logger.setup_logging import setup_logging
-from src.logger.logging import configure_logging, CorrelationIdFilter
 from src.logger.logging import get_logger
 from src.middleware import add_middleware
 # from src.config.settings import get_settings
@@ -72,9 +71,8 @@ async def lifespan(app: FastAPI):
                 "Missing optional dependency 'azure-monitor-opentelemetry' required for Application Insights logging"
             ) from exc
 
-        # logging in application insights
-        configure_logging()
-        logger.addFilter(CorrelationIdFilter())
+        # logging in application insights (P11: CorrelationIdFilter/configure_logging retired;
+        # the unified-logging SDK owns the bootstrap and exports OTel trace context itself)
         configure_azure_monitor(
             connection_string=app_settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
             logger_name="api",

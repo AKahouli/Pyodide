@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, FileSpreadsheet, FileText, Loader2, Search, Share2, Warehouse } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useModuleTranslation } from '@/modules/localization';
 import { getSharedWorkspaces, getWorkspaces } from '@/modules/workspace/api';
@@ -11,6 +11,7 @@ import { semanticModelApi } from '../../api';
 import type { SourceFileMatch, SourceSuggestionOption } from '../../types';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from '../mapping/WorkspaceFilePicker';
 import { isStructuredDocument } from '../knowledge/KnowledgePanel';
+import { HelpTip, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 type WorkspaceRow = { id: string; name: string; documentCount: number; shared: boolean };
 
@@ -166,21 +167,21 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
   const renderWorkspace = (row: WorkspaceRow) => {
     const isOpen = findsFiles && expanded === row.id;
     const chosen = choice?.workspaceId === row.id;
-    return <li key={row.id} className={`overflow-hidden rounded-lg border ${chosen ? 'border-primary/60 bg-primary/5' : 'bg-card'}`}>
-      <div className='flex items-center gap-1 p-1.5'>
-        {findsFiles && <Button type='button' size='icon' variant='ghost' className='h-8 w-8 shrink-0' onClick={() => setExpanded(isOpen ? null : row.id)}
+    return <li key={row.id} className={chosen ? 'bg-primary/10' : undefined}>
+      <div className='flex items-center gap-1 py-1 pl-1 pr-2'>
+        {findsFiles && <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0' onClick={() => setExpanded(isOpen ? null : row.id)}
           aria-label={isOpen ? t('knowledge.collapseWorkspace', { name: row.name }) : t('knowledge.expandWorkspace', { name: row.name })}>
           {isOpen ? <ChevronDown className='h-4 w-4' /> : <ChevronRight className='h-4 w-4' />}
         </Button>}
         <button type='button' className='flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-muted/60' onClick={() => chooseWorkspace(row)} aria-label={t('assistantSources.chooser.pickWorkspace', { name: row.name })} aria-pressed={chosen}>
-          {row.shared ? <Share2 className='h-4 w-4 shrink-0 text-blue-400' /> : <Warehouse className='h-4 w-4 shrink-0 text-primary' />}
+          {row.shared ? <Share2 className='h-4 w-4 shrink-0 text-blue-500 dark:text-blue-400' /> : <Warehouse className='h-4 w-4 shrink-0 text-primary' />}
           <span className='min-w-0 flex-1'>
             <span className='block truncate text-sm font-medium'>{row.name}</span>
             <span className='block text-[11px] text-muted-foreground'>{t('assistantSources.chooser.fileCount', { count: row.documentCount })}{row.shared ? ` · ${t('assistantSources.chooser.shared')}` : ''}</span>
           </span>
         </button>
       </div>
-      {isOpen && <div className='border-t bg-background/60 p-2'>
+      {isOpen && <div className='border-t bg-muted/20 p-2'>
         <WorkspaceFilePicker workspaceId={row.id} name={row.name}
           // Opening a workspace shows its files; it is chosen only once something in it is picked (or it is picked whole).
           whole={chosen ? choice!.whole && !choice!.spreadsheet : false}
@@ -200,26 +201,28 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
   const own = rows.filter((row) => !row.shared);
   const shared = rows.filter((row) => row.shared);
   return <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-    <DialogContent className='flex max-h-[90dvh] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-3 p-4 sm:p-6'>
+    <DialogContent className='flex max-h-[90dvh] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-4 p-4 sm:p-6' aria-describedby={undefined}>
       <DialogHeader>
-        <DialogTitle>{title ?? t('assistantSources.chooser.title', { concept: conceptLabel })}</DialogTitle>
-        <DialogDescription>{description ?? t('assistantSources.chooser.description')}</DialogDescription>
+        <div className='flex items-center gap-1'>
+          <DialogTitle>{title ?? t('assistantSources.chooser.title', { concept: conceptLabel })}</DialogTitle>
+          <HelpTip text={description ?? t('assistantSources.chooser.description')} />
+        </div>
       </DialogHeader>
       <div className='relative'>
         <Search className='pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' />
-        <Input autoFocus className='pl-9' value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('assistantSources.chooser.search')} aria-label={t('assistantSources.chooser.search')} />
+        <Input autoFocus className={`${INPUT} pl-9`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('assistantSources.chooser.search')} aria-label={t('assistantSources.chooser.search')} />
       </div>
-      <div className='min-h-0 flex-1 space-y-4 overflow-y-auto pr-1' data-testid='source-chooser-list'>
-        {findsFiles && term.length >= MIN_FILE_SEARCH && <section aria-label={t('assistantSources.chooser.files')}>
-          <h3 className='mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('assistantSources.chooser.files')}</h3>
+      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto pr-1' data-testid='source-chooser-list'>
+        {findsFiles && term.length >= MIN_FILE_SEARCH && <section aria-label={t('assistantSources.chooser.files')} className='space-y-2'>
+          <SectionHeader title={t('assistantSources.chooser.files')} count={files.data?.files.length || undefined} />
           {files.isLoading ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>
             : !files.data?.files.length ? <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.noFiles')}</p>
-            : <ul className='space-y-1'>{files.data.files.map((file) => {
+            : <ul className={ROW_LIST}>{files.data.files.map((file) => {
               const spreadsheet = isSheet(file);
               const readable = mode === 'files' || mode === 'file' || spreadsheet || isReadableDocument(file.mimeType);
               const picked = choice?.workspaceId === file.workspaceId && (choice.spreadsheet ? choice.spreadsheet.id === file.id : !choice.whole && choice.pick.documentIds.includes(file.id));
               return <li key={file.id}>
-                <label className={`flex min-h-10 items-center gap-2 rounded-md px-2 text-sm ${readable ? 'cursor-pointer hover:bg-muted/60' : 'opacity-60'} ${picked ? 'bg-primary/10' : ''}`}>
+                <label className={`flex min-h-10 items-center gap-2 px-3 py-1 text-sm ${readable ? 'cursor-pointer hover:bg-muted/60' : 'opacity-60'} ${picked ? 'bg-primary/10' : ''}`}>
                   <input type={spreadsheet || mode === 'file' ? 'radio' : 'checkbox'} name={spreadsheet ? 'source-chooser-sheet' : mode === 'file' ? 'source-chooser-file' : undefined} disabled={!readable} checked={picked} onChange={(event) => toggleFile(file, event.target.checked)} />
                   {spreadsheet ? <FileSpreadsheet className='h-4 w-4 shrink-0 text-emerald-600' /> : <FileText className='h-4 w-4 shrink-0 text-muted-foreground' />}
                   <span className='min-w-0 flex-1'>
@@ -232,17 +235,17 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
             })}</ul>}
         </section>}
         {findsFiles && term.length > 0 && term.length < MIN_FILE_SEARCH && <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.searchHint')}</p>}
-        <section aria-label={t('assistantSources.chooser.workspaces')}>
-          <h3 className='mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('assistantSources.chooser.workspaces')}</h3>
+        <section aria-label={t('assistantSources.chooser.workspaces')} className='space-y-2'>
+          <SectionHeader title={t('assistantSources.chooser.workspaces')} />
           {workspaces.isError ? <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.loadError')}</p>
             : workspaces.isLoading ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>
             : !rows.length ? <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.noWorkspaces')}</p>
             : <>
-              <ul className='space-y-1.5'>{own.map(renderWorkspace)}</ul>
-              {workspaces.data?.more && <Button type='button' variant='ghost' size='sm' className='mt-1 w-full text-xs' disabled={workspaces.isFetching} onClick={() => setWorkspacePages((pages) => pages + 1)}>{t('assistantSources.chooser.loadMore')}</Button>}
+              {own.length > 0 && <ul className={`${ROW_LIST} overflow-hidden`}>{own.map(renderWorkspace)}</ul>}
+              {workspaces.data?.more && <Button type='button' variant='ghost' size='sm' className='w-full text-xs' disabled={workspaces.isFetching} onClick={() => setWorkspacePages((pages) => pages + 1)}>{t('assistantSources.chooser.loadMore')}</Button>}
               {shared.length > 0 && <>
-                <h4 className='mb-1.5 mt-3 text-[11px] font-semibold text-blue-400'>{t('assistantSources.chooser.shared')}</h4>
-                <ul className='space-y-1.5'>{shared.map(renderWorkspace)}</ul>
+                <h4 className='flex items-center gap-1.5 pt-2 text-xs font-medium text-muted-foreground'><Share2 className='h-3 w-3' aria-hidden />{t('assistantSources.chooser.shared')}</h4>
+                <ul className={`${ROW_LIST} overflow-hidden`}>{shared.map(renderWorkspace)}</ul>
               </>}
             </>}
         </section>

@@ -26,6 +26,7 @@ import { PlaybookAssistantSourcesService } from '../assistant/playbook-assistant
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookInputContractService } from '../services/playbook-input-contract.service';
 import { PlaybookFlowArtifactService } from '../services/playbook-flow-artifact.service';
+import { FlowAccessService } from '../domain/flow-access.service';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -46,6 +47,7 @@ export class PlaybookFlowController {
     private readonly playbookInputContractService: PlaybookInputContractService,
     private readonly artifactService: PlaybookFlowArtifactService,
     private readonly systemService: SystemService,
+    private readonly accessService: FlowAccessService,
   ) {}
 
   @Post()
@@ -60,7 +62,6 @@ export class PlaybookFlowController {
 
   @Get()
   @ApiOperation({ summary: 'List playbook flows' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findAll(
     @CurrentUser('_id') userId: string,
     @Query() query: PlaybookFlowQueryDto,
@@ -70,7 +71,6 @@ export class PlaybookFlowController {
 
   @Get('active-executions')
   @ApiOperation({ summary: 'List active executions across playbooks' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async getActiveExecutions(
     @CurrentUser('_id') userId: string,
   ) {
@@ -79,7 +79,6 @@ export class PlaybookFlowController {
 
   @Get('recent-artifacts')
   @ApiOperation({ summary: 'List recent accessible generated artifacts' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async recentArtifacts(
     @CurrentUser('_id') userId: string,
     @Query('limit', new DefaultValuePipe(6), ParseIntPipe) limit: number,
@@ -89,7 +88,6 @@ export class PlaybookFlowController {
 
   @Get('assistant/source-files')
   @ApiOperation({ summary: 'Find files by name across every workspace the user can open, to choose a playbook source' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   searchAssistantSourceFiles(
     @CurrentUser('_id') userId: string,
     @Query('search') search = '',
@@ -100,7 +98,6 @@ export class PlaybookFlowController {
 
   @Get('assistant/pending-sources')
   @ApiOperation({ summary: 'The Yellowmind source questions still waiting on a change to this playbook' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   getAssistantPendingSources(
     @CurrentUser('_id') userId: string,
     @Query('playbookId') playbookId = '',
@@ -110,7 +107,6 @@ export class PlaybookFlowController {
 
   @Get('assistant/clarifications/:continuationId/sources')
   @ApiOperation({ summary: 'The source questions the assistant is waiting on, and what the user chose for them' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   getAssistantClarificationSources(
     @CurrentUser('_id') userId: string,
     @Param('continuationId') continuationId: string,
@@ -120,7 +116,6 @@ export class PlaybookFlowController {
 
   @Put('assistant/clarifications/:continuationId/questions/:questionId/sources')
   @ApiOperation({ summary: 'Choose the workspaces or files for one source question, or skip it' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   chooseAssistantClarificationSources(
     @CurrentUser('_id') userId: string,
     @Param('continuationId') continuationId: string,
@@ -132,7 +127,6 @@ export class PlaybookFlowController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a playbook flow by id' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findOne(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
@@ -146,7 +140,6 @@ export class PlaybookFlowController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a playbook flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
   async update(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
@@ -159,7 +152,6 @@ export class PlaybookFlowController {
 
   @Patch(':id/delta')
   @ApiOperation({ summary: 'Apply a delta patch to a playbook flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
   async patchDelta(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
@@ -260,24 +252,24 @@ export class PlaybookFlowController {
 
   @Get(':id/evaluations')
   @ApiOperation({ summary: 'List evaluation executions for a flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async listEvaluations(
     @CurrentUser('_id') userId: string,
     @Param('id') flowId: string,
     @Query('taskId') taskId?: string,
   ) {
+    await this.accessService.assertExecutionAccess(flowId, userId, 'read');
     return this.evaluationService.listEvaluationExecutions(flowId, taskId);
   }
 
   @Get(':id/evaluation-tasks/:taskId/baseline')
   @ApiOperation({ summary: 'Get active evaluation baseline for a task' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async getBaseline(
     @CurrentUser('_id') userId: string,
     @Param('id') flowId: string,
     @Param('taskId') taskId: string,
     @Query('iteration') iteration?: number,
   ) {
+    await this.accessService.assertExecutionAccess(flowId, userId, 'read');
     return this.evaluationService.getActiveBaseline(flowId, taskId, iteration);
   }
 
@@ -322,7 +314,6 @@ export class PlaybookFlowController {
 
   @Get(':id/design-messages')
   @ApiOperation({ summary: 'Get design message history for a flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async getDesignMessages(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
@@ -485,7 +476,6 @@ export class PlaybookFlowController {
 
   @Get(':id/input-contract')
   @ApiOperation({ summary: 'Get the derived Playbook input contract' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async getInputContract(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,
@@ -531,7 +521,6 @@ export class PlaybookFlowController {
 
   @Get(':id/assistant/messages')
   @ApiOperation({ summary: 'List server-owned Playbook assistant conversation messages' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   listAssistantMessages(
     @CurrentUser('_id') userId: string,
     @Param('id') id: string,

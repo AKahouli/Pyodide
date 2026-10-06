@@ -161,24 +161,24 @@ describe('PlaybookFlowValidatorService', () => {
     [{ sourceKind: 'constant' }, 'constant bindings require constantValue'],
     [{ sourceKind: 'node-output', sourceNode: '', sourcePort: 'summary' }, 'require sourceNode and sourcePort'],
   ])('rejects incomplete source-specific bindings', (source, message) => {
-    expect(() => service.validate(buildNodes(), [], [{
+    expect(() => { service.validate(buildNodes(), [], [{
       id: 'binding-1',
       targetNode: 'target-node',
       targetPort: 'prompt',
       ...source,
-    }] as any)).toThrow(message);
+    }] as any); }).toThrow(message);
   });
 
   it('accepts complete constants and legacy trigger namespaces', () => {
-    expect(() => service.validate(buildNodes(), [], [{
+    expect(() => { service.validate(buildNodes(), [], [{
       id: 'binding-1', targetNode: 'target-node', targetPort: 'prompt',
       sourceKind: 'trigger', triggerPath: 'mail.payload.subject',
-    }] as any)).not.toThrow();
+    }] as any); }).not.toThrow();
 
-    expect(() => service.validate(buildNodes(), [], [{
+    expect(() => { service.validate(buildNodes(), [], [{
       id: 'binding-1', targetNode: 'target-node', targetPort: 'prompt',
       sourceKind: 'constant', constantValue: null,
-    }] as any)).not.toThrow();
+    }] as any); }).not.toThrow();
   });
 
   it('keeps colon-containing binding target tuples distinct', () => {

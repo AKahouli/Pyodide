@@ -5,6 +5,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { getDocuments, getFolderContents } from '@/modules/workspace/api';
 import type { WorkspaceDocument } from '@/modules/workspace/types';
 import { isMappableDocument, isStructuredDocument } from '../knowledge/KnowledgePanel';
+import { HelpTip } from './RuleControls';
 
 /** Picked folders (every file inside, at any depth) and single files. Nothing picked means the whole workspace. */
 export interface WorkspacePick {
@@ -112,16 +113,18 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
     ...(folderCount ? [t(folderCount === 1 ? 'mapping.pickedFolders_one' : 'mapping.pickedFolders_other', { count: folderCount })] : []),
     ...(fileCount ? [t(fileCount === 1 ? 'mapping.pickedFiles_one' : 'mapping.pickedFiles_other', { count: fileCount })] : []),
   ];
-  return <div className='space-y-2'>
-    <div role='radiogroup' aria-label={t('mapping.coverage')} className='grid gap-1.5 sm:grid-cols-2'>
-      {[true, false].map((option) => <label key={String(option)} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 text-xs ${whole === option ? 'border-teal-500 bg-teal-500/10' : 'hover:bg-muted/60'}`}>
-        <input type='radio' name='workspace-coverage' className='mt-0.5' checked={whole === option} onChange={() => onChange({ whole: option, pick })} />
-        <span><span className='block font-medium'>{option ? t('mapping.coverWhole') : t('mapping.coverPicked')}</span>
-          <span className='text-muted-foreground'>{option ? t('mapping.coverWholeHelp', { name }) : t('mapping.coverPickedHelp')}</span></span>
-      </label>)}
+  return <div className='space-y-3'>
+    <div role='radiogroup' aria-label={t('mapping.coverage')} className='grid gap-2 sm:grid-cols-2'>
+      {[true, false].map((option) => <div key={String(option)} className={`flex items-center gap-1 rounded-lg border pr-1.5 text-sm ${whole === option ? 'border-teal-500 bg-teal-500/10' : 'hover:bg-muted/60'}`}>
+        <label className='flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 pl-3'>
+          <input type='radio' name='workspace-coverage' checked={whole === option} onChange={() => onChange({ whole: option, pick })} />
+          <span className='truncate font-medium'>{option ? t('mapping.coverWhole') : t('mapping.coverPicked')}</span>
+        </label>
+        <HelpTip text={option ? t('mapping.coverWholeHelp', { name }) : t('mapping.coverPickedHelp')} />
+      </div>)}
     </div>
     {!whole && <>
-      <div className='max-h-64 overflow-y-auto rounded-xl border bg-background p-1.5'>{renderLevel(rootKey, 0, false)}</div>
+      <div className='max-h-64 overflow-y-auto rounded-lg border bg-background p-1.5'>{renderLevel(rootKey, 0, false)}</div>
       <p className={`text-xs ${count ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`}>
         {count ? t('mapping.pickedSummary', { items: pickedParts.join(t('mapping.pickedAnd')) }) : t('mapping.pickNothing')}
       </p>

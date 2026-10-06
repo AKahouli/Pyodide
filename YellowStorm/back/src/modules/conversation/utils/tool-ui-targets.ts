@@ -42,7 +42,7 @@ export function extractToolUiTargets(resultJson: unknown): ToolUiTarget[] {
     if (found.size >= MAX_TARGETS || depth > MAX_DEPTH || !value || typeof value !== 'object') return;
     if (typeof value === 'string') return;
     if (Array.isArray(value)) {
-      value.forEach((item) => visit(item, depth + 1));
+      value.forEach((item) => { visit(item, depth + 1); });
       return;
     }
     const record = value as Record<string, unknown>;

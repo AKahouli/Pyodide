@@ -228,7 +228,7 @@ export class TelegramValidationService {
     ownerTelegramUserId: string | undefined,
     data: string | undefined,
   ): Promise<ValidationCallbackResult | null> {
-    if (!data || !data.startsWith('hv:')) return null;
+    if (!data?.startsWith('hv:')) return null;
     const parts = data.slice(3).split(':');
     const validationId = parts[0];
     const answerValue = parts[1];

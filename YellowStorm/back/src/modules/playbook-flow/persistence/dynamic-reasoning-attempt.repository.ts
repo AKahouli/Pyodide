@@ -86,7 +86,7 @@ function toColumns(patch: DynamicReasoningAttemptPatch): Partial<typeof a.$infer
     else if (key === 'acceptedRevision') out[key] = integerOrNull(value);
     else out[key] = value;
   }
-  return out as Partial<typeof a.$inferInsert>;
+  return out;
 }
 
 function reviveRevisions(value: unknown): DynamicReasoningRevision[] {
@@ -133,7 +133,7 @@ export class DynamicReasoningAttemptRepository {
       eq(a.parentTaskId, identity.parentTaskId),
       eq(a.parentIteration, wholeNumber(identity.parentIteration)),
       eq(a.attempt, wholeNumber(identity.attempt)),
-    ) as SQL;
+    )!;
   }
 
   /**

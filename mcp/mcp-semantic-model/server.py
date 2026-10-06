@@ -38,18 +38,44 @@ own initiative: a wrong workspace can hold thousands of documents. Instead:
 - stop_data_update stops a running data update when the user asks; the data in use does not change.
 If the user wants to skip these steps, stop proposing them: they continue in the designer.
 
-Answering from a model's data: find_records finds the records that match the question, then
-get_related_records follows their real links (with the entityId values find_records returned). These are
-records stored in the model, not documents. Say plainly when a result is incomplete or the model does not
-hold the information, and never state a fact that no returned field or link holds."""
+Answering from a model's data (records stored in the model, not documents):
+- describe_model first when you do not know the model's concepts and fields: it gives each field's key,
+  label and type, the relationships, and how many records each concept holds. Never invent a concept or
+  a field: use only the names it returns.
+- find_records for "which record is this": a name, a key or a fuzzy description, or words that may be
+  deep in a long text (an e-mail body). Its passages quote the matching part of long fields: cite them as
+  evidence.
+- get_related_records follows the real links of records (their entityId): what a record is linked to,
+  two-step chains, and with fields=[...] the linked records' values; linkCounts gives the exact number of
+  linked records per relationship. To read more linked records than it returns, use query_records with
+  linked_to.
+- query_records for everything that filters, counts or compares: "all X where...", how many, totals,
+  stats per month or per value, dates and amounts compared, records linked to a record matching a field.
+  The total and the groups are exact counts over the whole data, not samples.
+- for a summary of a set of records, fetch them with query_records (only the text fields you need),
+  write the summary from the returned values, and cite the records you rely on; page with offset when
+  nextOffset is set, or say that the summary covers only part of the records.
+Every data answer carries completeness: answer "all" or "every" only when complete is true; otherwise say
+how many were returned out of how many (total, linkCounts) and why (reasons). When query_records finds
+nothing, read diagnostics (didYouMean) before saying nothing exists.
+State the exact filter you used (appliedQuery shows how it was read, with absolute date ranges). Read
+the notes and say plainly when values could not be read, records are hidden, or a list is truncated or
+incomplete. Say when the model does not hold the information, and never state a fact that no returned
+field or link holds."""
 
 settings = Settings.from_env()
+# Unified logging: stderr JSON lines only (MCP protocol owns stdout).
+from yellowmind_observability import setup_observability
+
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "mcp-semantic-model")
 mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
 _client: YellowStormSemanticModelClient | None = None
 
 BASE = "/api/v1/internal/semantic-model-assistant"
-# MCP hints for clients that ask before acting: reads change nothing; these two remove or publish.
+# MCP hints for clients that ask before acting (YellowStorm imports them as each tool's safety): reads change
+# nothing, changes create or edit, destructive tools remove or publish.
 READ_ONLY = {"readOnlyHint": True}
+CHANGES = {"readOnlyHint": False, "destructiveHint": False}
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True}
 
 
@@ -217,10 +243,25 @@ async def list_semantic_models(search: str | None = None) -> SemanticModelMcpRes
     return await call(backend().get(with_query(f"{BASE}/models", search=search), require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def create_semantic_model(name: str, description: str | None = None) -> SemanticModelMcpResultV1:
     """Create a new, empty semantic model owned by the user. Design it next with apply_model_changes. The conversation shows a button that opens it."""
     return await call(backend().post(f"{BASE}/models", require_acting_user_id(), compact({"name": name, "description": description})))
+
+
+@mcp.tool(annotations=CHANGES)
+async def clone_semantic_model(model_id: str, name: str | None = None, include_sources: bool = True,
+                               include_data: bool = False, include_shares: bool = False) -> SemanticModelMcpResultV1:
+    """Copy a model into a new one the user owns (default name "<name> (copy)"). The structure (concepts, fields, relationships, key fields, layout) is always copied.
+    include_sources: source links and extraction rules (default yes). include_data: the data already built, so the copy is usable without a new build (forces the sources). include_shares: the same people keep their access (owner only). Source files are never duplicated. The conversation shows a button that opens the copy."""
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/clone", require_acting_user_id(), compact({
+        "name": name, "includeSources": include_sources, "includeData": include_data, "includeShares": include_shares})))
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_semantic_model(model_id: str, confirm_name: str) -> SemanticModelMcpResultV1:
+    """PERMANENTLY delete a model and all its data (concepts, fields, source links, records, review items, search index, history). Cannot be undone; workspace documents stay. Only the owner can. First ask the user to confirm explicitly, then pass the model's exact name as confirm_name."""
+    return await call(backend().delete(with_query(f"{BASE}/models/{path_id(model_id)}", confirmName=confirm_name), require_acting_user_id()))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -235,7 +276,7 @@ async def check_semantic_model(model_id: str) -> SemanticModelMcpResultV1:
     return await call(backend().get(f"{BASE}/models/{path_id(model_id)}/check", require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def apply_model_changes(
     model_id: str,
     concepts: list[dict[str, Any]] | str | None = None,
@@ -272,7 +313,7 @@ async def list_model_changes(model_id: str) -> SemanticModelMcpResultV1:
     return await call(backend().get(f"{BASE}/models/{path_id(model_id)}/changes", require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def undo_model_change(model_id: str, change_id: str | None = None) -> SemanticModelMcpResultV1:
     """Undo an assistant change (the latest one when change_id is omitted): concepts, fields, key fields, relationships and sources go back to how they were."""
     path = f"{BASE}/models/{path_id(model_id)}/changes/{path_id(change_id)}/undo" if change_id else f"{BASE}/models/{path_id(model_id)}/changes/undo"
@@ -295,7 +336,7 @@ async def list_workspace_files(source_workspace_id: str, folder_id: str | None =
     return await call(backend().get(path, require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def suggest_sources(model_id: str, suggestions: list[dict[str, Any]] | str) -> SemanticModelMcpResultV1:
     """Ask the user to choose the source of each concept, WITHOUT connecting anything. The user picks files from a searchable list of all their workspaces and files, takes one of your options (shown with the workspace name and file count), or skips. Options are optional: leave them empty rather than search for sources.
     suggestions: [{"concept": "Contract", "note": "optional", "options": [] or [{"source_workspace_id": "...", "folder_ids": ["..."], "document_ids": ["..."], "sheet_name": "optional", "reason": "why it fits, in a few words"}]}].
@@ -311,14 +352,14 @@ async def suggest_sources(model_id: str, suggestions: list[dict[str, Any]] | str
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/source-suggestions", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def profile_spreadsheet(model_id: str, source_workspace_id: str, document_id: str, sheet_name: str | None = None) -> SemanticModelMcpResultV1:
     """Read a spreadsheet's sheets, columns (type, how filled, how unique) and a few sample rows, to design concepts or map columns. Only for a spreadsheet the user chose or confirmed. Links the workspace to the model if needed."""
     payload = compact({"workspaceId": source_workspace_id, "documentId": document_id, "sheetName": sheet_name})
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/sources/profile", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def map_spreadsheet(
     model_id: str,
     concept: str,
@@ -339,7 +380,7 @@ async def map_spreadsheet(
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/sources/spreadsheet", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def map_documents(
     model_id: str,
     concept: str,
@@ -373,7 +414,7 @@ async def remove_source(model_id: str, source_id: str) -> SemanticModelMcpResult
 # ── Data ────────────────────────────────────────────────────────────────────
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def run_data_update(model_id: str) -> SemanticModelMcpResultV1:
     """Read every source again and rebuild the model's records and graph, in the background. Only when the user asked for it. Follow it with get_run_status; stop it with stop_data_update."""
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/runs", require_acting_user_id()))
@@ -386,18 +427,11 @@ async def get_run_status(model_id: str, job_id: str | None = None) -> SemanticMo
     return await call(backend().get(path, require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def stop_data_update(model_id: str, job_id: str | None = None) -> SemanticModelMcpResultV1:
     """Stop a data update (the one running now when job_id is omitted) when the user asks. Nothing it read is kept: the data in use stays as it was before the run."""
     path = f"{BASE}/models/{path_id(model_id)}/runs/{path_id(job_id)}/stop" if job_id else f"{BASE}/models/{path_id(model_id)}/runs/stop"
     return await call(backend().post(path, require_acting_user_id()))
-
-
-@mcp.tool(annotations=READ_ONLY)
-async def search_records(model_id: str, concept: str, query: str | None = None, limit: int = 20) -> SemanticModelMcpResultV1:
-    """Look at the records a concept holds after the last data update, optionally searched by any value. No change is made."""
-    path = with_query(f"{BASE}/models/{path_id(model_id)}/concepts/{path_id(concept)}/records", q=query, limit=limit)
-    return await call(backend().get(path, require_acting_user_id()))
 
 
 DATA_CHOICES = ("published", "draft")
@@ -422,18 +456,20 @@ async def find_records(
     query: str,
     concepts: list[str] | str | None = None,
     data: str = "published",
-    limit: int = 10,
+    limit: int | None = None,
 ) -> SemanticModelMcpResultV1:
     """Find the records of a semantic model that match a question: by exact key or name first, then by words and meaning. Use it first to answer a question from a model's data, then get_related_records with the entityId of the records found. No change is made.
-    The results are records stored in the model (a customer, a contract, an invoice...) with their key fields and a snippet of their fields, NOT documents or document text. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
-    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: 1 to 25.
-    Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. Never infer a fact that is not in a field of a returned record."""
+    The results are records stored in the model (a customer, a contract, an invoice, an e-mail...) with their key fields and a snippet of their fields, NOT documents. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
+    Long text fields (an e-mail body, a contract text) are searched to their end: a record may come with passages [{field, fieldKey, text}], the excerpts of those fields that match the question (matchedIn "passage" when the match came from them; the snippet is then the best passage). Quote a passage as evidence, naming its record and field; it is an excerpt, so to read the whole field call query_records on the record's concept with a filter on its name (or a key field) and fields=[the fieldKey] (values longer than 1500 characters come back cut).
+    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: how many records (default and maximum are set by the administrator: 10 and 25 unless changed); leave it out unless you need more or fewer.
+    Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. hasMore=true means more records match than were returned: the list is incomplete. completeness (complete, returned, hasMore, hiddenRecords, reasons: more_results, index_not_ready, index_partial) says whether anything was left out, and notes say it in words: when complete is false, say so in the answer. A concept name that is nearly right (a plural, a typo) is read as the closest concept. Never infer a fact that is not in a field of a returned record."""
     try:
         payload = compact({
             "query": query.strip() if isinstance(query, str) else query,
             "concepts": string_list(concepts, "concepts") or None,
             "data": choice(data, "data", DATA_CHOICES),
-            "limit": bounded(limit, "limit", 1, 25),
+            # The back end applies the administrator's default and caps at their maximum.
+            "limit": bounded(limit, "limit", 1, 100) if limit is not None else None,
         })
     except ValueError as exc:
         return fail(str(exc))
@@ -452,13 +488,16 @@ async def get_related_records(
     concepts: list[str] | str | None = None,
     data: str = "published",
     max_records: int = 50,
+    fields: list[str] | str | None = None,
 ) -> SemanticModelMcpResultV1:
-    """Follow the real links (relationships of the model) from some records to the records linked to them. record_ids: the entityId of records returned by find_records (1 to 25). No change is made.
+    """Follow the real links (relationships of the model) from some records to the records linked to them. record_ids: the entityId of records returned by find_records or query_records (1 to 25). No change is made.
     A related record is included because it is linked to a record you asked for, NOT because it matched anything: its path says through which relationship. Records come from the model, not from documents.
-    relations: the relationships to follow (names or keys from get_semantic_model); omitted means every relationship of these records, one step away. direction: outgoing, incoming or both (default).
-    then_relations: the relationships of an optional second step, followed from the records reached by the first (e.g. relations=["signs"], then_relations=["is billed by"] goes Customer -> Contract -> Invoice). A second step must name its relationships.
+    relations: the relationships to follow, by name, inverse name or key (from describe_model); omitted means every relationship of these records, one step away. direction: outgoing, incoming or both (default).
+    then_relations: the relationships of an optional second step, followed from the records reached by the first (e.g. relations=["a pour participant"], then_relations=["désigne"] goes Message -> Participation -> Correspondant). A second step must name its relationships.
     concepts: keep only related records of these concepts (applied to the last step). data: "published" (default) or "draft". max_records: 1 to 100.
-    Report the result honestly, using notes: truncated=true means more linked records exist than were returned; say the list is incomplete. Never infer a fact that is not in a field or a link of a returned record."""
+    fields: the fields to return with each record (names from describe_model, or ["*"] for all); without it only names and key fields come back. Values longer than 1500 characters are cut (truncatedFields).
+    linkCounts gives, for one step, the EXACT number of records linked per relationship and concept (count, and hidden for those the user cannot see), even when fewer were returned. To read more linked records than max_records, use query_records on the linked concept with linked_to.
+    completeness says whether the answer holds everything: complete, returned, total, hasMore, hiddenRecords, reasons. Report the result honestly, using notes and completeness: when complete is false, say the list is incomplete and how many exist. Never infer a fact that is not in a field or a link of a returned record."""
     try:
         ids = string_list(record_ids, "record_ids") or []
         payload = compact({
@@ -469,12 +508,120 @@ async def get_related_records(
             "concepts": string_list(concepts, "concepts") or None,
             "data": choice(data, "data", DATA_CHOICES),
             "maxRecords": bounded(max_records, "max_records", 1, 100),
+            "fields": string_list(fields, "fields") or None,
         })
     except ValueError as exc:
         return fail(str(exc))
     if not 1 <= len(ids) <= 25:
         return fail("record_ids must hold 1 to 25 entityId values from find_records")
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/graph-expand", require_acting_user_id(), payload))
+
+
+MATCH_CHOICES = ("all", "any")
+
+
+def filter_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str) or not isinstance(item.get("op"), str):
+        raise ValueError('each filter must be an object {"field": ..., "op": ..., "value": ...}')
+    spec: dict[str, Any] = {"field": item["field"], "op": item["op"]}
+    if "value" in item and item["value"] is not None:
+        spec["value"] = item["value"]
+    if item.get("as") is not None:
+        spec["as"] = item["as"]
+    return spec
+
+
+def linked_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict) or not isinstance(item.get("relation"), str):
+        raise ValueError('each linked_to item must be an object {"relation": ..., "record_ids": [...]}')
+    ids = string_list(item.get("record_ids", item.get("recordIds")), "record_ids") or []
+    if not ids:
+        raise ValueError("linked_to needs record_ids: the entityId of the records to follow links from")
+    return {"relation": item["relation"], "recordIds": ids}
+
+
+def group_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"field": item}
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        raise ValueError('each group_by item must be a field name or {"field": ..., "bucket": ...}')
+    return compact({"field": item["field"], "bucket": item.get("bucket"), "as": item.get("as")})
+
+
+def aggregate_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"op": item}
+    if not isinstance(item, dict) or not isinstance(item.get("op"), str):
+        raise ValueError('each aggregate must be an op name or {"op": ..., "field": ...}')
+    return compact({"op": item["op"], "field": item.get("field"), "as": item.get("as")})
+
+
+def order_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"field": item}
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        raise ValueError('each order_by item must be a field name or {"field": ..., "direction": "asc" or "desc"}')
+    return compact({"field": item["field"], "direction": item.get("direction"), "as": item.get("as")})
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def describe_model(model_id: str, data: str = "published") -> SemanticModelMcpResultV1:
+    """Describe the data of a model before querying it: each concept with its key, label, aliases, description, key fields and number of records, its fields (key, label, type text/number/boolean/date/enum, options, description, aliases), and the relationships (key, label, inverse label, from, to, cardinality). No change is made.
+    Use it first when you do not know the model: query_records and find_records accept only the concept and field names it returns (key or label). A field with inData: false was added after the last data update and holds no value yet.
+    data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). howToQuery recalls the query_records syntax."""
+    try:
+        environment = choice(data, "data", DATA_CHOICES)
+    except ValueError as exc:
+        return fail(str(exc))
+    return await call(backend().get(with_query(f"{BASE}/models/{path_id(model_id)}/data-description", data=environment), require_acting_user_id()))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def query_records(
+    model_id: str,
+    concept: str,
+    filters: list[dict[str, Any]] | str | None = None,
+    match: str = "all",
+    group_by: list[Any] | str | None = None,
+    aggregates: list[Any] | str | None = None,
+    order_by: list[Any] | str | None = None,
+    fields: list[str] | str | None = None,
+    linked_to: list[dict[str, Any]] | str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    data: str = "published",
+) -> SemanticModelMcpResultV1:
+    """Filter, count, group and list the records of ONE concept, with exact totals over all its data. Use it for "all X where...", how many, totals, stats per month or per value, date and amount comparisons, and to fetch the records a summary is written from. No change is made.
+    concept: a concept key or label (from describe_model). Fields are named by key or label; "name" is the record name.
+    filters: [{"field": "Sender domain", "op": "eq", "value": "acme.com"}]. ops: eq, ne, contains, starts_with, ends_with, in (list), gt, gte, lt, lte, between ([from, to] or one relative period), is_empty, not_empty. Text compares ignore case and accents; ne also keeps records with no value.
+    Dates (date fields): an ISO date "2026-07-14", a month "2026-07" or a year "2026" (each covers the whole period), or a period resolved on the server in UTC: today, yesterday, last_7_days, last_N_days|weeks|months|years (N units up to today), this_week|month|quarter|year, last_week|month|quarter|year. Numbers compare as numbers on number fields.
+    A linked record: "field": "<relation>.<field>" keeps the records linked through that relation (key, label or inverse label) to a record whose field matches, e.g. {"field": "sent by.domain", "op": "eq", "value": "acme.com"}; "field": "<relation>" with is_empty / not_empty keeps the records with no / some linked record.
+    linked_to: [{"relation": "<relation>", "record_ids": ["<entityId>", ...]}] keeps only the records linked through that relation to those exact records (entityId from find_records or query_records), on top of the filters. Use it to read or summarise the records linked to a record, e.g. concept="Fait", linked_to=[{"relation": "énonce", "record_ids": [the e-mail's entityId]}]: unlike get_related_records it returns their fields and an exact total.
+    "as": "date"|"number"|"text"|"boolean" in a filter, group or aggregate reads a field with another type than declared (dates kept in a text field). match: "all" (default) or "any" of the filters.
+    group_by: up to 2 fields, e.g. [{"field": "Received", "bucket": "month"}, "Sender"]; bucket (date fields): day, week, month, quarter, year. aggregates: [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}, {"op": "sum", "field": "Amount"}] with count, count_distinct, sum, avg, min, max; [count] by default with group_by. Groups come back sorted (dates in order, otherwise largest count first), at most 500.
+    Without group_by: total (exact) and a page of records {entityId, name, keyFields, values}, ordered by order_by [{"field": "Received", "direction": "desc"}]; fields: the fields to return (default all; ask only for what you need); long values are cut at 1500 characters (truncated). limit: 0 to 200 (0 returns only total and totals); offset pages through: call again with offset=nextOffset.
+    data: "published" (default) or "draft".
+    Report honestly: status invalid_query or not_represented comes with errors naming the wrong part and the names available: fix the query from them, never guess. appliedQuery shows how the query was read (field keys, absolute date ranges): state the filter you used. notes say when values could not be read (unparsable), records are hidden from the user, or groups or records were left out: say so in the answer. completeness (complete, returned, total, hasMore, hiddenRecords, reasons) sums it up: answer "all" only when complete is true.
+    When nothing matches, diagnostics says how many readable records the concept holds and how many each filter or link keeps alone, with didYouMean: the stored values that look like a text value that matched nothing (a typo, an accent). Never present an empty result as the answer before checking them: retry with the stored value or ask the user."""
+    try:
+        payload = compact({
+            "concept": concept.strip() if isinstance(concept, str) else concept,
+            "filters": [filter_spec(item) for item in parse_json(filters, "filters", list) or []] or None,
+            "match": choice(match, "match", MATCH_CHOICES),
+            "groupBy": [group_spec(item) for item in parse_json(group_by, "group_by", list) or []] or None,
+            "aggregates": [aggregate_spec(item) for item in parse_json(aggregates, "aggregates", list) or []] or None,
+            "orderBy": [order_spec(item) for item in parse_json(order_by, "order_by", list) or []] or None,
+            "fields": string_list(fields, "fields") or None,
+            "linkedTo": [linked_spec(item) for item in parse_json(linked_to, "linked_to", list) or []] or None,
+            "limit": bounded(limit, "limit", 0, 200),
+            "offset": bounded(offset, "offset", 0, 100000),
+            "data": choice(data, "data", DATA_CHOICES),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not payload.get("concept"):
+        return fail("concept must name one concept of the model")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/records-query", require_acting_user_id(), payload))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

@@ -42,6 +42,12 @@ export const agents = pgTable(
     enableTemporaryChildAgents: boolean('enable_temporary_child_agents').notNull().default(false),
     maxTemporaryChildAgents: smallint('max_temporary_child_agents').notNull().default(4),
 
+    // Versioned root-delegation policy (WP01). Absent/null = the agent is not
+    // enrolled as a root; legacy temporary-child fields keep their meaning for
+    // unenrolled callers. Only mono-agent records may carry a policy (service
+    // validated) and only backend-approved routes act on it.
+    rootExecutionPolicy: jsonb('root_execution_policy'),
+
     isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     isDefaultForType: boolean('is_default_for_type').notNull().default(false),
@@ -149,5 +155,32 @@ export const agentConnectorActions = pgTable(
   (t) => [
     primaryKey({ columns: [t.agentId, t.connectorId] }),
     index('idx_agent_connector_actions_connector_id').on(t.connectorId),
+  ],
+);
+
+// Root-delegation allowlists (WP01): direct specialist ids and source Teams of
+// an enrolled root. Membership alone is not authorization — the resolver
+// (WP02) re-checks execution grants; these tables only persist the selection.
+export const agentRootDelegateAgents = pgTable(
+  'agent_root_delegate_agents',
+  {
+    rootAgentId: char('root_agent_id', { length: 24 }).notNull().references(() => agents.id, { onDelete: 'cascade' }),
+    delegateAgentId: char('delegate_agent_id', { length: 24 }).notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rootAgentId, t.delegateAgentId] }),
+    index('idx_agent_root_delegate_agents_delegate').on(t.delegateAgentId),
+  ],
+);
+
+export const agentRootDelegateTeams = pgTable(
+  'agent_root_delegate_teams',
+  {
+    rootAgentId: char('root_agent_id', { length: 24 }).notNull().references(() => agents.id, { onDelete: 'cascade' }),
+    teamId: char('team_id', { length: 24 }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rootAgentId, t.teamId] }),
+    index('idx_agent_root_delegate_teams_team').on(t.teamId),
   ],
 );

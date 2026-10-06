@@ -170,3 +170,32 @@ async def test_record_index_observation_is_idempotent_upsert():
     assert "ON CONFLICT (asset_version_id, document_pk)" in sql
     assert params[3] is None
     assert params[6] == '{"structure": true, "vectors": false}'
+
+
+@pytest.mark.asyncio
+async def test_a_name_with_spaces_matches_its_indexed_underscored_form():
+    class Underscored(FakeConnection):
+        async def fetch(self, sql, *params):  # type: ignore[no-untyped-def]
+            self.calls.append((sql, params))
+            return [{"id": 516, "workspace_id": "ws", "file_name": "FP_A_TEC_v1.pdf",
+                     "user_id": "u1"}] if params[1] == "FP_A_TEC_v1.pdf" else []
+
+    conn = Underscored()
+    result = await resolve_document_candidates(conn, workspace_id="ws", file_name="FP A TEC_v1.pdf")
+    assert result["resolution"] == "resolved"
+    assert [call[1][1] for call in conn.calls] == ["FP A TEC_v1.pdf", "FP_A_TEC_v1.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_of_spaces_and_underscores_matches_the_single_underscore_the_indexer_keeps():
+    stored = "FP_PRET_EMPRUNT_STEP_UP_REVERSE_FLOATER_CHROME_v1.2.pdf"
+
+    class Collapsed(FakeConnection):
+        async def fetch(self, sql, *params):  # type: ignore[no-untyped-def]
+            self.calls.append((sql, params))
+            return [{"id": 7, "workspace_id": "ws", "file_name": stored, "user_id": "u1"}] if params[1] == stored else []
+
+    conn = Collapsed()
+    result = await resolve_document_candidates(conn, workspace_id="ws", file_name="FP PRET EMPRUNT STEP UP_ REVERSE FLOATER_CHROME_v1.2.pdf")
+    assert result["resolution"] == "resolved"
+    assert [call[1][1] for call in conn.calls][-1] == stored

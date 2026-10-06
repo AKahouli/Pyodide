@@ -1,7 +1,7 @@
 import type { AttributeDefinition } from './semantic-model.types';
 
 export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
-export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
 // How an `extract` mapping resolves its value. Deterministic is the default so
 // existing mappings keep their current behaviour without a migration.
 // `rules_then_ai` reads a field by its rules and asks the AI only when they find nothing.
@@ -10,11 +10,83 @@ export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
 /** Where a document value is and what it looks like; without rules, `Label: value` or a table row. */
 export interface ExtractionRules {
   labels?: string[];
-  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
   pattern?: string;
-  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso';
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;
+  /** Where a passage stops (after a label) or starts (before one); the section edge without any. */
+  boundaryLabels?: string[];
+  /** The pages read whole when `location` is `pages`. */
+  pages?: { from: number; to?: number };
+  /** Keep only the first or last characters, words or lines of what was found, like LEFT(value, n). */
+  take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
+}
+
+/**
+ * A field's recipe: take it from somewhere, cut it, keep a part, match a shape, clean it up (the runtime
+ * applies it). A document's computed field, or a spreadsheet's direct field that is transformed.
+ */
+/** One input a recipe reads: kind 'file' reads 'document_name' (documents); kind 'field' reads another
+ * mapping's targetAttribute (not itself taken from a field); kind 'column' reads a column of the row. */
+export interface ComputedInputRef { kind: 'file' | 'field' | 'column'; name: string }
+
+/**
+ * What a recipe reads: a single input (`name`), or kind 'join': several `parts` (inputs and fixed texts,
+ * in order) joined into one text with `separator` (' ' when absent); `skipEmpty` (the default) leaves an
+ * empty part out with its separator.
+ */
+export interface ComputedFieldInput {
+  kind: 'file' | 'field' | 'column' | 'join';
+  name?: string;
+  parts?: Array<{ kind: 'file' | 'field' | 'column' | 'text'; name?: string; value?: string }>;
+  separator?: string;
+  skipEmpty?: boolean;
+}
+
+export const MAX_JOIN_PARTS = 10;
+export const MAX_JOIN_TEXT_CHARS = 100;
+export const MAX_JOIN_SEPARATOR_CHARS = 10;
+
+/** What a recipe reads: its input, or every part of a join that is not a fixed text. */
+export function computedInputRefs(input: ComputedFieldInput | undefined): ComputedInputRef[] {
+  if (!input) return [];
+  const refs = input.kind === 'join' ? (input.parts ?? []) : [input];
+  return refs.filter((part) => part.kind !== 'text' && part.kind !== 'join')
+    .map((part) => ({ kind: part.kind as ComputedInputRef['kind'], name: part.name ?? '' }));
+}
+
+/** Why a joined input cannot be used (beyond its DTO checks), or null. */
+export function joinInputProblem(input: ComputedFieldInput | undefined): string | null {
+  if (input?.kind !== 'join') return null;
+  const parts = input.parts ?? [];
+  if (parts.length < 2 || parts.length > MAX_JOIN_PARTS) return `a join needs 2 to ${MAX_JOIN_PARTS} parts`;
+  if (parts.some((part) => !['file', 'field', 'column', 'text'].includes(part.kind))) return 'a join cannot hold another join';
+  if (parts.some((part) => part.kind === 'text' && (!part.value || part.value.length > MAX_JOIN_TEXT_CHARS))) {
+    return `a fixed text part needs 1 to ${MAX_JOIN_TEXT_CHARS} characters`;
+  }
+  if ((input.separator?.length ?? 0) > MAX_JOIN_SEPARATOR_CHARS) return `the separator is at most ${MAX_JOIN_SEPARATOR_CHARS} characters`;
+  if (!computedInputRefs(input).length) return 'a join needs at least one part read from the record';
+  return null;
+}
+
+export interface ComputedFieldSpec {
+  // A single input, or several parts joined into one text.
+  input: ComputedFieldInput;
+  // 'whole' keeps the input as it is (no cut).
+  method: 'whole' | 'split' | 'between' | 'regex';
+  delimiter?: string;
+  part?: number;
+  after?: string;
+  before?: string;
+  pattern?: string;
+  template?: string;
+  stripExtension?: boolean;
+  /** After the cut: keep only the first or last characters, words or lines (as the reading rules' take). */
+  take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
+  /** After the take: what the value looks like; its first group is kept when it has one. `pattern` is the cut's own. */
+  valuePattern?: string;
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 }
 
 export interface SourceFieldMapping {
@@ -23,7 +95,13 @@ export interface SourceFieldMapping {
   mode: SourceFieldMappingMode;
   constantValue?: unknown;
   extractionStrategy?: SourceExtractionStrategy;
+  /** AI reading only: what the value means and what to look for; empty uses the attribute's description. */
+  semanticDefinition?: string;
+  /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
+  agentId?: string;
   rules?: ExtractionRules;
+  /** mode 'computed' (documents) or 'direct' (spreadsheets: the column's value is transformed). */
+  computed?: ComputedFieldSpec;
 }
 
 /** How much of a document the AI reads. */
@@ -36,7 +114,61 @@ export interface AiExtractionSettings {
   longDocumentCharacters: number;
   /** Blocks kept per field in a long document. */
   blocksPerField: number;
+  /** AI calls made at once for this mapping (one per record); bounded by the admin's ceiling. Absent: 4. */
+  parallelCalls?: number;
+  /** One document gives several records (one per item the AI finds), e.g. each line of a table. Mapping only. */
+  manyRecords?: boolean;
 }
+
+/** How much one population run may read and keep. The runtime applies the same ranges. */
+export interface RunLimits {
+  /** Most files (or sheets) one run reads; also the most files one workspace source covers. */
+  maxRunSources: number;
+  /** Most records one source (a sheet, an archive table) gives. */
+  maxRecordsPerSource: number;
+  /** Most records one run keeps, all concepts together. */
+  maxRecordsPerRun: number;
+  /** Most field values one run keeps, all records together. */
+  maxValuesPerRun: number;
+  /** Most records of one source read with AI in a run (the rest keep their other fields). */
+  maxAiRowsPerSource: number;
+  /** Most AI calls one run makes at once, whatever a mapping asks. */
+  maxAiParallelCalls: number;
+  /** Most e-mails one archive may hold. */
+  maxArchiveEmails: number;
+  /** Largest e-mail archive read, in MB. */
+  maxArchiveMb: number;
+  /** Memory of the reader process for one source, in MB (enforced on Linux). */
+  parserMemoryMb: number;
+  /** Time one full read of an e-mail archive may take, in seconds. */
+  archiveTimeoutSeconds: number;
+}
+
+export const DEFAULT_RUN_LIMITS: RunLimits = {
+  maxRunSources: 5000,
+  maxRecordsPerSource: 5000,
+  maxRecordsPerRun: 10000,
+  maxValuesPerRun: 50000,
+  maxAiRowsPerSource: 500,
+  maxAiParallelCalls: 8,
+  maxArchiveEmails: 50000,
+  maxArchiveMb: 1024,
+  parserMemoryMb: 512,
+  archiveTimeoutSeconds: 900,
+};
+
+export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
+  maxRunSources: [1, 50000],
+  maxRecordsPerSource: [100, 500000],
+  maxRecordsPerRun: [100, 500000],
+  maxValuesPerRun: [1000, 5000000],
+  maxAiRowsPerSource: [0, 200000],
+  maxAiParallelCalls: [1, 32],
+  maxArchiveEmails: [100, 200000],
+  maxArchiveMb: [10, 51200],
+  parserMemoryMb: [256, 16384],
+  archiveTimeoutSeconds: [60, 7200],
+};
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {
   maxBlocks: 400,
@@ -65,11 +197,15 @@ export interface ResolvedEntity {
   provenance: {
     rowNumber?: number;
     fields?: Record<string, {
-      method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value';
+      method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value' | 'computed_field';
       page?: string;
       quote?: string;
       reference?: string;
       confidence?: number;
+      /** A recipe: the columns or fields it read, in order. */
+      sources?: string[];
+      /** Taken from another concept's record: that concept, the record's label, and the field(s) read. */
+      derivedFrom?: { conceptId?: string; label?: string; attribute?: string; attributes?: string[]; method?: string; records?: number };
     }>;
   };
 }
@@ -182,18 +318,23 @@ export function resolveSheetEntities(
   fieldMappings: SourceFieldMapping[],
   identityFields: string[],
   limit = 50,
+  /** The rows already read as a run reads them (recipes, rules), in the same order as `rows`. */
+  shaped?: Array<{ values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']> }>,
 ): { entities: ResolvedEntity[]; stats: ResolutionStats } {
   const active = fieldMappings.filter((mapping) => mapping.mode !== 'ignore');
   const stats: ResolutionStats = { scannedRows: 0, resolvedEntities: 0, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 };
   const seen = new Set<string>();
   const entities: ResolvedEntity[] = [];
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     if (entities.length >= limit || stats.scannedRows >= PREVIEW_ROW_SCAN_LIMIT) break;
     stats.scannedRows += 1;
-    const values: Record<string, unknown> = {};
-    for (const mapping of active) {
-      values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
-        : mapping.sourceField ? row[mapping.sourceField] : undefined;
+    const read = shaped?.[index];
+    const values: Record<string, unknown> = read ? { ...read.values } : {};
+    if (!read) {
+      for (const mapping of active) {
+        values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
+          : mapping.sourceField ? row[mapping.sourceField] : undefined;
+      }
     }
     const key = identityFields.length ? identityKeyOf(values, identityFields) : `row:${stats.scannedRows}`;
     if (identityFields.length && !key.replace(/\u0000/g, '')) {
@@ -207,7 +348,7 @@ export function resolveSheetEntities(
     if (identityFields.length) seen.add(key);
     const labelField = identityFields.find((field) => normalizeIdentityValue(values[field]) !== '')
       ?? active.find((mapping) => normalizeIdentityValue(values[mapping.targetAttribute]) !== '')?.targetAttribute;
-    const fields = Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
+    const fields = read?.fields ?? Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
       method: mapping.mode === 'constant' ? 'fixed_value' as const : 'direct_mapping' as const,
       reference: mapping.sourceField ?? undefined,
     }]));
@@ -216,7 +357,7 @@ export function resolveSheetEntities(
       label: labelField ? String(values[labelField] ?? '') : '',
       values,
       provenance: {
-        rowNumber: typeof row[SHEET_ROW_KEY] === 'number' ? row[SHEET_ROW_KEY] as number : stats.scannedRows,
+        rowNumber: typeof row[SHEET_ROW_KEY] === 'number' ? row[SHEET_ROW_KEY] : stats.scannedRows,
         fields,
       },
     });
@@ -237,7 +378,7 @@ export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
  * the other fields, and a row for a field the concept no longer has is dropped. `changed` is false
  * when the same fields are read, so an unrelated edit does not make the next run read again.
  */
-export function withConceptFields(saved: SourceFieldMapping[], attributes: ReadonlyArray<{ key: string }>): { mappings: SourceFieldMapping[]; changed: boolean } {
+export function withConceptFields(saved: SourceFieldMapping[], attributes: readonly { key: string }[]): { mappings: SourceFieldMapping[]; changed: boolean } {
   const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
   const counts = new Map<SourceExtractionStrategy, number>();
   for (const mapping of saved) {
@@ -253,4 +394,20 @@ export function withConceptFields(saved: SourceFieldMapping[], attributes: Reado
   const keys = new Set(attributes.map((attribute) => attribute.key));
   const changed = mappings.length !== saved.length || saved.some((mapping) => !keys.has(mapping.targetAttribute));
   return { mappings, changed };
+}
+
+/**
+ * What the AI is told about a field. The field's own semantic definition wins; without one, the
+ * concept attribute's description is used, so rules saved before definitions existed read as before.
+ */
+export function aiFieldHints(
+  attribute: AttributeDefinition,
+  field?: Pick<SourceFieldMapping, 'semanticDefinition'>,
+): { description?: string; valueType?: string; allowedValues?: string[] } {
+  const description = field?.semanticDefinition?.trim() || attribute.description?.trim();
+  return {
+    ...(description ? { description } : {}),
+    ...(attribute.type ? { valueType: attribute.type } : {}),
+    ...(attribute.options?.length ? { allowedValues: attribute.options } : {}),
+  };
 }

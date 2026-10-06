@@ -296,7 +296,9 @@ def test_fingerprint_and_profile_id_are_deterministic():
     assert parser_fingerprint({"sheets": ["A"]}) != parser_fingerprint({"sheets": ["B"]})
     ref = resolve_asset_ref(XLSX)
     fp = parser_fingerprint(None)
-    assert discovery_profile_id(ref["assetVersionId"], fp) == discovery_profile_id(ref["assetVersionId"], fp)
+    assert discovery_profile_id(ref, fp) == discovery_profile_id(ref, fp)
+    # The same bytes in another workspace are another file: its profile must not collide.
+    assert discovery_profile_id({**ref, "workspaceId": "other"}, fp) != discovery_profile_id(ref, fp)
 
 
 def test_archive_safety_bounds_and_traversal():

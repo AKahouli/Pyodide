@@ -1,4 +1,5 @@
 import { Inject } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { and, asc, desc, eq, gt, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -63,6 +64,7 @@ function connectorToRow(r: ConnRow, skillIds: string[]): ConnectorRow {
     mcpTransportType: r.mcpTransportType,
     mcpServerUrl: r.mcpServerUrl,
     mcpServerConfig: r.mcpServerConfig ?? {},
+    workerPolicy: r.workerPolicy,
     dynamicHeaders: (r.dynamicHeaders ?? []) as unknown as ConnectorRow["dynamicHeaders"],
     actions: (r.actions ?? []) as unknown as ConnectorRow["actions"],
     skillIds,
@@ -171,13 +173,13 @@ export class PgConnectorStore implements ConnectorStore {
     return this.hydrate(rows);
   }
 
-  async findAllActiveVisible(exceptionSlug: string): Promise<ConnectorRow[]> {
+  async findAllActiveVisible(): Promise<ConnectorRow[]> {
     const rows = await this.q
       .select()
       .from(schema.integrationsConnectors)
       .where(and(
         eq(schema.integrationsConnectors.isActive, true),
-        sql`(${schema.integrationsConnectors.isHidden} = false OR ${schema.integrationsConnectors.slug} = ${exceptionSlug})`,
+        eq(schema.integrationsConnectors.isHidden, false),
       ))
       .orderBy(asc(schema.integrationsConnectors.name));
     return this.hydrate(rows);
@@ -231,12 +233,24 @@ export class PgConnectorStore implements ConnectorStore {
   async update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null> {
     return withTransaction(this.db, async (tx) => {
       const { skillIds, ...columns } = patch;
+      const [before] = await tx.select().from(schema.integrationsConnectors)
+        .where(eq(schema.integrationsConnectors.id, id)).for('update');
+      if (!before) return null;
+      const workerPolicyChanged = (patch.workerPolicy !== undefined && !isDeepStrictEqual(before.workerPolicy, patch.workerPolicy))
+        || (patch.actions !== undefined && !isDeepStrictEqual(before.actions, patch.actions));
       const [row] = await tx
         .update(schema.integrationsConnectors)
         .set({ ...columns, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsConnectors.$inferInsert>)
         .where(eq(schema.integrationsConnectors.id, id))
         .returning();
       if (!row) return null;
+      if (workerPolicyChanged) {
+        // Fence frozen worker snapshots in the same transaction as the policy edit.
+        const affected = tx.select({ id: schema.agentConnectors.agentId })
+          .from(schema.agentConnectors).where(eq(schema.agentConnectors.connectorId, id));
+        await tx.update(schema.agents).set({ updatedAt: new Date() })
+          .where(inArray(schema.agents.id, affected));
+      }
       if (skillIds) await this.replaceSkills(tx, id, skillIds);
       const skills = await hydrateSkills(tx, [id]);
       return connectorToRow(row, skills.get(id) ?? []);
@@ -263,35 +277,6 @@ export class PgConnectorStore implements ConnectorStore {
       .where(eq(schema.integrationsConnectors.id, id))
       .returning();
     return row ? connectorToRow(row, []) : null;
-  }
-
-  async upsertSystemActionsBySlug(
-    slug: string,
-    seed: NewConnectorRow,
-    actions: ConnectorAction[],
-  ): Promise<ConnectorRow> {
-    const { skillIds: _skillIds, ...c } = seed;
-    return withTransaction(this.db, async (tx) => {
-      // Partial unique index (slug WHERE is_system): raw SQL for the conflict target.
-      await tx.execute(sql`
-        INSERT INTO integrations.connectors
-          (id, slug, name, description, icon, color, icon_color, category_id, auth_type,
-           auth_config_schema, auth_source_type, connected_app_key, runtime_auth_config,
-           mcp_transport_type, mcp_server_url, mcp_server_config, dynamic_headers, actions,
-           is_active, is_system, is_hidden, created_by)
-        VALUES (${newObjectId()}, ${slug}, ${c.name}, ${c.description}, ${c.icon}, ${c.color},
-                ${c.iconColor}, ${c.categoryId}, ${c.authType}, ${JSON.stringify(c.authConfigSchema)}::jsonb,
-                ${c.authSourceType}, ${c.connectedAppKey}, ${JSON.stringify(c.runtimeAuthConfig)}::jsonb,
-                ${c.mcpTransportType}, ${c.mcpServerUrl}, ${JSON.stringify(c.mcpServerConfig)}::jsonb,
-                ${JSON.stringify(c.dynamicHeaders)}::jsonb, ${JSON.stringify(actions)}::jsonb,
-                ${c.isActive}, ${c.isSystem}, ${c.isHidden}, ${c.createdBy})
-        ON CONFLICT (slug) WHERE is_system
-        DO UPDATE SET actions = EXCLUDED.actions, updated_at = now()
-      `);
-      const [row] = await tx.select().from(schema.integrationsConnectors).where(eq(schema.integrationsConnectors.slug, slug)).limit(1);
-      const skills = await hydrateSkills(tx, [row.id]);
-      return connectorToRow(row, skills.get(row.id) ?? []);
-    });
   }
 
   async findAllExport(ids?: string[]): Promise<ConnectorRow[]> {
@@ -694,7 +679,7 @@ export class PgConnectorAdminAuthStore implements ConnectorAdminAuthStore {
     const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = patch;
     await this.q
       .update(schema.integrationsAdminConnectorAuthTokens)
-      .set({ ...rest, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsAdminConnectorAuthTokens.$inferInsert>)
+      .set({ ...rest, updatedAt: new Date() })
       .where(eq(schema.integrationsAdminConnectorAuthTokens.id, id));
   }
 

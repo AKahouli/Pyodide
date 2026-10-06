@@ -17,7 +17,7 @@ export interface TeamExecutionDefinition {
 
 export function validateExecutableTeam(
   nodes: TeamExecutionNode[],
-  agents: Array<{ id: string; agentTypeSlug: string }>,
+  agents: { id: string; agentTypeSlug: string }[],
 ): TeamExecutionNode[] {
   const fail = (message: string): never => {
     throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, message);
@@ -50,7 +50,7 @@ export function validateExecutableTeam(
 
   const ordered: TeamExecutionNode[] = [];
   const visited = new Set<string>();
-  const queue: Array<{ node: TeamExecutionNode; depth: number }> = [{ node: roots[0], depth: 1 }];
+  const queue: { node: TeamExecutionNode; depth: number }[] = [{ node: roots[0], depth: 1 }];
   while (queue.length) {
     const { node, depth } = queue.shift()!;
     if (visited.has(node.agentId)) fail('The team hierarchy must be acyclic.');

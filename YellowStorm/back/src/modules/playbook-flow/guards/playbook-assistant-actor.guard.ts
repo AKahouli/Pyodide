@@ -12,7 +12,7 @@ export class PlaybookAssistantActorGuard implements CanActivate {
       'x-yellowstorm-conversation-id',
       'x-correlation-id',
     ];
-    if (required.some((name) => typeof headers[name] !== 'string' || !headers[name]?.trim() || headers[name]!.length > 200)) {
+    if (required.some((name) => typeof headers[name] !== 'string' || !headers[name]?.trim() || headers[name].length > 200)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid trusted Playbook assistant actor identity');
     }
     return true;

@@ -36,6 +36,7 @@
           "parameter_schema": {},
           "parameter_schema_json": "{\"type\":\"object\",\"properties\":{\"top\":{\"type\":\"number\"}}}",
           "safety": "read",
+          "execution_kind": "leaf",
           "result_kind": "generic",
           "citation_mode": "none",
           "result_mapping_json": "{}"

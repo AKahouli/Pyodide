@@ -44,7 +44,7 @@ export interface GovernanceScopeOverview {
   authorization: { canApprove: boolean };
   readiness: { score: number; status: ReadinessStatus; blockers: GovernanceScopeOverviewCheck[]; warnings: GovernanceScopeOverviewCheck[]; checks: GovernanceScopeOverviewCheck[] };
   knowledge: { sharedWorkspaces: Record<string, unknown>[]; localWorkspaces: Record<string, unknown>[]; documents: Record<string, unknown>[]; reviewBlockers: GovernanceScopeOverviewCheck[] };
-  agents: { mappedAgents: Array<{ id: string; isPrimary: boolean }>; primaryAgentId?: string; missingAgent: boolean };
+  agents: { mappedAgents: { id: string; isPrimary: boolean }[]; primaryAgentId?: string; missingAgent: boolean };
   deployment?: Record<string, unknown>;
   draftRevision?: Record<string, unknown>;
   publishedRevision?: Record<string, unknown>;
@@ -91,7 +91,7 @@ export class GovernanceScopeOverviewService {
       this.accessService.canActInScopeRole(actorId, programId, scopeId, ['scope_approver']),
     ]);
     const checks = this.buildChecks(scope, documents, workspaceBindings.length > 0, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
-    const revisionActors = await this.findRevisionActors([draftRevision, publishedRevision] as unknown as Array<Record<string, unknown> | null>);
+    const revisionActors = await this.findRevisionActors([draftRevision, publishedRevision]);
     const sharedWorkspaces = workspaceBindings.filter((binding) => binding.visibility === 'program_shared');
     const localWorkspaces = workspaceBindings.filter((binding) => binding.visibility !== 'program_shared');
     return {
@@ -110,7 +110,7 @@ export class GovernanceScopeOverviewService {
       publishedRevision: publishedRevision ? this.revisionToResponse(publishedRevision, revisionActors) : undefined,
       channels: (deployment?.channels as Record<string, unknown>) ?? {},
       latestDryRun: latestDryRun ? this.dryRunToResponse(latestDryRun) : undefined,
-      metricsSummary: this.summarizeMetrics(metrics as unknown as Array<Record<string, unknown>>),
+      metricsSummary: this.summarizeMetrics(metrics as unknown as Record<string, unknown>[]),
     };
   }
 
@@ -139,13 +139,13 @@ export class GovernanceScopeOverviewService {
     return this.dryRunStore.findLatestByDeployment(deploymentId);
   }
 
-  private buildChecks(scope: GovernanceScopeRecord, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: GovernanceRevisionRecord | null, latestDryRun: GovernanceDryRunRecord | null, memberships: Array<Record<string, unknown>>, agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
+  private buildChecks(scope: GovernanceScopeRecord, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: GovernanceRevisionRecord | null, latestDryRun: GovernanceDryRunRecord | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
     const knowledge = scope.knowledge as { sourceMode?: string } | undefined;
     // LLM-only scopes need no mapped workspaces; legacy scopes without the
     // knowledge setting keep the workspace-binding requirement.
     const knowledgeConfigured = knowledge?.sourceMode === 'llm_only' || hasWorkspaceBinding;
-    const ownershipAssigned = (memberships as Array<Record<string, unknown>>).some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
+    const ownershipAssigned = (memberships).some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
     const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
     const audience = scope.audience as { mode?: string; userIds?: unknown[]; groupIds?: unknown[] } | undefined;
     const audienceConfigured = audience?.mode === 'all_authenticated' || Boolean(audience?.userIds?.length || audience?.groupIds?.length);
@@ -168,7 +168,7 @@ export class GovernanceScopeOverviewService {
     ];
   }
 
-  private async findScopeMemberships(programId: string, scopeId: string): Promise<Array<Record<string, unknown>>> {
+  private async findScopeMemberships(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
     const memberships = await this.membershipStore.listByProgram(programId);
     return memberships
       .filter((membership) => membership.status === 'active' && (!membership.scopeId || membership.scopeId === scopeId))
@@ -181,7 +181,7 @@ export class GovernanceScopeOverviewService {
     return this.agentRepository.findByIds(ids.map(String)) as unknown as Promise<Record<string, unknown>[]>;
   }
 
-  private async findRevisionActors(revisions: Array<unknown>): Promise<Map<string, GovernanceActorSummary>> {
+  private async findRevisionActors(revisions: unknown[]): Promise<Map<string, GovernanceActorSummary>> {
     const ids = [...new Set(revisions.flatMap((revision) => [(revision as { createdBy?: string } | null)?.createdBy, (revision as { publishedBy?: string } | null)?.publishedBy]).filter(Boolean).map(String))];
     if (ids.length === 0) return new Map();
     const users = await this.userLookup.byIds(ids);
@@ -220,7 +220,7 @@ export class GovernanceScopeOverviewService {
     return { mappedAgents, primaryAgentId: mappedAgents[0]?.id, missingAgent: mappedAgents.length === 0 };
   }
 
-  private summarizeMetrics(metrics: Array<Record<string, unknown>>): GovernanceScopeOverview['metricsSummary'] {
+  private summarizeMetrics(metrics: Record<string, unknown>[]): GovernanceScopeOverview['metricsSummary'] {
     const initialSummary: GovernanceScopeOverview['metricsSummary'] = { totalEvents: 0, byChannel: {}, byType: {} };
     return metrics.reduce<GovernanceScopeOverview['metricsSummary']>((summary, metric) => {
       const value = Number(metric.value ?? 0);

@@ -45,7 +45,7 @@ export function decodeConversationCursor(value: string): ConversationCursorPaylo
       if (payload.s !== 'lastMessageAt' && (payload.n !== 0 || payload.value === null)) {
         throw new Error('invalid sort value');
       }
-      if (payload.s !== 'title' && payload.value !== null && Number.isNaN(Date.parse(payload.value as string))) {
+      if (payload.s !== 'title' && payload.value !== null && Number.isNaN(Date.parse(payload.value))) {
         throw new Error('invalid cursor timestamp');
       }
     },

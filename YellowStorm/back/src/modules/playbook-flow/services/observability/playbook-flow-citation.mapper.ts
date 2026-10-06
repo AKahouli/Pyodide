@@ -97,9 +97,9 @@ function normalizeCitationComponent(component: Record<string, unknown>): Record<
 }
 
 export function normalizePlaybookComponents(
-  components: Array<Record<string, unknown>> | undefined,
+  components: Record<string, unknown>[] | undefined,
   citationSources: unknown,
-): Array<Record<string, unknown>> | undefined {
+): Record<string, unknown>[] | undefined {
   const normalized = (components ?? []).map((component) => (
     component.type === 'citation' ? normalizeCitationComponent(component) : component
   ));

@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from '@modules/exceptions';
+import { BadGatewayException, ServiceUnavailableException, TooManyRequestsException } from '@modules/exceptions';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 
 function build(options: {
@@ -83,10 +83,21 @@ describe('SemanticAttributeExtractionService', () => {
     await expect(service.extract(request)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it('reports an ADK failure as an unavailable dependency', async () => {
+  it('reports a failing or unreachable ADK as a bad gateway, worth another try', async () => {
     fetchMock.mockResolvedValue(new Response('bad gateway', { status: 502 }));
     const { service } = build();
+    await expect(service.extract(request)).rejects.toBeInstanceOf(BadGatewayException);
 
+    fetchMock.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    await expect(service.extract(request)).rejects.toBeInstanceOf(BadGatewayException);
+  });
+
+  it('passes a throttled ADK on as too many requests, and a refusal as unavailable', async () => {
+    fetchMock.mockResolvedValue(new Response('slow down', { status: 429 }));
+    const { service } = build();
+    await expect(service.extract(request)).rejects.toBeInstanceOf(TooManyRequestsException);
+
+    fetchMock.mockResolvedValue(new Response('{"detail":"bad request"}', { status: 400 }));
     await expect(service.extract(request)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

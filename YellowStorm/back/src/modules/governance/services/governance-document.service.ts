@@ -46,7 +46,7 @@ export class GovernanceDocumentService {
     const document = await this.workspaceDocuments.findOne({ id: documentId, isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     const binding = await this.bindingStore.findByProgramAndWorkspace(programId, document.workspaceId);
-    if (!binding || !binding.enabled) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
+    if (!binding?.enabled) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
     const defaults = binding.defaults as { validityMode?: string; reviewFrequencyDays?: number; ownerUserId?: string; ownerScopeId?: string };
     const validity = { ...DEFAULT_UNKNOWN_VALIDITY, mode: defaults.validityMode ?? 'unknown', reviewFrequencyDays: defaults.reviewFrequencyDays };
     return this.tx.run(async () => {

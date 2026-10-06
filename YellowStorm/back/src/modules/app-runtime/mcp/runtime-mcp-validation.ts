@@ -61,7 +61,7 @@ function normalizeVerification(raw: unknown): VerificationEvidence {
 }
 
 export function validateToolPath(path: string): string {
-  if (!path || !path.trim()) {
+  if (!path?.trim()) {
     throw new InvalidParamsError('path must be non-empty');
   }
   const normalized = path.replace(/\\/g, '/');

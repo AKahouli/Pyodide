@@ -245,7 +245,7 @@ export class WorkspaceDocumentTree {
     folderId: string,
     workspaceId: string,
     userId: string,
-    visited: Set<string> = new Set(),
+    visited = new Set<string>(),
     depth = 0,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
     this.enterFolder(folderId, visited, depth);
@@ -279,7 +279,7 @@ export class WorkspaceDocumentTree {
   private async collectFolderDocumentIds(
     folderId: string,
     workspaceId: string,
-    visited: Set<string> = new Set(),
+    visited = new Set<string>(),
     depth = 0,
   ): Promise<string[]> {
     this.enterFolder(folderId, visited, depth);

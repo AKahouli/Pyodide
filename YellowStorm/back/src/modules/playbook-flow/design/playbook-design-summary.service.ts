@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-type DesignNode = { id: string };
-type DesignEdge = { source: string; target: string };
+interface DesignNode { id: string }
+interface DesignEdge { source: string; target: string }
 
 @Injectable()
 /**

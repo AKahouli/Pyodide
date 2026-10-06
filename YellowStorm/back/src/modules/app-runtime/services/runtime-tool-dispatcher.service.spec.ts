@@ -62,8 +62,7 @@ describe('RuntimeToolDispatcherService', () => {
   ): void => {
     socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
       if (event !== 'tool.invoke') return;
-      setImmediate(() =>
-        outcome.ok
+      setImmediate(() => { outcome.ok
           ? dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: outcome.result,
@@ -71,7 +70,7 @@ describe('RuntimeToolDispatcherService', () => {
           : dispatcher.handleFailed('sess_1', {
               toolCallId: payload.toolCallId,
               error: outcome.error,
-            }),
+            }); },
       );
     });
   };
@@ -206,8 +205,7 @@ describe('RuntimeToolDispatcherService', () => {
       connect();
       socket.emit.mockImplementation((event: string) => {
         if (event !== 'tool.invoke') return;
-        setImmediate(() =>
-          dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'),
+        setImmediate(() => { dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'); },
         );
       });
 
@@ -363,11 +361,10 @@ describe('RuntimeToolDispatcherService', () => {
           if (event !== 'tool.invoke') return;
           inFlight.push(payload.toolCallId);
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: {},
-              }),
+              }); },
             10,
           );
         },
@@ -413,11 +410,10 @@ describe('RuntimeToolDispatcherService', () => {
         if (event !== 'tool.invoke') return;
         next += 1;
         const revisionId = `rev_${next}`;
-        setImmediate(() =>
-          dispatcher.handleCompleted('sess_1', {
+        setImmediate(() => { dispatcher.handleCompleted('sess_1', {
             toolCallId: payload.toolCallId,
             result: { revisionId },
-          }),
+          }); },
         );
       });
 
@@ -459,11 +455,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         if (payload.toolCallId === 'tc_hold') {
-          void hold.then(() =>
-            dispatcher.handleCompleted('sess_1', {
+          void hold.then(() => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: {},
-            }),
+            }); },
           );
           return;
         }
@@ -566,11 +561,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         setTimeout(
-          () =>
-            dispatcher.handleCompleted('sess_1', {
+          () => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: { path: 'a.ts' },
-            }),
+            }); },
           30,
         );
       });
@@ -670,17 +664,15 @@ describe('RuntimeToolDispatcherService', () => {
           const ticks = [15, 30, 45];
           ticks.forEach((delay) =>
             setTimeout(
-              () =>
-                dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }),
+              () => { dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }); },
               delay,
             ),
           );
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: { done: true },
-              }),
+              }); },
             55,
           );
         },

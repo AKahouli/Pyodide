@@ -4,6 +4,7 @@ import pytest
 
 from src.grpc_generated import chatbot_pb2
 from src.grpc_server.chatbot_servicer import ChatbotServicer
+from google.protobuf.struct_pb2 import Struct, Value
 
 
 def _agent(*modalities: str) -> chatbot_pb2.Agent:
@@ -66,11 +67,22 @@ async def test_convert_single_agent_keeps_task_summary_separate_from_message():
         query='{"selectedChoices":[]}',
         task_summary="Profitability",
         agent=agent,
+        execution_scope=chatbot_pb2.ExecutionScope(execution_role=chatbot_pb2.EXECUTION_ROLE_ROOT,
+            execution_id="execution", resume_intent="resume", native_session_id="conversation-1",
+            native_invocation_id="invocation"),
+        native_input_responses=[chatbot_pb2.NativeInputResponse(input_id="input",
+            function_name="adk_request_input", response=Struct(fields={
+                "answer": Value(string_value="yes"),
+            }))],
     )
 
     converted = await servicer._convert_single_agent_request(request)
 
     assert converted.message == '{"selectedChoices":[]}'
+    assert converted.native_input_responses == [{
+        "input_id": "input", "function_name": "adk_request_input", "response": {"answer": "yes"},
+    }]
+    assert converted.execution_scope.native_invocation_id == "invocation"
     assert converted.task_summary == "Profitability"
     assert converted.chatbot_name == converted.agents[0].chatbot_name
     assert converted.chatbot_name["context_window_tokens"] == 200_000

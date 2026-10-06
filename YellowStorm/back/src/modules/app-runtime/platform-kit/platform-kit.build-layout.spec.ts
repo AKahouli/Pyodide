@@ -5,7 +5,9 @@ import { PLATFORM_KIT_FILES } from './platform-kit';
 const BACK_ROOT = join(__dirname, '..', '..', '..', '..');
 
 function readJson(file: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(BACK_ROOT, file), 'utf8')) as Record<string, unknown>;
+  // tsconfig files tolerate // comments; strip them before strict JSON.parse.
+  const raw = readFileSync(join(BACK_ROOT, file), 'utf8').replace(/^[ \t]*\/\/.*$/gm, '');
+  return JSON.parse(raw) as Record<string, unknown>;
 }
 
 /**

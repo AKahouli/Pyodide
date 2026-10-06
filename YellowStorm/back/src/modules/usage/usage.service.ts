@@ -135,7 +135,7 @@ export class UsageService implements OnApplicationBootstrap {
     }
     // Prefer the unlimited plan for new user registrations
     let plan = await this.planStore.findBySlug(PlanTier.UNLIMITED);
-    if (!plan || !plan.isActive) {
+    if (!plan?.isActive) {
       // Fallback to any plan marked as default
       plan = await this.planStore.findFlaggedDefault();
     }

@@ -103,7 +103,7 @@ export class RuntimeBrokerService {
         void this.releaseBinding
           .bindRevision({
             workspaceId: binding.workspaceId,
-            revisionId: outcome.result.revisionId as string,
+            revisionId: outcome.result.revisionId,
           })
           .catch((err: Error) => {
             this.logger.warn(

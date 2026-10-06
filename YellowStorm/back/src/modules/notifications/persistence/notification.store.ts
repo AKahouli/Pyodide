@@ -1,5 +1,5 @@
 /** Flat row shape of ops.notifications (plan 1B.1). */
-export type NotificationActions = Array<{ label?: string; url?: string; action?: string }>;
+export type NotificationActions = { label?: string; url?: string; action?: string }[];
 
 export interface NotificationRecord {
   id: string;

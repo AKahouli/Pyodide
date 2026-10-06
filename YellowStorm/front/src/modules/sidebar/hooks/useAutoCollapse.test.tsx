@@ -30,7 +30,7 @@ describe('useAutoCollapse', () => {
     setWidth(1280);
   });
 
-  it.each(['/', '/conversation', '/conversation/conversation-1', '/studio', '/studio/session-1'])(
+  it.each(['/', '/conversation', '/conversation/conversation-1', '/semantic-models/model-1'])(
     'collapses when entering %s',
     (pathname) => {
       document.cookie = 'sidebar_state=true';
@@ -43,6 +43,22 @@ describe('useAutoCollapse', () => {
       expect(sidebarState.setOpen).not.toHaveBeenCalled();
     },
   );
+
+  it('does not collapse the semantic models library', () => {
+    document.cookie = 'sidebar_state=true';
+    locationState.pathname = '/semantic-models';
+    renderHook(() => useAutoCollapse());
+
+    expect(sidebarState.setOpen).not.toHaveBeenCalled();
+  });
+
+  it('does not collapse Conversation v2', () => {
+    document.cookie = 'sidebar_state=true';
+    locationState.pathname = '/conversation-v2/session-1';
+    renderHook(() => useAutoCollapse());
+
+    expect(sidebarState.setOpen).not.toHaveBeenCalled();
+  });
 
   it('collapses on mount when below 1024px and no persisted state exists', () => {
     setWidth(900);

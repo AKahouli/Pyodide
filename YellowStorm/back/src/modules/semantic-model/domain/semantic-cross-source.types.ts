@@ -18,7 +18,7 @@ export interface RelationResolutionRule {
 
 export interface SourceResolutionPolicy {
   conceptId: string;
-  priorities: Array<{ mappingId: string; rank: number }>;
+  priorities: { mappingId: string; rank: number }[];
   defaultStrategy: 'primary_then_fallback';
 }
 
@@ -66,8 +66,8 @@ export interface ReconciledEntity {
     rowNumber?: number;
     field?: NonNullable<ResolvedEntity['provenance']['fields']>[string];
   }>;
-  sources: Array<{ mappingId: string; source: ResolvedMappingEntity['source'] }>;
-  conflicts: Array<{
+  sources: { mappingId: string; source: ResolvedMappingEntity['source'] }[];
+  conflicts: {
     attribute: string;
     preferred: unknown;
     conflicting: unknown;
@@ -75,7 +75,7 @@ export interface ReconciledEntity {
     conflictingMappingId: string;
     preferredProvenance: ReconciledEntity['provenance'][string];
     conflictingProvenance: ReconciledEntity['provenance'][string];
-  }>;
+  }[];
 }
 
 export interface RelationMatch {

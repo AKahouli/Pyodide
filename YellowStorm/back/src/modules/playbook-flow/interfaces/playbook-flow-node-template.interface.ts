@@ -18,14 +18,14 @@ export interface FlowNodeTemplateIteratorConfig {
 export interface FlowNodeTemplateRouterConfig {
   outputLabels: string[];
   maxIterations: number;
-  conditions?: Array<{
+  conditions?: {
     label: string;
     sourceNode?: string | null;
     sourcePort?: string | null;
     path?: string | null;
     operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
     value?: unknown;
-  }>;
+  }[];
   defaultLabel?: string | null;
   mode?: 'ai' | 'deterministic' | null;
   prompt?: string | null;
@@ -76,7 +76,7 @@ export interface FlowNodeTemplateListResponse {
 export interface FlowNodeTemplateImportPayload {
   version: 1;
   type: 'playbook-node-templates';
-  items: Array<CreateFlowNodeTemplateRequest & { enabled?: boolean; isBuiltIn?: boolean }>;
+  items: (CreateFlowNodeTemplateRequest & { enabled?: boolean; isBuiltIn?: boolean })[];
 }
 
 export interface CreateFlowNodeTemplateRequest {

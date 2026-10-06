@@ -143,7 +143,7 @@ export class InMemoryWidgetSessionStore implements WidgetSessionStore {
 }
 
 export class InMemoryWidgetMessageStore implements WidgetMessageStore {
-  readonly rows: Array<WidgetMessageInput & { id: string; createdAt: Date }> = [];
+  readonly rows: (WidgetMessageInput & { id: string; createdAt: Date })[] = [];
 
   async insert(input: WidgetMessageInput): Promise<{ id: string }> {
     const id = Math.random().toString(16).slice(2, 14).padEnd(24, '0');

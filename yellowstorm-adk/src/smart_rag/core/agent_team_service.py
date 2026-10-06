@@ -44,9 +44,10 @@ class AgentTeamService:
             model_request = request.model_copy(
                 update={"message": f"{request.message}\n\n{RESPONSE_LANGUAGE_POLICY}"}
             )
-            await run_agent_team_logic(model_request, queue)
+            result = await run_agent_team_logic(model_request, queue)
 
             logger.info(f"[SERVICE] Agent team request completed successfully - session_id: {request.session_id}")
+            return result
         except Exception as e:
             logger.error(f"[SERVICE] Agent team request failed - session_id: {request.session_id}: {str(e)}", exc_info=True)
 

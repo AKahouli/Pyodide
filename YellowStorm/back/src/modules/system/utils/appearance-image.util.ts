@@ -204,7 +204,7 @@ function readIcoSize(buffer: Buffer): ImageDimensions | null {
 
 function readSvgSize(buffer: Buffer): ImageDimensions | null {
   const text = buffer.toString('utf8');
-  const viewBox = text.match(/viewBox\s*=\s*["']?\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+  const viewBox = /viewBox\s*=\s*["']?\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i.exec(text);
   if (viewBox) {
     const width = Number(viewBox[3]);
     const height = Number(viewBox[4]);
@@ -212,8 +212,8 @@ function readSvgSize(buffer: Buffer): ImageDimensions | null {
       return { width, height };
     }
   }
-  const widthAttr = parseSvgLength(text.match(/\bwidth\s*=\s*["']?\s*([-\d.]+)/i)?.[1]);
-  const heightAttr = parseSvgLength(text.match(/\bheight\s*=\s*["']?\s*([-\d.]+)/i)?.[1]);
+  const widthAttr = parseSvgLength((/\bwidth\s*=\s*["']?\s*([-\d.]+)/i.exec(text))?.[1]);
+  const heightAttr = parseSvgLength((/\bheight\s*=\s*["']?\s*([-\d.]+)/i.exec(text))?.[1]);
   if (widthAttr && heightAttr) {
     return { width: widthAttr, height: heightAttr };
   }

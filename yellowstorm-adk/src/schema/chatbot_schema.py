@@ -1,8 +1,11 @@
 """Pydantic models for chatbot endpoints."""
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+from src.root_runtime.contracts import ExecutionScopeV1
 
 
 def _sync_workspace_aliases(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -141,6 +144,18 @@ class RunAgentTeamRequest(BaseModel):
     deep_search_enabled: bool = False
     correction_replay_context: Optional[CorrectionReplayContext] = None
     team_definition: Optional[AgentTeamDefinition] = None
+    # Trusted execution scope (WP03); frozen dataclass from src.root_runtime.
+    # None/unset = legacy semantics. Never model-authored.
+    execution_scope: Optional[ExecutionScopeV1] = None
+    abort_signal: Optional[asyncio.Event] = Field(default=None, exclude=True)
+    session_service: Any = Field(default=None, exclude=True)
+    native_input_responses: Optional[List[Dict[str, Any]]] = None
+    # WP04 root delegation: compact authorized catalog + frozen candidate
+    # definitions. None/unset = legacy request.
+    root_context: Optional[Dict[str, Any]] = None
+    delegate_candidates: Optional[List[AgentSuggestion]] = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))
@@ -196,4 +211,3 @@ class ChatCompletionRequest(BaseModel):
     model: str
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
-

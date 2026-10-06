@@ -23,7 +23,7 @@ export interface GovernanceDryRunResponse {
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
   executionMode: 'conversation' | 'manual';
-  testCases: Array<Record<string, unknown>>;
+  testCases: Record<string, unknown>[];
   checks: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -165,13 +165,13 @@ export class GovernanceDryRunService {
     return this.toResponse(updated);
   }
 
-  async messages(actorId: string, dryRunId: string): Promise<Array<Record<string, unknown>>> {
+  async messages(actorId: string, dryRunId: string): Promise<Record<string, unknown>[]> {
     const dryRun = await this.findOwnedDryRun(actorId, dryRunId);
     if (dryRun.conversationId) {
       const page = await this.messageService.findByConversation(dryRun.conversationId, { page: 1, limit: 100 });
-      return page.messages as unknown as Array<Record<string, unknown>>;
+      return page.messages as unknown as Record<string, unknown>[];
     }
-    return dryRun.testCases as Array<Record<string, unknown>>;
+    return dryRun.testCases;
   }
 
   private async finishDryRun(dryRunId: string, status: 'passed' | 'failed', extraChecks: Record<string, unknown>): Promise<void> {
@@ -180,7 +180,7 @@ export class GovernanceDryRunService {
     await this.dryRunStore.update(dryRunId, { status, checks: { ...dryRun.checks, ...extraChecks } });
   }
 
-  private firstTestCaseInput(testCases?: Array<Record<string, unknown>>): string | undefined {
+  private firstTestCaseInput(testCases?: Record<string, unknown>[]): string | undefined {
     const value = testCases?.find((testCase) => typeof testCase.input === 'string')?.input;
     return typeof value === 'string' ? value : undefined;
   }

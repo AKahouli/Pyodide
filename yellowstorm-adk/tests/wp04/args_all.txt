@@ -1,0 +1,9 @@
+tests/wp03/test_root_runtime_contracts.py
+tests/wp03/test_root_cancellation.py
+tests/wp03/test_root_compiler.py
+tests/wp03/test_root_event_projector.py
+tests/wp03/test_plugin_resume_guard.py
+tests/wp03/test_execution_scope_proto.py
+tests/wp04/test_delegate_dispatcher.py
+tests/integration/test_google_adk_28_contract.py
+tests/wp00/test_adk211_root_runtime_compat.py

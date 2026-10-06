@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { SEMANTIC_EXTRACTION_AGENT_NAME } from '@modules/agent/constants/semantic-extraction.constants';
-import { ServiceUnavailableException } from '@modules/exceptions';
+import { BadGatewayException, ServiceUnavailableException, TooManyRequestsException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 export interface AttributeExtractionAttribute {
@@ -35,6 +35,8 @@ export interface AttributeExtractionRequest {
   sections: AttributeExtractionSection[];
   /** Required: execution must run the exact extractor the revision was built for. */
   aiExtraction?: AiExtractionIdentity | null;
+  /** The mapping reads several records from this document. */
+  multiple?: boolean;
 }
 
 const ADK_TIMEOUT_MS = 240_000;
@@ -42,8 +44,10 @@ const ADK_TIMEOUT_MS = 240_000;
 export interface AttributeExtractionResult {
   model?: string | null;
   extractorVersion: string;
-  values: Array<{ key: string; value: unknown; evidenceReferences: string[] }>;
+  values: { key: string; value: unknown; evidenceReferences: string[] }[];
   failed: string[];
+  /** Only when several records were asked for: every item found, with its own values. */
+  records?: { label: string; values: { key: string; value: unknown; evidenceReferences: string[] }[] }[];
 }
 
 /**
@@ -72,7 +76,7 @@ export class SemanticAttributeExtractionService {
 
   async extract(request: AttributeExtractionRequest): Promise<AttributeExtractionResult> {
     const bound = request.aiExtraction;
-    if (!bound || !bound.agentSlug || !bound.model || !bound.contractVersion) {
+    if (!bound?.agentSlug || !bound.model || !bound.contractVersion) {
       throw new ServiceUnavailableException(
         ErrorCode.SERVICE_UNAVAILABLE,
         'AI extraction requires the extractor identity bound at job admission',
@@ -109,10 +113,11 @@ export class SemanticAttributeExtractionService {
         let parsed: unknown = body;
         try { parsed = JSON.parse(body) as unknown; } catch { /* non-JSON error body */ }
         const detail = typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed);
-        throw new ServiceUnavailableException(
-          ErrorCode.SERVICE_UNAVAILABLE,
-          `Attribute extraction failed (HTTP ${res.status}): ${detail}`,
-        );
+        const message = `Attribute extraction failed (HTTP ${res.status}): ${detail}`;
+        // Throttled or briefly down: the runtime tries again later; anything else will not pass on retry.
+        if (res.status === 429) throw new TooManyRequestsException(message);
+        if (res.status >= 500) throw new BadGatewayException(ErrorCode.SERVICE_UNAVAILABLE, message);
+        throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, message);
       }
       const data = await res.json() as AttributeExtractionResult;
       if (data?.extractorVersion !== bound.contractVersion) {
@@ -123,9 +128,11 @@ export class SemanticAttributeExtractionService {
       }
       return data;
     } catch (error) {
-      if (error instanceof ServiceUnavailableException) throw error;
+      if (error instanceof ServiceUnavailableException || error instanceof TooManyRequestsException
+        || error instanceof BadGatewayException) throw error;
       const detail = error instanceof Error ? error.message : String(error);
-      throw new ServiceUnavailableException(
+      // The ADK did not answer (unreachable, timed out): worth another try.
+      throw new BadGatewayException(
         ErrorCode.SERVICE_UNAVAILABLE,
         `Attribute extraction failed: ${detail}`,
       );

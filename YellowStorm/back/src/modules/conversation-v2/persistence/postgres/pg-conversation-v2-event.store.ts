@@ -28,7 +28,7 @@ export class PgConversationV2EventStore implements ConversationV2EventStore {
   ) {}
 
   private get q(): NodePgDatabase<typeof schema> {
-    return resolveQueryable(this.db) as NodePgDatabase<typeof schema>;
+    return resolveQueryable(this.db);
   }
 
   private static toRecord(row: EventRow): ConversationV2EventRecord {
@@ -39,7 +39,7 @@ export class PgConversationV2EventStore implements ConversationV2EventStore {
       eventId: row.eventId,
       type: row.type as ConversationV2EventTypeName,
       emittedAt: row.emittedAt,
-      payload: (row.payload ?? {}) as Record<string, unknown>,
+      payload: (row.payload ?? {}),
       modelId: row.modelId ?? null,
       createdAt: row.createdAt,
     };

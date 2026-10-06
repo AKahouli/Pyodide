@@ -78,7 +78,7 @@ export class PromptTemplateRepository {
   }
 
   /** Key, version and built-in flag of the templates among `keys` that exist. */
-  async findVersions(keys: readonly string[]): Promise<Array<Pick<PromptTemplateRecord, 'key' | 'version' | 'isBuiltIn'>>> {
+  async findVersions(keys: readonly string[]): Promise<Pick<PromptTemplateRecord, 'key' | 'version' | 'isBuiltIn'>[]> {
     if (keys.length === 0) return [];
     return this.q.select({ key: pt.key, version: pt.version, isBuiltIn: pt.isBuiltIn }).from(pt).where(inArray(pt.key, [...keys]));
   }

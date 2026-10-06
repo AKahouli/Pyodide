@@ -56,3 +56,28 @@ describe('RunProgress', () => {
     expect(durationParts(5400)).toEqual({ unit: 'hours', count: 1.5 });
   });
 });
+
+describe('RunProgress steps and AI calls', () => {
+  const base = { phase: 'reading' as const, total: 1, done: 0, reused: 0, records: 0, gaps: 0, startedAt: '2026-09-27T10:00:00Z', current: null, recent: [] };
+
+  it('says how far the source under way is, and that an archive is still opening', () => {
+    const { rerender } = render(<RunProgress running progress={{ ...base, step: { unit: 'rows', done: 5000, total: 25000 } }} />);
+    expect(screen.getByText('population.progress.step.rows')).toBeInTheDocument();
+    expect(screen.getByText('20%')).toBeInTheDocument();
+    rerender(<RunProgress running progress={{ ...base, step: { unit: 'opening', done: 0, total: null } }} />);
+    expect(screen.getByText('population.progress.step.openingUnknown')).toBeInTheDocument();
+  });
+
+  it('counts the AI calls answered, reused, failed and left over the limit', () => {
+    render(<RunProgress running progress={{ ...base, ai: { planned: 40, answered: 12, reused: 5, skipped: 3, failed: 1 } }} />);
+    expect(screen.getByLabelText('population.progress.ai.title')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.ai.done')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.ai.failed')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.ai.skipped')).toBeInTheDocument();
+  });
+
+  it('shows no step once the run is over', () => {
+    render(<RunProgress running={false} progress={{ ...base, done: 1, step: { unit: 'rows', done: 10, total: 10 } }} />);
+    expect(screen.queryByText('population.progress.step.rows')).not.toBeInTheDocument();
+  });
+});

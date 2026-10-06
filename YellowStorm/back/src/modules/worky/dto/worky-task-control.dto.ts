@@ -4,7 +4,7 @@ import { WORKY_TASK_LANES } from '../constants/worky.constants';
 
 export class MoveWorkyTaskDto {
   @ApiProperty({ enum: WORKY_TASK_LANES })
-  @IsIn(WORKY_TASK_LANES as unknown as string[])
+  @IsIn(WORKY_TASK_LANES)
   lane!: string;
 
   @ApiPropertyOptional({ maxLength: 500 })

@@ -39,7 +39,7 @@ export interface GovernanceDocumentUpdateSet {
 export interface GovernanceDocumentUpdate {
   set: GovernanceDocumentUpdateSet;
   /** Clears optional fields (Mongo `$unset`-equivalent). */
-  unset?: Array<'archivedAt' | 'archivedBy' | 'archiveReason'>;
+  unset?: ('archivedAt' | 'archivedBy' | 'archiveReason')[];
   bumpGovernanceRevision?: boolean;
   bumpTemporalDecisionRevision?: boolean;
 }

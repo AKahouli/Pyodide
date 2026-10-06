@@ -7,6 +7,7 @@ import { WorkspaceShareService } from '@modules/workspace/workspace-share.servic
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { graphDiff } from '../domain/graph-diff';
+import { findCompleteness, queryCompleteness, relatedCompleteness } from '../domain/answer-completeness';
 import {
   attributeTypes,
   type AttributeDefinition,
@@ -26,7 +27,8 @@ import { SemanticModelWorkspaceService } from './semantic-model-workspace.servic
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticModelVersionService } from './semantic-model-version.service';
 import { SemanticGraphSearchService } from './semantic-graph-search.service';
-import type { RuntimeGraphExpandStep, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
+import type { RecordsQuery } from './semantic-graph-search.service';
+import type { RuntimeGraphExpandStep, RuntimeRecordsQueryResult, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
 
 /**
  * What an assistant (an agent using the semantic model MCP) can do to a model, as the person it acts for.
@@ -102,7 +104,7 @@ export interface SourceSnapshot {
   documentId: string;
   sheetName: string;
   assetKind: string;
-  fieldMappings: Array<Record<string, unknown>>;
+  fieldMappings: Record<string, unknown>[];
   identityFields: string[];
   scope?: string;
   folderId?: string | null;
@@ -203,6 +205,80 @@ export function businessKey(label: string, fallback = 'item'): string {
 
 const normalize = (value: string) => value.trim().toLowerCase();
 
+/** A field as an assistant needs it to query: names, type, allowed values and meaning. */
+function describeField(field: AttributeDefinition) {
+  return {
+    key: field.key, label: field.label, type: field.type,
+    ...(field.options?.length ? { options: field.options } : {}),
+    ...(field.description ? { description: field.description } : {}),
+    ...(field.aliases?.length ? { aliases: field.aliases } : {}),
+  };
+}
+
+const HOW_TO_QUERY = 'query_records(concept, filters=[{field, op, value}], match="all"|"any", group_by=[field | {field, bucket}], '
+  + 'aggregates=[{op, field}], order_by=[{field, direction}], fields, limit, offset). Name concepts and fields by key or label from '
+  + 'this description; "name" is the record name; "<relation>.<field>" filters on a linked record (relation by key, label or inverse label). '
+  + 'ops: eq, ne, contains, starts_with, ends_with, in, gt, gte, lt, lte, between, is_empty, not_empty; text ignores case and accents. '
+  + 'Dates: ISO (2026-07-14, 2026-07, 2026) or today, yesterday, last_N_days|weeks|months|years, this_/last_week|month|quarter|year (UTC); '
+  + 'buckets: day, week, month, quarter, year. aggregates: count, count_distinct, sum, avg, min, max. limit 0 returns only counts.';
+
+/** The answer of a valid records query: groups, or a page of records with optional totals. */
+function queryResultBody(result: RuntimeRecordsQueryResult) {
+  const common = { total: result.total ?? 0, ...(result.unparsable && Object.keys(result.unparsable).length ? { unparsable: result.unparsable } : {}) };
+  if (result.buckets) return { ...common, groups: result.buckets, truncated: Boolean(result.bucketsTruncated) };
+  const more = result.nextOffset !== null && result.nextOffset !== undefined;
+  return {
+    ...common, ...(result.aggregates ? { totals: result.aggregates } : {}),
+    records: result.records ?? [], offset: result.offset ?? 0, nextOffset: more ? result.nextOffset : null, truncated: more,
+  };
+}
+
+/** Why a records query matched nothing: an empty concept, or which filter or link left nothing, and the stored values a text value may have meant. */
+function emptyResultNotes(result: RuntimeRecordsQueryResult): string[] {
+  const diagnostics = result.diagnostics;
+  if (!diagnostics) return ['No record matches this query.'];
+  if (diagnostics.readableRecords === 0) {
+    return [result.hiddenRecords
+      ? 'No record matches: every record of this concept comes from sources the user cannot open.'
+      : 'No record matches: this concept holds no record yet.'];
+  }
+  const notes = [`No record matches this query, out of ${String(diagnostics.readableRecords)} readable records. Each condition alone keeps: ${diagnostics.checks.map((check) => `${check.part} (${check.field} ${check.op}) ${String(check.matches)}`).join('; ')}.`];
+  for (const check of diagnostics.checks.filter((item) => item.didYouMean?.length)) {
+    notes.push(`${check.part} matches no stored value of "${check.field}". Stored values that look like it: ${(check.didYouMean ?? []).map((value) => `"${value}"`).join(', ')}. Ask the user or retry with one of them; never present the empty result as the answer.`);
+  }
+  return notes;
+}
+
+/** What a records query left out or could not read, said so the assistant reports it. */
+function queryNotes(result: RuntimeRecordsQueryResult): string[] {
+  const notes: string[] = [];
+  const applied = result.appliedQuery;
+  const fields = new Map<string, { label: string; type: string }>();
+  for (const filter of applied.filters ?? []) {
+    if (filter.field && !filter.relation) fields.set(filter.field, { label: filter.fieldLabel ?? filter.field, type: filter.type ?? 'text' });
+  }
+  for (const group of applied.groupBy ?? []) fields.set(group.field, { label: group.label, type: group.type });
+  for (const aggregate of applied.aggregates ?? []) {
+    if (aggregate.field && !fields.has(aggregate.field)) {
+      fields.set(aggregate.field, { label: aggregate.label ?? aggregate.field, type: aggregate.op === 'sum' || aggregate.op === 'avg' ? 'number' : 'value' });
+    }
+  }
+  const kinds: Record<string, string> = { date: 'dates', number: 'numbers', boolean: 'yes/no values' };
+  for (const [key, count] of Object.entries(result.unparsable ?? {})) {
+    const field = fields.get(key) ?? { label: key, type: 'value' };
+    notes.push(`${String(count)} value${count > 1 ? 's' : ''} of "${field.label}" could not be read as ${kinds[field.type] ?? 'typed values'} and ${count > 1 ? 'were' : 'was'} left out of the comparisons, groups and totals on this field. Say so in the answer.`);
+  }
+  if (result.hiddenRecords) notes.push(`${String(result.hiddenRecords)} records of this concept come from sources the user cannot open: they are not counted or shown.`);
+  if (result.total === 0) notes.push(...emptyResultNotes(result));
+  if (result.bucketsTruncated) notes.push(`Only the first ${String(result.buckets?.length ?? 0)} groups are returned: more exist. Say the list is incomplete, or narrow the query.`);
+  if (!result.buckets && result.nextOffset !== null && result.nextOffset !== undefined) {
+    const first = (result.offset ?? 0) + 1;
+    notes.push(`Records ${String(first)} to ${String(first + (result.returned ?? 0) - 1)} of ${String(result.total ?? 0)} are returned${result.pageCutShort ? ' (the page stopped early: the values are long)' : ''}; call again with offset=${String(result.nextOffset)} for the next ones, or say the list is incomplete.`);
+  }
+  if (result.records?.some((record) => record.truncated)) notes.push('Some long values were cut at 1500 characters (truncated: true): say so if they matter.');
+  return notes;
+}
+
 @Injectable()
 export class SemanticModelAssistantService {
   private readonly logger = new Logger(SemanticModelAssistantService.name);
@@ -221,12 +297,12 @@ export class SemanticModelAssistantService {
     private readonly workspaceShares: WorkspaceShareService,
     private readonly documents: WorkspaceDocumentService,
     private readonly graphSearch: SemanticGraphSearchService,
-  ) {}
+  ) { }
 
   // ── Models ────────────────────────────────────────────────────────────────
 
   async listModels(userId: string, search?: string) {
-    const page = await this.models.list(userId, { search, page: 1, limit: 50, kind: 'designed' } as never) as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+    const page = await this.models.list(userId, { search, page: 1, limit: 50, kind: 'designed' } as never) as { items?: Record<string, unknown>[] } | Record<string, unknown>[];
     const items = Array.isArray(page) ? page : page.items ?? [];
     return {
       models: items.filter((model) => model.status !== 'archived').map((model) => ({
@@ -235,9 +311,35 @@ export class SemanticModelAssistantService {
     };
   }
 
+  /** Delete a model for good (owner only), once its exact name is repeated. Workspace documents stay. */
+  async deleteModel(userId: string, modelId: string, confirmName: string | undefined) {
+    const model = await this.models.get(userId, modelId);
+    if ((confirmName ?? '').trim() !== model.name.trim()) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'confirm_name must be the exact model name; ask the user to confirm the permanent deletion first');
+    }
+    await this.models.deletePermanently(userId, model.id);
+    return { deleted: true, modelId: model.id, name: model.name };
+  }
+
   async createModel(actor: AssistantActor, name: string, description?: string) {
     const model = await this.models.create(actor.userId, { name, description });
     return { modelId: model.id, name: model.name, model: this.modelRef(model), editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model) };
+  }
+
+  /** Copy a model into a new one the user owns; the data needs the sources and is copied by the runtime. */
+  async cloneModel(actor: AssistantActor, modelId: string, options: { name?: string; includeSources?: boolean; includeData?: boolean; includeShares?: boolean }) {
+    const source = await this.models.get(actor.userId, modelId);
+    const name = options.name?.trim() || `${source.name} (copy)`;
+    const copy = await this.models.clone(actor.userId, source.id, name, {
+      sources: options.includeSources ?? true,
+      data: options.includeData ?? false,
+      shares: options.includeShares ?? false,
+    });
+    return {
+      modelId: copy.id, name: copy.name, sourceModelId: source.id, dataCopy: copy.dataCopy,
+      model: this.modelRef(copy), editorPath: this.editorPath(copy.id), uiTarget: this.uiTarget(copy),
+    };
   }
 
   /**
@@ -259,7 +361,7 @@ export class SemanticModelAssistantService {
   /** The model as a person would describe it: concepts with their fields, relationships and sources, by name. */
   async describeModel(userId: string, modelId: string) {
     const model = await this.models.get(userId, modelId);
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const [identity, mappings] = await Promise.all([
       this.identityByConcept(userId, modelId),
       this.listSources(userId, modelId).catch(() => [] as SourceSnapshot[]),
@@ -294,7 +396,7 @@ export class SemanticModelAssistantService {
   }
 
   async checkModel(userId: string, modelId: string) {
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const issues = this.validation.validate(graph);
     const freshness = await this.population.freshness(userId, modelId).catch(() => ({ state: 'not_runnable' as const }));
     return {
@@ -312,7 +414,7 @@ export class SemanticModelAssistantService {
   async applyChanges(actor: AssistantActor, modelId: string, changes: AssistantModelChanges, dryRun = false) {
     const model = await this.models.requireActiveRole(actor.userId, modelId, ['owner', 'editor']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const before = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const before = await this.graph.getGraph(actor.userId, modelId);
     const identityBefore = await this.identityByConcept(actor.userId, modelId);
     const plan = this.plan(before, identityBefore, changes);
     const issues = this.validation.validate(plan.after).map((issue) => ({ severity: issue.severity, target: issue.targetLabel, message: issue.message }));
@@ -322,7 +424,7 @@ export class SemanticModelAssistantService {
       return { applied: false, dryRun, model: this.modelRef(model), summary: plan.summary, operationCount: operations.length, issues };
     }
     if (operations.length) {
-      await this.graph.apply(actor.userId, modelId, { expectedRevision: before.revision, operations: operations as unknown as Record<string, unknown>[] });
+      await this.graph.apply(actor.userId, modelId, { expectedRevision: before.revision, operations: operations });
     }
     await this.saveIdentity(actor.userId, modelId, identityChanged.map((conceptId) => [conceptId, plan.identity[conceptId]]));
     const changeSet = await this.recordChangeSet(actor, model.id, model.currentDraftVersionId, {
@@ -398,7 +500,7 @@ export class SemanticModelAssistantService {
           const label = spec.newLabel.trim();
           edits.push(`renamed to ${label}`);
           node.label = label;
-          node.key = this.uniqueKey(graph.nodes.filter((item) => item.id !== node!.id).map((item) => item.key), businessKey(label, 'concept'));
+          node.key = this.uniqueKey(graph.nodes.filter((item) => item.id !== node.id).map((item) => item.key), businessKey(label, 'concept'));
         }
         if (spec.description !== undefined && spec.description !== node.description) { node.description = spec.description; edits.push('description'); }
         if (spec.category && spec.category !== node.category) { node.category = spec.category; edits.push('category'); }
@@ -413,13 +515,14 @@ export class SemanticModelAssistantService {
         edits.push(`removed field ${field.label}`);
       }
       for (const fieldSpec of spec.fields ?? []) {
-        const { field, added } = this.upsertField(node, fieldSpec);
+        const { field, added, changed } = this.upsertField(node, fieldSpec);
         if (added) edits.push(`added field ${field.label}`);
+        else if (changed.length) edits.push(`changed field ${field.label} (${changed.join(', ')})`);
       }
       if (spec.keyFields) {
         identity[node.id] = spec.keyFields.map((reference) => {
-          const field = this.findField(node!, reference);
-          if (!field) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${node!.label} has no field "${reference}" to use as a key field`);
+          const field = this.findField(node, reference);
+          if (!field) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${node.label} has no field "${reference}" to use as a key field`);
           return field.key;
         });
       }
@@ -460,13 +563,14 @@ export class SemanticModelAssistantService {
     return { after: graph, identity, summary };
   }
 
-  private upsertField(node: SemanticNodeType, spec: AssistantFieldSpec): { field: AttributeDefinition; added: boolean } {
+  private upsertField(node: SemanticNodeType, spec: AssistantFieldSpec): { field: AttributeDefinition; added: boolean; changed: string[] } {
     const label = spec.label?.trim();
     if (!label) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Each field of ${node.label} needs a name`);
     if (spec.type && !attributeTypes.includes(spec.type)) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Field type must be one of ${attributeTypes.join(', ')}`);
     }
     const existing = this.findField(node, spec.key ?? label);
+    const was: AttributeDefinition | null = existing ? structuredClone(existing) : null;
     const field: AttributeDefinition = existing ?? {
       key: this.uniqueKey(node.attributes.map((item) => item.key), businessKey(spec.key ?? label, 'field')), label, type: spec.type ?? 'text', required: false,
     };
@@ -478,7 +582,10 @@ export class SemanticModelAssistantService {
     if (field.type === 'enum') field.options = spec.options ?? field.options ?? [];
     else delete field.options;
     if (!existing) node.attributes = [...node.attributes, field];
-    return { field, added: !existing };
+    // What an edit of an existing field changed, so the summary does not read "no change".
+    const changed = was ? (['label', 'type', 'required', 'description', 'aliases', 'options'] as const)
+      .filter((name) => JSON.stringify(was[name] ?? null) !== JSON.stringify(field[name] ?? null)) : [];
+    return { field, added: !existing, changed };
   }
 
   private findConcept(graph: SemanticGraph, reference: string): SemanticNodeType | undefined {
@@ -526,7 +633,7 @@ export class SemanticModelAssistantService {
     return Object.fromEntries(rules.map((rule) => [rule.conceptId, rule.fields]));
   }
 
-  private async saveIdentity(userId: string, modelId: string, rules: Array<[string, string[]]>) {
+  private async saveIdentity(userId: string, modelId: string, rules: [string, string[]][]) {
     for (const [conceptId, fields] of rules) {
       const model = await this.models.get(userId, modelId);
       await this.crossSource.saveIdentityRule(userId, modelId, conceptId, { expectedRevision: model.revision, fields });
@@ -538,10 +645,10 @@ export class SemanticModelAssistantService {
   async listWorkspaces(userId: string, search?: string) {
     const [own, shared] = await Promise.all([
       this.workspaces.findAllByUser(userId, { page: 1, limit: 50, search }),
-      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 50 } as never).catch(() => ({ workspaces: [] })),
+      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 50 }).catch(() => ({ workspaces: [] })),
     ]);
     const term = search?.trim().toLowerCase();
-    const sharedItems = (shared.workspaces as Array<{ id: string; name: string }>).filter((workspace) => !term || workspace.name.toLowerCase().includes(term));
+    const sharedItems = (shared.workspaces as { id: string; name: string }[]).filter((workspace) => !term || workspace.name.toLowerCase().includes(term));
     return {
       workspaces: [
         ...own.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, shared: false })),
@@ -574,10 +681,10 @@ export class SemanticModelAssistantService {
     if (term.length < 2) return { files: [], page: 1, totalPages: 1 };
     const [own, shared] = await Promise.all([
       this.workspaces.findAllByUser(userId, { page: 1, limit: 100 }),
-      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 } as never).catch(() => ({ workspaces: [] })),
+      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 }).catch(() => ({ workspaces: [] })),
     ]);
     const names = new Map<string, string>();
-    for (const workspace of [...own.workspaces, ...(shared.workspaces as Array<{ id: string; name: string }>)]) names.set(workspace.id, workspace.name);
+    for (const workspace of [...own.workspaces, ...(shared.workspaces as { id: string; name: string }[])]) names.set(workspace.id, workspace.name);
     if (!names.size) return { files: [], page: 1, totalPages: 1 };
     const result = await this.documents.findByMultipleWorkspaces([...names.keys()], { page, limit: 50, search: term, sortBy: 'originalName', sortOrder: 'asc' } as never);
     const files = result.documents.filter((document) => !document.isFolder);
@@ -634,7 +741,7 @@ export class SemanticModelAssistantService {
   }
 
   private compactProfile(profile: Record<string, unknown>) {
-    const fields = Array.isArray(profile.fields) ? profile.fields as Array<Record<string, unknown>> : [];
+    const fields = Array.isArray(profile.fields) ? profile.fields as Record<string, unknown>[] : [];
     return {
       sheets: profile.sheets,
       sheet: profile.sheet,
@@ -651,7 +758,7 @@ export class SemanticModelAssistantService {
 
   /** Feed a concept from a spreadsheet sheet: each concept field takes one column. */
   async mapSpreadsheet(actor: AssistantActor, modelId: string, input: { concept: string; workspaceId: string; documentId: string; sheetName?: string; columns: Record<string, string>; keyFields?: string[] }) {
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const node = this.requireMappableConcept(graph, input.concept);
     await this.ensureWorkspaceLinked(actor.userId, modelId, input.workspaceId);
     const document = await this.documents.findById(input.workspaceId, input.documentId);
@@ -683,7 +790,7 @@ export class SemanticModelAssistantService {
     concept: string; workspaceId: string; documentIds?: string[]; folderIds?: string[]; wholeWorkspace?: boolean;
     fields?: Record<string, DocumentFieldMethod>; keyFields?: string[];
   }) {
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const node = this.requireMappableConcept(graph, input.concept);
     await this.ensureWorkspaceLinked(actor.userId, modelId, input.workspaceId);
     const documentIds = [...new Set(input.documentIds ?? [])];
@@ -716,7 +823,7 @@ export class SemanticModelAssistantService {
     const result = await this.sourceMappings.createWorkspace(actor.userId, modelId, {
       expectedRevision: model.revision, conceptId: node.id, workspaceId: input.workspaceId,
       ...(input.wholeWorkspace ? {} : { folderIds, documentIds }), fieldMappings, identityFields,
-    } as never);
+    });
     const saved = await this.recordSourceAdded(actor, modelId, node,
       (mapping) => mapping.scope === 'workspace' && mapping.workspaceId === input.workspaceId && this.sameSelection(mapping, input.wholeWorkspace ? null : { folderIds, documentIds }),
       `documents feed ${node.label}`);
@@ -747,13 +854,13 @@ export class SemanticModelAssistantService {
     if (items.length > MAX_SUGGESTED_CONCEPTS) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Suggest sources for at most ${MAX_SUGGESTED_CONCEPTS} concepts at a time`);
     }
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const files = new Map<string, Promise<Awaited<ReturnType<WorkspaceDocumentService['listAllInWorkspace']>>>>();
     const workspaceFiles = (workspaceId: string) => {
       if (!files.has(workspaceId)) files.set(workspaceId, this.documents.listAllInWorkspace(workspaceId));
       return files.get(workspaceId)!;
     };
-    const planned: Array<{ node: SemanticNodeType; options: SourceSuggestionOption[]; note: string }> = [];
+    const planned: { node: SemanticNodeType; options: SourceSuggestionOption[]; note: string }[] = [];
     for (const item of items) {
       const node = this.findConcept(graph, item.concept);
       if (!node || node.systemKey) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `There is no concept "${item.concept}" in this model`);
@@ -791,7 +898,7 @@ export class SemanticModelAssistantService {
       this.database.query<SuggestionRow>(
         `SELECT id, concept_id AS "conceptId", concept_key AS "conceptKey", options, note, status, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM semantic_model.assistant_source_suggestions WHERE model_id=$1 ORDER BY created_at, concept_key`, [model.id]),
-      this.graph.getGraph(userId, modelId) as Promise<SemanticGraph>,
+      this.graph.getGraph(userId, modelId),
       this.listSources(userId, modelId).catch(() => [] as SourceSnapshot[]),
     ]);
     const suggestions = rows.rows.flatMap((row) => {
@@ -828,8 +935,10 @@ export class SemanticModelAssistantService {
     if (unknown.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Some picked files or folders are not in ${workspace.name}`);
     const nameOf = (id: string) => { const item = byId.get(id)!; return item.isFolder ? item.folderName || item.originalName : item.originalName; };
     const reason = option.reason?.trim().slice(0, 300) ?? '';
-    const base = { workspaceId: option.workspaceId, workspaceName: workspace.name, folderIds, documentIds, reason,
-      folders: folderIds.slice(0, 10).map(nameOf), documents: documentIds.slice(0, 10).map(nameOf) };
+    const base = {
+      workspaceId: option.workspaceId, workspaceName: workspace.name, folderIds, documentIds, reason,
+      folders: folderIds.slice(0, 10).map(nameOf), documents: documentIds.slice(0, 10).map(nameOf)
+    };
     if (!folderIds.length && documentIds.length === 1) {
       const document = byId.get(documentIds[0])!;
       if (STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
@@ -885,7 +994,7 @@ export class SemanticModelAssistantService {
   }
 
   private async ensureWorkspaceLinked(userId: string, modelId: string, workspaceId: string) {
-    const links = await this.modelWorkspaces.list(userId, modelId) as Array<{ workspaceId: string; enabled: boolean; role: string }>;
+    const links = await this.modelWorkspaces.list(userId, modelId) as { workspaceId: string; enabled: boolean; role: string }[];
     if (links.some((link) => link.workspaceId === workspaceId && link.enabled) && links.some((link) => link.role === 'origin' && link.enabled)) return;
     await this.requireWorkspaceAccess(userId, workspaceId);
     const model = await this.models.get(userId, modelId);
@@ -940,18 +1049,8 @@ export class SemanticModelAssistantService {
       jobId: target, state: job.state, stopped: job.state === 'cancelled' || stopping,
       message: job.state === 'cancelled' ? 'The data update was stopped; the data in use did not change'
         : stopping ? 'The data update is stopping; the data in use will not change'
-        : RUN_ENDED.has(job.state) ? 'This data update had already ended' : 'The data update could not be stopped',
+          : RUN_ENDED.has(job.state) ? 'This data update had already ended' : 'The data update could not be stopped',
     };
-  }
-
-  async searchRecords(userId: string, modelId: string, concept: string, query?: string, limit = 20) {
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
-    const node = this.findConcept(graph, concept);
-    if (!node) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, `There is no concept "${concept}" in this model`);
-    const page = await this.population.conceptRecords(userId, modelId, node.id, { q: query, limit: Math.min(Math.max(limit, 1), 50), offset: 0 }) as {
-      total: number; records: Array<{ label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }>;
-    };
-    return { concept: node.label, total: page.total, records: page.records.map((record) => ({ name: record.label, ...record.identity, ...record.values })) };
   }
 
   /**
@@ -963,7 +1062,7 @@ export class SemanticModelAssistantService {
     const data = input.data ?? 'published';
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.search(userId, modelId, {
-      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit ?? 10,
+      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit,
     });
     const notes: string[] = [];
     if (result.status === 'index_not_ready') {
@@ -975,14 +1074,33 @@ export class SemanticModelAssistantService {
     if (result.status === 'no_match') notes.push('No record of the model matches this search.');
     if (result.modeUsed === 'lexical_only') notes.push('Search by meaning was unavailable: only keys, names and words were matched, so a record worded differently may be missing.');
     if (result.modeUsed === 'exact_only') notes.push('Only exact keys and names were matched.');
+    if (result.seeds.some((seed) => seed.passages?.length)) {
+      notes.push('passages quote the parts of long fields (an e-mail body, a contract text) that match the search: quote them as evidence. They are excerpts: to read a whole field, use query_records on that record with fields=[the field].');
+    }
+    if (result.coverage.passageTruncatedCount) {
+      notes.push(`${String(result.coverage.passageTruncatedCount)} records have fields too long to be searched to their end: words near the end of those fields may not be found.`);
+    }
+    const completeness = findCompleteness(result);
+    if (completeness.hasMore) notes.push(`More records match than the ${String(completeness.returned)} returned: the list is not complete. Raise limit, narrow the search, or use query_records for every record of a concept.`);
+    if (completeness.reasons.includes('index_partial')) {
+      notes.push(`Only ${String(result.coverage.indexedCount + result.coverage.exactOnlyCount)} of ${String(result.coverage.expectedCount)} records are in the search index: matching records may be missing.`);
+    }
+    if (completeness.hiddenRecords) notes.push(`${String(completeness.hiddenRecords)} records come from sources the user cannot open: they were not searched or shown.`);
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
-      records: result.seeds.map((seed) => ({
-        entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields, snippet: seed.snippet,
-        match: seed.matchClass, sourceCount: seed.provenance.length,
-      })),
-      coverage: result.coverage, notes,
+      records: result.seeds.map((seed) => {
+        const passages = (seed.passages ?? []).map((passage) => ({ field: passage.field, fieldKey: passage.fieldKey, text: passage.text }));
+        // Found by words deep in a long field: the passage says why, the start of the record does not.
+        const fromPassage = seed.matchedIn === 'passage' && passages.length > 0;
+        return {
+          entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
+          snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
+          match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
+          ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
+        };
+      }),
+      coverage: result.coverage, completeness, notes,
     };
   }
 
@@ -993,7 +1111,7 @@ export class SemanticModelAssistantService {
    */
   async relatedRecords(userId: string, modelId: string, input: {
     recordIds: string[]; relations?: string[]; direction?: RuntimeGraphExpandStep['direction']; thenRelations?: string[];
-    concepts?: string[]; data?: AssistantDataChoice; maxRecords?: number;
+    concepts?: string[]; data?: AssistantDataChoice; maxRecords?: number; fields?: string[];
   }) {
     const data = input.data ?? 'published';
     const direction = input.direction ?? 'both';
@@ -1007,9 +1125,22 @@ export class SemanticModelAssistantService {
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.expand(userId, modelId, {
       environment: assistantEnvironment(data), seedEntityIds: input.recordIds, steps, maxNodes: input.maxRecords ?? 50,
+      ...(input.fields?.length ? { fields: input.fields } : {}),
     });
+    const completeness = relatedCompleteness(result, !twoSteps);
+    const linkCounts = (result.linkCounts ?? []).map((count) => ({
+      relation: count.relationKey, direction: count.direction, concept: count.conceptLabel, count: count.count,
+      ...(count.hidden ? { hidden: count.hidden } : {}),
+    }));
     const notes: string[] = [];
-    if (result.truncated) notes.push(`The result stopped at ${String(result.nodes.length)} records: more linked records exist. Say that the list is incomplete.`);
+    if (completeness.hasMore) {
+      notes.push(completeness.total !== null
+        ? `${String(completeness.returned)} of the ${String(completeness.total)} linked records are returned (linkCounts gives the exact count per relationship). To read them all, call query_records on the linked concept with linked_to=[{"relation": ..., "record_ids": [...]}] and page with nextOffset; otherwise say the list is incomplete.`
+        : `The result stopped at ${String(result.nodes.length)} records: more linked records exist. Say that the list is incomplete.`);
+    }
+    if (linkCounts.some((count) => count.hidden)) notes.push('Some linked records come from sources the user cannot open: they are counted in linkCounts as hidden and not shown.');
+    if (result.unknownFields?.length) notes.push(`No linked record has the fields ${result.unknownFields.map((name) => `"${name}"`).join(', ')}: use the field names from describe_model.`);
+    if (result.nodes.some((node) => node.truncatedFields?.length)) notes.push('Some long values were cut at 1500 characters (truncatedFields): say so if they matter.');
     if (result.hiddenSeeds) notes.push(`${String(result.hiddenSeeds)} of the records asked for come from sources the user cannot open, so they and their links are not shown.`);
     if (result.status === 'no_match') notes.push('These records have no links of the kind asked for.');
     if (result.status === 'partial') notes.push('Only part of the links could be followed. Say that the result may be incomplete.');
@@ -1017,17 +1148,97 @@ export class SemanticModelAssistantService {
       model: this.modelRef(model), data, status: result.status, truncated: result.truncated,
       records: result.nodes.map((node) => ({
         entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields,
+        ...(node.values ? { values: node.values } : {}), ...(node.truncatedFields?.length ? { truncatedFields: node.truncatedFields } : {}),
         includedBecause: node.inclusionReason === 'seed' ? 'asked_for' : 'linked',
         path: node.path.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
       })),
       links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
-      notes,
+      linkCounts, completeness, notes,
+    };
+  }
+
+  /**
+   * The data's shape for an assistant about to query it (describe_model): concepts with their fields and
+   * types, key fields, relationships, and how many records the person can see in each concept, from the
+   * version whose data is bound (published unless data=draft).
+   */
+  async describeData(userId: string, modelId: string, data: AssistantDataChoice = 'published') {
+    const model = await this.models.get(userId, modelId);
+    const { overview, graph, versionId } = await this.graphSearch.dataOverview(userId, modelId, assistantEnvironment(data));
+    const inData = new Map(overview.concepts.map((concept) => [concept.key, concept]));
+    const nodes = (graph?.nodes ?? []).filter((node) => !node.systemKey);
+    const byId = new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
+    const notes: string[] = [];
+    const concepts: (Record<string, unknown> & { fields: Record<string, unknown>[] })[] = nodes.map((node) => {
+      const stored = inData.get(node.key);
+      if (!stored) notes.push(`"${node.label}" has no data yet (added after the last data update): it cannot be queried.`);
+      else if (stored.hiddenRecords) notes.push(`${String(stored.hiddenRecords)} records of "${node.label}" come from sources the user cannot open: they are not counted or shown.`);
+      const queryable = new Set(stored?.fields ?? []);
+      return {
+        key: node.key, label: node.label, ...(node.description ? { description: node.description } : {}),
+        ...(node.aliases.length ? { aliases: node.aliases } : {}),
+        recordCount: stored?.recordCount ?? 0, keyFields: stored?.keyFields ?? [],
+        fields: node.attributes.map((field) => ({
+          ...describeField(field), ...(stored && !queryable.has(field.key) ? { inData: false } : {}),
+        })),
+      };
+    });
+    for (const stored of overview.concepts) {
+      if (!nodes.some((node) => node.key === stored.key)) {
+        concepts.push({
+          key: stored.key, label: stored.label, recordCount: stored.recordCount, keyFields: stored.keyFields,
+          fields: stored.fields.map((key) => ({ key, label: key, type: 'text' }))
+        });
+      }
+    }
+    if (concepts.some((concept) => concept.fields.some((field) => field.inData === false))) {
+      notes.push('Fields marked inData: false were added after the last data update: they hold no value yet and cannot be queried.');
+    }
+    if (versionId && overview.modelVersionId !== versionId) {
+      notes.push('The data was built from another version of the model: some definitions may differ from the data.');
+    }
+    const relations = (graph?.relations ?? []).map((relation) => ({
+      key: relation.key, label: relation.label, ...(relation.inverseLabel ? { inverseLabel: relation.inverseLabel } : {}),
+      from: byId.get(relation.sourceNodeTypeId)?.key ?? relation.sourceNodeTypeId,
+      to: byId.get(relation.targetNodeTypeId)?.key ?? relation.targetNodeTypeId,
+      cardinality: relation.cardinality, ...(relation.description ? { description: relation.description } : {}),
+    }));
+    return { model: this.modelRef(model), data, dataRevisionId: overview.dataRevisionId, concepts, relations, howToQuery: HOW_TO_QUERY, notes };
+  }
+
+  /**
+   * Records of one concept filtered, counted, grouped or listed (query_records). The assistant plans the
+   * query; the result echoes how it was read (field keys, absolute date ranges) and notes say plainly what
+   * was left out (unreadable values, hidden records, more groups or pages), so nothing is presented as
+   * complete when it is not.
+   */
+  async queryRecords(userId: string, modelId: string, input: Omit<RecordsQuery, 'environment'> & { data?: AssistantDataChoice }) {
+    const { data = 'published', ...query } = input;
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.queryRecords(userId, modelId, { ...query, environment: assistantEnvironment(data) });
+    const base = { model: this.modelRef(model), data, status: result.status, appliedQuery: result.appliedQuery };
+    if (result.status !== 'ok') {
+      const unknownConcept = result.status === 'not_represented';
+      return {
+        ...base, errors: result.errors ?? [],
+        notes: [unknownConcept
+          ? `The model has no concept "${input.concept}": this information is not in the model. Its concepts: ${(result.errors?.[0]?.available ?? []).join(', ')}.`
+          : 'The query is not valid: fix the parts listed in errors, using the concept and field names from describe_model, and call again.'],
+      };
+    }
+    const notes = queryNotes(result);
+    if (result.definitionsVersionId && result.modelVersionId !== result.definitionsVersionId) {
+      notes.push('The data was built from another version of the model: field names or types may differ from the data.');
+    }
+    return {
+      ...base, concept: result.concept?.label, ...queryResultBody(result),
+      ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}), completeness: queryCompleteness(result), notes,
     };
   }
 
   async publish(userId: string, modelId: string) {
     const model = await this.models.get(userId, modelId);
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const result = await this.versions.publish(userId, modelId, model.revision, graph.revision) as Record<string, unknown>;
     return { published: true, ...result, model: this.modelRef(model), uiTarget: this.uiTarget(model) };
   }
@@ -1114,15 +1325,15 @@ export class SemanticModelAssistantService {
       await this.sourceMappings.delete(userId, modelId, current.id, model.revision);
     }
     if (operations.length) {
-      const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+      const graph = await this.graph.getGraph(userId, modelId);
       try {
-        await this.graph.apply(userId, modelId, { expectedRevision: graph.revision, operations: operations as unknown as Record<string, unknown>[] });
+        await this.graph.apply(userId, modelId, { expectedRevision: graph.revision, operations: operations });
       } catch (error) {
         throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
           `The model changed since, so this cannot be reversed automatically: ${(error as Error).message}`);
       }
     }
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     await this.saveIdentity(userId, modelId, Object.entries(identity).filter(([conceptId]) => graph.nodes.some((node) => node.id === conceptId)));
     const restored: SourceSnapshot[] = [];
     for (const source of sourcesToRestore) {

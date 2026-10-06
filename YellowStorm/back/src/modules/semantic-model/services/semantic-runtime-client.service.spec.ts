@@ -96,6 +96,22 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('says why the runtime refused a run, and that it cannot be reached when it is down', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: [
+      { loc: ['body', 'payload', 'sources'], msg: 'Value error, a run reads at least one source' },
+    ] }), { status: 422 }));
+    await expect(client.requestPopulationRun(runCommand as any, 'k')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+      message: 'The semantic runtime refused the request (payload › sources: a run reads at least one source).',
+    });
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(client.requestPopulationRun(runCommand as any, 'k')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+      message: expect.stringMatching(/cannot be reached right now/),
+    });
+  });
+
   describe('graph search', () => {
     const query = {
       actorUserId: 'u1', modelId: 'm1', environment: 'production' as const, query: 'acme', allowedWorkspaceIds: ['ws-1'],
@@ -159,5 +175,110 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       fetchMock.mockRejectedValueOnce(new Error('timeout'));
       await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
     });
+
+    it('queries and describes records as the actor, and says when a query is too slow', async () => {
+      const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      const body = {
+        actorUserId: 'u1', modelId: 'm1', environment: 'draft' as const, allowedWorkspaceIds: ['ws-1'], concept: 'Invoice',
+        filters: [{ field: 'amount', op: 'gt', value: 10 }], catalog: { concepts: [], relations: [] },
+      };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'ok', total: 0 }));
+      await expect(client.recordsQuery(body)).resolves.toMatchObject({ status: 'ok' });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/records-query');
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(body);
+      expect(fetchMock.mock.calls[0][1].headers).toEqual(expect.objectContaining({ 'X-Actor-User-Id': 'u1' }));
+      fetchMock.mockResolvedValueOnce(jsonResponse({ concepts: [], relations: [] }));
+      await client.recordsOverview({ actorUserId: 'u1', modelId: 'm1', environment: 'production', allowedWorkspaceIds: [] });
+      expect(fetchMock.mock.calls[1][0]).toBe('http://runtime:8000/v1/semantic-model-search/records-overview');
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'query_too_slow' }), { status: 422 }));
+      await expect(client.recordsQuery(body)).rejects.toMatchObject({
+        code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, message: expect.stringMatching(/took too long/),
+      });
+    });
+  });
+
+  it('previews a computed field and maps a runtime 422 to a validation error', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    const body = { computed: { input: { kind: 'file', name: 'document_name' }, method: 'split', delimiter: '_', part: 1 }, samples: ['A_B.pdf'] };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ results: [{ input: 'A_B.pdf', value: 'A', reason: 'found' }] }));
+    await expect(client.previewComputedField(body)).resolves.toEqual({ results: [{ input: 'A_B.pdf', value: 'A', reason: 'found' }] });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/computed-preview');
+    expect(JSON.parse(init.body)).toEqual(body);
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'invalid_computed: part must not be 0' }),
+      { status: 422, headers: { 'Content-Type': 'application/json' } }));
+    await expect(client.previewComputedField(body)).rejects.toMatchObject({ message: expect.stringContaining('invalid_computed') });
+  });
+});
+
+describe('SemanticRuntimeClientService deleteModel', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  it('sends a service-key DELETE for the model', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m 1', 'u1')).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m%201');
+    expect(init.method).toBe('DELETE');
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('turns a running job into a clear 409', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'model_jobs_running' }), { status: 409 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m1', 'u1')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('fails closed when the runtime cannot purge', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m1', 'u1')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('skips when no runtime is configured', async () => {
+    const client = new SemanticRuntimeClientService(config({ runtimeEnabled: false }) as any);
+    await expect(client.deleteModel('m1', 'u1')).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('SemanticRuntimeClientService cloneModelData', () => {
+  let fetchMock: jest.Mock;
+  const command = { targetModelId: 't1', targetModelVersionId: 'v1', idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  it('posts the id map to the clone-data route with the service key', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ copied: true, counts: { entities: 2, relationships: 1 } }), { status: 200 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.cloneModelData('s1', command, 'u1')).resolves.toMatchObject({ copied: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/s1/clone-data');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual(command);
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('turns a running source job into a 409 and other failures into a 503', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'model_jobs_running' }), { status: 409 }));
+    await expect(client.cloneModelData('s1', command, 'u1')).rejects.toMatchObject({ status: 409 });
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    await expect(client.cloneModelData('s1', command, 'u1')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('skips when no runtime is configured', async () => {
+    const client = new SemanticRuntimeClientService(config({ runtimeEnabled: false }) as any);
+    await expect(client.cloneModelData('s1', command, 'u1')).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

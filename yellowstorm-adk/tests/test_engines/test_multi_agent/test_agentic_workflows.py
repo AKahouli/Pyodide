@@ -188,6 +188,70 @@ class TestManualAgentsWorkflow:
 
 
 class TestSingleAgentWorkflow:
+    def bind_owned_request(self, request, service):
+        from src.root_runtime.background_sessions import BackgroundWriteGrant
+        from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+        service.grant = BackgroundWriteGrant('a' * 24, 'b' * 24, 'c' * 24, 0, 'owner', 1,
+            'background_' + 'a' * 24, 'd' * 64, native_owner='native-process')
+        request.user_id = service.grant.actor_id
+        request.session_id = service.grant.session_id
+        request.execution_scope = ExecutionScopeV1(role=ExecutionRole.LIBRARY_WORKER, execution_id='a' * 24,
+            parent_execution_id='e' * 24, depth=1, expected_fence='1', native_session_id=request.session_id)
+        request.session_service = service
+
+    @pytest.mark.asyncio
+    async def test_owned_workflow_checks_authority_before_preparing_any_agent(self):
+        from src.root_runtime.background_sessions import FencedBackgroundSessionService, BackgroundOwnershipError
+        request = _team_request('mono', agents=[_worker_agent()])
+        service = MagicMock(spec=FencedBackgroundSessionService)
+        service.validate_owner = AsyncMock(side_effect=BackgroundOwnershipError('lost owner'))
+        self.bind_owned_request(request, service)
+        assert 'session_service' not in request.model_dump()
+        team = _mock_team()
+        with pytest.raises(BackgroundOwnershipError, match='lost owner'):
+            await handle_single_agent_workflow(team, request, AsyncMock())
+        team.agent_helper._prepare_agent_data.assert_not_called()
+        team.run_single_agent.assert_not_awaited()
+        team._message_helper._send_error_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_owned_workflow_forwards_storage_and_propagates_failure_to_supervisor(self):
+        from src.root_runtime.background_sessions import FencedBackgroundSessionService
+        request = _team_request('mono', agents=[_worker_agent()])
+        service = MagicMock(spec=FencedBackgroundSessionService)
+        service.validate_owner = AsyncMock()
+        self.bind_owned_request(request, service)
+        team = _mock_team()
+        with patch('src.smart_rag.engines.multi_agent.agentic_workflows.single_agent.DocumentHelpers') as docs:
+            docs.agent_to_dict.return_value = {'agent_type': 'worker'}
+            docs.merge_user_request_brain_documents_into_agents.side_effect = lambda agents, _request: agents
+            team.run_single_agent.side_effect = RuntimeError('native failure')
+            with pytest.raises(RuntimeError, match='native failure'):
+                await handle_single_agent_workflow(team, request, AsyncMock())
+        assert team.run_single_agent.call_args.kwargs['session_service'] is service
+        service.validate_owner.assert_awaited_once()
+        team._message_helper._send_error_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('mismatch', ['actor', 'session', 'execution', 'fence'])
+    async def test_owned_request_binding_is_rejected_before_team_factory(self, mismatch):
+        from dataclasses import replace
+        from src.root_runtime.background_sessions import FencedBackgroundSessionService
+        from src.smart_rag.engines.multi_agent.workflow_processor import run_agent_team_logic
+        request = _team_request('mono', agents=[_worker_agent()])
+        service = MagicMock(spec=FencedBackgroundSessionService)
+        service.validate_owner = AsyncMock()
+        self.bind_owned_request(request, service)
+        if mismatch == 'actor': request.user_id = 'wrong-actor'
+        elif mismatch == 'session': request.session_id = 'wrong-session'
+        elif mismatch == 'execution': request.execution_scope = replace(request.execution_scope, execution_id='f' * 24)
+        else: request.execution_scope = replace(request.execution_scope, expected_fence='2')
+        with patch('src.smart_rag.engines.multi_agent.workflow_processor.initialize_dependencies') as factory:
+            with pytest.raises(ValueError, match='owned native authority'):
+                await run_agent_team_logic(request, AsyncMock())
+        factory.assert_not_called()
+        service.validate_owner.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_handle_single_agent_workflow_runs_agent(self):
         team = _mock_team()
@@ -212,6 +276,13 @@ class TestSingleAgentWorkflow:
             q=ANY,
             image_input=request.image_input,
             task_summary="Profitability",
+            delegation_tool=None,
+            temporary_worker_tool=None,
+            fanout_tool=None,
+            delegation_instruction="",
+            execution_scope=None,
+            abort_signal=None,
+            native_input_responses=None,
         )
         team._message_helper._send_error_message.assert_not_awaited()
 

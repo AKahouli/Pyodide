@@ -17,6 +17,62 @@ describe('ConversationArtifactService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('resolves governed citations only through the current pinned scope, without ordinary workspace expansion', async () => {
+    const runtime = { resolveRuntime: jest.fn().mockResolvedValue({ workspaceIds: ['approved'] }) };
+    const governed = new ConversationArtifactService(messageService as never, documentService as never,
+      conversationService as never, workspaceDocumentService as never, undefined, runtime as never);
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'conversation',
+      components: [{ type: 'citation', data: { source: 'guide.pdf', reference: '1', workspaceId: 'approved' } }] });
+    const conversation = { runtimeMode: 'governed', createdBy: 'viewer', governanceContext: { revisionId: 'pinned' },
+      workspaces: ['unapproved'], systemWorkspaceId: 'unapproved-system' };
+    conversationService.getConversationDocument.mockResolvedValue(conversation);
+    workspaceDocumentService.findByMultipleWorkspaces.mockResolvedValue({ documents: [{
+      originalName: 'guide.pdf', filename: 'guide.pdf', path: 'approved/guide.pdf', mimeType: 'application/pdf', isFolder: false }],
+      pagination: { total: 1 } });
+    documentService.generateSasUrl.mockResolvedValue('https://storage.test/current');
+    expect(await governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf', reference: '1' }, 'viewer'))
+      .toMatchObject({ fileName: 'guide.pdf' });
+    expect(workspaceDocumentService.findByMultipleWorkspaces).toHaveBeenCalledWith(['approved'], expect.anything());
+    expect(runtime.resolveRuntime).toHaveBeenCalledTimes(2);
+    expect(conversationService.filterAccessibleWorkspaceIds).not.toHaveBeenCalled();
+    runtime.resolveRuntime.mockRejectedValueOnce(new Error('Scope revoked'));
+    await expect(governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf' }, 'viewer')).rejects.toThrow('revoked');
+    runtime.resolveRuntime.mockResolvedValueOnce({ workspaceIds: ['approved'] }).mockRejectedValueOnce(new Error('Late revocation'));
+    await expect(governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf' }, 'viewer')).rejects.toThrow('Late revocation');
+  });
+
+  it('resolves a published delegate artifact through its original producer and current viewer', async () => {
+    const rootEvidence = { resolve: jest.fn().mockResolvedValue({ kind: 'artifact', url: 'https://storage.test/current', fileName: 'result.txt' }) };
+    const owned = new ConversationArtifactService(messageService as never, documentService as never,
+      conversationService as never, workspaceDocumentService as never, rootEvidence as never);
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'conversation', components: [{ type: 'artifact',
+      data: { artifactId: 'original-artifact', evidenceId: 'stable-evidence', executionId: 'producer' } }] });
+    expect(await owned.resolveDownloadUrl('conversation', 'followup-message', 'original-artifact', 'viewer'))
+      .toEqual({ viewUrl: 'https://storage.test/current', downloadUrl: 'https://storage.test/current' });
+    expect(rootEvidence.resolve).toHaveBeenCalledWith('conversation', 'producer', 'stable-evidence', 'viewer');
+    await expect(owned.resolveDownloadUrl('conversation', 'followup-message', 'original-artifact')).rejects.toThrow('not found');
+    rootEvidence.resolve.mockRejectedValueOnce(new Error('current producer grant revoked'));
+    await expect(owned.resolveDownloadUrl('conversation', 'followup-message', 'original-artifact', 'viewer')).rejects.toThrow('revoked');
+    expect(documentService.generateSasUrl).not.toHaveBeenCalled();
+  });
+
+  it('uses publication aliases to distinguish sibling-local citations without broadening conversation sources', async () => {
+    const rootEvidence = { resolve: jest.fn().mockResolvedValue({ kind: 'citation', url: 'https://storage.test/current',
+      fileName: 'private.pdf', mimeType: 'application/pdf' }) };
+    const owned = new ConversationArtifactService(messageService as never, documentService as never,
+      conversationService as never, workspaceDocumentService as never, rootEvidence as never);
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'conversation', components: [
+      { type: 'citation', data: { source: 'private.pdf', fileName: 'private.pdf', reference: '1', evidenceId: 'first', executionId: 'producer-one' } },
+      { type: 'citation', data: { source: 'private.pdf', fileName: 'private.pdf', reference: '2', evidenceId: 'second', executionId: 'producer-two' } },
+    ] });
+    expect(await owned.resolveCitationUrl('conversation', 'followup-message', { source: 'private.pdf', reference: '2' }, 'viewer'))
+      .toMatchObject({ mimeType: 'application/pdf', fileName: 'private.pdf' });
+    expect(rootEvidence.resolve).toHaveBeenCalledWith('conversation', 'producer-two', 'second', 'viewer');
+    await expect(owned.resolveCitationUrl('conversation', 'followup-message', { source: 'private.pdf' }, 'viewer')).rejects.toThrow('not found');
+    expect(workspaceDocumentService.findByMultipleWorkspaces).not.toHaveBeenCalled();
+    expect(conversationService.filterAccessibleWorkspaceIds).not.toHaveBeenCalled();
+  });
+
   it('projects recent ready artifacts without storage paths', async () => {
     messageService.listRecentArtifactMessages.mockResolvedValue([{
       id: 'message-1', conversationId: 'conversation-1', conversationTitle: 'Quarterly review', updatedAt: new Date('2026-09-13T10:00:00Z'),

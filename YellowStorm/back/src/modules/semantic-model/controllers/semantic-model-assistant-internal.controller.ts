@@ -4,24 +4,25 @@ import { Public } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
+  AssistantCloneModelDto,
   AssistantCreateModelDto,
   AssistantListQueryDto,
   AssistantMapDocumentsDto,
   AssistantMapSpreadsheetDto,
   AssistantModelChangesDto,
   AssistantProfileDto,
-  AssistantRecordsQueryDto,
   AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
-import { AssistantFindRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
+import { AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
-type ActorRequest = { headers: Record<string, string | string[] | undefined> };
+interface ActorRequest { headers: Record<string, string | string[] | undefined> }
 
 const READ = [Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL];
 const CREATE = [Permissions.SEMANTIC_MODELS_CREATE, Permissions.SEMANTIC_MODELS_ALL];
 const UPDATE = [Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL];
+const DELETE = [Permissions.SEMANTIC_MODELS_DELETE, Permissions.SEMANTIC_MODELS_ALL];
 const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODELS_ALL];
 
 /**
@@ -47,6 +48,20 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(CREATE, 'any')
   createModel(@Req() request: ActorRequest, @Body() dto: AssistantCreateModelDto) {
     return this.assistant.createModel(assistantActorFrom(request.headers), dto.name, dto.description);
+  }
+
+  /** Copy a model: structure always, sources/data/shares as asked. */
+  @Post('models/:modelId/clone')
+  @RequirePermissions(CREATE, 'any')
+  cloneModel(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantCloneModelDto) {
+    return this.assistant.cloneModel(assistantActorFrom(request.headers), modelId, dto);
+  }
+
+  /** Delete a model and all its data for good; the exact model name must be repeated. */
+  @Delete('models/:modelId')
+  @RequirePermissions(DELETE, 'any')
+  deleteModel(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Query('confirmName') confirmName: string) {
+    return this.assistant.deleteModel(assistantActorFrom(request.headers).userId, modelId, confirmName);
   }
 
   @Get('models/:modelId')
@@ -172,12 +187,6 @@ export class SemanticModelAssistantInternalController {
     return this.assistant.stopRun(assistantActorFrom(request.headers).userId, modelId, jobId);
   }
 
-  @Get('models/:modelId/concepts/:concept/records')
-  @RequirePermissions(READ, 'any')
-  searchRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('concept') concept: string, @Query() query: AssistantRecordsQueryDto) {
-    return this.assistant.searchRecords(assistantActorFrom(request.headers).userId, modelId, concept, query.q, query.limit);
-  }
-
   @Post('models/:modelId/graph-search')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Find records of the model by key, words and meaning (published data unless data=draft)' })
@@ -192,6 +201,21 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(READ, 'any')
   relatedRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantRelatedRecordsDto) {
     return this.assistant.relatedRecords(assistantActorFrom(request.headers).userId, modelId, dto);
+  }
+
+  @Get('models/:modelId/data-description')
+  @ApiOperation({ summary: 'Concepts, fields with types, relationships and record counts of the published (or draft) data' })
+  @RequirePermissions(READ, 'any')
+  describeData(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Query() query: AssistantDescribeDataQueryDto) {
+    return this.assistant.describeData(assistantActorFrom(request.headers).userId, modelId, query.data ?? 'published');
+  }
+
+  @Post('models/:modelId/records-query')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Filter, count, group and list the records of one concept (published data unless data=draft)' })
+  @RequirePermissions(READ, 'any')
+  queryRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantQueryRecordsDto) {
+    return this.assistant.queryRecords(assistantActorFrom(request.headers).userId, modelId, dto);
   }
 
   @Post('models/:modelId/publish')

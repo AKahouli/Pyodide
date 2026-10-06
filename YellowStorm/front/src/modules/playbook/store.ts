@@ -5749,8 +5749,6 @@ export const useIsExecuting = (playbookId?: string) =>
     playbookId ? s.executingPlaybookIds.includes(playbookId) : s.executingPlaybookIds.length > 0,
   );
 
-export const useExecutingPlaybookIds = () =>
-  usePlaybookStore(useShallow((s) => s.executingPlaybookIds));
 
 export const useIsDirty = () => usePlaybookStore((s) => s.isDirty);
 
@@ -5762,7 +5760,6 @@ export const useIsSaving = () => usePlaybookStore((s) => s.isSaving);
 
 export { useSelectedStep } from './uiStore';
 
-export const usePlaybookError = () => usePlaybookStore((s) => s.error);
 
 export const useDesignMessages = () =>
   usePlaybookStore(useShallow((s) => s.designMessages.length > 0 ? s.designMessages : EMPTY_DESIGN_MESSAGES));
