@@ -159,6 +159,8 @@ export class PyodideRuntimeDispatcher {
         code: request.code,
         input: request.input ?? null,
         timeoutMs: request.timeoutMs,
+        ...(request.inputFiles?.length ? { inputFiles: request.inputFiles } : {}),
+        ...(request.outputs?.length ? { outputFiles: request.outputs } : {}),
       });
     });
   }
@@ -224,6 +226,8 @@ export class PyodideRuntimeDispatcher {
       stdout: typeof result.stdout === 'string' ? result.stdout : '',
       stderr: typeof result.stderr === 'string' ? result.stderr : '',
       logsTruncated: result.logsTruncated,
+      outputFiles: Array.isArray(result.outputFiles) ? result.outputFiles : undefined,
+      artifacts: Array.isArray(result.artifacts) ? result.artifacts : undefined,
       execution: result.execution,
       error: result.error,
     };

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from auth import PlatformActorContext, actor_context
+from auth import PlatformActorContext, actor_context, workspace_id
 from clients.yellowstorm_pyodide_client import PyodideBackendError, YellowStormPyodideClient
 
 
@@ -32,6 +32,27 @@ async def test_forwards_internal_and_acting_user_headers_and_returns_result():
     assert seen["agent"] == "agent-1"
     assert seen["correlation"] == "correlation-1"
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_forwards_the_trusted_workspace_header():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["workspace"] = request.headers.get("X-YellowStorm-Workspace-Id")
+        return httpx.Response(200, json={"ok": True})
+
+    token = actor_context.set(PlatformActorContext("user-1", "", "", ""))
+    workspace_token = workspace_id.set("65f0000000000000000000aa")
+    try:
+        client = YellowStormPyodideClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        await client.execute({"code": "1", "input": None, "timeoutMs": 1000})
+        await client.close()
+    finally:
+        workspace_id.reset(workspace_token)
+        actor_context.reset(token)
+
+    assert seen["workspace"] == "65f0000000000000000000aa"
 
 
 @pytest.mark.asyncio

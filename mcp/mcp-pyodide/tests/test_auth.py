@@ -1,6 +1,6 @@
 import pytest
 
-from auth import TrustedIdentityMiddleware, acting_user_id, actor_context, require_acting_user_id
+from auth import TrustedIdentityMiddleware, acting_user_id, actor_context, require_acting_user_id, workspace_id
 
 
 async def app(_scope, _receive, send):
@@ -146,3 +146,51 @@ def test_tool_authorization_requires_acting_user():
 async def test_allows_health_routes_without_trusted_identity():
     messages = await invoke([], "/health/live")
     assert messages[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_extracts_the_first_workspace_object_id_from_a_json_array():
+    seen = []
+
+    async def context_app(_scope, _receive, send):
+        seen.append(workspace_id.get())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+    async def send(message):
+        messages.append(message)
+
+    middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-user-id", b"user-1"),
+        (b"workspace_id", b'["65f0000000000000000000aa","65f0000000000000000000bb"]'),
+    ]}, lambda: None, send)
+
+    assert messages[0]["status"] == 200
+    assert seen[0] == "65f0000000000000000000aa"
+
+
+@pytest.mark.asyncio
+async def test_ignores_a_malformed_workspace_header():
+    seen = []
+
+    async def context_app(_scope, _receive, send):
+        seen.append(workspace_id.get())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+    async def send(message):
+        messages.append(message)
+
+    middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-user-id", b"user-1"),
+        (b"workspace_id", b"../../etc/passwd"),
+    ]}, lambda: None, send)
+
+    assert messages[0]["status"] == 200
+    assert seen[0] is None

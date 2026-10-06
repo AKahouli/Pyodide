@@ -39,10 +39,43 @@ export interface PyodideRuntimeConnection {
   activeExecutionId?: string;
 }
 
+/** A logical file reference from the model: a document id or an exact name, never a storage path. */
+export interface PyodideInputFileRef {
+  as: string;
+  documentId?: string;
+  name?: string;
+}
+
+/** A bounded input file handed to the browser and mounted under /workspace/input. */
+export interface PyodideResolvedInputFile {
+  name: string;
+  mimeType: string;
+  contentBase64: string;
+}
+
+/** A file captured from /workspace/output in the browser. */
+export interface PyodideOutputFile {
+  name: string;
+  mimeType?: string;
+  contentBase64: string;
+}
+
+/** A persisted workspace artifact reference (no content travels through MCP). */
+export interface PyodideArtifactReference {
+  name: string;
+  sizeBytes: number;
+  contentType?: string;
+  documentId?: string;
+}
+
 export interface ExecutePyodideRequest {
   code: string;
   input?: unknown;
   timeoutMs: number;
+  inputs?: PyodideInputFileRef[];
+  outputs?: string[];
+  /** Resolved, bounded input files injected by the relay controller before dispatch. */
+  inputFiles?: PyodideResolvedInputFile[];
 }
 
 export interface PyodideExecutionInfo {
@@ -60,6 +93,10 @@ export interface PyodideExecutionResult {
   stdout: string;
   stderr: string;
   logsTruncated?: boolean;
+  /** Persisted artifact references (content never travels through MCP). */
+  artifacts?: PyodideArtifactReference[];
+  /** Raw files captured from the browser, persisted by the relay before returning. */
+  outputFiles?: PyodideOutputFile[];
   execution: PyodideExecutionInfo;
   error?: { code: string; message: string };
 }

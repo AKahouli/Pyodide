@@ -385,6 +385,8 @@ export const configValidationSchema = Joi.object({
   PYODIDE_RUNTIME_EXECUTION_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(90000),
   PYODIDE_RUNTIME_HEARTBEAT_TIMEOUT_MS: Joi.number().min(5000).max(300000).default(30000),
   PYODIDE_RUNTIME_MAX_QUEUE: Joi.number().min(1).max(10).default(3),
+  PYODIDE_RUNTIME_MAX_INPUT_FILE_BYTES: Joi.number().min(1024).max(32 * 1024 * 1024).default(2 * 1024 * 1024),
+  PYODIDE_RUNTIME_MAX_OUTPUT_FILE_BYTES: Joi.number().min(1024).max(32 * 1024 * 1024).default(512 * 1024),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),

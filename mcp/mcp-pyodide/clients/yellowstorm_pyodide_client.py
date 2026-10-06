@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import require_actor_context
+from auth import require_actor_context, workspace_id
 
 
 class PyodideBackendError(RuntimeError):
@@ -79,6 +79,9 @@ class YellowStormPyodideClient:
             headers["X-YellowStorm-Conversation-Id"] = context.conversation_id
         if context.correlation_id:
             headers["X-Correlation-Id"] = context.correlation_id
+        workspace = workspace_id.get()
+        if workspace:
+            headers["X-YellowStorm-Workspace-Id"] = workspace
         return headers
 
     @staticmethod
