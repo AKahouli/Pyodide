@@ -80,8 +80,9 @@ export class ConversationV2SessionService {
   async createDraft(
     ownerId: string,
     workspaceIds: string[] = [],
+    starterRevisionId?: string,
   ): Promise<ConversationV2SessionRecord> {
-    return this.store.createDraft(ownerId, workspaceIds);
+    return this.store.createDraft(ownerId, workspaceIds, starterRevisionId);
   }
 
   /**

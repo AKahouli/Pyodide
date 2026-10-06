@@ -1,5 +1,14 @@
 import React, { Suspense } from 'react';
-import { createHashRouter, Navigate } from 'react-router-dom';
+import { createHashRouter, Navigate, useParams, useSearchParams } from 'react-router-dom';
+
+/** Preserve query string when rewriting legacy `/conversation-v2/:id` → `/studio/:id`. */
+function ConversationV2LegacyRedirect() {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const [searchParams] = useSearchParams();
+  const qs = searchParams.toString();
+  const to = `/studio/${sessionId ?? ''}${qs ? `?${qs}` : ''}`;
+  return <Navigate to={to} replace />;
+}
 
 import NoMatch from './pages/NoMatch';
 import MaintenancePage from './pages/MaintenancePage';
@@ -244,12 +253,20 @@ export const router = createHashRouter([
         element: lazyPage(<ConversationPage />),
       },
       {
-        path: 'conversation-v2',
+        path: 'studio',
         element: lazyPage(<ConversationV2Page />),
       },
       {
-        path: 'conversation-v2/:sessionId',
+        path: 'studio/:sessionId',
         element: lazyPage(<ConversationV2SessionPage />),
+      },
+      {
+        path: 'conversation-v2',
+        element: <Navigate to='/studio' replace />,
+      },
+      {
+        path: 'conversation-v2/:sessionId',
+        element: <ConversationV2LegacyRedirect />,
       },
       {
         path: 'chats',

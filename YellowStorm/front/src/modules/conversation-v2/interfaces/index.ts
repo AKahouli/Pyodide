@@ -18,6 +18,8 @@ export type {
   ConversationV2PointerSummary,
   ListSessionsResponse,
   SessionPointer,
+  AgentSessionSource,
+  AgentSessionLocationState,
   LocationState,
 } from './session';
 

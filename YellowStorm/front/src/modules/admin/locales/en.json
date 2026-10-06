@@ -1949,7 +1949,7 @@
   "evaluationSettings.correctiveGuardedDescription": "Verify and correct the answer before publication.",
   "evaluationSettings.comingLater": "Coming later",
   "evaluationSettings.notAvailable": "Not available in this MVP",
-  "evaluationSettings.scope": "Applies to legacy Conversation only. Conversation V2 is not included.",
+  "evaluationSettings.scope": "Applies to legacy Conversation only. App Builder is not included.",
   "evaluationSettings.judgeModel": "Judge model",
   "evaluationSettings.selectModel": "Select an active chat model",
   "evaluationSettings.noModel": "No active compatible judge model is available. Activate a chat model in Admin > Models.",

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ArrowRight, Bot } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -105,7 +105,7 @@ export const RecentChats = memo(function RecentChats({
     async (sessionId: string) => {
       const wasCurrent = currentV2SessionId === sessionId;
       await removeV2(sessionId);
-      if (wasCurrent) navigate('/conversation-v2');
+      if (wasCurrent) navigate('/studio');
     },
     [currentV2SessionId, removeV2, navigate],
   );
@@ -179,7 +179,7 @@ export const RecentChats = memo(function RecentChats({
                   id={row.id}
                   title={row.displayTitle}
                   to={row.to}
-                  icon={<Bot className='h-4 w-4' />}
+                  icon={<Sparkles className='h-4 w-4 text-primary' />}
                   isActive={currentV2SessionId === row.id}
                   streaming={(v2Streaming && currentV2SessionId === row.id) || v2BackgroundStreamingIds.includes(row.id)}
                   draggable={false}

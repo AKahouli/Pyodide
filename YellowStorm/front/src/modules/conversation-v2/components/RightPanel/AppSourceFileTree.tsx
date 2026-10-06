@@ -150,13 +150,15 @@ export function AppSourceFileTree({ tree, selectedPath, onSelect, className }: A
   return (
     <div
       className={cn(
-        'flex h-full min-h-0 flex-col overflow-hidden border-r border-border/80 bg-muted/20',
+        'flex h-full min-h-0 flex-col overflow-hidden bg-muted/15',
         className,
       )}
     >
-      <div className='shrink-0 space-y-2 border-b border-border/80 bg-card/50 px-2.5 py-2'>
-        <div className='flex items-center gap-1'>
-          <FolderIcon className='size-3.5 shrink-0 text-muted-foreground' />
+      <div className='shrink-0 space-y-2 border-b border-border/60 bg-background/70 px-2.5 py-2.5 backdrop-blur-sm'>
+        <div className='flex items-center gap-1.5'>
+          <div className='flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary'>
+            <FolderIcon className='size-3.5 shrink-0' aria-hidden />
+          </div>
           <span className='min-w-0 flex-1 truncate text-xs font-semibold tracking-tight'>
             {t('nodepod.explorer')}
           </span>

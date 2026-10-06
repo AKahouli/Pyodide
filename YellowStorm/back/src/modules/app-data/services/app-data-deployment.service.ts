@@ -67,6 +67,40 @@ export class AppDataDeploymentService {
     };
   }
 
+  /**
+   * Register the workspace in App Data and provision DEV (idempotent).
+   * Every App Builder app enforces App Data auth, so this cannot depend on the
+   * agent calling the builder MCP `provision` tool.
+   */
+  async ensureDevProvisioned(workspaceId: string, ownerUserId: string): Promise<void> {
+    this.provisioning.assertEnabled();
+    await this.provisioning.provisionDev({
+      workspaceId,
+      ownerUserId,
+      actorPrincipal: 'deploy',
+    });
+    this.logger.log(`DEV App Data ensured workspaceId=${workspaceId}`);
+  }
+
+  /** DEV runtime env for the preview, provisioning DEV first when missing. */
+  async ensureDevRuntimeEnv(
+    workspaceId: string,
+    ownerUserId: string,
+  ): Promise<AppDataRuntimeEnv | null> {
+    const existing = await this.getRuntimeEnvForWorkspace(workspaceId, 'dev');
+    if (existing || !this.catalog.isEnabled()) return existing;
+    try {
+      await this.ensureDevProvisioned(workspaceId, ownerUserId);
+    } catch (err) {
+      this.logger.warn(
+        `DEV App Data provisioning failed for workspaceId=${workspaceId}; preview proceeds without appDataRuntimeEnv`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+    return this.getRuntimeEnvForWorkspace(workspaceId, 'dev');
+  }
+
   async getRuntimeEnvForWorkspace(
     workspaceId: string,
     environment: 'dev' | 'prod' = 'dev',

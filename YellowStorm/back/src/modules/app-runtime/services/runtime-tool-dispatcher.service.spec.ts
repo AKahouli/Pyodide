@@ -12,6 +12,8 @@ const CONFIG = {
   'appRuntime.heartbeatTimeoutMs': 45_000,
   'appRuntime.mutationWaitMs': 30_000,
   'appRuntime.toolTimeoutMs': 5_000,
+  // Immediate fail in unit tests unless a case overrides the wait.
+  'appRuntime.browserWaitMs': 0,
 } as Record<string, number>;
 
 const BINDING = {
@@ -157,6 +159,33 @@ describe('RuntimeToolDispatcherService', () => {
       expect(asFailure(envelope).code).toBe(AppRuntimeErrorCodes.RUNTIME_OFFLINE);
       expect(markWaitingForBrowser).toHaveBeenCalledWith('sess_1');
       expect(socket.emit).not.toHaveBeenCalled();
+    });
+
+    it('waits for runtime.register before dispatching when the browser is still booting', async () => {
+      (config.get as jest.Mock).mockImplementation(
+        (key: string, fallback?: number) =>
+          key === 'appRuntime.browserWaitMs' ? 2_000 : (CONFIG[key] ?? fallback),
+      );
+      browserAnswers({ ok: true, result: { content: 'ok' } });
+
+      const invokePromise = dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_wait',
+        tool: 'read',
+        arguments: { path: 'a.ts' },
+      });
+
+      await new Promise((r) => setTimeout(r, 30));
+      expect(markWaitingForBrowser).toHaveBeenCalledWith('sess_1');
+      expect(socket.emit).not.toHaveBeenCalled();
+
+      connect();
+      const envelope = await invokePromise;
+      expect(envelope.ok).toBe(true);
+      expect(socket.emit).toHaveBeenCalledWith(
+        'tool.invoke',
+        expect.objectContaining({ toolCallId: 'tc_wait' }),
+      );
     });
 
     it('fails with RUNTIME_OFFLINE when the heartbeat has timed out', async () => {

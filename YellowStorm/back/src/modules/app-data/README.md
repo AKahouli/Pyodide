@@ -131,7 +131,7 @@ Toutes les variables d'environnement sont gérées via `registerAs('appData', ..
 | `APP_DATA_REMOTE_BIND_TIMEOUT_MS` | `120000` | Timeout bind/schema |
 | `APP_DATA_MCP_ENABLED` | `false` | Endpoint MCP |
 | `APP_DATA_DATA_TAB_ENABLED` | `false` | Owner Data tab |
-| `APP_BUILDER_STARTER_REVISION_ID` | `starter_react_vite_v4` | Starter des nouvelles sessions |
+| `APP_BUILDER_STARTER_REVISION_ID` | `starter_react_vite_v6` | Starter des nouvelles sessions |
 
 ### 3.3 Endpoints backend restants
 
@@ -339,19 +339,29 @@ insertions groupées idempotentes (ON CONFLICT DO NOTHING).
 
 ---
 
-## 9. Starter React/Vite
+## 9. Platform Kit React/Vite
 
-Source de vérité : [`templates/sources/`](templates/sources/).
-Starter courant : **`starter_react_vite_v4`**.
+Source de vérité : [`templates/sources/`](templates/sources/). Ces fichiers sont
+la couche plateforme injectée dans **tout** projet App Builder (starter ou
+template admin) par `app-runtime/platform-kit`, au seed de session (`mode: 'seed'`)
+puis revérifiée au déploiement (`mode: 'deploy'`).
+
+Starter courant : **`starter_react_vite_v6`**, lui-même généré depuis le kit
+(`scripts/materialize-starter-v6.ts`) pour qu'il ne puisse pas diverger.
 
 | Fichier | Contrat |
 |---|---|
 | `src/lib/yellowmind-data.ts` | Client data — mutations attendent `{ row }`, liste `{ rows }` |
 | `src/lib/yellowmind-auth.tsx` | Register/login → `{ token, user }`, `me` → `{ user }` |
+| `src/lib/app-base.ts` | `resolveRouterBasename()` / `resolvePublicAsset()` pour le déploiement sous `/apps/<id>/` |
+| `src/AppRouter.tsx` | Router plateforme : `/login`, `/register`, app protégée |
 | `src/components/auth/ProtectedRoute.tsx` | Bypass login en dev preview |
 | `preview-wrapper.html` (front `public/`) | Relay postMessage (accepte `/v1/apps/`) |
 
-Le starter est **URL-agnifique** : construit tout à partir de `VITE_YM_APP_DATA_URL`.
+Le kit est **URL-agnostique** : tout est construit à partir de
+`VITE_YM_APP_DATA_URL` et de `VITE_APP_BASE`. Le manifeste
+`yellowstorm.platform.json` liste les fichiers managés, qui ne doivent pas être
+édités par l'agent (l'outil MCP `platform_check` le vérifie avant finalisation).
 
 ---
 
@@ -502,7 +512,7 @@ curl -s http://localhost:8443/v1/health/ready | jq .
 |---|---|
 | `publish-starter-to-ceph.ts` | Publie un starter dir → Ceph (blobs + manifest) |
 | `download-starter-from-ceph.js` | Télécharge manifest + blobs (inspection) |
-| `materialize-starter-v3.ts` | Reconstruit le starter v3 |
+| `materialize-starter-v6.ts` | Regénère le starter v6 depuis le Platform Kit |
 | `export-dev-db-to-md.js` (**microservice**) | Exporte les DB tenant DEV en Markdown |
 | `reassign-anonymous-rows.js` (**microservice**) | Réattribue `owner_id='anonymous'` → owner |
 

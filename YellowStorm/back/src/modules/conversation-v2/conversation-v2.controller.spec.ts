@@ -15,6 +15,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
@@ -129,6 +130,10 @@ describe('ConversationV2Controller', () => {
     detectAndPersist: jest.fn().mockResolvedValue(false),
     markHasAiFeatures: jest.fn().mockResolvedValue(undefined),
   };
+  const mockTemplates = {
+    requirePublished: jest.fn(),
+    requireUsableForUser: jest.fn(),
+  };
 
   const emptyRevisionCatalog = {
     lastDeployedRevisionId: null,
@@ -158,6 +163,7 @@ describe('ConversationV2Controller', () => {
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
         { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
         { provide: ConversationV2AppAiFeaturesService, useValue: mockAppAiFeatures },
+        { provide: ConversationV2TemplateService, useValue: mockTemplates },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -209,7 +215,7 @@ describe('ConversationV2Controller', () => {
       systemWorkspaceId: 'sysws',
     });
     // Empty selection expands to the owner's workspaces, which are forwarded to gRPC.
-    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1']);
+    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1'], 'web_app');
     expect(mockSessions.attachAiSession).toHaveBeenCalledWith(draftId, 'ai-1', 'sysws');
   });
 
@@ -267,6 +273,7 @@ describe('ConversationV2Controller', () => {
       lastEventAt: new Date('2024-01-01T00:00:00.000Z'),
       eventCount: 3,
       systemWorkspaceId: 'sysws',
+      starterRevisionId: 'template_tpl1',
     });
     const result = await controller.getSession(id, {
       conversationV2Access: {
@@ -277,6 +284,7 @@ describe('ConversationV2Controller', () => {
     expect(result.sessionId).toBe(id);
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
+    expect(result.starterRevisionId).toBe('template_tpl1');
     expect(result.viewerRole).toBe('owner');
     expect(result.permissions).toContain('session.read');
   });
@@ -611,7 +619,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
     );
     expect(mockFinalizedRevisions.resolveLatestFinalized).toHaveBeenCalledWith('conversation-1');
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
       1,
       'user-1',
@@ -655,7 +663,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
       'rev_15',
     );
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
   });
 
   it('POST /sessions/:id/deploy rejects non-finalized explicit revisionId', async () => {

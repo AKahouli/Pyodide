@@ -6,7 +6,7 @@
  * them as a unit.
  *
  *   {
- *     "sess-abc": "gpt-4o",
+ *     "sess-abc": "<catalog-model-id>",
  *     "sess-def": "claude-3-5-sonnet"
  *   }
  *

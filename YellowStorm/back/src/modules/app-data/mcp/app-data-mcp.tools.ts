@@ -26,7 +26,7 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   schema_get: 'Get current DEV schema manifest and version. In remote mode, returns table names only (no column-level detail) — call schema_apply directly with the full manifest.',
   schema_plan: 'Plan typed schema migration without applying',
   schema_apply:
-    'Apply typed schema migration to DEV. New tables automatically receive default DEV policies (anonymous + yellowmind_owner CRUD).',
+    'REQUIRED before the UI calls list/insert/get/update/remove. Creates every DEV table the app uses. Reserved columns id, owner_id, created_at, updated_at are added automatically — do not declare them. New tables receive default DEV policies. Remote mode: call this directly; schema_plan and policy_apply are not available.',
   policy_get: 'Get table policies for DEV',
   policy_apply:
     'Apply table policies for DEV. Format: { "<table>": { "select": ["anonymous","yellowmind_owner"], "insert": [...], "update": [...], "delete": [...] } }. Preview uses principal anonymous; MCP row_* uses yellowmind_owner.',
