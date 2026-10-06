@@ -72,6 +72,7 @@
     "katex": "^0.18.7",
     "lucide-react": "^0.292.0",
     "nanoid": "^5.1.6",
+    "pyodide": "314.0.7",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-day-picker": "^9.13.0",

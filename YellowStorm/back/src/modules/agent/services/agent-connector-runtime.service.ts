@@ -9,6 +9,7 @@ import { ConnectorService } from '../../connector/connector.service';
 import { IConnectorResponse } from '../../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
+import { isTrustedMcpServerUrl } from '../../connector/utils/trusted-mcp-server.util';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -111,6 +112,7 @@ export class AgentConnectorRuntimeService {
     );
     const connectorSkillIds = this.getConnectorSkillIds(connectorsMap, uniqueConnectorIds);
     const skills = await this.buildGrpcSkillsForPlaybook(connectorSkillIds);
+    this.injectTrustedIdentity(connectorBindings, userId);
 
     return {
       connectorIds: uniqueConnectorIds,
@@ -118,6 +120,21 @@ export class AgentConnectorRuntimeService {
       tools: this.buildConnectorToolDefs(connectorBindings),
       skills,
     };
+  }
+
+  /**
+   * Playbook bindings pointing at a trusted internal MCP server (matched by URL) receive the acting user's
+   * identity, mirroring the Conversation agent path. Third-party MCP servers never do. Agent, conversation
+   * and correlation headers are added only where authority values are available.
+   */
+  private injectTrustedIdentity(bindings: Record<string, unknown>[], userId: string): void {
+    for (const binding of bindings) {
+      if (!isTrustedMcpServerUrl(this.configService, binding.mcp_server_url)) continue;
+      binding.auth_headers = {
+        ...((binding.auth_headers as Record<string, unknown> | undefined) ?? {}),
+        'X-YellowStorm-User-Id': userId,
+      };
+    }
   }
 
   async buildGrpcSkillsForPlaybook(skillIds: string[]): Promise<Record<string, unknown>[]> {

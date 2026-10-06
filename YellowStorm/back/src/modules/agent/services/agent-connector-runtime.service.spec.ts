@@ -69,3 +69,56 @@ describe('AgentConnectorRuntimeService', () => {
     })]);
   });
 });
+
+describe('AgentConnectorRuntimeService trusted identity propagation', () => {
+  const userId = '65f000000000000000000001';
+  const trustedUrl = 'http://localhost:8027/mcp';
+
+  function buildService(): AgentConnectorRuntimeService {
+    const connectors = [
+      {
+        id: 'c-pyodide', name: 'Pyodide', slug: 'pyodide',
+        actions: [{
+          key: 'execute_python', isEnabled: true,
+          parameterSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] },
+        }],
+        mcpServerUrl: trustedUrl, mcpTransportType: 'streamable_http', authSourceType: 'none',
+      },
+      {
+        id: 'c-external', name: 'External', slug: 'external',
+        actions: [{ key: 'do', isEnabled: true, parameterSchema: {} }],
+        mcpServerUrl: 'https://third.party/mcp', mcpTransportType: 'streamable_http', authSourceType: 'none',
+      },
+    ];
+    return new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never,
+      { findByIds: jest.fn() } as never,
+      { findByIds: jest.fn().mockResolvedValue(connectors) } as never,
+      { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as never,
+      { get: jest.fn((key: string, fallback: string) => (key === 'PYODIDE_MCP_SERVER_URL' ? trustedUrl : fallback)) } as never,
+    );
+  }
+
+  it('adds the acting user to trusted internal MCP bindings only', async () => {
+    const result = await buildService().buildGrpcConnectorRuntimeForPlaybook(userId, [
+      { connectorId: 'c-pyodide', actions: [{ actionKey: 'execute_python', isEnabled: true }] },
+      { connectorId: 'c-external', actions: [{ actionKey: 'do', isEnabled: true }] },
+    ]);
+
+    const trusted = result.connector_bindings.find((binding) => binding.connector_slug === 'pyodide');
+    const external = result.connector_bindings.find((binding) => binding.connector_slug === 'external');
+    expect(trusted?.auth_headers).toMatchObject({ 'X-YellowStorm-User-Id': userId });
+    expect(external?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
+  });
+
+  it('never exposes the trusted identity as a model-visible tool argument', async () => {
+    const result = await buildService().buildGrpcConnectorRuntimeForPlaybook(userId, [
+      { connectorId: 'c-pyodide', actions: [{ actionKey: 'execute_python', isEnabled: true }] },
+    ]);
+
+    const action = (result.connector_bindings[0].actions as Array<Record<string, unknown>>)[0];
+    const schema = JSON.parse(String(action.parameter_schema_json)) as { properties: Record<string, unknown> };
+    expect(Object.keys(schema.properties)).toEqual(['code']);
+    expect(JSON.stringify(action)).not.toContain('X-YellowStorm');
+  });
+});

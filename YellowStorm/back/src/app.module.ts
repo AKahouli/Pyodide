@@ -25,6 +25,7 @@ import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
 import semanticModelConfig from './config/semantic-model.config';
+import pyodideRuntimeConfig from './config/pyodide-runtime.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -49,6 +50,7 @@ import { NotificationsModule } from './modules/notifications';
 import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
 import { BrowserSessionModule } from './modules/browser-session/browser-session.module';
+import { PyodideRuntimeModule } from './modules/pyodide-runtime/pyodide-runtime.module';
 import { ModelsModule } from './modules/models';
 import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
@@ -87,7 +89,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, pyodideRuntimeConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -121,6 +123,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     WorkspaceArtifactModule,
     IndexingModule,
     BrowserSessionModule,
+    PyodideRuntimeModule,
     ConversationModule,
     ConversationV2Module,
     AppRuntimeModule,

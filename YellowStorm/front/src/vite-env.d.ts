@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_SOCKET_BASE_URL?: string;
   readonly VITE_PORT?: string;
+  readonly VITE_PYODIDE_RUNTIME_ENABLED?: string;
+  readonly VITE_PYODIDE_INDEX_URL?: string;
 }
 
 interface ImportMeta {

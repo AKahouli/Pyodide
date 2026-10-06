@@ -115,10 +115,15 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet'],
+      // Pyodide loads its own assets from VITE_PYODIDE_INDEX_URL at runtime.
+      exclude: ['pyodide'],
       dedupe: ['react', 'react-dom'],
       esbuildOptions: {
         target: 'es2022',
       },
+    },
+    worker: {
+      format: 'es',
     },
     esbuild: {
       target: 'es2022',

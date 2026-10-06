@@ -143,6 +143,7 @@ export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'f
 export function resolveToolRenderKind(title: string): ToolRenderKind {
   const normalized = title.trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (normalized === 'run_code') return 'run_code';
+  if (normalized === 'pyodide_execute_python') return 'run_code';
   if (normalized.includes('search')) return normalized.includes('web') ? 'web' : 'search';
   if (normalized.includes('document')) return 'document';
   if (normalized.includes('file')) return 'file';
@@ -156,6 +157,7 @@ export function humanizeToolTitle(value: string): string {
 const TOOL_DISPLAY_KEYS: Record<string, string> = {
   run_code: 'runCode',
   python_interpreter: 'runCode',
+  pyodide_execute_python: 'runCode',
   code_interpreter_file_find: 'findFiles',
   code_interpreter_file_list: 'findFiles',
   code_interpreter_sandbox_create: 'createSandbox',
