@@ -113,7 +113,7 @@ describeIntegration('template, output-format, HITL memory and mail ledger reposi
     });
 
     it('updates fields, bumps version in the statement, and maps nulls to what a Mongo read gave back', async () => {
-      const a = await create({ enabled: true, inputPorts: [{ id: 'p', name: 'P', artifactKind: 'text', required: false }] });
+      const a = await create({ enabled: true, isBuiltIn: true, inputPorts: [{ id: 'p', name: 'P', artifactKind: 'text', required: false }] });
       const results = await Promise.all([
         nodeTemplates.update(a.id, { title: 'T1', updatedBy: otherId }),
         nodeTemplates.update(a.id, { description: ' d ' }),
@@ -123,8 +123,8 @@ describeIntegration('template, output-format, HITL memory and mail ledger reposi
       expect(after).toMatchObject({ title: 'T1', description: 'd', version: 3, updatedBy: otherId });
       expect(after!.updatedAt.getTime()).toBeGreaterThanOrEqual(a.updatedAt.getTime());
 
-      const nulls = await nodeTemplates.update(a.id, { nodeType: null as never, enabled: null as never, inputPorts: null as never, requiredToolNames: null as never, routerConfig: null });
-      expect(nulls).toMatchObject({ nodeType: 'agent', enabled: false, inputPorts: [], requiredToolNames: [], routerConfig: null, version: 4 });
+      const nulls = await nodeTemplates.update(a.id, { nodeType: null as never, enabled: null as never, isBuiltIn: null as never, inputPorts: null as never, requiredToolNames: null as never, routerConfig: null });
+      expect(nulls).toMatchObject({ nodeType: 'agent', enabled: false, isBuiltIn: false, inputPorts: [], requiredToolNames: [], routerConfig: null, version: 4 });
       expect(await nodeTemplates.update(oid(), { title: 'x' })).toBeNull();
       expect(await nodeTemplates.update('bad', { title: 'x' })).toBeNull();
     });
