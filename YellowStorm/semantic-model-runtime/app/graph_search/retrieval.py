@@ -61,13 +61,21 @@ def resolve_concepts(compiled: dict[str, Any], names: list[str] | None
             for c in found.values()], unknown
 
 
-def resolve_relations(compiled: dict[str, Any], names: list[str]) -> tuple[list[str], list[str]]:
+def resolve_relations(compiled: dict[str, Any], names: list[str], catalog: dict[str, Any] | None = None
+                      ) -> tuple[list[str], list[str]]:
+    """Relations named by id or key, or by the label or inverse label the model gives them
+    (``catalog``), or nearly (``near_match``); unknown names are returned apart."""
+    labels = {item.get("key"): item for item in (catalog or {}).get("relations") or [] if item.get("key")}
+    named: dict[str, str] = {}
+    for relation in compiled["relations"].values():
+        entry = labels.get(relation.get("key")) or {}
+        for item in (relation["relationId"], relation.get("key"), entry.get("label"), entry.get("inverseLabel")):
+            if fold(item):
+                named.setdefault(fold(item), relation["relationId"])
     found: list[str] = []
     unknown: list[str] = []
     for name in names:
-        key = fold(name)
-        match = next((relation["relationId"] for relation in compiled["relations"].values()
-                      if key in {fold(relation["relationId"]), fold(relation.get("key"))}), None)
+        match = named.get(fold(name)) or near_match(name, named)
         if match is None:
             unknown.append(name)
         elif match not in found:

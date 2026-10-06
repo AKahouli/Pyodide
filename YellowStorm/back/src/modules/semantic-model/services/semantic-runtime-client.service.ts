@@ -401,8 +401,23 @@ export interface RuntimeGraphExpandRequest {
   seedEntityIds: string[];
   steps: RuntimeGraphExpandStep[];
   maxNodes?: number;
+  /** Field values to return with the records (key, label or alias; "*" for all). */
+  fields?: string[];
+  /** The model's labels, so relationships and fields can be named as the model names them. */
+  catalog?: RuntimeRecordsCatalog;
   allowedWorkspaceIds?: string[] | null;
   expectedDataRevisionId?: string;
+}
+
+/** How many records are linked to the seeds through one relationship, one step away (exact). */
+export interface RuntimeGraphLinkCount {
+  relationId: string;
+  relationKey: string;
+  direction: 'outgoing' | 'incoming';
+  conceptId: string;
+  conceptLabel: string;
+  count: number;
+  hidden: number;
 }
 
 export interface RuntimeGraphPathStep {
@@ -429,8 +444,13 @@ export interface RuntimeGraphExpandResult {
     inclusionReason: 'seed' | 'relationship';
     path: RuntimeGraphPathStep[];
     provenance: RuntimeRecordProvenance[];
+    values?: Record<string, unknown>;
+    truncatedFields?: string[];
   }>;
   edges: Array<{ relationId: string; relationKey: string; sourceEntityId: string; targetEntityId: string }>;
+  linkCounts?: RuntimeGraphLinkCount[];
+  unknownFields?: string[];
+  graphLayout?: 'typed' | 'entity';
   hiddenSeeds: number;
   truncated: boolean;
   timings: { expandMs: number };
@@ -519,6 +539,11 @@ export interface RuntimeRecordsAppliedQuery {
   offset?: number;
 }
 
+export interface RuntimeRecordsDiagnostics {
+  readableRecords: number;
+  checks: Array<{ part: string; field: string; op: string; matches: number; didYouMean?: string[] }>;
+}
+
 export interface RuntimeRecordsQueryResult {
   modelId: string;
   environment: RuntimeSearchEnvironment;
@@ -536,6 +561,8 @@ export interface RuntimeRecordsQueryResult {
   offset?: number;
   nextOffset?: number | null;
   pageCutShort?: boolean;
+  /** Only when nothing matched: the readable records, and how many each filter or link keeps alone. */
+  diagnostics?: RuntimeRecordsDiagnostics;
   buckets?: Record<string, unknown>[];
   bucketsTruncated?: boolean;
   aggregates?: Record<string, unknown>;

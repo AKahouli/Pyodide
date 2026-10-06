@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.population.age_projection import (PopulationError, compile_projection, create_graph_sql,
+from app.population.age_projection import (PopulationError, compile_projection, concept_label, create_graph_sql,
                                             drop_graph_sql, drop_projection, finalize_draft_revision,
-                                            project_revision,
-                                            projection_counts, projection_graph_name, render_edge_batch,
+                                            is_live_projection_ref, is_typed_projection, live_projection_ref,
+                                            project_revision, projection_counts, projection_graph,
+                                            projection_graph_name, relation_label, render_edge_batch,
                                             render_vertex_batch, validate_projection)
 
 
@@ -41,16 +42,54 @@ def test_compile_and_render_escapes_values():
           "attributes": {"name": "O'Brien\\Co", "9lives": "x"}}],
         [{"sourceEntityId": "crm:1", "targetEntityId": "crm:2", "relationId": "r1"}])
     assert plan["vertices"][0]["_9lives"] == "x"
-    vertex_sql = render_vertex_batch("pop_dr_1", plan["vertices"])
+    customer, knows = concept_label("c1"), relation_label("r1")
+    vertex_sql = render_vertex_batch("pop_dr_1", customer, plan["vertices"])
     assert "O\\'Brien\\\\Co" in vertex_sql
-    assert "MERGE (n:Entity {record_id: row.record_id})" in vertex_sql
-    edge_sql = render_edge_batch("pop_dr_1", plan["edges"])
-    assert "MATCH (s:Entity {record_id: row.source})" in edge_sql
-    assert "MERGE (s)-[r:RELATED_TO {relation_id: row.relation}]->(t)" in edge_sql
+    assert f"CREATE (n:{customer}) SET n = row" in vertex_sql
+    edge_sql = render_edge_batch("pop_dr_1", knows, customer, customer, plan["edges"])
+    assert f"MATCH (s:{customer}), (t:{customer}) WHERE s.record_id = row.source AND t.record_id = row.target" in edge_sql
+    assert f"CREATE (s)-[:{knows} {{relation_id: row.relation}}]->(t)" in edge_sql
     with pytest.raises(PopulationError):
-        render_vertex_batch("pop_dr_1", [])
+        render_vertex_batch("pop_dr_1", customer, [])
     with pytest.raises(PopulationError):
-        render_edge_batch("pop_dr_1", plan["edges"] * 501)
+        render_edge_batch("pop_dr_1", knows, customer, customer, plan["edges"] * 501)
+    with pytest.raises(PopulationError):
+        render_vertex_batch("pop_dr_1", "Entity) DETACH DELETE (n", plan["vertices"])
+
+
+def test_labels_are_safe_readable_and_distinct_per_id():
+    assert concept_label("c-invoice").startswith("c_c_invoice_")
+    assert relation_label("r-billed").startswith("r_r_billed_")
+    assert concept_label("a-b") != concept_label("a_b")
+    assert concept_label("Facture été") == concept_label("Facture été")
+    assert concept_label("").startswith("c_") and len(concept_label("x" * 300)) <= 52
+
+
+def test_references_name_typed_and_older_graphs():
+    assert live_projection_ref("pop_dr_1") == "age:v2:pop_dr_1"
+    assert is_typed_projection("age:v2:pop_dr_1") and not is_typed_projection("age:v1:pop_dr_1")
+    assert projection_graph("age:v1:pop_dr_1") == projection_graph("age:v2:pop_dr_1") == "pop_dr_1"
+    assert is_live_projection_ref("age:v1:pop_dr_1") and not is_live_projection_ref("age:v3:pop_dr_1")
+    with pytest.raises(PopulationError):
+        projection_graph("age:v2:pop_x'; drop")
+
+
+def test_records_and_links_are_projected_once_with_their_workspaces():
+    plan = compile_projection(
+        [{"entityId": "m1", "conceptId": "message", "provenance": {"sources": [
+            {"assetRef": {"assetId": "a", "workspaceId": "w2"}}, {"assetRef": {"assetId": "b", "workspaceId": "w1"}},
+            {"assetRef": {"assetId": "c"}}]}},
+         {"entityId": "m1", "conceptId": "message"},
+         {"entityId": "f1", "conceptId": "fact"}],
+        [{"sourceEntityId": "m1", "targetEntityId": "f1", "relationId": "states"},
+         {"sourceEntityId": "m1", "targetEntityId": "f1", "relationId": "states"}])
+    assert [vertex["record_id"] for vertex in plan["vertices"]] == ["m1", "f1"]
+    assert plan["vertices"][0]["workspace_ids"] == []  # the later row wins
+    assert plan["edges"] == [{"source": "m1", "target": "f1", "relation": "states",
+                              "sourceConcept": "message", "targetConcept": "fact"}]
+    once = compile_projection([{"entityId": "m1", "conceptId": "message", "provenance": {"sources": [
+        {"assetRef": {"workspaceId": "w2"}}, {"assetRef": {"workspaceId": "w1"}}]}}], [])
+    assert once["vertices"][0]["workspace_ids"] == ["w1", "w2"]
 
 
 def test_graph_nodes_show_key_fields_and_keep_their_own_id():
@@ -60,7 +99,8 @@ def test_graph_nodes_show_key_fields_and_keep_their_own_id():
           "attributes": {"name": "Sony France", "country": "France", "record_id": "spoofed", "label": "other"}}],
         [])
     assert plan["vertices"][0] == {"customer_id": "C00042", "name": "Sony France", "country": "France",
-                                   "record_id": "crm:C00042", "concept_id": "customer", "label": "Sony France"}
+                                   "record_id": "crm:C00042", "concept_id": "customer", "label": "Sony France",
+                                   "workspace_ids": []}
 
 
 def test_validate_projection_compares_counts():
@@ -72,11 +112,17 @@ def test_validate_projection_compares_counts():
 @pytest.mark.asyncio
 async def test_project_revision_batches_and_drops():
     conn = FakeConnection()
-    plan = {"vertices": [{"record_id": f"e{i}"} for i in range(600)], "edges": []}
+    plan = {"vertices": [{"record_id": f"e{i}", "concept_id": "c"} for i in range(600)],
+            "edges": [{"source": "e1", "target": "e2", "relation": "r", "sourceConcept": "c", "targetConcept": "c"}]}
     result = await project_revision(conn, graph="pop_dr_1", plan=plan)
-    assert result == {"graph": "pop_dr_1", "vertices": 600, "edges": 0}
+    assert result == {"graph": "pop_dr_1", "vertices": 600, "edges": 1}
     assert conn.statements[0] == create_graph_sql("pop_dr_1")
-    assert len(conn.statements) == 3  # create + 2 vertex batches
+    label, link = concept_label("c"), relation_label("r")
+    assert conn.statements[1] == f"SELECT ag_catalog.create_vlabel('pop_dr_1', '{label}')"
+    assert conn.statements[2].startswith(f'CREATE INDEX IF NOT EXISTS "{label}_record_id"')
+    assert conn.statements[5] == f"SELECT ag_catalog.create_elabel('pop_dr_1', '{link}')"
+    # create graph, label, index, 2 vertex batches, edge label, 1 edge batch, 2 ANALYZE
+    assert len(conn.statements) == 9 and conn.statements[-1] == f'ANALYZE "pop_dr_1"."{link}"'
     await drop_projection(conn, "pop_dr_1")
     assert conn.statements[-1] == drop_graph_sql("pop_dr_1")
 

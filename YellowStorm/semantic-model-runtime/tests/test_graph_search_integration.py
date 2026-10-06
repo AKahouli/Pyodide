@@ -29,7 +29,8 @@ from app.graph_search.traversal import init_age_connection
 from app.jobs.service import JobService
 from app.persistence import graph_search_store as search_store
 from app.persistence.postgres_jobs import PostgresJobRepository
-from app.population.age_projection import drop_projection, projection_exists, projection_graph_name
+from app.population.age_projection import (concept_label, drop_projection, projection_exists,
+                                            projection_graph_name, reproject_revision)
 from test_population_graph_mvp_integration import (AGE_DSN, AGE_SETTINGS, CONTRACTS_ASSET,  # noqa: E402
                                                    CONTRACTS_CSV, CUSTOMERS_ASSET, MIGRATIONS, MODEL_ID,
                                                    RUNTIME_DSN, WORKSPACE_ID, customers_xlsx, run_request)
@@ -215,6 +216,29 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert set(related) == {"CT001", "CT002"}
         assert related["CT001"]["path"][0]["relationKey"] == "has_contract"
         assert {(edge["sourceEntityId"], edge["relationKey"]) for edge in expanded["edges"]} == {(sony, "has_contract")}
+        # A typed graph: a table per concept and relationship, each concept's indexed by record id.
+        assert expanded["projectionRef"].startswith("age:v2:") and expanded["graphLayout"] == "typed"
+        graph = projection_graph_name(revision_id)
+        async with age.acquire() as age_connection:
+            indexed = {row["indexname"] for row in await age_connection.fetch(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = $1", graph)}
+        assert {f"{concept_label(concept)}_record_id" for concept in ("c-customer", "c-contract")} <= indexed
+        # The exact number of linked records per relationship, beside the walk.
+        assert [(count["relationKey"], count["direction"], count["count"], count["hidden"])
+                for count in expanded["linkCounts"]] == [("has_contract", "outgoing", 2, 0)]
+        # Field values on request, and a relationship named by its label.
+        with_values = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["signs"], "direction": "outgoing"}],
+            "fields": ["*"], "catalog": {"relations": [{"key": "has_contract", "label": "signs"}]}})).json()
+        contracts = [node for node in with_values["nodes"] if node["inclusionReason"] == "relationship"]
+        assert len(contracts) == 2 and all(node["values"].get("title") for node in contracts), contracts
+        # Hidden linked records are counted apart, never shown.
+        hidden_links = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}],
+            "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
+        assert hidden_links["linkCounts"][0]["count"] == 2
         # Incoming from a contract finds its customer; the wrong direction finds nothing.
         contract = related["CT002"]["entityId"]
         back = (await client.post("/v1/semantic-model-search/expand", json={
@@ -239,6 +263,32 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         unknown = await client.post("/v1/semantic-model-search/expand", json={
             **two_steps, "steps": [{"relations": ["owns"]}]})
         assert unknown.status_code == 422 and unknown.json()["detail"] == "unknown_relation"
+
+        # An older Entity graph is rebuilt typed from the stored rows, and the revision, its
+        # binding and its search index move to it together; the old graph is dropped.
+        typed_ref = expanded["projectionRef"]
+        older_ref = "age:v1:" + typed_ref[len("age:v2:"):]
+        for table in ("semantic_population.data_revisions", "semantic_runtime.active_bindings",
+                      "semantic_graph_search.index_generations"):
+            column = "id" if table.endswith("data_revisions") else "data_revision_id"
+            await runtime.execute(f"UPDATE {table} SET projection_ref = $2 WHERE {column} = $1", revision_id, older_ref)
+        graphs.append(f"{graph}_t2")
+        moved = await reproject_revision(runtime, age, revision_id)
+        assert moved["reprojected"] is True and moved["projectionRef"] == f"age:v2:{graph}_t2"
+        assert await reproject_revision(runtime, age, revision_id) == {
+            "revisionId": revision_id, "projectionRef": moved["projectionRef"], "reprojected": False}
+        refs = await runtime.fetch(
+            "SELECT projection_ref FROM semantic_population.data_revisions WHERE id = $1 UNION ALL "
+            "SELECT projection_ref FROM semantic_runtime.active_bindings WHERE data_revision_id = $1 UNION ALL "
+            "SELECT projection_ref FROM semantic_graph_search.index_generations WHERE data_revision_id = $1",
+            revision_id)
+        assert {row["projection_ref"] for row in refs} == {moved["projectionRef"]}
+        async with age.acquire() as age_connection:
+            assert not await projection_exists(age_connection, graph)
+        again = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}]})).json()
+        assert again["projectionRef"] == moved["projectionRef"] and len(again["nodes"]) == 3
         # Nothing is published yet: production search says so.
         unpublished = await client.post("/v1/semantic-model-search/query",
                                         json={**query("sony"), "environment": "production"})

@@ -345,7 +345,7 @@ def test_project_rebuilds_legacy_unverified_reference(client: TestClient):
     response = client.post("/v1/semantic-model-population/revisions/dr_1/project",
                            headers=AUTH)
     assert response.status_code == 200
-    assert response.json()["projectionRef"] == "age:v1:pop_dr_1"
+    assert response.json()["projectionRef"] == "age:v2:pop_dr_1"  # rebuilt typed
 
 
 def test_activation_swaps_binding_only_on_expected_tuple(client: TestClient):

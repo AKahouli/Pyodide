@@ -105,14 +105,20 @@ describe('SemanticGraphSearchService', () => {
     expect(runtime.graphSearch).not.toHaveBeenCalled();
   });
 
-  it('expands with the steps given and the allow-list', async () => {
-    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+  it('expands with the steps given, the allow-list, the fields asked for and the model labels', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2' });
     await service.expand('user-1', 'model-1', {
-      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, expectedDataRevisionId: 'dr-1',
+      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20,
+      fields: ['Amount'], expectedDataRevisionId: 'dr-1',
     });
     expect(runtime.graphExpand).toHaveBeenCalledWith({
       actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', seedEntityIds: ['e-1'],
-      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, allowedWorkspaceIds: ['ws-1'], expectedDataRevisionId: 'dr-1',
+      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, fields: ['Amount'], allowedWorkspaceIds: ['ws-1'],
+      expectedDataRevisionId: 'dr-1',
+      catalog: {
+        concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+        relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+      },
     });
   });
 

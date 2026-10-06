@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from difflib import SequenceMatcher
 from typing import Any
 
 from .documents import humanize
@@ -116,6 +117,8 @@ class Plan:
     fields: list[Field] = field(default_factory=list)
     limit: int = 50
     offset: int = 0
+    # Each filter and link alone, to explain an empty result (``diagnose``).
+    checks: list[dict[str, Any]] = field(default_factory=list)
 
 
 class _Errors:
@@ -179,6 +182,29 @@ def find_concept(compiled: dict[str, Any], catalog: dict[str, Any], name: str) -
         named.update({item: (concept, entry) for item in names if item})
     near = near_match(wanted, named)
     return build_concept(*near) if near is not None else None
+
+
+def field_keys_by_concept(compiled: dict[str, Any], catalog: dict[str, Any], names: list[str]
+                          ) -> tuple[dict[str, list[str]], list[str]]:
+    """The field keys some names mean in each concept (key, label, alias or a near miss);
+    ``*`` means every field. Names no concept has come back apart."""
+    keys: dict[str, list[str]] = {}
+    known: set[str] = set()
+    for compiled_concept in compiled["concepts"].values():
+        concept = build_concept(compiled_concept, _catalog_concept(catalog, compiled_concept.get("key", "")))
+        chosen: list[str] = []
+        for name in names:
+            if name.strip() == "*":
+                chosen += [item.key for item in concept.fields]
+                known.add(name)
+                continue
+            item = concept.by_name.get(fold(name)) or near_match(name, concept.by_name)
+            if item is not None and item.special is None:
+                chosen.append(item.key)
+                known.add(name)
+        if chosen:
+            keys[concept.concept_id] = list(dict.fromkeys(chosen))
+    return keys, [name for name in names if name not in known]
 
 
 def concept_names(compiled: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
@@ -547,6 +573,7 @@ def _compile_filter(builder: _Builder, errors: _Errors, compiled: dict[str, Any]
     if kind != "text" and op not in NO_VALUE_OPS:
         unparsable[item.key] = column
     condition = _condition(builder, errors, part, op, kind, f"r{column}", f"t{column}", spec.get("value"), now, echo)
+    echo["_column"] = column  # taken out by compile_query: for "did you mean" values
     return condition, echo
 
 
@@ -624,17 +651,24 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
     if len(filters) > MAX_FILTERS:
         errors.add("filters", "too_many", f"At most {MAX_FILTERS} filters")
         filters = filters[:MAX_FILTERS]
-    conditions, echoed = [], []
+    conditions, echoed, checks = [], [], []
     for index, spec in enumerate(filters):
         condition, echo = _compile_filter(builder, errors, compiled, catalog, concept, index, spec, now, unparsable)
+        column = echo.pop("_column", None)
         echoed.append(echo)
         if condition:
             conditions.append(f"({condition})")
+            checks.append({"part": f"filters[{index}]", "condition": condition, "column": column,
+                           "field": echo.get("fieldLabel") or echo.get("relationLabel") or echo.get("field"),
+                           "op": echo.get("op"), "type": echo.get("type"), "value": spec.get("value")})
     applied.update(filters=echoed, match=match)
     where = (" AND " if match == "all" else " OR ").join(conditions) if conditions else "true"
     links = _compile_linked_to(builder, errors, compiled, catalog, concept, request.get("linkedTo") or [])
     if links:
         applied["linkedTo"] = [echo for _, echo in links]
+        checks += [{"part": f"linkedTo[{index}]", "condition": condition, "column": None,
+                    "field": echo["relation"], "op": "linked_to", "type": None, "value": echo["recordIds"]}
+                   for index, (condition, echo) in enumerate(links)]
         where = " AND ".join([f"({where})", *(f"({condition})" for condition, _ in links)])
 
     group_specs = request.get("groupBy") or []
@@ -809,7 +843,8 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
         return None, errors.items, applied
     plan = Plan(concept=concept, params=builder.params, raw_columns=builder.raw, typed_columns=builder.typed,
                 where=where, applied=applied, unparsable=sorted(unparsable.items()), group=groups,
-                aggregates=aggregates, order=order, fields=returned, limit=limit, offset=offset)
+                aggregates=aggregates, order=order, fields=returned, limit=limit, offset=offset,
+                checks=checks)
     return plan, [], applied
 
 
@@ -935,6 +970,63 @@ async def run_query(pool: Any, plan: Plan) -> dict[str, Any]:
                   nextOffset=next_offset if next_offset < total and plan.limit else None,
                   pageCutShort=len(records) < len(rows))
     return result
+
+
+SUGGESTION_VALUES = 5000  # distinct stored values compared with a value that matched nothing
+SUGGESTIONS = 5
+
+
+def diagnose_sql(plan: Plan) -> str:
+    """How many readable records each filter and link keeps on its own."""
+    checks = "".join(f", count(*) FILTER (WHERE ({check['condition']})) AS f{index}"
+                     for index, check in enumerate(plan.checks))
+    return base_sql(plan) + f" SELECT count(*) AS scoped{checks} FROM typed"
+
+
+def _wanted_texts(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return [fold(item) for item in values if isinstance(item, (str, int, float)) and fold(item)]
+
+
+def _close_values(wanted: list[str], stored: list[str]) -> list[str]:
+    """Stored values that look like what was asked: containing it, or spelled closely."""
+    folded = {value: fold(value) for value in stored}
+    found: list[str] = []
+    for text in wanted:
+        found += [value for value, form in folded.items() if text in form or form in text][:SUGGESTIONS]
+        scored = sorted(((SequenceMatcher(None, text, form).ratio(), value) for value, form in folded.items()),
+                        reverse=True)
+        found += [value for ratio, value in scored[:SUGGESTIONS] if ratio >= 0.6]
+    return list(dict.fromkeys(found))[:SUGGESTIONS]
+
+
+async def diagnose(pool: Any, plan: Plan) -> dict[str, Any]:
+    """Why a query matched nothing: the readable records of the concept, how many each
+    filter or link keeps alone, and for a text value that kept none, the stored values that
+    look like it (a typo, an accent, a longer name)."""
+    async with pool.acquire() as connection:
+        async with connection.transaction(readonly=True):
+            await connection.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+            await connection.execute("SET LOCAL TimeZone = 'UTC'")
+            stats = await connection.fetchrow(diagnose_sql(plan), *plan.params, timeout=CLIENT_TIMEOUT_SECONDS)
+            checks = []
+            for index, check in enumerate(plan.checks):
+                item = {"part": check["part"], "field": check["field"], "op": check["op"],
+                        "matches": int(stats[f"f{index}"])}
+                if (item["matches"] == 0 and check["column"] is not None and check["type"] == "text"
+                        and check["op"] in ("eq", "in", "contains", "starts_with", "ends_with")):
+                    wanted = _wanted_texts(check["value"])
+                    column = f"r{int(check['column'])}"
+                    if wanted:
+                        rows = await connection.fetch(
+                            base_sql(plan) + f" SELECT {column} AS v, count(*) AS n FROM typed "
+                            f"WHERE NOT {is_blank_sql(column)} GROUP BY 1 ORDER BY n DESC "
+                            f"LIMIT {SUGGESTION_VALUES}", *plan.params, timeout=CLIENT_TIMEOUT_SECONDS)
+                        close = _close_values(wanted, [str(row["v"]) for row in rows])
+                        if close:
+                            item["didYouMean"] = close
+                checks.append(item)
+    return {"readableRecords": int(stats["scoped"]), "checks": checks}
 
 
 async def overview(pool: Any, *, model_id: str, revision_id: str, allowed_workspaces: list[str] | None

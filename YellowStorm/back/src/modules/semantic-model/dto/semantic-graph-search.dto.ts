@@ -147,6 +147,8 @@ export class AssistantRelatedRecordsDto {
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true }) concepts?: string[];
   @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
   @ApiPropertyOptional({ default: 50, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) maxRecords?: number;
+  @ApiPropertyOptional({ type: [String], maxItems: 60, description: 'Field values to return with the linked records (key, label or alias; "*" for all)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
 }
 
 /** How query_records compares, groups and totals; checked in full (names, types, values) by the runtime. */

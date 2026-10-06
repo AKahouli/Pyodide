@@ -22,7 +22,7 @@ from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, Idempot
                              ReviewResolveCommand)
 from app.persistence import manual_store
 from app.persistence import population_store as store
-from app.population.age_projection import (LIVE_PROJECTION_PREFIX, ProjectionUnavailable,
+from app.population.age_projection import (ProjectionUnavailable, projection_graph,
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
                                              read_projection_graph)
@@ -324,7 +324,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     for ref in result.pop("projections"):
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):
@@ -355,7 +355,7 @@ async def delete_model(model_id: str, request: Request) -> Response:
     for ref in result["projections"]:
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):

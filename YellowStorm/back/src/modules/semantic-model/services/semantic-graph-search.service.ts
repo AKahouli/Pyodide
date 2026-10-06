@@ -34,6 +34,8 @@ export interface GraphExpandQuery {
   seedEntityIds: string[];
   steps: RuntimeGraphExpandStep[];
   maxNodes?: number;
+  /** Field values to return with the records (key, label or alias; "*" for all). */
+  fields?: string[];
   expectedDataRevisionId?: string;
 }
 
@@ -90,7 +92,10 @@ export class SemanticGraphSearchService {
 
   async expand(userId: string, modelId: string, input: GraphExpandQuery): Promise<RuntimeGraphExpandResult> {
     const model = await this.requireReadable(userId, modelId, input.environment);
-    const allowedWorkspaceIds = await this.allowedWorkspaceIds(userId, model.id);
+    // The model's labels travel with the walk, so relationships and fields are named as the model names them.
+    const [allowedWorkspaceIds, definitions] = await Promise.all([
+      this.allowedWorkspaceIds(userId, model.id), this.definitions(model, input.environment),
+    ]);
     return this.bound(input.environment, () => this.runtime.graphExpand({
       actorUserId: userId,
       modelId: model.id,
@@ -98,6 +103,8 @@ export class SemanticGraphSearchService {
       seedEntityIds: input.seedEntityIds,
       steps: input.steps,
       ...(input.maxNodes ? { maxNodes: input.maxNodes } : {}),
+      ...(input.fields?.length ? { fields: input.fields } : {}),
+      catalog: recordsCatalog(definitions.graph),
       allowedWorkspaceIds,
       ...(input.expectedDataRevisionId ? { expectedDataRevisionId: input.expectedDataRevisionId } : {}),
     }));

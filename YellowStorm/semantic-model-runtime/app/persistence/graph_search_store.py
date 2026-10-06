@@ -460,3 +460,64 @@ async def document_texts(pool: Any, index_id: str, entity_ids: list[str]) -> dic
         "SELECT entity_id, search_text FROM semantic_graph_search.entity_documents "
         "WHERE index_id = $1::uuid AND entity_id = ANY($2::text[])", index_id, entity_ids)
     return {row["entity_id"]: row["search_text"] for row in rows}
+
+
+async def entity_attributes(pool: Any, revision_id: str, entity_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The stored field values of some records: key fields and attributes together."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        "SELECT id, identity_key, attributes FROM semantic_population.entities "
+        "WHERE data_revision_id = $1 AND id = ANY($2::text[])", revision_id, list(entity_ids))
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        values: dict[str, Any] = {}
+        for raw in (row["identity_key"], row["attributes"]):
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, dict):
+                values.update(parsed)
+        result[row["id"]] = values
+    return result
+
+
+# Every workspace the linked record was read from is readable (manual records have none).
+_LINKED_VISIBLE = (
+    "($4::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements("
+    "CASE WHEN jsonb_typeof(o.provenance -> 'sources') = 'array' THEN o.provenance -> 'sources' "
+    "ELSE '[]'::jsonb END) AS src(item) "
+    "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '' "
+    "AND NOT ((src.item -> 'assetRef' ->> 'workspaceId') = ANY($4::text[]))))")
+
+
+async def link_counts(pool: Any, revision_id: str, seed_ids: list[str], relations: list[str] | None,
+                      direction: str, allowed_workspaces: list[str] | None,
+                      concept_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    """Distinct records linked to the seeds by accepted links, per relation, direction and
+    linked concept (only ``concept_ids`` when given): all of them (``total``) and those the
+    actor may see (``visible``)."""
+    if not seed_ids:
+        return []
+    parts = []
+    if direction in ("outgoing", "both"):
+        parts.append("SELECT relation_id, 'outgoing' AS direction, target_entity_id AS other "
+                     "FROM semantic_population.relationships WHERE data_revision_id = $1 "
+                     "AND state = 'accepted' AND source_entity_id = ANY($2::text[]) "
+                     "AND ($3::text[] IS NULL OR relation_id = ANY($3::text[]))")
+    if direction in ("incoming", "both"):
+        parts.append("SELECT relation_id, 'incoming' AS direction, source_entity_id AS other "
+                     "FROM semantic_population.relationships WHERE data_revision_id = $1 "
+                     "AND state = 'accepted' AND target_entity_id = ANY($2::text[]) "
+                     "AND ($3::text[] IS NULL OR relation_id = ANY($3::text[]))")
+    if not parts:
+        return []
+    rows = await pool.fetch(
+        "SELECT l.relation_id, l.direction, o.concept_id, count(DISTINCT o.id) AS total, "
+        f"count(DISTINCT o.id) FILTER (WHERE {_LINKED_VISIBLE}) AS visible "
+        f"FROM ({' UNION ALL '.join(parts)}) l "
+        "JOIN semantic_population.entities o ON o.data_revision_id = $1 AND o.id = l.other "
+        "WHERE ($5::text[] IS NULL OR o.concept_id = ANY($5::text[])) "
+        "GROUP BY l.relation_id, l.direction, o.concept_id ORDER BY l.relation_id, l.direction, o.concept_id",
+        revision_id, list(seed_ids), list(relations) if relations else None, allowed_workspaces,
+        list(concept_ids) if concept_ids else None)
+    return [{"relationId": row["relation_id"], "direction": row["direction"], "conceptId": row["concept_id"],
+             "total": int(row["total"]), "visible": int(row["visible"])} for row in rows]

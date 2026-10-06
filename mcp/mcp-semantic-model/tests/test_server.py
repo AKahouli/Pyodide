@@ -237,12 +237,15 @@ async def test_get_related_records_builds_one_or_two_steps(monkeypatch, actor):
             "model_id": "m", "record_ids": '["e-1", "e-2"]', "relations": ["signs"], "direction": "outgoing",
             "then_relations": ["is billed by"], "concepts": ["Invoice"], "data": "draft", "max_records": 20,
         })
+        await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"], "fields": '["*"]'})
     assert backend.calls == [
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
          {"recordIds": ["e-1"], "direction": "both", "data": "published", "maxRecords": 50}),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
          {"recordIds": ["e-1", "e-2"], "relations": ["signs"], "direction": "outgoing", "thenRelations": ["is billed by"],
           "concepts": ["Invoice"], "data": "draft", "maxRecords": 20}),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
+         {"recordIds": ["e-1"], "direction": "both", "data": "published", "maxRecords": 50, "fields": ["*"]}),
     ]
 
 

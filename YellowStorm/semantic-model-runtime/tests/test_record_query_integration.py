@@ -19,7 +19,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 import app.api.graph_search_routes as routes
-from app.graph_search.record_query import compile_query, run_query
+from app.graph_search.record_query import compile_query, diagnose, run_query
 from app.graph_search.typed_values import typed_value_sql
 
 DSN = os.environ.get("SEMANTIC_RUNTIME_TEST_DATABASE_URL")
@@ -207,6 +207,28 @@ async def test_a_linked_record_must_match_and_be_readable(pool) -> None:  # type
     either = await query(pool, {"match": "any", "filters": [{"field": "billed_to.country", "op": "eq", "value": "deutschland"},
                                                             {"field": "status", "op": "eq", "value": "cancelled"}]})
     assert names(either) == ["Invoice F-2", "Invoice F-7"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_result_says_which_filter_left_nothing_and_what_is_stored(pool) -> None:  # type: ignore[no-untyped-def]
+    compiled = await routes._compiled(pool, REVISION)
+    plan, errors, _ = compile_query(compiled, CATALOG, {"concept": "Invoice", "filters": [
+        {"field": "status", "op": "eq", "value": "payed"},
+        {"field": "amount", "op": "gt", "value": 100}]}, model_id=MODEL, revision_id=REVISION,
+        allowed_workspaces=["ws1"], now=NOW)
+    assert errors == [] and (await run_query(pool, plan))["total"] == 0
+    found = await diagnose(pool, plan)
+    assert found["readableRecords"] == 6  # F-6 is hidden
+    status, amount = found["checks"]
+    assert (status["part"], status["matches"], amount["matches"]) == ("filters[0]", 0, 3)
+    assert {"Payée", "payee"} <= set(status["didYouMean"])  # a typo, an accent: the stored values
+    assert "didYouMean" not in amount
+    plan, _, _ = compile_query(compiled, CATALOG, {"concept": "Invoice", "linkedTo": [
+        {"relation": "billed to", "recordIds": ["customer:C-DE"]}], "filters": [
+        {"field": "status", "op": "eq", "value": "draft"}]}, model_id=MODEL, revision_id=REVISION,
+        allowed_workspaces=["ws1"], now=NOW)
+    both = await diagnose(pool, plan)
+    assert [(check["part"], check["matches"]) for check in both["checks"]] == [("filters[0]", 2), ("linkedTo[0]", 1)]
 
 
 @pytest.mark.asyncio

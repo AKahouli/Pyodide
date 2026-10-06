@@ -562,6 +562,36 @@ async def set_revision_projection(pool: Any, revision_id: str, projection_ref: s
     return row is not None
 
 
+async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str, new_ref: str) -> bool:
+    """Point a revision, the bindings serving it and its search index generations at a
+    rebuilt graph, together; False (nothing changed) when the revision no longer uses
+    ``old_ref``."""
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            moved = await connection.fetchval(
+                "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
+                "WHERE id = $1 AND projection_ref = $2 RETURNING id", revision_id, old_ref, new_ref)
+            if moved is None:
+                return False
+            await connection.execute(
+                "UPDATE semantic_runtime.active_bindings SET projection_ref = $3 "
+                "WHERE data_revision_id = $1 AND projection_ref = $2", revision_id, old_ref, new_ref)
+            await connection.execute(
+                "UPDATE semantic_graph_search.index_generations SET projection_ref = $3 "
+                "WHERE data_revision_id = $1 AND projection_ref = $2", revision_id, old_ref, new_ref)
+    return True
+
+
+async def revisions_with_untyped_projection(pool: Any, model_id: str | None = None) -> list[dict[str, Any]]:
+    """Revisions whose graph predates typed labels (``age:v1:``), newest first."""
+    rows = await pool.fetch(
+        "SELECT id, model_id, projection_ref FROM semantic_population.data_revisions "
+        "WHERE projection_ref LIKE 'age:v1:%' AND ($1::text IS NULL OR model_id = $1) "
+        "ORDER BY created_at DESC", model_id)
+    return [{"revisionId": row["id"], "modelId": row["model_id"], "projectionRef": row["projection_ref"]}
+            for row in rows]
+
+
 async def count_revision_rows(pool: Any, revision_id: str) -> dict[str, int]:
     row = await pool.fetchrow(
         "SELECT (SELECT count(*) FROM semantic_population.entities WHERE data_revision_id = $1) "
@@ -791,11 +821,11 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
 async def list_revision_relationships(pool: Any, revision_id: str,
                                       limit: int = 20000) -> list[dict[str, Any]]:
     rows = await pool.fetch(
-        "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy "
+        "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy, state "
         "FROM semantic_population.relationships WHERE data_revision_id = $1 "
         "ORDER BY relation_id, source_entity_id, target_entity_id LIMIT $2",
         revision_id, limit,
     )
     return [{"relationId": row["relation_id"], "sourceEntityId": row["source_entity_id"],
              "targetEntityId": row["target_entity_id"],
-             "matchingStrategy": row["matching_strategy"]} for row in rows]
+             "matchingStrategy": row["matching_strategy"], "state": row.get("state") or "accepted"} for row in rows]
