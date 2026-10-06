@@ -76,7 +76,7 @@ export class SemanticModelController {
   @Get()
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   list(@CurrentUser() user: AuthUser, @Query() query: SemanticModelQueryDto) {
-    return this.models.list(user._id.toString(),query);
+    return this.models.list(user._id.toString(),query).then((page) => this.shares.attachOwners(page));
   }
 
   @Post()

@@ -103,6 +103,11 @@ export class SemanticModelQueryDto {
   @IsString()
   workspace?: string;
 
+  @ApiPropertyOptional({ enum: ['mine', 'shared'], description: 'mine: models the user owns; shared: models other people shared with the user' })
+  @IsOptional()
+  @IsIn(['mine', 'shared'])
+  scope?: 'mine' | 'shared';
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)

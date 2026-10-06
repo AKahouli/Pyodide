@@ -35,6 +35,9 @@ export interface SemanticModel {
   currentDraftVersionId: string | null;
   currentPublishedVersionId: string | null;
   role?: 'owner' | 'editor' | 'viewer';
+  /** Who owns a model shared with the user; absent on models the user owns. */
+  ownerName?: string | null;
+  ownerEmail?: string | null;
   workspaceCount?: number;
   nodeCount?: number;
   relationCount?: number;
