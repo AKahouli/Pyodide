@@ -26,6 +26,22 @@ export function usePopulationRun(modelId: string | undefined) {
 }
 
 /**
+ * Rebuilds only the graph of the data in use, from the records and links already stored: no source is
+ * read again and no AI call is made. The records stay as they are.
+ */
+export function useReprojectGraph(modelId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => semanticModelApi.reprojectPopulationGraph(modelId ?? ''),
+    onSuccess: () => {
+      if (!modelId) return;
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graphStatus(modelId) });
+    },
+  });
+}
+
+/**
  * Repopulates the model from scratch: the runtime clears every record, link and review item earlier runs
  * made, then reads every source again. The model's settings are left as they are.
  */

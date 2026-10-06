@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Loader2, RotateCcw, Sparkles, Zap } from "lucide-react";
+import { AlertTriangle, Loader2, RotateCcw, Share2, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { parseApiError } from "@/lib/api-error";
-import { showError } from "@/lib/notifications";
+import { showError, showSuccess } from "@/lib/notifications";
 import { useModuleTranslation } from "@/modules/localization";
-import { usePopulationRun, useRebuildFromScratch } from "../../hooks/use-population-run";
+import { usePopulationRun, useRebuildFromScratch, useReprojectGraph } from "../../hooks/use-population-run";
 
 interface Props {
   open: boolean;
@@ -28,9 +28,26 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
   const populate = usePopulationRun(modelId);
   const rebuild = useRebuildFromScratch(modelId);
   const [confirming, setConfirming] = useState(false);
+  const reproject = useReprojectGraph(modelId);
   const [forgetDocumentReading, setForgetDocumentReading] = useState(false);
-  const busy = populate.isPending || rebuild.isPending;
-  useEffect(() => { if (!open) { setConfirming(false); setForgetDocumentReading(false); } }, [open]);
+  const [graphOnly, setGraphOnly] = useState(false);
+  const busy = populate.isPending || rebuild.isPending || reproject.isPending;
+  useEffect(() => { if (!open) { setConfirming(false); setForgetDocumentReading(false); setGraphOnly(false); } }, [open]);
+
+  const handleGraphOnly = async () => {
+    try {
+      const result = await reproject.mutateAsync();
+      if (!result.revisions.length) {
+        showError(t("population.graphError"), { description: t("population.graphNothing") });
+        return;
+      }
+      const largest = result.revisions.reduce((best, item) => (item.vertices ?? 0) >= (best.vertices ?? 0) ? item : best);
+      showSuccess(t("population.graphRebuilt"), { description: t("population.graphRebuiltHint", { records: largest.vertices ?? 0, links: largest.edges ?? 0 }) });
+      onOpenChange(false);
+    } catch (error) {
+      showError(t("population.graphError"), { description: parseApiError(error).message, duration: 10000 });
+    }
+  };
 
   const handleRead = async () => {
     try {
@@ -95,11 +112,19 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
             <DialogDescription>{t("population.hint")}</DialogDescription>
           </DialogHeader>
 
+          <label className="flex items-start gap-2.5 rounded-lg border p-3 text-sm">
+            <Checkbox className="mt-0.5" checked={graphOnly} onCheckedChange={(checked) => setGraphOnly(checked === true)} disabled={busy} />
+            <span>
+              <span className="font-medium">{t("population.graphOnly")}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{t("population.graphOnlyHint")}</span>
+            </span>
+          </label>
+
           <DialogFooter className="sm:flex-col sm:items-stretch sm:gap-2">
-            <Button onClick={() => void handleRead()} disabled={busy}>
-              {populate.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              <Sparkles className="mr-2 h-4 w-4" />
-              {t("population.action")}
+            <Button onClick={() => void (graphOnly ? handleGraphOnly() : handleRead())} disabled={busy}>
+              {(populate.isPending || reproject.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {graphOnly ? <Share2 className="mr-2 h-4 w-4" /> : <Sparkles className="mr-2 h-4 w-4" />}
+              {t(graphOnly ? "population.graphOnlyAction" : "population.action")}
             </Button>
             <div className="flex items-center justify-between gap-2 border-t pt-2">
               <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirming(true)} disabled={busy} title={t("rebuild.buttonHint")}>

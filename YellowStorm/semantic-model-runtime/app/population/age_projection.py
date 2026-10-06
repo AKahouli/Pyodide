@@ -281,6 +281,22 @@ async def projection_exists(connection: Any, graph: str) -> bool:
     ))
 
 
+async def graph_counts(connection: Any, graph: str) -> dict[str, int] | None:
+    """Records, links and labels actually in a graph (None when it does not exist). The parent
+    label tables hold the rows of every concept and relationship table."""
+    graph = _check_graph(graph)
+    labels = await connection.fetchrow(
+        "SELECT count(*) FILTER (WHERE l.kind = 'v' AND l.name <> '_ag_label_vertex') AS concepts, "
+        "count(*) FILTER (WHERE l.kind = 'e' AND l.name <> '_ag_label_edge') AS relations "
+        "FROM ag_catalog.ag_graph g JOIN ag_catalog.ag_label l ON l.graph = g.graphid WHERE g.name = $1", graph)
+    if labels is None or not await projection_exists(connection, graph):
+        return None
+    vertices = await connection.fetchval(f'SELECT count(*) FROM "{graph}"._ag_label_vertex')
+    edges = await connection.fetchval(f'SELECT count(*) FROM "{graph}"._ag_label_edge')
+    return {"vertices": int(vertices), "edges": int(edges), "conceptLabels": int(labels["concepts"]),
+            "relationLabels": int(labels["relations"])}
+
+
 def _agtype_count(value: Any) -> int:
     parsed = json.loads(value) if isinstance(value, str) else value
     if isinstance(parsed, bool) or not isinstance(parsed, int) or parsed < 0:
@@ -435,20 +451,23 @@ async def _build_revision_projection(pool: Any, connection: Any, revision_id: st
             "graph": graph, **expected, "reused": not recorded}
 
 
-async def reproject_revision(pool: Any, age_pool: Any, revision_id: str) -> dict[str, Any]:
-    """Rebuild a revision's older ``Entity`` graph as a typed one from its stored records and
-    links (no source is read again), then move the revision, its bindings and its search
-    index to it at once and drop the old graph. A typed graph is left as it is."""
+async def reproject_revision(pool: Any, age_pool: Any, revision_id: str, *,
+                             force: bool = False) -> dict[str, Any]:
+    """Rebuild a revision's graph as a typed one from its stored records and links (no source
+    is read again), then move the revision, its bindings and its search index to it at once
+    and drop the old graph. A typed graph is left as it is unless ``force``."""
     from app.persistence import population_store as store
 
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")
     old_ref = revision["projection_ref"]
-    if is_typed_projection(old_ref):
+    if is_typed_projection(old_ref) and not force:
         return {"revisionId": revision_id, "projectionRef": old_ref, "reprojected": False}
     old_graph = projection_graph(old_ref)
-    graph = _check_graph(f"{projection_graph_name(revision_id)}_t2")
+    # The new graph is built beside the one in use, so it needs another name.
+    name = projection_graph_name(revision_id)
+    graph = _check_graph(f"{name}_t2" if old_graph != f"{name}_t2" else f"{name}_t3")
     async with age_pool.acquire() as connection:
         await connection.fetchval("SELECT pg_advisory_lock(hashtextextended($1, 0))", graph)
         try:

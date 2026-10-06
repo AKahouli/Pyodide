@@ -3,14 +3,29 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticModelValidateDialog } from './SemanticModelValidateDialog';
 
-const mutations = vi.hoisted(() => ({ population: vi.fn(), rebuild: vi.fn() }));
+const mutations = vi.hoisted(() => ({ population: vi.fn(), rebuild: vi.fn(), reproject: vi.fn() }));
 
 vi.mock('../../hooks/use-population-run', () => ({
   usePopulationRun: () => ({ mutateAsync: mutations.population, isPending: false }),
   useRebuildFromScratch: () => ({ mutateAsync: mutations.rebuild, isPending: false }),
+  useReprojectGraph: () => ({ mutateAsync: mutations.reproject, isPending: false }),
 }));
 
 describe('SemanticModelValidateDialog', () => {
+  it('rebuilds only the graph when the box is ticked: no run is started', async () => {
+    mutations.population.mockClear();
+    mutations.reproject.mockResolvedValue({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true, vertices: 217, edges: 195 }] });
+    const onOpenChange = vi.fn();
+    render(<SemanticModelValidateDialog open onOpenChange={onOpenChange} modelId="model-1" />);
+
+    await userEvent.click(screen.getByRole('checkbox'));
+    await userEvent.click(screen.getByRole('button', { name: 'population.graphOnlyAction' }));
+
+    await waitFor(() => expect(mutations.reproject).toHaveBeenCalledTimes(1));
+    expect(mutations.population).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('starts a whole-model population run on the runtime', async () => {
     mutations.population.mockResolvedValue({ jobId: 'job-1', status: 'queued', skipped: [], reused: false });
     const onPopulationStarted = vi.fn();

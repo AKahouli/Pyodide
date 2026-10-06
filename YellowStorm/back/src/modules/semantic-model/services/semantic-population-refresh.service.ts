@@ -881,6 +881,18 @@ export class SemanticPopulationRefreshService {
     return { ...await this.requestRefresh(userId, modelId, build), cleared };
   }
 
+  /** Which graph the draft and the published data use, and whether it holds every stored record and link. */
+  async graphStatus(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    return this.runtime.getGraphStatus(model.id, userId);
+  }
+
+  /** Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made. */
+  async reprojectGraphs(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    return this.runtime.reprojectModelGraphs(model.id, userId);
+  }
+
   /**
    * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
    * have today (design, mappings and source file versions) with the one of the active data.

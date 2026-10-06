@@ -25,7 +25,8 @@ from app.persistence import population_store as store
 from app.population.age_projection import (ProjectionUnavailable, projection_graph,
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
-                                             read_projection_graph)
+                                             graph_counts, is_typed_projection,
+                                             read_projection_graph, reproject_revision)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
@@ -334,6 +335,73 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
             logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
                            type(exc).__name__)
     return {**result, "projectionsDropped": dropped}
+
+
+@router.get("/models/{model_id}/graph-status", status_code=status.HTTP_200_OK)
+async def read_graph_status(model_id: str, request: Request) -> dict[str, object]:
+    """Which graph each environment serves (schema, revision, layout), what it holds compared
+    with the stored records and links, and the state of its search index. Read only."""
+    from app.graph_search.embeddings import profile_from_env
+    from app.persistence import graph_search_store as search_store
+
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_read_pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    profile = profile_from_env()
+    environments: list[dict[str, Any]] = []
+    for served in await store.served_graphs(pool, model_id):
+        ref = served["projection_ref"]
+        graph = projection_graph(ref) if is_live_projection_ref(ref) else None
+        counts = None
+        if graph and age_pool is not None:
+            try:
+                async with age_pool.acquire() as connection:
+                    counts = await graph_counts(connection, graph)
+            except Exception as exc:  # noqa: BLE001 - the status says the graph could not be read
+                logger.warning("Could not count graph %s: %s", graph, type(exc).__name__)
+        stored = {"records": int(served["records"]), "links": int(served["links"])}
+        if counts is None:
+            state = "missing"
+        elif counts["vertices"] != stored["records"] or counts["edges"] != stored["links"]:
+            state = "mismatch"
+        else:
+            state = "ok"
+        generation = (await search_store.latest_generation(pool, served["data_revision_id"], profile.fingerprint)
+                      if profile else None)
+        index = search_store.public_generation(generation)
+        created = served["created_at"]
+        environments.append({
+            "environment": served["environment"], "dataRevisionId": served["data_revision_id"],
+            "modelVersionId": served["model_version_id"], "projectionRef": ref, "graphSchema": graph,
+            "layout": "typed" if is_typed_projection(ref) else "entity",
+            "builtAt": created.isoformat() if hasattr(created, "isoformat") else created,
+            "stored": stored, "graph": counts, "state": state,
+            "index": {key: index.get(key) for key in ("state", "expectedCount", "indexedCount", "completedAt")},
+        })
+    return {"modelId": model_id, "environments": environments}
+
+
+@router.post("/models/{model_id}/reproject", status_code=status.HTTP_200_OK)
+async def reproject_model_graphs(model_id: str, request: Request) -> dict[str, object]:
+    """Rebuild the graphs of the data a model serves from its stored records and links: no
+    source is read again and no record changes. Refused while a build runs."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    if await store.population_running(pool, model_id):
+        raise HTTPException(status_code=409, detail="population_running")
+    rebuilt: list[dict[str, Any]] = []
+    for revision_id in await store.served_revisions(pool, model_id):
+        try:
+            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True))
+        except PopulationError as exc:
+            raise HTTPException(status_code=409, detail=exc.code) from exc
+        except ProjectionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Rebuilt the graphs of model %s: %s", model_id, rebuilt)
+    return {"modelId": model_id, "revisions": rebuilt}
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)

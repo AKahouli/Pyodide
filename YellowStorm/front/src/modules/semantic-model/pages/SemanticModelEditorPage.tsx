@@ -68,6 +68,7 @@ import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
+import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
@@ -776,6 +777,7 @@ export function SemanticModelEditorPage() {
             <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
             <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
         </p>
+        {modelId && <GraphStatusTooltip modelId={modelId} />}
         <div className="flex shrink-0 items-center gap-1.5">
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
           {onCanvas && <DropdownMenu>

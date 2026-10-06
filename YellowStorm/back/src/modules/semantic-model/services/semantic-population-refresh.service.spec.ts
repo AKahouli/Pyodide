@@ -82,6 +82,8 @@ const setup = (
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
     purgeModelData: jest.fn(async () => ({ modelId: 'model-1', revisions: 2, jobs: 1 })),
+    getGraphStatus: jest.fn(async () => ({ modelId: 'model-1', environments: [] })),
+    reprojectModelGraphs: jest.fn(async () => ({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true }] })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
@@ -299,6 +301,22 @@ describe('SemanticPopulationRefreshService', () => {
     const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
     expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
     expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it('rebuilds only the graph: no run is started and no source is read', async () => {
+    const { models, runtime, service } = setup();
+    const result = await service.reprojectGraphs('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor']);
+    expect(runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(result.revisions).toHaveLength(1);
+  });
+
+  it('shows the graph in use to anyone who can read the model', async () => {
+    const { models, runtime, service } = setup();
+    await service.graphStatus('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor', 'viewer']);
+    expect(runtime.getGraphStatus).toHaveBeenCalledWith('model-1', 'u-1');
   });
 
   it('clears nothing when the model cannot be built', async () => {

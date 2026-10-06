@@ -586,6 +586,34 @@ const GRAPH_SEARCH_REJECTIONS: Record<string, string> = {
   query_too_slow: 'This query took too long: add filters, or group by fewer or coarser values',
 };
 
+/** The graph one environment serves, what it holds compared with the stored data, and its search index. */
+export interface RuntimeServedGraph {
+  environment: 'draft' | 'production';
+  dataRevisionId: string;
+  modelVersionId: string;
+  projectionRef: string;
+  /** The graph's schema in the graph database; null when the data has no graph. */
+  graphSchema: string | null;
+  layout: 'typed' | 'entity';
+  builtAt: string | null;
+  stored: { records: number; links: number };
+  graph: { vertices: number; edges: number; conceptLabels: number; relationLabels: number } | null;
+  /** ok: the graph holds every stored record and link; mismatch: it does not; missing: no graph could be read. */
+  state: 'ok' | 'mismatch' | 'missing';
+  index: { state: string; expectedCount?: number; indexedCount?: number; completedAt?: string | null };
+}
+
+export interface RuntimeGraphStatus {
+  modelId: string;
+  environments: RuntimeServedGraph[];
+}
+
+/** The graphs rebuilt from a model's stored records and links, one per data revision it serves. */
+export interface RuntimeReprojectedGraphs {
+  modelId: string;
+  revisions: Array<{ revisionId: string; projectionRef: string; reprojected: boolean; vertices?: number; edges?: number }>;
+}
+
 export interface RuntimePurgedData {
   modelId: string;
   resetGeneration: number;
@@ -893,6 +921,34 @@ export class SemanticRuntimeClientService {
         'A build or index job is running on this model. Wait for it to finish, then copy it again with its data.');
     }
     throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The model data could not be copied.');
+  }
+
+  async getGraphStatus(modelId: string, actorUserId: string): Promise<RuntimeGraphStatus> {
+    return this.get<RuntimeGraphStatus>(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/graph-status`, actorUserId);
+  }
+
+  /**
+   * Rebuild the graphs of the data a model serves from its stored records and links: no source is
+   * read again and no record changes. Large graphs take a while, so the deadline is longer.
+   */
+  async reprojectModelGraphs(modelId: string, actorUserId: string): Promise<RuntimeReprojectedGraphs> {
+    const base = this.requireWrites();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/reproject`, {
+        method: 'POST',
+        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey, 'X-Actor-User-Id': actorUserId },
+        signal: AbortSignal.timeout(Math.max(this.config.runtimeRequestTimeoutMs, 300_000)),
+      });
+    } catch (error) {
+      throw this.translate(error);
+    }
+    if (res.ok) return await res.json() as RuntimeReprojectedGraphs;
+    if (res.status === 409) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
+        'A data update is running on this model. Wait for it to finish, then rebuild the graph again.');
+    }
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The graph could not be rebuilt; the data in use is unchanged.');
   }
 
   async requestDatasourceDiscovery(

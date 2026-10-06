@@ -592,6 +592,35 @@ async def revisions_with_untyped_projection(pool: Any, model_id: str | None = No
             for row in rows]
 
 
+async def served_graphs(pool: Any, model_id: str) -> list[dict[str, Any]]:
+    """What each environment of a model serves: its data revision, graph and stored counts."""
+    rows = await pool.fetch(
+        "SELECT b.environment, b.data_revision_id, b.model_version_id, r.projection_ref, r.created_at, "
+        "r.validation_state, "
+        "(SELECT count(*) FROM semantic_population.entities e WHERE e.data_revision_id = r.id) AS records, "
+        "(SELECT count(*) FROM semantic_population.relationships l WHERE l.data_revision_id = r.id "
+        "AND l.state = 'accepted') AS links "
+        "FROM semantic_runtime.active_bindings b "
+        "JOIN semantic_population.data_revisions r ON r.id = b.data_revision_id "
+        "WHERE b.model_id = $1 ORDER BY b.environment", model_id)
+    return [dict(row) for row in rows]
+
+
+async def served_revisions(pool: Any, model_id: str) -> list[str]:
+    """The data revisions a model serves (draft and production), each once."""
+    rows = await pool.fetch(
+        "SELECT DISTINCT data_revision_id FROM semantic_runtime.active_bindings WHERE model_id = $1",
+        model_id)
+    return [row["data_revision_id"] for row in rows]
+
+
+async def population_running(pool: Any, model_id: str) -> bool:
+    return bool(await pool.fetchval(
+        "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+        "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
+        model_id, list(_TERMINAL_JOB_STATES)))
+
+
 async def count_revision_rows(pool: Any, revision_id: str) -> dict[str, int]:
     row = await pool.fetchrow(
         "SELECT (SELECT count(*) FROM semantic_population.entities WHERE data_revision_id = $1) "

@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, PopulationReprojectResponse, GraphStatus, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
@@ -337,6 +337,14 @@ export const semanticModelApi = {
   /** Clear every record, link and review item generated for the model, then read every source again. */
   async rebuildPopulation(id: string, body: { forgetDocumentReading: boolean }): Promise<PopulationRebuildResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRebuildResponse>>(API_ENDPOINTS.semanticModels.populationRebuild(id), body, { timeout: 0 }));
+  },
+  /** Which graph the draft and the published data use, and whether it holds all the stored data. */
+  async graphStatus(id: string): Promise<GraphStatus> {
+    return unwrap(await apiClient.get<ApiResponse<GraphStatus>>(API_ENDPOINTS.semanticModels.populationGraphStatus(id)));
+  },
+  /** Rebuild the graph of the data in use from its stored records and links: no source is read, no AI call. */
+  async reprojectPopulationGraph(id: string): Promise<PopulationReprojectResponse> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationReprojectResponse>>(API_ENDPOINTS.semanticModels.populationReproject(id), {}, { timeout: 0 }));
   },
   /** This person's latest data updates of the model, newest first. */
   async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {

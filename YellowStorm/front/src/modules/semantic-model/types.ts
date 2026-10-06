@@ -634,6 +634,32 @@ export interface PopulationRefreshResponse {
 }
 
 /** A rebuild from scratch: what was cleared, then the build it started. */
+/** The graph one environment serves, what it holds compared with the stored data, and its search index. */
+export interface ServedGraph {
+  environment: 'draft' | 'production';
+  dataRevisionId: string;
+  modelVersionId: string;
+  projectionRef: string;
+  graphSchema: string | null;
+  layout: 'typed' | 'entity';
+  builtAt: string | null;
+  stored: { records: number; links: number };
+  graph: { vertices: number; edges: number; conceptLabels: number; relationLabels: number } | null;
+  state: 'ok' | 'mismatch' | 'missing';
+  index: { state: string; expectedCount?: number; indexedCount?: number; completedAt?: string | null };
+}
+
+export interface GraphStatus {
+  modelId: string;
+  environments: ServedGraph[];
+}
+
+/** The graphs rebuilt from the records already stored, one per data revision in use (draft, published). */
+export interface PopulationReprojectResponse {
+  modelId: string;
+  revisions: Array<{ revisionId: string; projectionRef: string; reprojected: boolean; vertices?: number; edges?: number }>;
+}
+
 export interface PopulationRebuildResponse extends PopulationRefreshResponse {
   cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
 }

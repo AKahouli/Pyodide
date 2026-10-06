@@ -30,7 +30,7 @@ from app.jobs.service import JobService
 from app.persistence import graph_search_store as search_store
 from app.persistence.postgres_jobs import PostgresJobRepository
 from app.population.age_projection import (concept_label, drop_projection, projection_exists,
-                                            projection_graph_name, reproject_revision)
+                                            graph_counts, projection_graph_name, reproject_revision)
 from test_population_graph_mvp_integration import (AGE_DSN, AGE_SETTINGS, CONTRACTS_ASSET,  # noqa: E402
                                                    CONTRACTS_CSV, CUSTOMERS_ASSET, MIGRATIONS, MODEL_ID,
                                                    RUNTIME_DSN, WORKSPACE_ID, customers_xlsx, run_request)
@@ -285,6 +285,24 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert {row["projection_ref"] for row in refs} == {moved["projectionRef"]}
         async with age.acquire() as age_connection:
             assert not await projection_exists(age_connection, graph)
+        again = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}]})).json()
+        assert again["projectionRef"] == moved["projectionRef"] and len(again["nodes"]) == 3
+        # "Rebuild the graph only" rebuilds a typed graph too, beside the one in use, then swaps.
+        graphs.append(f"{graph}_t3")
+        forced = await reproject_revision(runtime, age, revision_id, force=True)
+        assert forced["reprojected"] is True and forced["projectionRef"] == f"age:v2:{graph}_t3"
+        assert (await reproject_revision(runtime, age, revision_id, force=True))["projectionRef"] == moved["projectionRef"]
+        async with age.acquire() as age_connection:
+            assert not await projection_exists(age_connection, f"{graph}_t3")
+            assert await graph_counts(age_connection, f"{graph}_t3") is None
+            counts = await graph_counts(age_connection, f"{graph}_t2")
+        status_now = (await client.get(f"/v1/semantic-model-population/models/{MODEL_ID}/graph-status")).json()
+        [served] = status_now["environments"]
+        assert served["graphSchema"] == f"{graph}_t2" and served["layout"] == "typed" and served["state"] == "ok"
+        assert served["stored"] == {"records": counts["vertices"], "links": counts["edges"]}
+        assert counts["conceptLabels"] >= 2 and counts["relationLabels"] >= 1
         again = (await client.post("/v1/semantic-model-search/expand", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
             "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}]})).json()

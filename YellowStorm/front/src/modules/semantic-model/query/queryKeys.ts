@@ -21,6 +21,8 @@ export const semanticModelQueryKeys = {
   corrections: (id: string) => ['semantic-models','corrections',id] as const,
   mappingHealth: (id: string) => ['semantic-models','mapping-health',id] as const,
   freshness: (id: string) => ['semantic-models','freshness',id] as const,
+  // Under freshness: whatever refreshes freshness after a run refreshes the graph status too.
+  graphStatus: (id: string) => ['semantic-models','freshness',id,'graph'] as const,
   sourceSuggestions: (id: string) => ['semantic-models','source-suggestions',id] as const,
   canvasPositions: (id: string) => ['semantic-models','canvas-positions',id] as const,
   readiness: (id: string) => ['semantic-models','readiness',id] as const,
