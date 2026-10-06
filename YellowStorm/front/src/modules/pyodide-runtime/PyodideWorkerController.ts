@@ -1,4 +1,4 @@
-import { PyodideExecutionResult, WorkerResponse, failureResult } from './protocol';
+import { PyodideExecutionResult, PyodideWorkspaceFile, WorkerResponse, failureResult } from './protocol';
 
 export interface PyodideWorkerControllerOptions {
   indexUrl: string;
@@ -36,7 +36,14 @@ export class PyodideWorkerController {
     this.ensureWorker();
   }
 
-  execute(executionId: string, code: string, input: unknown, timeoutMs: number): Promise<PyodideExecutionResult> {
+  execute(
+    executionId: string,
+    code: string,
+    input: unknown,
+    timeoutMs: number,
+    inputFiles?: PyodideWorkspaceFile[],
+    outputFiles?: string[],
+  ): Promise<PyodideExecutionResult> {
     const worker = this.ensureWorker();
     return new Promise<PyodideExecutionResult>((resolve) => {
       const timer = setTimeout(
@@ -47,7 +54,15 @@ export class PyodideWorkerController {
         timeoutMs,
       );
       this.pending.set(executionId, { resolve, timer });
-      worker.postMessage({ type: 'execute', executionId, code, input, timeoutMs });
+      worker.postMessage({
+        type: 'execute',
+        executionId,
+        code,
+        input,
+        timeoutMs,
+        ...(inputFiles?.length ? { inputFiles } : {}),
+        ...(outputFiles?.length ? { outputFiles } : {}),
+      });
     });
   }
 

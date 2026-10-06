@@ -3,7 +3,9 @@ import { loadPyodide } from 'pyodide';
 import {
   MAX_LOG_BYTES,
   MAX_RESULT_BYTES,
+  MAX_WORKSPACE_FILE_BYTES,
   PyodideExecutionResult,
+  PyodideWorkspaceFile,
   WorkerRequest,
   WorkerResponse,
   emptyExecution,
@@ -53,8 +55,63 @@ function jsonSafe(value: unknown): unknown {
   }
 }
 
+const WORKSPACE_INPUT = '/workspace/input';
+const WORKSPACE_OUTPUT = '/workspace/output';
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
+/** Fresh /workspace/input and /workspace/output per execution so nothing leaks between calls. */
+function resetWorkspace(py: PyodideApi): void {
+  py.runPython(
+    "import os, shutil\n"
+    + "shutil.rmtree('/workspace/input', ignore_errors=True)\n"
+    + "shutil.rmtree('/workspace/output', ignore_errors=True)\n"
+    + "os.makedirs('/workspace/input', exist_ok=True)\n"
+    + "os.makedirs('/workspace/output', exist_ok=True)\n",
+  );
+}
+
+function mountInputs(py: PyodideApi, files: PyodideWorkspaceFile[]): void {
+  for (const file of files) {
+    py.FS.writeFile(`${WORKSPACE_INPUT}/${file.name}`, base64ToBytes(file.contentBase64));
+  }
+}
+
+function captureOutputs(py: PyodideApi, names: string[]): PyodideWorkspaceFile[] {
+  const captured: PyodideWorkspaceFile[] = [];
+  let total = 0;
+  for (const name of names) {
+    let bytes: Uint8Array;
+    try {
+      bytes = py.FS.readFile(`${WORKSPACE_OUTPUT}/${name}`) as Uint8Array;
+    } catch {
+      continue;
+    }
+    total += bytes.length;
+    if (total > MAX_WORKSPACE_FILE_BYTES) {
+      throw new Error('The output files exceeded the configured limit.');
+    }
+    captured.push({ name, contentBase64: bytesToBase64(bytes) });
+  }
+  return captured;
+}
+
 async function execute(request: Extract<WorkerRequest, { type: 'execute' }>): Promise<PyodideExecutionResult> {
-  const { executionId, code, input } = request;
+  const { executionId, code, input, inputFiles = [], outputFiles: requestedOutputs = [] } = request;
   const started = performance.now();
   const wasCold = coldStart;
 
@@ -75,6 +132,10 @@ async function execute(request: Extract<WorkerRequest, { type: 'execute' }>): Pr
       `A required package is not available in the Pyodide distribution: ${(error as Error).message}`,
     );
   }
+
+  scope.postMessage({ type: 'progress', executionId, phase: 'files' });
+  resetWorkspace(py);
+  mountInputs(py, inputFiles);
 
   let stdout = '';
   let stderr = '';
@@ -131,6 +192,13 @@ async function execute(request: Extract<WorkerRequest, { type: 'execute' }>): Pr
     return failureResult('PYODIDE_RESULT_TOO_LARGE', 'The result exceeded the configured limit.', { stdout, stderr, logsTruncated });
   }
 
+  let outputFiles: PyodideWorkspaceFile[] = [];
+  try {
+    outputFiles = captureOutputs(py, requestedOutputs);
+  } catch (error) {
+    return failureResult('PYODIDE_RESULT_TOO_LARGE', (error as Error).message, { stdout, stderr, logsTruncated });
+  }
+
   coldStart = false;
   return {
     ok: true,
@@ -138,6 +206,7 @@ async function execute(request: Extract<WorkerRequest, { type: 'execute' }>): Pr
     stdout,
     stderr,
     ...(logsTruncated ? { logsTruncated: true } : {}),
+    ...(outputFiles.length ? { outputFiles } : {}),
     execution: emptyExecution({
       durationMs: Math.round(performance.now() - started),
       coldStart: wasCold,

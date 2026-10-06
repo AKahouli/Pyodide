@@ -4,6 +4,14 @@ export type PyodideRuntimeStatus = 'booting' | 'ready' | 'busy';
 export const MAX_LOG_BYTES = 256 * 1024;
 /** Serialized result cap. */
 export const MAX_RESULT_BYTES = 512 * 1024;
+/** Total bytes of files captured from /workspace/output before the relay persists them. */
+export const MAX_WORKSPACE_FILE_BYTES = 8 * 1024 * 1024;
+
+export interface PyodideWorkspaceFile {
+  name: string;
+  mimeType?: string;
+  contentBase64: string;
+}
 
 export interface PyodideExecutionResult {
   ok: boolean;
@@ -11,6 +19,8 @@ export interface PyodideExecutionResult {
   stdout: string;
   stderr: string;
   logsTruncated?: boolean;
+  /** Raw files captured from /workspace/output; persisted by the relay, never returned to the model. */
+  outputFiles?: PyodideWorkspaceFile[];
   execution: {
     runtime: 'pyodide';
     pythonVersion?: string;
@@ -38,6 +48,10 @@ export interface ExecutionRequestPayload {
   code: string;
   input: unknown;
   timeoutMs: number;
+  /** Bounded workspace files to mount under /workspace/input. */
+  inputFiles?: PyodideWorkspaceFile[];
+  /** File names to capture from /workspace/output. */
+  outputFiles?: string[];
 }
 
 export interface ExecutionCancelPayload {
@@ -51,7 +65,15 @@ export interface RuntimeRegisterPayload {
 
 export type WorkerRequest =
   | { type: 'init'; indexUrl: string }
-  | { type: 'execute'; executionId: string; code: string; input: unknown; timeoutMs: number };
+  | {
+      type: 'execute';
+      executionId: string;
+      code: string;
+      input: unknown;
+      timeoutMs: number;
+      inputFiles?: PyodideWorkspaceFile[];
+      outputFiles?: string[];
+    };
 
 export type WorkerResponse =
   | { type: 'ready'; pyodideVersion: string }

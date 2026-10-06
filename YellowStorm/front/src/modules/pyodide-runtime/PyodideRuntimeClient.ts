@@ -95,6 +95,8 @@ export class PyodideRuntimeClient {
       payload.code,
       payload.input,
       payload.timeoutMs,
+      payload.inputFiles,
+      payload.outputFiles,
     );
     if (this.cancelled.delete(payload.executionId)) return;
     this.socket?.emit(PyodideRuntimeEvents.EXECUTION_COMPLETED, {
