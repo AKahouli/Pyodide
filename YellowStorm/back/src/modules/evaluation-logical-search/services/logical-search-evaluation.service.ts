@@ -1,9 +1,6 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
-import AdmZip = require('adm-zip');
-import { mkdir, writeFile, readFile, rename, rm } from 'fs/promises';
-import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { PlaybookFlowExecutionService } from '../../playbook-flow/services/playbook-flow-execution.service';
 import { AgentService } from '../../agent/agent.service';
@@ -93,10 +90,6 @@ function setDeepPath(target: Record<string, unknown>, path: string[], value: unk
     }
   }
   current[path[path.length - 1]] = value;
-}
-
-async function readJson<T>(filePath: string): Promise<T> {
-  return JSON.parse(await readFile(filePath, 'utf-8')) as T;
 }
 
 @Injectable()
@@ -244,8 +237,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
   async remove(ownerId: string, id: string) {
     await this.getById(ownerId, id);
     await this.repository.deleteById(id);
-    // Best-effort: the run output lives on disk next to the DB row.
-    await rm(join(process.cwd(), 'uploads', 'eval', id), { force: true, recursive: true }).catch(() => undefined);
     return { id, deleted: true };
   }
 
@@ -283,11 +274,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     if (!workspaceId) {
       throw new BadRequestException('workspaceId is required for ad-hoc evaluation.');
     }
-
-    const grpcTarget = this.config.get<string>('playbook-flow.grpcUrl') ?? 'localhost:50051';
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const benchmarkPayload = evaluation.queries as { queries?: unknown[] };
-    const zipPath = join(runDir, 'dataset.zip');
 
     // Node 1: Target Agent - generates answer from question
     const targetNode = {
@@ -365,67 +351,24 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       seeded_task_outputs: [],
     };
     const evaluatorConfig = {
-      grpc_target: grpcTarget,
-      grpc_secure: false,
-      request_template_path: 'uploads/eval/' + evaluationId + '/request_template.json',
       answer_node_id: 'eval-judge',
       target_node_id: 'eval-target',
-      benchmark_zip_path: zipPath,
-      benchmark_queries_member: 'benchmark_queries.json',
-      output_directory: join(runDir, 'outputs'),
       query_path: ['input_context', 'query'],
       additional_query_paths: [
         ['snapshot', 'nodes', '0', 'metadata', 'description'],
         ['input_context', 'expected_answer'],
       ],
     };
-    const adhocConfig = {
-      agentId: targetAgentId,
+    // Persist everything the run needs (config + gRPC request template +
+    // evaluator agent) so nothing depends on the local filesystem.
+    const prepared = {
+      config: evaluatorConfig,
+      template: requestTemplate,
       evaluatorAgentId,
-      workspaceId,
-      modelId: input.modelId ?? null,
       evaluatorModelId: input.evaluatorModelId ?? null,
       fileScope: input.fileScope ?? [],
       createdAt: new Date().toISOString(),
     };
-
-    try {
-      await mkdir(runDir, { recursive: true });
-      await rm(join(runDir, 'results.json'), { force: true });
-      await rm(join(runDir, 'summary.json'), { force: true });
-      await rm(join(runDir, 'progress.json'), { force: true });
-      await rm(join(runDir, 'progress.json.tmp'), { force: true });
-      await rm(join(runDir, 'outputs'), { force: true, recursive: true });
-      await writeFile(join(runDir, 'benchmark_queries.json'), JSON.stringify(benchmarkPayload), 'utf-8');
-      const zip = new AdmZip();
-      zip.addFile(
-        'benchmark_queries.json',
-        Buffer.from(JSON.stringify(benchmarkPayload), 'utf-8'),
-      );
-      await zip.writeZipPromise(zipPath);
-      await writeFile(
-        join(runDir, 'request_template.json'),
-        JSON.stringify(requestTemplate, null, 2),
-        'utf-8',
-      );
-      await writeFile(join(runDir, 'config.json'), JSON.stringify(evaluatorConfig, null, 2), 'utf-8');
-      await writeFile(join(runDir, 'adhoc-config.json'), JSON.stringify(adhocConfig, null, 2), 'utf-8');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to write ad-hoc evaluator inputs for ${evaluationId}: ${message}`);
-      await this.repository.applyPrepare({
-        id: evaluationId,
-        agentId: targetAgentId,
-        flowId: null,
-        workspaceId: input.workspaceId ?? evaluation.workspaceId,
-        executionId: null,
-        modelId: input.modelId ?? null,
-        answerNodeId: 'eval-judge',
-        status: 'failed',
-        error: message,
-      });
-      throw new BadRequestException(`Failed to generate ad-hoc evaluator inputs: ${message}`);
-    }
 
     const updated = await this.repository.applyPrepare({
       id: evaluationId,
@@ -436,14 +379,15 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       modelId: input.modelId ?? null,
       answerNodeId: 'eval-judge',
       status: 'prepared',
+      prepared,
     });
     return {
       evaluationId,
-      runDir,
+      runDir: '',
       answerNodeId: 'eval-judge',
       targetNodeId: 'eval-target',
       flowId: `eval-flow-${evaluationId}`,
-      files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json', 'adhoc-config.json'],
+      files: [],
       status: updated?.status ?? 'prepared',
     };
   }
@@ -472,10 +416,16 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       throw new BadRequestException(`Evaluation is ${evaluation.status}; run prepare first.`);
     }
 
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const config = await readJson<PreparedConfig>(join(runDir, 'config.json'));
-    const template = await readJson<PreparedTemplate>(join(runDir, 'request_template.json'));
-    const benchmark = await readJson<{ queries: BenchmarkQuery[] }>(join(runDir, 'benchmark_queries.json'));
+    const prepared = (evaluation.prepared ?? null) as {
+      config?: PreparedConfig;
+      template?: PreparedTemplate;
+    } | null;
+    const config: PreparedConfig = prepared?.config ?? {};
+    const template = prepared?.template;
+    if (!template) {
+      throw new BadRequestException('Evaluation is not prepared; call prepare first.');
+    }
+    const benchmark = (evaluation.queries ?? {}) as { queries?: BenchmarkQuery[] };
     const allQueries = Array.isArray(benchmark.queries) ? benchmark.queries : [];
     if (allQueries.length === 0) {
       throw new BadRequestException('Benchmark has no queries.');
@@ -491,16 +441,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     const queryPath = config.query_path ?? ['input_context', 'query'];
     const additionalQueryPaths = config.additional_query_paths ?? [];
     const answerNodeId = config.answer_node_id ?? evaluation.answerNodeId ?? undefined;
-    // A targeted run always re-executes its single query and rewrites the run
-    // output, so the export only contains that question.
+    // A targeted run always re-executes its single query; a full run resumes
+    // from the results already stored in Postgres.
     let results: EvaluationQueryResult[] = [];
     if (!isTargeted) {
-      try {
-        results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-      } catch {
-        results = [];
-      }
-      if (!Array.isArray(results)) results = [];
+      results = await this.repository.listResults(evaluationId);
     }
     const doneQueryIds = new Set(
       results.filter((r) => r.status === 'completed').map((r) => r.query_id),
@@ -533,10 +478,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
           const result = resultsByIndex[completed.index];
           if (!result) return;
           const snapshotResults = resultsByIndex.filter((r): r is EvaluationQueryResult => r !== null);
-          await writeFile(join(runDir, 'results.json.tmp'), JSON.stringify(snapshotResults, null, 2), 'utf-8');
-          await rename(join(runDir, 'results.json.tmp'), join(runDir, 'results.json'));
-          await writeFile(join(runDir, 'summary.json'), JSON.stringify(buildSummary(snapshotResults), null, 2), 'utf-8');
-          await this.writeProgress(runDir, {
+          await this.repository.applyProgress(evaluationId, {
             done: snapshotResults.length,
             total: queries.length,
             currentIndex: completed.index,
@@ -544,8 +486,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             currentQuery: completed.queryText,
             startedAt: runStartedAt,
             updatedAt: new Date().toISOString(),
-          });
-          await this.repository.applyRunProgress(evaluationId);
+          } satisfies EvaluationProgress);
           await this.repository.applyResult(evaluationId, result);
         }).catch((writeError) => {
           this.logger.warn(
@@ -675,7 +616,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       await fileWriteChain;
       results = resultsByIndex.filter((r): r is EvaluationQueryResult => r !== null);
 
-      await this.writeProgress(runDir, {
+      await this.repository.applyProgress(evaluationId, {
         done: queries.length,
         total: queries.length,
         currentIndex: queries.length,
@@ -683,7 +624,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         currentQuery: '',
         startedAt: runStartedAt,
         updatedAt: new Date().toISOString(),
-      });
+      } satisfies EvaluationProgress);
     } catch (error) {
       runError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -692,7 +633,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
 
     if (stopped) {
       runError = 'Stopped by user; partial results kept.';
-      await this.writeProgress(runDir, {
+      await this.repository.applyProgress(evaluationId, {
         done: results.length,
         total: queries.length,
         currentIndex: Math.min(results.length, queries.length),
@@ -700,17 +641,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         currentQuery: '',
         startedAt: runStartedAt,
         updatedAt: new Date().toISOString(),
-      });
+      } satisfies EvaluationProgress);
     }
 
     const summary: EvaluationRunSummary = buildSummary(results);
-    let finalStatus: 'completed' | 'failed' = runError ? 'failed' : 'completed';
-    try {
-      await writeFile(join(runDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
-    } catch (error) {
-      finalStatus = 'failed';
-      runError = (runError ? `${runError}; ` : '') + (error instanceof Error ? error.message : String(error));
-    }
+    const finalStatus: 'completed' | 'failed' = runError ? 'failed' : 'completed';
     await this.repository.applyRunComplete(evaluationId, { summary, error: runError });
 
     return {
@@ -739,47 +674,29 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     return { evaluationId, status: 'running', signal: 'stopping' };
   }
 
-  private async writeProgress(runDir: string, progress: EvaluationProgress): Promise<void> {
-    await writeFile(join(runDir, 'progress.json.tmp'), JSON.stringify(progress, null, 2), 'utf-8');
-    await rename(join(runDir, 'progress.json.tmp'), join(runDir, 'progress.json'));
-  }
-
   /**
-   * Results for a run: prefer the on-disk file (preserves benchmark order), and
-   * fall back to the payloads stored in Postgres so results/export/report work
-   * without the uploads volume (Option B).
+   * Results for a run, rebuilt from the payloads stored in Postgres. Order
+   * follows the benchmark (the results table is keyed by query id).
    */
-  private async readRunResults(runDir: string, evaluationId: string): Promise<EvaluationQueryResult[]> {
-    try {
-      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    } catch {
-      // No run file on disk; use the DB copy.
-    }
+  private async readRunResults(evaluationId: string): Promise<EvaluationQueryResult[]> {
     return this.repository.listResults(evaluationId);
   }
 
   async getProgress(ownerId: string, evaluationId: string) {
     const evaluation = await this.getById(ownerId, evaluationId);
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    try {
-      const progress = await readJson<EvaluationProgress>(join(runDir, 'progress.json'));
-      return { evaluationId, status: evaluation.status, progress };
-    } catch {
-      return { evaluationId, status: evaluation.status, progress: null };
-    }
+    return {
+      evaluationId,
+      status: evaluation.status,
+      progress: (evaluation.progress as EvaluationProgress | null) ?? null,
+    };
   }
 
   async getResults(ownerId: string, evaluationId: string) {
     const evaluation = await this.getById(ownerId, evaluationId);
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const results = await this.readRunResults(runDir, evaluationId);
+    const results = await this.readRunResults(evaluationId);
     // Recompute from raw results so summary fields introduced after the run
     // (e.g. judge_exact_match_rate) are also present for older evaluations.
-    const summary =
-      results.length > 0
-        ? buildSummary(results)
-        : await readJson<EvaluationRunSummary>(join(runDir, 'summary.json')).catch(() => null);
+    const summary = results.length > 0 ? buildSummary(results) : null;
     return { evaluationId, status: evaluation.status, queryCount: results.length, summary, results };
   }
 
@@ -809,8 +726,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       throw new BadRequestException('Interpreter agent not found or not accessible.');
     }
 
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const results = await this.readRunResults(runDir, evaluationId);
+    const results = await this.readRunResults(evaluationId);
     if (results.length === 0) {
       throw new BadRequestException('No run output yet; run the evaluation first.');
     }
@@ -860,8 +776,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     evaluationId: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
     const evaluation = await this.getById(ownerId, evaluationId);
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const results = await this.readRunResults(runDir, evaluationId);
+    const results = await this.readRunResults(evaluationId);
     if (results.length === 0) {
       throw new BadRequestException('No run output yet; run the evaluation first.');
     }
@@ -976,13 +891,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Detailed Results');
 
     // Versioning: which model, connector and agents produced this run.
-    let evaluatorAgentId: string | null = null;
-    try {
-      const adhoc = await readJson<{ evaluatorAgentId?: string }>(join(runDir, 'adhoc-config.json'));
-      evaluatorAgentId = adhoc?.evaluatorAgentId ?? null;
-    } catch {
-      evaluatorAgentId = null;
-    }
+    const prepared = (evaluation.prepared ?? null) as { evaluatorAgentId?: string | null } | null;
+    const evaluatorAgentId = prepared?.evaluatorAgentId ?? null;
     const runMetadata = await this.repository.findRunMetadata({
       agentId: evaluation.agentId ?? null,
       evaluatorAgentId,

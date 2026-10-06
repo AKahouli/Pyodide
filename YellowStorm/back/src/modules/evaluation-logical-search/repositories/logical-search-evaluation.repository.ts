@@ -30,6 +30,7 @@ export interface LinkExecutionInput {  id: string;
   answerNodeId: string | null;
   status: 'prepared' | 'failed';
   error?: string | null;
+  prepared?: unknown;
 }
 
 @Injectable()
@@ -107,6 +108,7 @@ export class LogicalSearchEvaluationRepository {
         status: input.status,
         error: input.error ?? null,
         updatedAt: new Date(),
+        ...(input.prepared !== undefined ? { prepared: input.prepared } : {}),
       })
       .where(eq(evaluationRuns.id, input.id))
       .returning();
@@ -116,7 +118,7 @@ export class LogicalSearchEvaluationRepository {
   async applyRunStart(id: string) {
     const [row] = await this.db
       .update(evaluationRuns)
-      .set({ status: 'running', error: null, updatedAt: new Date() })
+      .set({ status: 'running', error: null, progress: null, updatedAt: new Date() })
       .where(eq(evaluationRuns.id, id))
       .returning();
     return row ?? null;
@@ -131,10 +133,10 @@ export class LogicalSearchEvaluationRepository {
       .limit(50);
   }
 
-  async applyRunProgress(id: string) {
+  async applyProgress(id: string, progress: unknown) {
     const [row] = await this.db
       .update(evaluationRuns)
-      .set({ updatedAt: new Date() })
+      .set({ progress, updatedAt: new Date() })
       .where(eq(evaluationRuns.id, id))
       .returning();
     return row ?? null;

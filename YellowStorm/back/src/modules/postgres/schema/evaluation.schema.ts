@@ -42,6 +42,11 @@ export const evaluationRuns = evaluationSchema.table(
     summary: jsonb('summary'),
     // LLM-generated narrative report (structured sections), overwritten on regenerate.
     narrative: jsonb('narrative'),
+    // Prepared run inputs (config + request template + evaluator agent id...), so
+    // a run/resume no longer depends on the on-disk run directory.
+    prepared: jsonb('prepared'),
+    // Last known run progress (done/total/current query), read by the live UI.
+    progress: jsonb('progress'),
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
