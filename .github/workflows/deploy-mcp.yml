@@ -1,0 +1,69 @@
+name: CI/CD MCP images
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+    paths:
+      - 'mcp/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Choose environment to deploy'
+        options:
+          - poc
+        required: true
+
+env:
+  ACR_LOGIN_SERVER: yscrmetachatbot001.azurecr.io
+  ENV_NAME: ${{ github.event.inputs.environment || 'poc'}}
+
+jobs:
+  build:
+    if: (github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch')
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="1.5.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Version is $VERSION"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      # requirements.txt references the wheel as file:./.generated/observability/*.whl;
+      # without this step the image build fails at pip install and the container
+      # would crash on `import yellowmind_observability`.
+      - name: "Stage observability SDK wheel (required by requirements.txt file: dependency)"
+        run: node scripts/observability/build-sdks.mjs
+
+      - name: Build and push Docker images
+        run: |
+          # --network=host: the runner's bridge network has no outbound access
+          # (apt-get inside build containers times out), while the host does.
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+            IMAGE="${ACR_LOGIN_SERVER}/yellowstorm-${mcp}-poc"
+            docker build --network=host -t "${IMAGE}:${VERSION}" "mcp/${mcp}"
+            docker push "${IMAGE}:${VERSION}"
+          done
+
+  # Deploy wiring: no MCP compose/service path is defined in this repo yet.
+  # Mirror deploy-adk.yml's "Update Compose and deploy" job here once the target
+  # compose file is known (it must pass the three *_MCP_INGRESS_TOKEN values and
+  # YELLOWSTORM_INTERNAL_SERVICE_TOKEN from the deployment secret manager).

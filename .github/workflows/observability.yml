@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install SDK + test deps
-        run: pip install -e packages/observability-python
+        run: pip install -e "packages/observability-python[test]"
       - run: python -m pytest packages/observability-python/tests -q
 
   packaging:

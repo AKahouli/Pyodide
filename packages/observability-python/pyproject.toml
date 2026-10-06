@@ -9,6 +9,9 @@ description = "Yellowmind unified logging Python SDK (bounded snapshot queue, st
 requires-python = ">=3.11"
 dependencies = ["structlog>=25.4.0"]
 
+[project.optional-dependencies]
+test = ["pytest>=8.0.0,<9.0.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
