@@ -127,6 +127,7 @@ export interface EvaluationRunSummary {
   mean_fact_precision: number;
   mean_answer_quality: number;
   answer_exact_match_rate: number;
+  judge_exact_match_rate: number;
   mean_file_recall: number;
   mean_file_precision: number;
   mean_page_hit: number;

@@ -976,6 +976,7 @@ export interface EvaluationRunSummary {
   mean_fact_precision: number;
   mean_answer_quality: number;
   answer_exact_match_rate: number;
+  judge_exact_match_rate: number;
   mean_file_recall: number;
   mean_file_precision: number;
   mean_page_hit: number;
@@ -992,6 +993,12 @@ export function buildSummary(results: EvaluationQueryResult[]): EvaluationRunSum
   const retrievalSuccesses = retrievalMetricsList.filter((m) => m.retrieval_success).length;
   const retrievalExactMatches = retrievalMetricsList.filter((m) => m.exact_match).length;
   const completed = results.filter((r) => r.status === 'completed').length;
+  // Judge-graded exact match: queries the LLM judge scored 1, over the queries
+  // that actually received a judge score (missing scores are ignored).
+  const judgeScored = results.filter(
+    (r) => typeof r.judge_score === 'number' && Number.isFinite(r.judge_score),
+  );
+  const judgeExactMatches = judgeScored.filter((r) => r.judge_score === 1).length;
 
   return {
     query_count: total,
@@ -1006,6 +1013,7 @@ export function buildSummary(results: EvaluationQueryResult[]): EvaluationRunSum
     mean_fact_precision: mean(answerMetricsList.map((m) => m.fact_precision)),
     mean_answer_quality: mean(answerMetricsList.map((m) => m.answer_quality)),
     answer_exact_match_rate: total === 0 ? 0 : round4(answerExactMatches / total),
+    judge_exact_match_rate: judgeScored.length === 0 ? 0 : round4(judgeExactMatches / judgeScored.length),
     mean_file_recall: mean(retrievalMetricsList.map((m) => m.file_recall)),
     mean_file_precision: mean(retrievalMetricsList.map((m) => m.file_precision)),
     mean_page_hit: mean(retrievalMetricsList.map((m) => m.page_hit_count)),

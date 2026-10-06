@@ -766,10 +766,16 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     } catch {
       results = [];
     }
-    try {
-      summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
-    } catch {
-      summary = null;
+    if (results.length > 0) {
+      // Recompute from raw results so summary fields introduced after the run
+      // (e.g. judge_exact_match_rate) are also present for older evaluations.
+      summary = buildSummary(results);
+    } else {
+      try {
+        summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
+      } catch {
+        summary = null;
+      }
     }
     return { evaluationId, status: evaluation.status, queryCount: results.length, summary, results };
   }

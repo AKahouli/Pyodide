@@ -6,6 +6,7 @@ import {
   buildExpectedSources,
   buildRetrievalMetrics,
   buildQueryResult,
+  buildSummary,
   buildCitations,
   normalizeFilename,
   extractFilePagePairs,
@@ -176,6 +177,33 @@ describe('buildQueryResult', () => {
     expect(result.token_usage?.total_tokens).toBe(300);
     expect(result.target_token_usage).toEqual({ total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 });
     expect(result.judge_token_usage).toEqual({ total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 });
+  });
+});
+
+describe('buildSummary judge exact match rate', () => {
+  const scored = (judgeScore?: number) => {
+    const result = buildQueryResult({
+      queryId: 'Q1',
+      query: 'question',
+      expectedAnswer: 'reponse attendue',
+      requiredFile: null,
+      page: null,
+      generatedAnswer: 'reponse produite',
+      status: 'completed',
+      durationMs: 1,
+      toolCalls: [],
+    });
+    if (judgeScore !== undefined) result.judge_score = judgeScore;
+    return result;
+  };
+
+  it('is the share of judge-graded exact matches, ignoring missing scores', () => {
+    const summary = buildSummary([scored(1), scored(1), scored(0), scored(undefined)]);
+    expect(summary.judge_exact_match_rate).toBeCloseTo(2 / 3, 4);
+  });
+
+  it('is 0 when no query received a judge score', () => {
+    expect(buildSummary([scored(undefined), scored(undefined)]).judge_exact_match_rate).toBe(0);
   });
 });
 

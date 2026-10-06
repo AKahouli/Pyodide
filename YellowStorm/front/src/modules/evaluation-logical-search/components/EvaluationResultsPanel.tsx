@@ -47,6 +47,14 @@ export function EvaluationResultsPanel({ evaluationId, status, evaluationName, d
   const summary = data?.summary ?? null;
   const results = useMemo(() => data?.results ?? [], [data]);
 
+  // Judge-graded exact match: share of queries the LLM judge scored 1, over the
+  // queries that actually have a judge score (missing scores are ignored).
+  const judgeExactMatchRate = useMemo(() => {
+    const scored = results.filter((r) => typeof r.judge_score === 'number' && Number.isFinite(r.judge_score));
+    if (scored.length === 0) return null;
+    return scored.filter((r) => r.judge_score === 1).length / scored.length;
+  }, [results]);
+
   const toggle = (queryId: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -73,7 +81,7 @@ export function EvaluationResultsPanel({ evaluationId, status, evaluationName, d
 
         {summary && (
           <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-            <Kpi label={t('results.kpi.correctness')} value={formatPct(summary.mean_answer_correctness)} />
+            <Kpi label={t('results.kpi.correctness')} value={formatPct(judgeExactMatchRate)} />
             <Kpi label={t('results.kpi.semantic')} value={formatPct(summary.mean_semantic_similarity)} />
             <Kpi label={t('results.kpi.factRecall')} value={formatPct(summary.mean_fact_recall)} />
             <Kpi label={t('results.kpi.fileRecall')} value={formatPct(summary.mean_file_recall)} />

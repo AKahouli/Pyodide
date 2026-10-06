@@ -32,6 +32,7 @@ const summary: EvaluationRunSummary = {
   mean_fact_precision: 0.5,
   mean_answer_quality: 0.72,
   answer_exact_match_rate: 0.45,
+  judge_exact_match_rate: 0.4,
   mean_file_recall: 0.93,
   mean_file_precision: 0.63,
   mean_page_hit: 2.5,
