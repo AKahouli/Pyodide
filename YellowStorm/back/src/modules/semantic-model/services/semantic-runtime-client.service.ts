@@ -344,14 +344,36 @@ export interface RuntimeGraphSearchSeed {
   label: string;
   keyFields: Record<string, unknown>;
   snippet: string;
-  matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid';
-  /** Where the best matches were: the record's own search text, or a passage of a long field. */
-  matchedIn?: 'record' | 'passage';
+  /** linked: found only through its link to a record the request names (see via). */
+  matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid' | 'linked';
+  /** Where the best matches were: the record's own search text, a passage of a long field, or only its link. */
+  matchedIn?: 'record' | 'passage' | 'link';
+  /** The record of another concept the request names, that this record is linked to, and the links in between. */
+  via?: RuntimeGraphSearchVia;
   /** Best matching passages of long fields (up to 2), quoted around the words of the query. */
   passages?: RuntimeGraphSearchPassage[];
   rank: number;
   diagnostics: Record<string, unknown>;
   provenance: RuntimeRecordProvenance[];
+}
+
+export interface RuntimeGraphSearchVia {
+  entityId: string;
+  /** The name the request gives it. */
+  label: string;
+  conceptLabel: string;
+  links: number;
+  /** From that record to this one: each relationship key and the way it was read. */
+  path: Array<{ relation: string; direction: 'outgoing' | 'incoming' }>;
+}
+
+/** A record of another concept that the request names; the records asked for linked to it were found through it. */
+export interface RuntimeGraphSearchAnchor {
+  entityId: string;
+  label: string;
+  conceptLabel: string;
+  /** Records asked for linked to it, through the fewest links (all of them, even beyond the limit). */
+  linkedCount: number;
 }
 
 export interface RuntimeGraphSearchPassage {
@@ -371,12 +393,19 @@ export interface RuntimeGraphSearchResult {
   modelVersionId: string;
   dataRevisionId: string;
   projectionRef: string;
-  index: { indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null };
+  index: {
+    indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null;
+    /** While this index is built, the last ready one was searched: of the same data, or of earlier data. */
+    fallback?: { indexId: string; sameData: boolean };
+  };
   modeUsed: 'hybrid' | 'lexical_only' | 'exact_only';
   status: 'found' | 'no_match' | 'not_represented' | 'index_not_ready';
   concepts: Array<{ conceptId: string; key: string; label: string }>;
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
+  anchors?: RuntimeGraphSearchAnchor[];
+  /** The walk from the anchors was cut short: linked records may be missing. */
+  linksTruncated?: boolean;
   hasMore?: boolean;
   hiddenRecords?: number;
   notes?: string[];

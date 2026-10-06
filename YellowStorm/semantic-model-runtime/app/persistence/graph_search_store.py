@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022, 024 and 025).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025 and 028).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -14,7 +14,19 @@ _GENERATION_COLUMNS = (
     "index_id::text, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
     "state, attempt, owner, job_id::text, expected_count, indexed_count, exact_only_count, "
     "failed_count, reused_count, embedding_calls, last_error_code, created_at, completed_at, "
-    "passage_count, passage_indexed_count, passage_truncated_count, index_settings")
+    "passage_count, passage_indexed_count, passage_truncated_count, index_settings, vector_fingerprint")
+
+# Word index of a text: its words as written, and their French and English stems.
+_LEXICAL_CONFIGS = ("simple", "french", "english")
+
+
+def _tsvector(param: str) -> str:
+    return " || ".join(f"to_tsvector('{config}', {param})" for config in _LEXICAL_CONFIGS)
+
+
+def _tsquery(param: str) -> str:
+    """A request (``documents.lexical_query`` text) matched as written or by its stems."""
+    return "(" + " || ".join(f"to_tsquery('{config}', {param})" for config in _LEXICAL_CONFIGS) + ")"
 
 
 def _generation(row: Any) -> dict[str, Any] | None:
@@ -77,13 +89,15 @@ async def get_generation_by_id(pool: Any, index_id: str) -> dict[str, Any] | Non
 
 async def create_generation(pool: Any, *, model_id: str, data_revision_id: str, projection_ref: str,
                             spec_hash: str, fingerprint: str,
-                            index_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+                            index_settings: dict[str, Any] | None = None,
+                            vector_fingerprint: str | None = None) -> dict[str, Any]:
     await pool.execute(
         "INSERT INTO semantic_graph_search.index_generations "
-        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, index_settings) "
-        "VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
+        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, index_settings, "
+        " vector_fingerprint) "
+        "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
         model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
-        json.dumps(index_settings, sort_keys=True) if index_settings is not None else None)
+        json.dumps(index_settings, sort_keys=True) if index_settings is not None else None, vector_fingerprint)
     generation = await get_generation(pool, data_revision_id, fingerprint)
     assert generation is not None
     return generation
@@ -132,7 +146,7 @@ async def insert_documents(pool: Any, index_id: str, documents: list[dict[str, A
         "INSERT INTO semantic_graph_search.entity_documents "
         "(index_id, entity_id, concept_id, label, label_key, source_workspaces, search_text, lexical, "
         " content_hash, status, diagnostics) "
-        "VALUES ($1::uuid, $2, $3, $4, $5, $6::text[], $7, to_tsvector('simple', $8), $9, $10, $11::jsonb) "
+        f"VALUES ($1::uuid, $2, $3, $4, $5, $6::text[], $7, {_tsvector('$8')}, $9, $10, $11::jsonb) "
         "ON CONFLICT (index_id, entity_id) DO NOTHING",
         [(index_id, document["entityId"], document["conceptId"], document["label"],
           document["labelKey"], document["sourceWorkspaces"], document["searchText"],
@@ -154,7 +168,7 @@ async def insert_passages(pool: Any, index_id: str, documents: list[dict[str, An
             "INSERT INTO semantic_graph_search.entity_passages "
             "(index_id, entity_id, ordinal, concept_id, field_key, field_label, start_offset, end_offset, "
             " passage_text, search_text, lexical, content_hash, status, source_workspaces) "
-            "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_tsvector('simple', $11), $12, "
+            f"VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, {_tsvector('$11')}, $12, "
             "'pending', $13::text[]) ON CONFLICT (index_id, entity_id, ordinal) DO NOTHING", rows)
     return len(rows)
 
@@ -163,18 +177,20 @@ _VECTOR_TABLES = {"documents": "semantic_graph_search.entity_documents",
                   "passages": "semantic_graph_search.entity_passages"}
 
 
-async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: str,
+async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: str | list[str],
                           kind: str = "documents") -> int:
     """Reuse vectors already computed for the same text: no model call. ``kind``: documents
-    or passages (one cache: a vector depends only on the text and the profile)."""
+    or passages (one cache: a vector depends only on the text and the vector space);
+    ``fingerprint``: the cache keys of that space."""
+    fingerprints = [fingerprint] if isinstance(fingerprint, str) else list(fingerprint)
     result = await pool.execute(
         f"UPDATE {_VECTOR_TABLES[kind]} document "
         "SET embedding = cache.embedding, status = 'ready' "
         "FROM semantic_graph_search.embedding_cache cache "
         "WHERE document.index_id = $1::uuid AND document.status = 'pending' "
-        "AND cache.model_id = $2 AND cache.embedding_fingerprint = $3 "
+        "AND cache.model_id = $2 AND cache.embedding_fingerprint = ANY($3::text[]) "
         "AND cache.content_hash = document.content_hash",
-        index_id, model_id, fingerprint)
+        index_id, model_id, fingerprints)
     reused = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
     if reused:
         await pool.execute(
@@ -293,18 +309,18 @@ async def prune_generations(pool: Any, model_id: str, keep_recent: int = 2) -> i
 _VISIBLE = "($3::text[] IS NULL OR source_workspaces <@ $3::text[])"
 
 
-async def lexical_candidates(pool: Any, index_id: str, terms: list[str], label_query: str,
+async def lexical_candidates(pool: Any, index_id: str, tsquery: str | None, label_query: str,
                              concept_ids: list[str] | None, allowed_workspaces: list[str] | None,
                              limit: int) -> list[dict[str, Any]]:
-    """Records sharing words with the query, or whose name looks like it."""
-    tsquery = " | ".join(terms) if terms else None
+    """Records sharing words with the query (``documents.lexical_query``), or whose name looks
+    like it."""
     rows = await pool.fetch(
         "SELECT entity_id, "
-        "  COALESCE(ts_rank_cd(lexical, to_tsquery('simple', $4)), 0) "
+        f"  COALESCE(ts_rank_cd(lexical, {_tsquery('$4')}), 0) "
         "  + similarity(label_key, $5) AS score "
         "FROM semantic_graph_search.entity_documents "
         f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "AND (($4::text IS NOT NULL AND lexical @@ to_tsquery('simple', $4)) "
+        f"AND (($4::text IS NOT NULL AND lexical @@ {_tsquery('$4')}) "
         "     OR ($5 <> '' AND label_key % $5)) "
         "ORDER BY score DESC, entity_id LIMIT $6",
         index_id, concept_ids, allowed_workspaces, tsquery, label_query, limit)
@@ -359,25 +375,25 @@ def _passage_hits(rows: list[Any], score: str) -> list[dict[str, Any]]:
     return list(records.values())
 
 
-async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
+async def lexical_passage_candidates(pool: Any, index_id: str, tsquery: str | None,
                                      concept_ids: list[str] | None, allowed_workspaces: list[str] | None,
                                      limit: int, per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
-    """Records with a passage sharing words with the query, ranked by their best passage;
-    each with its best ``per_record`` passages."""
-    if not terms:
+    """Records with a passage sharing words with the query (``documents.lexical_query``), ranked
+    by their best passage; each with its best ``per_record`` passages."""
+    if not tsquery:
         return []
     rows = await pool.fetch(
         "WITH scored AS ("
-        "  SELECT entity_id, ordinal, ts_rank_cd(lexical, to_tsquery('simple', $4)) AS score "
+        f"  SELECT entity_id, ordinal, ts_rank_cd(lexical, {_tsquery('$4')}) AS score "
         "  FROM semantic_graph_search.entity_passages "
         f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "  AND lexical @@ to_tsquery('simple', $4)), "
+        f"  AND lexical @@ {_tsquery('$4')}), "
         "ranked AS (SELECT *, row_number() OVER (PARTITION BY entity_id ORDER BY score DESC, ordinal) AS place "
         "  FROM scored), "
         "best AS (SELECT entity_id, score FROM ranked WHERE place = 1 ORDER BY score DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.score FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.score DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, " | ".join(terms), limit, per_record)
+        index_id, concept_ids, allowed_workspaces, tsquery, limit, per_record)
     return _passage_hits(rows, "score")
 
 
@@ -451,6 +467,87 @@ async def entity_rows(pool: Any, revision_id: str, entity_ids: list[str]) -> dic
             "provenance": json.loads(provenance) if isinstance(provenance, str) else dict(provenance or {}),
         }
     return result
+
+
+async def fallback_generation(pool: Any, model_id: str, data_revision_id: str) -> dict[str, Any] | None:
+    """The ready generation to search while the wanted one is built: the revision's own (other
+    settings or text format) first, else the model's most recent one (earlier data)."""
+    return _generation(await pool.fetchrow(
+        f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
+        "WHERE model_id = $1 AND state = 'ready' "
+        "ORDER BY (data_revision_id = $2) DESC, completed_at DESC NULLS LAST, created_at DESC LIMIT 1",
+        model_id, data_revision_id))
+
+
+def _workspaces(alias: str) -> str:
+    """The workspaces a stored record was read from, as a text array (none: manual records)."""
+    return ("ARRAY(SELECT DISTINCT src.item -> 'assetRef' ->> 'workspaceId' FROM jsonb_array_elements("
+            f"CASE WHEN jsonb_typeof({alias}.provenance -> 'sources') = 'array' THEN {alias}.provenance -> 'sources' "
+            "ELSE '[]'::jsonb END) AS src(item) "
+            "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '')")
+
+
+def _readable(alias: str, param: str) -> str:
+    """Every workspace the record was read from is in ``param`` (NULL: no restriction)."""
+    return f"({param}::text[] IS NULL OR {_workspaces(alias)} <@ {param}::text[])"
+
+
+_LINKS_OF = (
+    "SELECT source_entity_id AS me, relation_id, 'outgoing' AS direction, target_entity_id AS other "
+    "FROM semantic_population.relationships WHERE data_revision_id = $1 AND state = 'accepted' "
+    "AND source_entity_id = ANY($2::text[]) "
+    "UNION ALL "
+    "SELECT target_entity_id, relation_id, 'incoming', source_entity_id "
+    "FROM semantic_population.relationships WHERE data_revision_id = $1 AND state = 'accepted' "
+    "AND target_entity_id = ANY($2::text[])")
+
+
+async def linked_names(pool: Any, revision_id: str, entity_ids: list[str],
+                       per_concept: int) -> dict[str, list[dict[str, Any]]]:
+    """Per record, the names of the records linked to it (accepted links, either way) that were
+    read from no workspace the record itself was not read from: at most ``per_concept`` per
+    linked concept, in name order, and how many more (``{"conceptId", "more"}``)."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        f"WITH links AS ({_LINKS_OF}), "
+        "named AS ("
+        "  SELECT DISTINCT links.me, other.id, other.concept_id, other.label "
+        "  FROM links JOIN semantic_population.entities other "
+        "    ON other.data_revision_id = $1 AND other.id = links.other "
+        "  JOIN semantic_population.entities mine ON mine.data_revision_id = $1 AND mine.id = links.me "
+        f"  WHERE other.id <> links.me AND COALESCE(other.label, '') <> '' "
+        f"  AND {_workspaces('other')} <@ {_workspaces('mine')}), "
+        "placed AS (SELECT *, row_number() OVER (PARTITION BY me, concept_id ORDER BY label, id) AS place, "
+        "  count(*) OVER (PARTITION BY me, concept_id) AS total FROM named) "
+        "SELECT me, concept_id, label, place, total FROM placed WHERE place <= $3 "
+        "ORDER BY me, concept_id, place",
+        revision_id, list(entity_ids), per_concept)
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        items = result.setdefault(row["me"], [])
+        items.append({"conceptId": row["concept_id"], "name": row["label"]})
+        if row["place"] == per_concept and row["total"] > per_concept:
+            items.append({"conceptId": row["concept_id"], "more": int(row["total"]) - per_concept})
+    return result
+
+
+async def neighbours(pool: Any, revision_id: str, entity_ids: list[str],
+                     allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """The records one accepted link away from ``entity_ids`` (either way) that the actor may
+    read, with the link: at most ``limit`` rows."""
+    if not entity_ids:
+        return []
+    rows = await pool.fetch(
+        f"WITH links AS ({_LINKS_OF}) "
+        "SELECT links.me, links.relation_id, links.direction, other.id AS other, other.concept_id "
+        "FROM links JOIN semantic_population.entities other "
+        "  ON other.data_revision_id = $1 AND other.id = links.other "
+        f"WHERE {_readable('other', '$3')} "
+        "ORDER BY links.me, links.relation_id, other.id LIMIT $4",
+        revision_id, list(entity_ids), allowed_workspaces, limit)
+    return [{"from": row["me"], "relationId": row["relation_id"], "direction": row["direction"],
+             "to": row["other"], "conceptId": row["concept_id"]} for row in rows]
 
 
 async def document_texts(pool: Any, index_id: str, entity_ids: list[str]) -> dict[str, str]:

@@ -143,6 +143,11 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         await runtime.execute(
             "UPDATE semantic_population.entities SET attributes = jsonb_set(attributes::jsonb, '{title}', "
             "to_jsonb($2::text)) WHERE data_revision_id = $1 AND label = 'CT003'", revision_id, long_title)
+        # An e-mail address and a reference, as people paste them.
+        await runtime.execute(
+            "UPDATE semantic_population.entities SET attributes = jsonb_set(attributes::jsonb, '{title}', "
+            "to_jsonb($2::text)) WHERE data_revision_id = $1 AND label = 'CT001'", revision_id,
+            "Sony Master Agreement, ref INV-2024-001, contact jane.doe@sony.com")
 
         # 2. The real index worker builds every record's document and vector, and the passages.
         outcome = await search_tasks._run_task(index_task["id"], "e2e-search")
@@ -205,6 +210,44 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         visible = (await client.post("/v1/semantic-model-search/query",
                                      json=query("support agreement", allowedWorkspaceIds=[WORKSPACE_ID]))).json()
         assert visible["seeds"][0]["label"] == "CT002"
+
+        # 4b. Words as people type them: an address and a reference match their parts in a row, a
+        # plural its singular; and a contract's search text names its customer.
+        before_extra = sum(calls)
+        address = (await client.post("/v1/semantic-model-search/query", json=query("jane.doe@sony.com"))).json()
+        assert address["seeds"][0]["label"] == "CT001" and "lexicalRank" in address["seeds"][0]["diagnostics"]
+        reference = (await client.post("/v1/semantic-model-search/query", json=query("INV-2024-001"))).json()
+        assert reference["seeds"][0]["label"] == "CT001" and "lexicalRank" in reference["seeds"][0]["diagnostics"]
+        other_reference = (await client.post("/v1/semantic-model-search/query", json=query("INV-2023-001"))).json()
+        assert all("lexicalRank" not in seed["diagnostics"] for seed in other_reference["seeds"])
+        plural = (await client.post("/v1/semantic-model-search/query",
+                                    json=query("supports", concepts=["contract"]))).json()
+        assert plural["seeds"][0]["label"] == "CT002" and "lexicalRank" in plural["seeds"][0]["diagnostics"]
+        contract_ids = {seed["label"]: seed["entityId"] for seed in found["seeds"]}
+        cards = await search_store.document_texts(runtime, status["index"]["indexId"], [contract_ids["CT003"]])
+        assert "Linked Customer: " in cards[contract_ids["CT003"]]
+
+        # 4c. Through the record the request names: Carrefour's contracts are found through the
+        # customer, along the stored link, and say so.
+        through = (await client.post("/v1/semantic-model-search/query",
+                                     json=query("agreements of Carrefour", concepts=["contract"]))).json()
+        assert [(anchor["label"], anchor["conceptLabel"], anchor["linkedCount"]) for anchor in through["anchors"]] \
+            == [("Carrefour", "Customer", 1)], through
+        assert through["seeds"][0]["label"] == "CT003"
+        assert through["seeds"][0]["via"]["label"] == "Carrefour"
+        assert through["seeds"][0]["via"]["path"] == [{"relation": "has_contract", "direction": "outgoing"}]
+        assert any("Found through Customer \"Carrefour\"" in note for note in through["notes"])
+        sony_contracts = (await client.post("/v1/semantic-model-search/query",
+                                            json=query("Sony", concepts=["contract"]))).json()
+        assert {seed["label"] for seed in sony_contracts["seeds"][:2]} == {"CT001", "CT002"}
+        assert all("via" in seed for seed in sony_contracts["seeds"][:2])
+        # A request naming no record of another concept is answered as before.
+        assert "anchors" not in plural
+        # Through a record the actor cannot read, nothing is found.
+        hidden_anchor = (await client.post("/v1/semantic-model-search/query", json=query(
+            "agreements of Carrefour", concepts=["contract"], allowedWorkspaceIds=[]))).json()
+        assert hidden_anchor["seeds"] == [] and "anchors" not in hidden_anchor
+        extra_queries = sum(calls) - before_extra
 
         # 5. From the customer, the real has_contract edges reach exactly its two contracts.
         sony = scoped["seeds"][0]["entityId"]
@@ -312,6 +355,16 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
                                         json={**query("sony"), "environment": "production"})
         assert unpublished.status_code == 404 and unpublished.json()["detail"] == "model_not_published"
 
+        # While an index with other settings is built, the last ready one is searched, and said so.
+        before_rebuild = sum(calls)
+        rebuilding = (await client.post("/v1/semantic-model-search/query", json=query(
+            "support agreement", settings={"index": {"cardValueChars": 400}}))).json()
+        assert rebuilding["index"]["state"] == "queued" and rebuilding["index"]["fallback"]["sameData"] is True
+        assert rebuilding["status"] == "found" and rebuilding["seeds"][0]["label"] == "CT002"
+        assert rebuilding["modeUsed"] == "hybrid"
+        assert any("being rebuilt" in note for note in rebuilding["notes"])
+        extra_queries += sum(calls) - before_rebuild
+
     # 6. A rebuild of the same texts under a new generation reuses every vector: no model call.
     generation = await search_store.get_generation_by_id(runtime, status["index"]["indexId"])
     await runtime.execute("DELETE FROM semantic_graph_search.index_generations WHERE index_id = $1::uuid",
@@ -328,4 +381,4 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
     assert outcome["state"] == "ready" and outcome["embedded"] == 0 and outcome["passagesEmbedded"] == 0
     assert outcome["reused"] == status["index"]["indexedCount"]
     assert outcome["passagesReused"] == status["index"]["passageCount"]
-    assert sum(calls) == embedded_once + 8  # only the query embeddings of step 4
+    assert sum(calls) == embedded_once + 8 + extra_queries  # only the query embeddings

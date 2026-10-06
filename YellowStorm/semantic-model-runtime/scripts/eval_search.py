@@ -9,6 +9,9 @@ Checks, per concept (a sample of records each):
   find_by_name     find_records(record name)              -> the record is ranked first
   find_with_typo   find_records(name with one letter off) -> the record is in the top 5
   find_by_words    find_records(6 words from a long text) -> the record is in the top 5
+  find_word_forms  find_records(the same 6 words, each singular made plural or plural singular)
+                                                          -> the record is in the top 5
+  find_by_address  find_records(an e-mail address a field holds) -> the first record holds it
   links            get_related_records(record, one step)  -> exactly its stored linked records,
                                                              and linkCounts = the stored count
   linked_to        query_records(linked concept, linked_to record) -> total = stored count
@@ -23,6 +26,10 @@ Walks (chains of 2 and 3 relationships between different concepts, a sample of t
                                                                         -> total = the records it reaches
   connect          connect_records(a, b 1 to 4 links apart) -> connected at that many links, along stored links
   not_connected    connect_records(a, b more than 4 links apart) -> not connected
+
+Through a record the request names (find_records "<concept asked for> <a record's name>", that concept):
+  find_through     -> that record is the anchor, linkedCount = the records asked for nearest it along the
+                      stored links (at most 3 links, read both ways), and the first records are among them
 
   conda run -n meta python scripts/eval_search.py <model-id> [production|draft] [--sample N] [--json out.json]
 """
@@ -68,6 +75,14 @@ def _misspell(text: str, rng: random.Random) -> str | None:
 
 def _words(text: str) -> list[str]:
     return re.findall(r"[^\W_]{3,}", text)
+
+
+def _other_form(word: str) -> str:
+    """The plural of a singular word, the singular of a plural one (French and English -s)."""
+    return word[:-1] if len(word) > 4 and word.lower().endswith("s") else word + "s"
+
+
+_ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 
 def _plain(word: str) -> bool:
@@ -232,6 +247,20 @@ async def run(model_id: str, environment: str, sample: int, seed: int, walks: in
                         if words:
                             top = await ev.find(words, key)
                             ev.record("find_by_words", record["id"] in top, concept=key, query=words, want=record["id"])
+                            forms = " ".join(_other_form(word) if len(word) >= 4 else word for word in words.split())
+                            top = await ev.find(forms, key)
+                            ev.record("find_word_forms", record["id"] in top, concept=key, query=forms,
+                                      want=record["id"])
+                    addresses = sorted({match for value in record["values"].values() if isinstance(value, str)
+                                        for match in _ADDRESS.findall(value)})
+                    if addresses:
+                        address = rng.choice(addresses)
+                        holders = {other["id"] for other in records
+                                   if any(isinstance(value, str) and address.lower() in value.lower()
+                                          for value in other["values"].values())}
+                        top = await ev.find(address, key)
+                        ev.record("find_by_address", bool(top) and top[0] in holders, concept=key, query=address,
+                                  got=top[:3], holders=len(holders))
                     # One step along every relationship: exactly the stored links, and the exact counts.
                     expected = {other for (source, _, _), others in linked.items() if source == record["id"]
                                 for other in others}
@@ -284,6 +313,7 @@ async def run(model_id: str, environment: str, sample: int, seed: int, walks: in
                         ev.record("did_you_mean", answer.get("total") == 0 and value in suggested, concept=key,
                                   field=field, query=typo, want=value, got=suggested[:5])
             await _walks(ev, rng, walks, concepts, relations, by_concept, linked, concept_of, links)
+            await _through(ev, rng, walks, concepts, by_concept, concept_of, links)
             return {"modelId": model_id, "environment": environment, "dataRevisionId": revision,
                     "graph": binding["projection_ref"], "records": len(rows), "links": len(links),
                     "checks": ev.summary()}
@@ -368,6 +398,70 @@ async def _walks(ev: Eval, rng: random.Random, count: int, concepts: dict[str, A
             answer = await ev.post("connect", {"fromEntityId": origin, "toEntityId": target, "maxLinks": 4})
             ev.record("not_connected", answer.get("status") == "not_connected", origin=origin, target=target,
                       status=answer.get("status"), links=answer.get("links"), truncated=answer.get("truncated"))
+
+
+async def _through(ev: Eval, rng: random.Random, count: int, concepts: dict[str, Any],
+                   by_concept: dict[str, list[dict[str, Any]]], concept_of: dict[str, str], links: list[Any]) -> None:
+    """find_records naming a record of another concept: the records asked for nearest it."""
+    from app.graph_search.anchors import MAX_ANCHOR_WORDS, MAX_LINKS, name_words
+
+    adjacent: dict[str, set[str]] = defaultdict(set)
+    for link in links:
+        adjacent[link["source_entity_id"]].add(link["target_entity_id"])
+        adjacent[link["target_entity_id"]].add(link["source_entity_id"])
+    named: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # name -> concept -> records
+    for concept_id, records in by_concept.items():
+        for record in records:
+            named[fold(record["label"])][concept_id] += 1
+
+    def nearest(origin: str, asked: str) -> set[str]:
+        """The records of ``asked`` the fewest links from ``origin``, never walking on through one."""
+        seen, frontier = {origin}, [origin]
+        for _ in range(MAX_LINKS):
+            reached, following = set(), []
+            for record in frontier:
+                for other in adjacent.get(record, ()):
+                    if other in seen:
+                        continue
+                    seen.add(other)
+                    (reached.add(other) if concept_of.get(other) == asked else following.append(other))
+            if reached:
+                return reached
+            frontier = following
+        return set()
+
+    cases = []
+    for concept_id, records in by_concept.items():
+        for record in records:
+            name = record["label"]
+            counts = named[fold(name)]
+            # One record of its concept bears the name, and no concept has fewer records bearing it.
+            if not 1 <= len(name_words(name)) <= MAX_ANCHOR_WORDS or counts[concept_id] != 1 \
+                    or any(other != concept_id and records_named <= 1 for other, records_named in counts.items()):
+                continue
+            for asked in by_concept:
+                if asked != concept_id and counts.get(asked, 0) == 0:
+                    cases.append((record, concept_id, asked))
+    rng.shuffle(cases)
+    done = 0
+    for record, concept_id, asked in cases:
+        if done >= count * 2:
+            break
+        want = nearest(record["id"], asked)
+        if not want:
+            continue
+        asked_concept = concepts.get(asked, {})
+        query = f"{asked_concept.get('label') or asked_concept.get('key')} {record['label']}"
+        found = await ev.post("query", {"query": query, "concepts": [asked_concept.get("key") or asked], "limit": 10})
+        anchors = found.get("anchors") or []
+        seeds = [seed["entityId"] for seed in found.get("seeds", [])]
+        first = seeds[:min(10, len(want))]
+        ok = (bool(anchors) and anchors[0]["entityId"] == record["id"] and anchors[0]["linkedCount"] == len(want)
+              and len(first) == min(10, len(want)) and set(first) <= want)
+        ev.record("find_through", ok, query=query, anchor=record["id"], want=len(want),
+                  anchors=[(anchor["entityId"], anchor["linkedCount"]) for anchor in anchors],
+                  outside=[seed for seed in first if seed not in want][:3])
+        done += 1
 
 
 def main() -> None:

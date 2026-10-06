@@ -31,6 +31,8 @@ from .compiler import PopulationError
 MAX_BATCH_VERTICES = 500
 MAX_BATCH_EDGES = 500
 MAX_PROJECTED_LINKS = 500_000
+# Records read to rebuild a graph from stored rows (the store's own default read stops at 50,000).
+MAX_PROJECTED_RECORDS = 500_000
 LIVE_PROJECTION_PREFIX = "age:v1:"  # Entity / RELATED_TO graphs, served until re-projected
 TYPED_PROJECTION_PREFIX = "age:v2:"  # a label per concept and per relationship
 _PROJECTION_PREFIXES = (TYPED_PROJECTION_PREFIX, LIVE_PROJECTION_PREFIX)
@@ -394,7 +396,7 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
     from app.persistence import population_store as store
 
     stored = await store.count_revision_rows(pool, revision_id)
-    entities = await store.list_revision_entities(pool, revision_id)
+    entities = await store.list_revision_entities(pool, revision_id, limit=MAX_PROJECTED_RECORDS)
     relationships = await store.list_revision_relationships(pool, revision_id, limit=MAX_PROJECTED_LINKS)
     if stored["entities"] != len(entities) or stored["relationships"] != len(relationships):
         raise PopulationError("projection_too_large")

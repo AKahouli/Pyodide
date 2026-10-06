@@ -278,6 +278,31 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/1 records have fields too long/);
   });
 
+  it('says which record the search named, and through which links each record was found', async () => {
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'found', modeUsed: 'hybrid', index: { state: 'queued', fallback: { indexId: 'old', sameData: false } },
+        concepts: [{ conceptId: 'c-k', key: 'contract', label: 'Contract' }], unknownConcepts: [],
+        anchors: [{ entityId: 'cust-1', label: 'Carrefour', conceptLabel: 'Customer', linkedCount: 40 }],
+        seeds: [{ entityId: 'k-1', conceptId: 'c-k', conceptLabel: 'Contract', label: 'CT003', keyFields: {}, snippet: 'Type: Contract',
+          matchClass: 'linked', matchedIn: 'link', rank: 1, diagnostics: {}, provenance: [],
+          via: { entityId: 'cust-1', label: 'Carrefour', conceptLabel: 'Customer', links: 1, path: [{ relation: 'has_contract', direction: 'outgoing' }] } }],
+        hasMore: true, coverage: { expectedCount: 10, indexedCount: 10, exactOnlyCount: 0 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'contrats de Carrefour', concepts: ['Contract'] });
+    expect(result).toMatchObject({
+      foundThrough: [{ entityId: 'cust-1', concept: 'Customer', name: 'Carrefour', linkedRecords: 40 }],
+      records: [{ entityId: 'k-1', match: 'linked', matchedIn: 'link',
+        via: { entityId: 'cust-1', concept: 'Customer', name: 'Carrefour', links: 1, path: [{ relation: 'has_contract', direction: 'outgoing' }] } }],
+      completeness: { complete: false, reasons: ['more_results', 'index_not_ready'] },
+    });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/Found through Customer "Carrefour".*40 record\(s\).*linked_to=\[\{relation, record_ids: \["cust-1"\]\}\]/);
+    expect(notes).toMatch(/index of earlier data was searched/);
+  });
+
   it('reports concepts the model does not hold as not represented', async () => {
     const graphSearch = {
       search: jest.fn().mockResolvedValue({

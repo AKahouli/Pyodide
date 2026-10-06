@@ -1084,6 +1084,15 @@ export class SemanticModelAssistantService {
       environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit,
     });
     const notes: string[] = [];
+    if (result.index.fallback && result.status !== 'index_not_ready') {
+      notes.push(result.index.fallback.sameData
+        ? 'The search index is being rebuilt: the previous index of this data was searched.'
+        : 'The search index of the latest data is being built: the index of earlier data was searched, so records added or changed since may be missing. Tell the user.');
+    }
+    for (const anchor of result.anchors ?? []) {
+      notes.push(`Found through ${anchor.conceptLabel} "${anchor.label}", which the search names: ${String(anchor.linkedCount)} record(s) asked for are linked to it (via on each record says through which links). For all of them, or to count or filter them, use query_records with linked_to=[{relation, record_ids: ["${anchor.entityId}"]}] or traverse_records.`);
+    }
+    if (result.linksTruncated) notes.push('The walk from the record the search names was cut short: linked records may be missing.');
     if (result.status === 'index_not_ready') {
       notes.push(`The search index of this data is not ready (${result.index.state}): ${String(result.coverage.indexedCount)} of ${String(result.coverage.expectedCount)} records can be found by meaning. Tell the user that records may be missing.`);
     }
@@ -1108,6 +1117,7 @@ export class SemanticModelAssistantService {
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
+      ...(result.anchors?.length ? { foundThrough: result.anchors.map((anchor) => ({ entityId: anchor.entityId, concept: anchor.conceptLabel, name: anchor.label, linkedRecords: anchor.linkedCount })) } : {}),
       records: result.seeds.map((seed) => {
         const passages = (seed.passages ?? []).map((passage) => ({ field: passage.field, fieldKey: passage.fieldKey, text: passage.text }));
         // Found by words deep in a long field: the passage says why, the start of the record does not.
@@ -1116,6 +1126,7 @@ export class SemanticModelAssistantService {
           entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
           snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
           match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
+          ...(seed.via ? { via: { entityId: seed.via.entityId, concept: seed.via.conceptLabel, name: seed.via.label, links: seed.via.links, path: seed.via.path } } : {}),
           ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
         };
       }),

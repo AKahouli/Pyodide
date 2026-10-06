@@ -309,6 +309,15 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
     index = search_store.public_generation(generation)
     if profile is None:
         index["state"] = "unavailable"
+    searched = generation
+    if generation is None or generation["state"] != "ready":
+        # While the index is built (new data, new settings or text format), the last ready one is searched.
+        fallback = await search_store.fallback_generation(pool, command.model_id, revision_id)
+        if fallback is not None:
+            searched = fallback
+            index["fallback"] = {"indexId": fallback["index_id"], "sameData": fallback["data_revision_id"] == revision_id}
+            index.update({key: value for key, value in search_store.public_generation(fallback).items()
+                          if key.endswith("Count")})
     base = {**_pinned(binding, command.environment), "index": index, "concepts": concepts,
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),
@@ -325,8 +334,8 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         pool, revision_id=revision_id, compiled=compiled, query=command.query,
         concept_ids=[concept["conceptId"] for concept in concepts] or None,
         limit=search_settings.limit(command.limit), allowed_workspaces=command.allowed_workspace_ids,
-        generation=generation, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
-    ready = generation is not None and generation["state"] == "ready"
+        generation=searched, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
+    ready = searched is not None and searched["state"] == "ready"
     if found["seeds"]:
         outcome = "found"
     elif not ready:
@@ -351,6 +360,14 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
 def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> list[str]:
     """What makes a search answer incomplete, said plainly for whoever reports it."""
     notes = []
+    fallback = index.get("fallback")
+    if fallback and ready:
+        if fallback["sameData"]:
+            notes.append("The search index is being rebuilt: the previous index of this data was searched, "
+                         "so words and meaning may match a little differently once it is done.")
+        else:
+            notes.append("The search index of the latest data is being built: the index of earlier data was "
+                         "searched, so records added or changed since may be missing.")
     if found.get("hasMore"):
         notes.append("More records match than were returned: the list is not complete.")
     if found.get("hiddenRecords"):
@@ -365,6 +382,11 @@ def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> l
         if expected and searched < expected:
             notes.append(f"Only {searched} of {expected} records are in the search index: "
                          "matching records may be missing.")
+    for anchor in found.get("anchors") or []:
+        notes.append(f"Found through {anchor['conceptLabel']} \"{anchor['label']}\", which the request names: "
+                     f"{anchor['linkedCount']} record(s) asked for are linked to it (see via on each record).")
+    if found.get("linksTruncated"):
+        notes.append("The walk from the named record was cut short (too many links): linked records may be missing.")
     return notes
 
 

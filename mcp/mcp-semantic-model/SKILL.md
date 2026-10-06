@@ -49,13 +49,21 @@ only these names. A field with `inData: false` has no value yet.
 ### find_records: find records by key, words and meaning
 
 - Exact key or name first, then words and meaning. `concepts` narrows the search (`["Message e-mail"]`).
-  A nearly right concept name (plural, typo) is read as the closest concept.
+  A nearly right concept name (plural, typo) is read as the closest concept. Words match singular and
+  plural (French and English), and an e-mail address or a reference (INV-2024-001) as written.
+- A record is also found through the names of the records linked to it: an e-mail by its sender's or its
+  attachment's name.
+- With `concepts`, a search naming a record of another concept finds that record first, then the records
+  asked for linked to it: "contrats de Carrefour" with `concepts=["Contrat"]` finds the customer
+  Carrefour, then its contracts. `foundThrough` names that record (`linkedRecords`: how many are linked to
+  it); each record found that way has `via` (the record, the links in between) and `match: linked` when
+  only the link found it. For all of them, use `query_records` with `linked_to` its `entityId`.
 - Each result has `entityId`: the handle for `get_related_records` and `linked_to`.
 - `match` vector or hybrid means a likely candidate, not proof: check its fields. `passages` quote the part
   of a long field (an e-mail body) that matched: cite them.
 - Report `status`: `index_not_ready` (records may be missing), `no_match`, `not_represented` (the model has no
   such concept). `hasMore: true` means more records match than were returned. Read `notes` (index
-  incomplete, records hidden from the user) and say so.
+  incomplete or being rebuilt, records hidden from the user) and say so.
 
 ### get_related_records: walk the graph
 
@@ -145,6 +153,11 @@ Say "all" or "every" only when `complete` is true. Otherwise say how many were r
 and why, or fetch the rest (page with `nextOffset`, use `linked_to`).
 
 ### Worked examples (e-mail model)
+
+**"Les faits du mail « Relance contrat »." (a quick look)**
+`find_records(query="faits du mail Relance contrat", concepts=["Fait"])`: the e-mail is found as
+`foundThrough`, and its facts with `via`; `linkedRecords` says how many it states. To read them all,
+continue as below.
 
 **"Résume les faits énoncés dans le mail « Relance contrat »."**
 1. `find_records(query="Relance contrat", concepts=["Message e-mail"])` -> the e-mail's `entityId`.

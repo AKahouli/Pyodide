@@ -39,7 +39,10 @@ function block(input: Omit<AnswerCompleteness, 'complete'>): AnswerCompleteness 
 export function findCompleteness(result: RuntimeGraphSearchResult): AnswerCompleteness {
   const reasons: IncompleteReason[] = [];
   if (result.hasMore) reasons.push('more_results');
-  if (result.index.state !== 'ready') {
+  if (result.linksTruncated) reasons.push('search_cut');
+  // While an index is built, the last ready one of the same data answers as well as it.
+  const fallback = result.index.fallback;
+  if (result.index.state !== 'ready' && !fallback?.sameData) {
     reasons.push('index_not_ready');
   } else {
     const searched = result.coverage.indexedCount + result.coverage.exactOnlyCount;

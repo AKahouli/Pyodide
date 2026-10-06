@@ -78,7 +78,7 @@ def test_the_card_stays_bounded_and_the_long_field_becomes_passages() -> None:
         assert passage["fieldKey"] == "body" and passage["fieldLabel"] == "Body"
         assert passage["text"] == collapse(body[passage["start"]:passage["end"]])
         assert passage["searchText"] == "Type: E-mail\nName: Re: servers\nField: Body (Corps)\n" + passage["text"]
-        assert passage["lexicalText"] == passage["text"].lower()
+        assert passage["lexicalText"] == " ".join(re.findall(r"[^\W_]+", passage["text"].lower()))
         assert passage["contentHash"].startswith("sha256:")
     assert build_document(mail(body), CONCEPT) == document
     # Another record with the same body has the same passage texts: vectors are reused.
