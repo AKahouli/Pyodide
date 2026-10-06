@@ -19,6 +19,7 @@ const consumers = [
 
 const sh = (cmd, cwd) => execSync(cmd, { cwd, stdio: 'inherit' });
 
+sh('npm ci --ignore-scripts', sdkDir);
 sh('npm run build', sdkDir);
 const staging = path.join(repoRoot, '.generated', 'observability', 'staging');
 rmSync(staging, { recursive: true, force: true });
