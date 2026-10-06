@@ -17,6 +17,19 @@ class PyodideExecutionInfoV1(TypedDict):
     loadedPackages: list[str]
 
 
+class PyodideArtifactV1(TypedDict):
+    """Reference to a file produced in /workspace/output and persisted by YellowStorm.
+
+    The content never travels through MCP: only this bounded reference does.
+    """
+
+    name: str
+    sizeBytes: int
+    contentType: NotRequired[str]
+    documentId: NotRequired[str]
+    artifactUrl: NotRequired[str]
+
+
 class PyodideExecutionResultV1(TypedDict):
     """Stable result contract shared by the MCP tool and the browser relay."""
 
@@ -25,6 +38,7 @@ class PyodideExecutionResultV1(TypedDict):
     stdout: str
     stderr: str
     logsTruncated: NotRequired[bool]
+    artifacts: NotRequired[list[PyodideArtifactV1]]
     execution: PyodideExecutionInfoV1
     error: NotRequired[PyodideExecutionErrorV1]
 

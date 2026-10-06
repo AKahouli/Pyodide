@@ -33,6 +33,8 @@ class Settings:
     max_log_bytes: int
     max_result_bytes: int
     max_queue: int
+    max_input_files: int
+    max_output_files: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +52,8 @@ class Settings:
             max_log_bytes=int(os.getenv("PYODIDE_MCP_MAX_LOG_BYTES", str(256 * 1024))),
             max_result_bytes=int(os.getenv("PYODIDE_MCP_MAX_RESULT_BYTES", str(512 * 1024))),
             max_queue=int(os.getenv("PYODIDE_MCP_MAX_QUEUE", "3")),
+            max_input_files=int(os.getenv("PYODIDE_MCP_MAX_INPUT_FILES", "5")),
+            max_output_files=int(os.getenv("PYODIDE_MCP_MAX_OUTPUT_FILES", "5")),
         )
 
     def validate(self) -> None:
@@ -73,3 +77,7 @@ class Settings:
             raise ValueError("PYODIDE_MCP_MAX_INPUT_BYTES must be between 1024 and 8388608")
         if not 1 <= self.max_queue <= 10:
             raise ValueError("PYODIDE_MCP_MAX_QUEUE must be between 1 and 10")
+        if not 1 <= self.max_input_files <= 20:
+            raise ValueError("PYODIDE_MCP_MAX_INPUT_FILES must be between 1 and 20")
+        if not 1 <= self.max_output_files <= 20:
+            raise ValueError("PYODIDE_MCP_MAX_OUTPUT_FILES must be between 1 and 20")

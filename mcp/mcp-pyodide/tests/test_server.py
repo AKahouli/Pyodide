@@ -46,7 +46,7 @@ async def test_execute_python_never_exposes_identity_arguments():
     async with Client(mcp) as client:
         tools = await client.list_tools()
     properties = set(tools[0].inputSchema["properties"])
-    assert properties == {"code", "input", "timeout_seconds"}
+    assert properties == {"code", "input", "timeout_seconds", "inputs", "outputs"}
     assert not properties.intersection({"user_id", "browser_runtime_id", "socket_id", "execution_id", "correlation_id"})
 
 
@@ -63,6 +63,61 @@ async def test_execute_python_relays_the_bounded_payload(monkeypatch):
 
     assert stub.payloads == [{"code": "print(1 + 1)", "input": {"a": 1}, "timeoutMs": 30000}]
     assert result_dict(response)["stdout"] == "2\n"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_relays_logical_file_references(monkeypatch):
+    stub = BackendStub(response={"ok": True})
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("execute_python", {
+                "code": "1",
+                "inputs": [{"document_id": "abc", "as": "data.txt"}, {"name": "other.csv"}],
+                "outputs": ["result.csv"],
+            })
+    finally:
+        actor_context.reset(token)
+
+    assert stub.payloads == [{
+        "code": "1",
+        "input": None,
+        "timeoutMs": 30000,
+        "inputs": [{"as": "data.txt", "document_id": "abc"}, {"as": "other.csv", "name": "other.csv"}],
+        "outputs": ["result.csv"],
+    }]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_rejects_paths_in_file_names(monkeypatch):
+    stub = BackendStub(response={"ok": True})
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("execute_python", {"code": "1", "outputs": ["../secret.csv"]})
+    finally:
+        actor_context.reset(token)
+
+    assert result_dict(response)["error"]["code"] == "PYODIDE_EXECUTION_ERROR"
+    assert stub.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_execute_python_rejects_too_many_inputs(monkeypatch):
+    stub = BackendStub(response={"ok": True})
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    too_many = [{"document_id": f"id{i}", "as": f"f{i}.txt"} for i in range(server.settings.max_input_files + 1)]
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("execute_python", {"code": "1", "inputs": too_many})
+    finally:
+        actor_context.reset(token)
+
+    assert result_dict(response)["error"]["code"] == "PYODIDE_REQUEST_TOO_LARGE"
+    assert stub.payloads == []
 
 
 @pytest.mark.asyncio

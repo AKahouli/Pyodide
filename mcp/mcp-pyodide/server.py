@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Any
 
 from fastmcp import FastMCP
@@ -55,6 +56,48 @@ def _input_bytes(value: Any) -> int:
         raise ValueError("input must be JSON-compatible")
 
 
+_SAFE_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,254}$")
+
+
+def _safe_file_name(value: Any) -> str:
+    """A bare filename (no path, no traversal): the model never provides storage paths (§27)."""
+    name = str(value or "").strip()
+    if not name or ".." in name or "/" in name or "\\" in name or not _SAFE_FILE_NAME.fullmatch(name):
+        raise ValueError("file names must be simple basenames without paths")
+    return name
+
+
+def _input_file_specs(raw: Any) -> list[dict[str, str]]:
+    """Logical references only: a workspace document id or an exact file name, never a path/URL."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("inputs must be a list of {document_id|name, as?}")
+    specs: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("each input must be an object")
+        document_id = str(item.get("document_id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if bool(document_id) == bool(name):
+            raise ValueError("each input must set exactly one of document_id or name")
+        spec = {"as": _safe_file_name(item.get("as") or name)}
+        if document_id:
+            spec["document_id"] = document_id
+        else:
+            spec["name"] = name
+        specs.append(spec)
+    return specs
+
+
+def _output_file_names(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("outputs must be a list of file names")
+    return [_safe_file_name(item) for item in raw]
+
+
 @mcp.custom_route("/health/live", methods=["GET"])
 async def health_live(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
@@ -74,8 +117,14 @@ async def execute_python(
     code: str,
     input: Any = None,
     timeout_seconds: int = 30,
+    inputs: list[dict[str, Any]] | None = None,
+    outputs: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Execute bounded Python code in the user's connected browser and return its result and logs."""
+    """Execute bounded Python code in the user's connected browser and return its result and logs.
+
+    Optionally read workspace files (logical references only: ``inputs=[{"document_id"| "name": ..., "as": ...}]``)
+    mounted under /workspace/input, and capture named files from /workspace/output as artifacts.
+    """
     try:
         require_actor_context()
     except RuntimeError:
@@ -96,13 +145,28 @@ async def execute_python(
             return error_result("PYODIDE_REQUEST_TOO_LARGE", "input exceeded the configured limit")
     except ValueError as exc:
         return error_result("PYODIDE_EXECUTION_ERROR", str(exc))
+    try:
+        input_files = _input_file_specs(inputs)
+        output_files = _output_file_names(outputs)
+    except ValueError as exc:
+        return error_result("PYODIDE_EXECUTION_ERROR", str(exc))
+    if len(input_files) > settings.max_input_files:
+        return error_result("PYODIDE_REQUEST_TOO_LARGE", f"inputs must not exceed {settings.max_input_files} files")
+    if len(output_files) > settings.max_output_files:
+        return error_result("PYODIDE_REQUEST_TOO_LARGE", f"outputs must not exceed {settings.max_output_files} files")
+
+    payload: dict[str, Any] = {
+        "code": code,
+        "input": input,
+        "timeoutMs": timeout_seconds * 1000,
+    }
+    if input_files:
+        payload["inputs"] = input_files
+    if output_files:
+        payload["outputs"] = output_files
 
     try:
-        return await backend().execute({
-            "code": code,
-            "input": input,
-            "timeoutMs": timeout_seconds * 1000,
-        })
+        return await backend().execute(payload)
     except PyodideBackendError as exc:
         return error_result(exc.code, str(exc))
 
