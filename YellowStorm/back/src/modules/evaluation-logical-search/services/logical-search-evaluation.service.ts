@@ -744,6 +744,21 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     await rename(join(runDir, 'progress.json.tmp'), join(runDir, 'progress.json'));
   }
 
+  /**
+   * Results for a run: prefer the on-disk file (preserves benchmark order), and
+   * fall back to the payloads stored in Postgres so results/export/report work
+   * without the uploads volume (Option B).
+   */
+  private async readRunResults(runDir: string, evaluationId: string): Promise<EvaluationQueryResult[]> {
+    try {
+      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // No run file on disk; use the DB copy.
+    }
+    return this.repository.listResults(evaluationId);
+  }
+
   async getProgress(ownerId: string, evaluationId: string) {
     const evaluation = await this.getById(ownerId, evaluationId);
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
@@ -758,25 +773,13 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
   async getResults(ownerId: string, evaluationId: string) {
     const evaluation = await this.getById(ownerId, evaluationId);
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    let results: EvaluationQueryResult[] = [];
-    let summary: EvaluationRunSummary | null = null;
-    try {
-      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-      results = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      results = [];
-    }
-    if (results.length > 0) {
-      // Recompute from raw results so summary fields introduced after the run
-      // (e.g. judge_exact_match_rate) are also present for older evaluations.
-      summary = buildSummary(results);
-    } else {
-      try {
-        summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
-      } catch {
-        summary = null;
-      }
-    }
+    const results = await this.readRunResults(runDir, evaluationId);
+    // Recompute from raw results so summary fields introduced after the run
+    // (e.g. judge_exact_match_rate) are also present for older evaluations.
+    const summary =
+      results.length > 0
+        ? buildSummary(results)
+        : await readJson<EvaluationRunSummary>(join(runDir, 'summary.json')).catch(() => null);
     return { evaluationId, status: evaluation.status, queryCount: results.length, summary, results };
   }
 
@@ -807,18 +810,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     }
 
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    let results: EvaluationQueryResult[] = [];
-    let summary: EvaluationRunSummary;
-    try {
-      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-      results = Array.isArray(parsed) ? parsed : [];
-      summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
-    } catch {
-      throw new BadRequestException('No run output yet; run the evaluation first.');
-    }
+    const results = await this.readRunResults(runDir, evaluationId);
     if (results.length === 0) {
       throw new BadRequestException('No run output yet; run the evaluation first.');
     }
+    const summary = buildSummary(results);
 
     const locale = input.locale === 'fr' ? 'fr' : 'en';
     const payload = JSON.stringify({ locale, report: buildReportModel(results, summary) });
@@ -865,16 +861,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
   ): Promise<{ buffer: Buffer; filename: string }> {
     const evaluation = await this.getById(ownerId, evaluationId);
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    let results: EvaluationQueryResult[] = [];
-    try {
-      results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-    } catch {
+    const results = await this.readRunResults(runDir, evaluationId);
+    if (results.length === 0) {
       throw new BadRequestException('No run output yet; run the evaluation first.');
     }
-    if (!Array.isArray(results) || results.length === 0) {
-      throw new BadRequestException('No run output yet; run the evaluation first.');
-    }
-    const summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
+    const summary = buildSummary(results);
 
     const meanOf = (values: number[]): number =>
       values.length > 0 ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0;

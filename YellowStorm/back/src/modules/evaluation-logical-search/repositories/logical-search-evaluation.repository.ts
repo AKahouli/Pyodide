@@ -180,6 +180,18 @@ export class LogicalSearchEvaluationRepository {
     return row ?? null;
   }
 
+  /** Full stored result payloads for a run, ordered by query id. */
+  async listResults(evaluationId: string): Promise<EvaluationQueryResult[]> {
+    const rows = await this.db
+      .select({ payload: evaluationResults.payload })
+      .from(evaluationResults)
+      .where(eq(evaluationResults.evaluationId, evaluationId))
+      .orderBy(evaluationResults.queryId);
+    return rows
+      .map((row) => row.payload)
+      .filter((payload): payload is EvaluationQueryResult => payload !== null && typeof payload === 'object');
+  }
+
   async applyResult(evaluationId: string, result: EvaluationQueryResult) {
     const tokenInt = (value: number | undefined): number | null =>
       typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
@@ -204,6 +216,7 @@ export class LogicalSearchEvaluationRepository {
       judgeReasoning: result.judge_reasoning ?? null,
       retrievedFiles: result.retrieved_files,
       toolCalls: result.tool_calls ?? null,
+      payload: result,
       tokenUsage: result.token_usage ?? null,
       targetPromptTokens: tokenInt(result.target_token_usage?.prompt_tokens),
       targetCompletionTokens: tokenInt(result.target_token_usage?.completion_tokens),

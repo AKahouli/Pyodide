@@ -80,6 +80,9 @@ export const evaluationResults = evaluationSchema.table(
     judgeReasoning: text('judge_reasoning'),
     retrievedFiles: jsonb('retrieved_files').$type<string[]>(),
     toolCalls: jsonb('tool_calls'),
+    // Full run result payload, so results/export can be rebuilt from the DB
+    // without depending on the on-disk run directory (Option B).
+    payload: jsonb('payload'),
     tokenUsage: jsonb('token_usage'),
     // Split token consumption: eval-target vs eval-judge, plus the global total.
     targetPromptTokens: integer('target_prompt_tokens'),
