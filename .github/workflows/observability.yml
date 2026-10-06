@@ -79,12 +79,23 @@ jobs:
           test -f YellowStorm/back/.generated/observability/manifest.json
           test -f yellowstorm-code-runtime/.generated/observability/manifest.json
           test -f yellowstorm-adk/.generated/observability/manifest.json
+          test -f mcp/mcp-agent/.generated/observability/manifest.json
+          test -f mcp/mcp-playbook/.generated/observability/manifest.json
+          test -f mcp/mcp-semantic-model/.generated/observability/manifest.json
           echo "staged artifacts verified"
       # Clean-install smoke (plan T28): npm ci proves the staged file: dependency resolves
       # against the committed lockfile (npm install would silently repair lock drift).
       - name: Consumer install smoke (backend)
         working-directory: YellowStorm/back
         run: npm ci --ignore-scripts --no-audit --no-fund
+      # Proves the staged wheel file: dependency resolves the same way the MCP
+      # Dockerfiles install it (pip install -r requirements.txt).
+      - name: Consumer install smoke (mcp)
+        working-directory: mcp/mcp-agent
+        run: |
+          python -m venv "$RUNNER_TEMP/mcp-agent-smoke"
+          "$RUNNER_TEMP/mcp-agent-smoke/bin/pip" install -r requirements.txt
+          "$RUNNER_TEMP/mcp-agent-smoke/bin/pip" check
 
   integration:
     name: Isolated stack integration (compose)

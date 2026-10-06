@@ -1,3 +1,5 @@
+﻿# Unified-logging wheel is staged by scripts/observability/build-sdks.mjs (run before install/build).
+yellowmind_observability @ file:./.generated/observability/yellowmind_observability-0.1.0-py3-none-any.whl
 fastmcp==2.14.7
 httpx>=0.27.0,<1.0.0
 pydantic>=2.0.0,<3.0.0
