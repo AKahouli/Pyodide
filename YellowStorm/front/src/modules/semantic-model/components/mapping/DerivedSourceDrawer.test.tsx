@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
 import type { DerivedSource, SemanticGraph } from '../../types';
-import { DerivedSourceDrawer, suggestSourceField } from './DerivedSourceDrawer';
+import { DerivedSourceDrawer, PANES_KEY, suggestSourceField } from './DerivedSourceDrawer';
 import { derivedPayload, derivedRows } from './derivedMapping';
 import { readingKeys } from './readingText';
 
@@ -62,11 +62,13 @@ function renderDrawer(derived: DerivedSource | undefined = saved) {
 }
 
 /** The row of one field in the shared field list. */
-const fieldRow = (label: string) => screen.getByText(label, { selector: 'span.truncate' }).closest('div.space-y-2') as HTMLElement;
+const fieldRow = (label: string) => within(screen.getByRole('region', { name: 'derived.fields' })).getByText(label, { selector: 'span.truncate' }).closest('div.space-y-2') as HTMLElement;
 
 describe('Derived source with the shared field mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Every part open, as a person who opened them all; folding is tried on its own below.
+    localStorage.setItem(PANES_KEY, JSON.stringify({ samples: true, expand: true, fields: true, keys: true, conflict: true, result: true }));
     useSemanticModelEditorStore.getState().hydrate(graph);
     api.listDerivedSources.mockResolvedValue([saved]);
     api.listIdentityRules.mockResolvedValue([{ conceptId: 'org', fields: ['id'] }]);
@@ -93,6 +95,31 @@ describe('Derived source with the shared field mapping', () => {
     // A source field is shown by its name.
     expect(within(id).getByRole('combobox', { name: 'derived.sourceFieldFor' })).toHaveTextContent('Customer ID');
     expect(within(fieldRow('Country')).getByRole('combobox', { name: 'mapping.methodFor' })).toHaveTextContent('mapping.method.ignore');
+  });
+
+  it('folds every part but the fields, says on each title what it holds, and remembers what is opened', async () => {
+    localStorage.removeItem(PANES_KEY);
+    renderDrawer();
+    await screen.findByText('Country', { selector: 'span.truncate' });
+    const pane = (name: string) => screen.getByRole('region', { name });
+    expect(within(pane('derived.fields')).getByRole('button', { expanded: true })).toBeInTheDocument();
+    const keys = within(pane('derived.keysTitle')).getByRole('button', { expanded: false });
+    // Folded, the key fields still show on the title.
+    expect(keys).toHaveTextContent('ID');
+    expect(screen.queryAllByRole('button', { name: 'derived.keyFor' })).toHaveLength(0);
+    fireEvent.click(keys);
+    expect(screen.getAllByRole('button', { name: 'derived.keyFor' }).length).toBeGreaterThan(0);
+    expect(JSON.parse(localStorage.getItem(PANES_KEY) ?? '{}')).toMatchObject({ keys: true, samples: false });
+  });
+
+  it('marks a folded part that blocks saving, and shows why beside Save', async () => {
+    localStorage.removeItem(PANES_KEY);
+    api.listIdentityRules.mockResolvedValue([]);
+    renderDrawer({ ...saved, conflictRule: 'latest' });
+    await screen.findByText('Country', { selector: 'span.truncate' });
+    expect(within(screen.getByRole('region', { name: 'derived.conflictTitle' })).getByRole('button')).toHaveTextContent('derived.problem.orderBy');
+    expect(screen.getByRole('alert')).toHaveTextContent('derived.problem.orderBy');
+    expect(screen.getByRole('button', { name: 'derived.save' })).toBeDisabled();
   });
 
   it('saves a derived source saved before the field modes exactly as it was', async () => {

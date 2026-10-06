@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bot, GitMerge, KeyRound, Loader2, RefreshCw, Rows, Search, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bot, Eye, GitMerge, KeyRound, ListChecks, Loader2, RefreshCw, Rows, Scale, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -15,7 +15,8 @@ import { useDerivedSources, useIdentityRules } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AiExtractionSettings, AttributeDefinition, DerivedConflictRule, DerivedExpand, DerivedFieldPreviewResponse, DerivedSource, DocumentFieldReading, MappingSettings, SourceFieldMapping } from '../../types';
-import { DELETE_BUTTON, FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
+import { DELETE_BUTTON, FormField, INPUT, ROW_LIST } from '../form/FormParts';
+import { readOpen, SettingsPane, writeOpen } from '../settings/SettingsPane';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
 import { MappingPresetBar } from './MappingPresetBar';
 import { FieldLiveStatus } from './DocumentPreviewPane';
@@ -40,6 +41,10 @@ const MAX_RECORDS = 20;
 const FILTER_FROM = 8;
 // The runtime's default bound on records read with AI per derived source and run (SEMANTIC_MAX_AI_ROWS_PER_SOURCE).
 const MAX_AI_RECORDS = 500;
+// The editor's parts, folded but for the fields until the person opens others; remembered per browser.
+export const PANES_KEY = 'semantic-model.derived-open';
+type Pane = 'samples' | 'expand' | 'fields' | 'keys' | 'conflict' | 'result';
+const DEFAULT_OPEN: Record<Pane, boolean> = { samples: false, expand: false, fields: true, keys: false, conflict: false, result: false };
 
 /** Whether a field reads an item of the expanded field (itself, or by a recipe). */
 const usesItem = (field: { sourceAttribute?: string; mode?: string; computed?: unknown }) =>
@@ -88,6 +93,16 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const [aiSettings, setAiSettings] = useState<Partial<AiExtractionSettings>>({});
   // Several records per source record: one source field split into items, each read as a record.
   const [expand, setExpand] = useState<DerivedExpand | null>(null);
+  // The source text shown on the sample record, when several fields are read.
+  const [textField, setTextField] = useState<string | null>(null);
+  const [panes, setPanes] = useState<Record<Pane, boolean>>(() => ({ ...DEFAULT_OPEN, ...readOpen(PANES_KEY) }));
+  const setPane = (pane: Pane, open: boolean) => setPanes((current) => {
+    if (current[pane] === open) return current;
+    const next = { ...current, [pane]: open };
+    writeOpen(PANES_KEY, next);
+    return next;
+  });
+  const paneProps = (pane: Pane) => ({ id: `derived-${pane}`, open: panes[pane], onOpenChange: (open: boolean) => setPane(pane, open) });
 
   // A concept filled from another one cannot fill a third, so derivations never chain.
   const others = derivedSources.filter((source) => source.id !== target?.derived?.id);
@@ -127,6 +142,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     setPicked(null);
     setShownId(null);
     setHighlight(null);
+    setTextField(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.conceptId, target?.derived?.id, concept?.id, identityRules.length, candidates.length]);
 
@@ -241,10 +257,16 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     return found ? { status: 'ready', labels: found.labels, documentsRead: found.read, unit: 'records',
       onPreview: (suggestion) => setHighlight({ text: suggestion.label }) } : undefined;
   };
+  // Showing where a value was found opens the sample records on that text.
   const showReading = (id: string | undefined, reading: DocumentFieldReading) => {
     if (id !== undefined) setShownId(id);
+    if (reading.column && textFields.includes(reading.column)) setTextField(reading.column);
     setHighlight({ column: reading.column, span: reading.span, text: reading.span ? undefined : String(reading.value ?? '') });
+    setPane('samples', true);
   };
+  const findLabel = (label: string) => { setHighlight({ text: label }); setPane('samples', true); };
+  const shownTexts = textFields.length ? textFields : usedFields.slice(0, 3);
+  const shownText = textField && shownTexts.includes(textField) ? textField : shownTexts[0];
   const labelCount = highlight?.text && !highlight.span
     ? pickedIds.filter((id) => {
       const record = samples.find((item) => item.id === id);
@@ -309,6 +331,14 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const keyLabels = keys.map(attributeLabel).join(', ');
   const busy = save.isPending || remove.isPending;
   const recordCount = samplesQuery.data?.total ?? samples.length;
+  // What each folded part says on its title: the values in force, or what to fix in it.
+  const aiFields = payloadRows.filter((row) => row.mode === 'extract' && row.extractionStrategy !== 'deterministic' && row.extractionStrategy !== undefined).length;
+  const fieldsAttention = !payload.length || fieldProblems.length > 0 || (usesAi && Boolean(limitProblem(aiSettings)));
+  const keysAttention = !keys.length || Boolean(unmappedKey);
+  const conflictAttention = rule === 'latest' && !orderBy;
+  const expandAttention = Boolean(expandProblem(expand)) || (payload.some((field) => usesItem(field)) && !expand);
+  const liveSummary = !canRead ? t('derived.incomplete') : live.loading ? t('derived.readingRecords', { count: pickedIds.length })
+    : live.result && !stale ? t('derived.readRecords', { count: live.result.records.length }) : usesAi ? t('mapping.live.aiManual') : t('derived.readingRecords', { count: pickedIds.length });
 
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && concept && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-3xl' onInteractOutside={(event) => event.preventDefault()}>
@@ -317,8 +347,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
         <SheetDescription>{t('derived.description', { concept: concept.label })}</SheetDescription>
       </SheetHeader>
       <ReadingTextContext.Provider value='record'>
-      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
-        <FormField label={t('derived.source')} htmlFor='derived-source'>
+      <div className='min-h-0 flex-1 space-y-3 overflow-y-auto p-5'>
+        <FormField label={t('derived.source')} htmlFor='derived-source' className='pb-2'>
           <Select value={sourceConceptId} onValueChange={(value) => {
             setSourceConceptId(value); setRows(suggestedRows(value)); setOrderBy(''); setExpand(null); setPicked(null); setShownId(null); setHighlight(null);
           }}>
@@ -328,10 +358,9 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
           {!candidates.length && <p className='text-xs text-muted-foreground'>{t('derived.noCandidate')}</p>}
         </FormField>
 
-        {source && <section className={FORM_SECTION} aria-label={t('derived.samplesTitle')}>
-          <SectionHeader title={t('derived.samplesTitle')} help={t('derived.samplesHelp', { max: MAX_RECORDS, source: source.label })} icon={<Rows className='mr-0.5 h-4 w-4 text-muted-foreground' />}>
-            <span className='text-[11px] tabular-nums text-muted-foreground'>{t('derived.recordsPicked', { count: pickedIds.length, total: samples.length })}</span>
-          </SectionHeader>
+        {source && <SettingsPane {...paneProps('samples')} title={t('derived.samplesTitle')} help={t('derived.samplesHelp', { max: MAX_RECORDS, source: source.label })}
+          icon={<Rows className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={samples.length ? `${t('derived.recordsPicked', { count: pickedIds.length, total: samples.length })} · ${liveSummary}` : samplesQuery.isLoading ? t('derived.loadingSamples') : t('derived.noSamplesShort')}>
           {samplesQuery.isLoading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('derived.loadingSamples')}</div>}
           {!samplesQuery.isLoading && !samples.length && <p className='text-xs text-muted-foreground'>{t('derived.noSamples', { source: source.label })}</p>}
           {samples.length > 0 && <div className='grid gap-3 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]'>
@@ -355,8 +384,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
             <div className='min-w-0 space-y-2'>
               <div className='flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground' aria-live='polite'>
                 {live.loading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <Rows className='h-3.5 w-3.5 shrink-0' />}
-                <span className='min-w-0 flex-1 truncate'>{!canRead ? t('derived.incomplete') : live.loading ? t('derived.readingRecords', { count: pickedIds.length })
-                  : live.result && !stale ? t('derived.readRecords', { count: live.result.records.length }) : usesAi ? t('mapping.live.aiManual') : t('derived.readingRecords', { count: pickedIds.length })}</span>
+                <span className='min-w-0 flex-1 truncate'>{liveSummary}</span>
                 {canRead && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.loading} onClick={() => void readRecords()}>
                   <RefreshCw className='mr-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('derived.readNow') : t('mapping.live.readAgain')}
                 </Button>}
@@ -365,30 +393,41 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
               {highlight?.text && labelCount !== null && <p role='status' className='flex items-center gap-1.5 text-[11px] text-muted-foreground'>
                 <Search className='h-3 w-3 shrink-0' />{t('derived.labelFound', { label: highlight.text, count: labelCount, total: pickedIds.length })}
               </p>}
-              {shown && (textFields.length ? textFields : usedFields.slice(0, 3)).map((field) => <div key={field} className='rounded-lg border'>
-                <div className='flex items-center justify-between gap-2 border-b bg-muted/30 px-2.5 py-1 text-[11px]'>
-                  <span className='truncate font-medium'>{sourceLabels[field] ?? field}</span>
+              {shown && shownText && <div className='rounded-lg border'>
+                <div className='flex items-center justify-between gap-2 border-b bg-muted/30 px-1.5 py-1 text-[11px]'>
+                  {/* Several texts read: one at a time, picked here, rather than near-copies one under the other. */}
+                  {shownTexts.length > 1 ? <div role='tablist' aria-label={t('derived.textsTitle')} className='flex min-w-0 flex-wrap gap-0.5'>
+                    {shownTexts.map((field) => <button key={field} type='button' role='tab' aria-selected={field === shownText}
+                      className={cn('truncate rounded px-1.5 py-0.5', field === shownText ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+                      onClick={() => setTextField(field)}>{sourceLabels[field] ?? field}</button>)}
+                  </div> : <span className='truncate px-1 font-medium'>{sourceLabels[shownText] ?? shownText}</span>}
                   <span className='shrink-0 truncate text-muted-foreground'>{shown.label || shown.id}</span>
                 </div>
-                <ScrollArea className='max-h-48'>
-                  <p className='whitespace-pre-wrap break-words px-2.5 py-2 text-xs' aria-label={t('derived.fieldOf', { field: sourceLabels[field] ?? field, record: shown.label || shown.id })}>
-                    {markText(String(recordValue(shown, field) ?? ''), highlight ?? foundSpans(shownReadings, field), field)}
+                <ScrollArea className='max-h-40'>
+                  <p className='whitespace-pre-wrap break-words px-2.5 py-2 text-xs' aria-label={t('derived.fieldOf', { field: sourceLabels[shownText] ?? shownText, record: shown.label || shown.id })}>
+                    {markText(String(recordValue(shown, shownText) ?? ''), highlight ?? foundSpans(shownReadings, shownText), shownText)}
                   </p>
                 </ScrollArea>
-              </div>)}
+              </div>}
             </div>
           </div>}
-        </section>}
+        </SettingsPane>}
 
-        {source && <ExpandCard value={expand} onChange={setExpand} sourceLabel={source.label}
+        {source && <SettingsPane {...paneProps('expand')} title={t('derived.expand.title')} attention={expandAttention}
+          icon={<ListChecks className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={expand ? t('derived.expand.summaryOn', { field: sourceLabels[expand.field] ?? (expand.field || '…') }) : t('derived.expand.off', { source: source.label })}>
+          <ExpandCard value={expand} onChange={setExpand} sourceLabel={source.label}
           sourceFields={source.attributes.map((field) => ({ key: field.key, label: field.label }))}
           relations={(graph?.relations ?? []).filter((relation) => (relation.sourceNodeTypeId === source.id && relation.targetNodeTypeId === concept.id)
             || (relation.sourceNodeTypeId === concept.id && relation.targetNodeTypeId === source.id)).map((relation) => ({ id: relation.id, label: relation.label }))}
           items={expand && live.result && !stale ? { count: live.result.records.length, records: new Set(live.result.records.map((record) => record.entityId)).size,
-            truncated: live.result.itemsTruncated === true } : undefined} />}
+            truncated: live.result.itemsTruncated === true } : undefined} />
+        </SettingsPane>}
 
-        {source && <section className={FORM_SECTION}>
-          <SectionHeader title={t('derived.fields')} help={t('derived.fieldsHelp', { source: source.label })} count={payload.length || undefined} />
+        {source && <SettingsPane {...paneProps('fields')} title={t('derived.fields')} help={t('derived.fieldsHelp', { source: source.label })} attention={fieldsAttention}
+          icon={<Rows className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={fieldsAttention && fieldProblems.length ? t('mapping.cell.saveBlocked', { fields: fieldProblems.map(attributeLabel).join(', ') })
+            : !payload.length ? t('derived.problem.noField') : t('derived.fieldsSummary', { count: payload.length, ai: aiFields })}>
           <MappingPresetBar modelId={modelId} conceptId={concept!.id} attributes={attributes}
             current={{ fieldMappings: payloadRows, aiSettings, identityFields: keys }} onApply={applySettings} autoStart={false} />
           <ReadAllFieldsBar direct mappings={rows} onApply={(choice) => changeRows(readAllWith(rows, choice, 'record'))} />
@@ -412,14 +451,15 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                 reading={shownReadings?.[mapping.targetAttribute]} pending={live.loading} stale={stale}
                 labels={mapping.mode === 'extract' ? mapping.rules?.labels?.length ? mapping.rules.labels : [attributeLabel(mapping.targetAttribute)] : []}
                 findLabelText={t('derived.findLabel')}
-                onShow={(item) => showReading(shown.id, item)} onFindLabel={(label) => setHighlight({ text: label })} /> : null,
+                onShow={(item) => showReading(shown.id, item)} onFindLabel={findLabel} /> : null,
               suggestions: mapping.mode === 'extract' ? suggestionsFor(mapping.sourceField) : undefined,
               reading: canRead && shown ? { reading: shownReadings?.[mapping.targetAttribute], pending: live.loading, onRead: () => void readRecords() } : undefined,
             })} />
-        </section>}
+        </SettingsPane>}
 
-        {source && <section className={FORM_SECTION} aria-label={t('derived.keysTitle')}>
-          <SectionHeader title={t('derived.keysTitle')} help={t('derived.keysHelp', { concept: concept.label })} icon={<KeyRound className='mr-0.5 h-4 w-4 text-amber-600 dark:text-amber-400' />} />
+        {source && <SettingsPane {...paneProps('keys')} title={t('derived.keysTitle')} help={t('derived.keysHelp', { concept: concept.label })} attention={keysAttention}
+          icon={<KeyRound className='h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400' />}
+          summary={!keys.length ? t('derived.problem.noKey') : unmappedKey ? t('derived.problem.keyNotFilled', { field: attributeLabel(unmappedKey) }) : keyLabels}>
           <div className='flex flex-wrap gap-1.5'>
             {payload.map((field) => {
               const isKey = keys.includes(field.targetAttribute);
@@ -434,9 +474,11 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
           <p className='text-xs text-muted-foreground'>
             {keys.length ? t('derived.keysSummary', { concept: concept.label, fields: keyLabels, source: source.label }) : t('derived.problem.noKey')}
           </p>
-        </section>}
+        </SettingsPane>}
 
-        {source && <section className={cn(FORM_SECTION, 'space-y-4')}>
+        {source && <SettingsPane {...paneProps('conflict')} title={t('derived.conflictTitle')} attention={conflictAttention}
+          icon={<Scale className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={conflictAttention ? t('derived.problem.orderBy') : t(`derived.rule.${rule}`)}>
           <FormField label={t('derived.conflict')} help={t(`derived.ruleHelp.${rule}`)} htmlFor='derived-conflict'>
             <Select value={rule} onValueChange={(value: DerivedConflictRule) => setRule(value)}>
               <SelectTrigger id='derived-conflict' className={INPUT}><SelectValue /></SelectTrigger>
@@ -450,13 +492,14 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                 .map((item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
           </FormField>}
-        </section>}
+        </SettingsPane>}
 
-        {live.result && source && <section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('derived.resultTitle')}>
-          <SectionHeader title={t('derived.resultTitle')} count={live.result.records.length} />
+        {live.result && source && <SettingsPane {...paneProps('result')} title={t('derived.resultTitle')} className={cn(stale && 'opacity-60')}
+          icon={<Eye className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={t('derived.resultSummary', { count: live.result.records.length })}>
           {live.result.ai.aiCalls > 0 && <p className='text-[11px] text-muted-foreground'>{t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}</p>}
           {live.result.records.map((record) => <div key={`${record.entityId}#${record.item ?? 0}`} className='space-y-1.5 rounded-lg border p-2'>
-            <button type='button' className='text-xs font-medium hover:underline' onClick={() => { setShownId(record.entityId); setHighlight(null); }}>
+            <button type='button' className='text-xs font-medium hover:underline' onClick={() => { setShownId(record.entityId); setHighlight(null); setPane('samples', true); }}>
               {recordLabel(record.entityId)}{record.item !== undefined ? ` · ${t('derived.expand.itemOf', { number: record.item, item: record.itemText ?? '' })}` : ''}</button>
             <div className='grid gap-1.5 sm:grid-cols-2'>
               {payload.filter((field) => record.fields[field.targetAttribute]).map((field) => {
@@ -470,17 +513,17 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
               })}
             </div>
           </div>)}
-        </section>}
-
-        {problem && source && <p role='alert' className='text-xs text-amber-700 dark:text-amber-400'>{problem}</p>}
-        {fillsAnother && !source && <p role='alert' className='text-xs text-amber-700 dark:text-amber-400'>{problem}</p>}
+        </SettingsPane>}
       </div>
       </ReadingTextContext.Provider>
       <div className='flex items-center gap-2 border-t p-4'>
         {target.derived && <Button variant='outline' className={DELETE_BUTTON} disabled={busy} onClick={() => remove.mutate()}>
           <Trash2 className='mr-1.5 h-4 w-4' />{t('derived.remove')}
         </Button>}
-        <div className='flex-1' />
+        <div className='min-w-0 flex-1'>
+          {problem && (source || fillsAnother) && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
+            <AlertTriangle className='h-3.5 w-3.5 shrink-0' /><span className='line-clamp-2'>{problem}</span></p>}
+        </div>
         <Button variant='outline' onClick={onClose} disabled={busy}>{t('action.cancel')}</Button>
         <Button onClick={() => save.mutate()} disabled={Boolean(problem) || busy}>{save.isPending ? t('derived.saving') : t('derived.save')}</Button>
       </div>

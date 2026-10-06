@@ -164,6 +164,9 @@ export interface FieldRowExtras {
   pageCount?: number;
 }
 
+// A column value short enough to show under a field that extracts from it.
+const SHORT_SAMPLE = 120;
+
 export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource, conceptId }: Readonly<{
   kind: MappingSourceKind;
   modelId: string;
@@ -203,7 +206,9 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
       const readsColumn = kind !== 'document' && (mapping.mode === 'direct' || mapping.mode === 'extract');
       const row = extras?.(mapping, index) ?? {};
       const columnChoices = [...new Set([...columns, ...(mapping.sourceField ? [mapping.sourceField] : [])])];
-      const sample = readsColumn && mapping.sourceField ? columnSamples?.[mapping.sourceField] : undefined;
+      // The value a column gives; a long text read out by rules or AI is not repeated under every field.
+      const columnSample = readsColumn && mapping.sourceField ? columnSamples?.[mapping.sourceField] : undefined;
+      const sample = columnSample && (mapping.mode === 'direct' || (columnSample.length <= SHORT_SAMPLE && !columnSample.includes('\n'))) ? columnSample : undefined;
       return <div key={mapping.targetAttribute} className='space-y-2 px-3 py-2.5'>
         <div className='flex flex-wrap items-center gap-2'>
           <span className='flex min-w-[8rem] flex-1 items-center gap-1.5 text-xs font-medium'>
