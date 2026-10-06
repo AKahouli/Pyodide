@@ -1,7 +1,7 @@
 ---
 slug: yellowstorm-semantic-model
 name: YellowStorm Semantic Model
-description: Design YellowStorm semantic models and answer questions from their records (find, follow links, filter, count, summarise) through the Semantic Model MCP connector.
+description: Design YellowStorm semantic models and answer questions from their records (find, follow links, walk several links, connect two records, filter, count, summarise) through the Semantic Model MCP connector.
 license: internal
 compatibility: YellowStorm agents with the semantic-model-mcp connector enabled
 metadata:
@@ -34,9 +34,11 @@ Use these tools when the user wants to design a model, or asks a question that a
 | --- | --- |
 | What does the model hold? Which concepts, fields, relationships? | `describe_model` |
 | Which record is this? (a name, a key, a vague description, words deep in an e-mail body) | `find_records` |
-| What is this record linked to? Which links exist? How are A and B connected (1-2 steps)? | `get_related_records` |
+| What is this record linked to? Which links exist? | `get_related_records` |
 | All X where..., how many, totals, averages, per month / per value, sorted, compared | `query_records` |
 | The content of the records linked to a record (the facts an e-mail states, to summarise them) | `query_records` with `linked_to` |
+| A question across several links, with conditions on the way (facts per correspondent, e-mails whose attachment states a penalty) | `traverse_records` |
+| How are A and B related? | `connect_records` |
 
 ### describe_model: first, when the model is unknown
 
@@ -70,9 +72,10 @@ Follows the stored links of the graph from records (1 to 25 `record_ids`) to the
 - `linkCounts` gives, for one step, the **exact** number of records linked per relationship and concept
   (`count`, and `hidden` for those the user cannot see), even when fewer were returned.
 
-Use it to explore links, to answer "who / what is linked to this record" with their values, for two-step
-chains, and to explain how two records are connected. When `linkCounts` says more records exist than
-`max_records` allows, read them all with `query_records` and `linked_to`.
+Use it to explore links and to answer "who / what is linked to this record" with their values. When
+`linkCounts` says more records exist than `max_records` allows, read them all with `query_records` and
+`linked_to`. To count or filter across more links, use `traverse_records`; to explain how two given records
+are related, `connect_records`.
 
 ### query_records: filter, count, group, list one concept
 
@@ -80,12 +83,16 @@ chains, and to explain how two records are connected. When `linkCounts` says mor
   starts_with, ends_with, in, gt, gte, lt, lte, between, is_empty, not_empty. Dates take ISO dates, months,
   years or periods (today, last_7_days, this_month, last_year...). Amounts like "1,5 M€" or "10 k€" are read
   as numbers.
-- A linked record's field: `"field": "<relationship>.<field>"`, e.g. `"envoyé par.domaine"`. `"field":
-  "<relationship>"` with is_empty / not_empty keeps records with no / some link.
+- A linked record's field: `"field": "<relationship>.<field>"`, e.g. `"envoyé par.domaine"`; further away,
+  up to 4 relationships in a row: `"énoncé par.a pour participant.désigne.domaine"`. `"field":
+  "<relationship>"` (or a chain) with is_empty / not_empty keeps records with no / some link.
 - `linked_to`: `[{"relation": "énonce", "record_ids": ["<entityId>"]}]` keeps only the records linked
-  through that relationship (either direction) to those exact records, on top of the filters.
+  through that relationship (either direction) to those exact records, on top of the filters;
+  `"relation": "<relationship>.<relationship>"` reaches records further away.
 - `group_by` (up to 2, date `bucket` day/week/month/quarter/year) with `aggregates` (count,
-  count_distinct, sum, avg, min, max): exact totals over all the data.
+  count_distinct, sum, avg, min, max): exact totals over all the data. A linked field groups by linked
+  records (`"envoyé par.name"`: per sender); a record linked to several counts in each of their groups
+  (`groupsOverlap`), and `entityIds` names each group's record.
 - Without `group_by`: `total` (exact) and a page of records `{entityId, name, keyFields, values}`;
   `fields` limits the fields returned; `limit` 0-200 (0: totals only); page with `offset = nextOffset`.
 - `status` `invalid_query` / `not_represented` comes with errors naming the wrong part and the names
@@ -94,6 +101,33 @@ chains, and to explain how two records are connected. When `linkCounts` says mor
 - When nothing matches, `diagnostics` gives the readable records of the concept, how many each filter or
   link keeps on its own, and `didYouMean`: stored values that look like a text value that matched nothing
   ("payed" -> "Payée"). Retry with the stored value or ask the user; never answer "none" before checking.
+
+### traverse_records: walk several links with conditions
+
+A walk: `start` records, then `steps`, each a relationship named as seen from the records the step before
+reached, with optional `filters` on the records it reaches. The answer is about the records of the last
+step, exactly as `query_records` gives it (total, page of records, groups, diagnostics).
+
+- `start`: `{"concept": "Correspondant", "record_ids": [...]}` or `{"concept": ..., "filters": [...]}`
+  (neither: every record of the concept).
+- `steps`: `["désigné par", "participe à", {"relation": "énonce", "filters": [{"field": "texte", "op":
+  "contains", "value": "pénalité"}]}]` goes Correspondant -> Participation -> Message -> Fait.
+- `hops`: a relationship between records of one concept repeats, `{"relation": "rend compte à", "hops":
+  "1..3"}`; `direction` picks which way to read it. A walk back to the start concept leaves out its start.
+- `group_by` on the last step's fields, or `{"field": "name", "step": 0}` to group by start record (step k:
+  the records reached at step k). A record reached from several start records counts in each group.
+- Every record on the way must be visible to the user: a hidden record never links two others.
+- Nothing reached: `diagnostics.startRecords` says whether the start matched anything, with `didYouMean`
+  for its filters, and how many records each condition keeps.
+
+### connect_records: how two records are related
+
+The shortest chains of real links between two records (`from_record_id`, `to_record_id`), links read both
+ways, up to `max_links` (1 to 6, default 4), optionally only through `relations`. Each path lists its
+records and steps `{from, relation, direction, to}`: describe the connection from them only.
+`not_connected` with `complete: true` means no chain of at most `max_links` exists; raise `max_links`
+before concluding. `complete: false` (`search_cut`) means the search stopped early: say a connection may
+exist.
 
 ### completeness: on every answer
 
@@ -105,7 +139,7 @@ Every read tool returns the same block, so you can tell whether you have everyth
 | `returned` / `total` | how many came back / how many exist (exact; `null` for find_records, which ranks) |
 | `hasMore` | more records exist beyond the page, the limit or `max_records` |
 | `hiddenRecords` | records left out because the user cannot see them (never counted, never shown) |
-| `reasons` | `more_results`, `index_not_ready`, `index_partial`, `values_unreadable`, `values_cut` |
+| `reasons` | `more_results`, `index_not_ready`, `index_partial`, `values_unreadable`, `values_cut`, `search_cut` |
 
 Say "all" or "every" only when `complete` is true. Otherwise say how many were returned out of how many,
 and why, or fetch the rest (page with `nextOffset`, use `linked_to`).
@@ -133,6 +167,18 @@ concepts=["Correspondant"])`.
 **"Combien de mails par expéditeur ce trimestre ?"**
 `query_records(concept="Message e-mail", filters=[{"field": "Received", "op": "between", "value":
 "this_quarter"}], group_by=["Sender"])`.
+
+**"Combien de faits par correspondant ?"**
+`traverse_records(start={"concept": "Correspondant"}, steps=["désigné par", "participe à", "énonce"],
+group_by=[{"field": "name", "step": 0}])`: one group per correspondent with its exact count of facts.
+
+**"Les mails dont une pièce jointe parle de pénalités."**
+`traverse_records(start={"concept": "Pièce jointe", "filters": [{"field": <text field>, "op": "contains",
+"value": "pénalité"}]}, steps=["contenue dans"], fields=["Subject"])` (the relationship from the attachment
+back to its e-mail, by its inverse name from describe_model).
+
+**"Quel lien entre Alice et le contrat Acme ?"**
+`find_records` for both, then `connect_records(from_record_id=<Alice>, to_record_id=<contract>)`.
 
 **"Les pièces jointes du mail X, avec leur taille."**
 `query_records(concept="Pièce jointe", linked_to=[{"relation": "contient", "record_ids": [<entityId>]}],

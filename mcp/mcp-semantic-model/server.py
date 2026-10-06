@@ -50,14 +50,20 @@ Answering from a model's data (records stored in the model, not documents):
   linked records per relationship. To read more linked records than it returns, use query_records with
   linked_to.
 - query_records for everything that filters, counts or compares: "all X where...", how many, totals,
-  stats per month or per value, dates and amounts compared, records linked to a record matching a field.
+  stats per month or per value, dates and amounts compared, records linked to a record matching a field
+  (a field several links away too: "<relation>.<relation>.<field>").
   The total and the groups are exact counts over the whole data, not samples.
+- traverse_records for questions across several links: start records, then relationships step by step
+  with conditions at each step (facts per correspondent, e-mails whose attachment states a penalty);
+  it counts, groups or lists the records reached, exactly.
+- connect_records for "how are A and B related": the shortest chains of real links between two records.
 - for a summary of a set of records, fetch them with query_records (only the text fields you need),
   write the summary from the returned values, and cite the records you rely on; page with offset when
   nextOffset is set, or say that the summary covers only part of the records.
 Every data answer carries completeness: answer "all" or "every" only when complete is true; otherwise say
-how many were returned out of how many (total, linkCounts) and why (reasons). When query_records finds
-nothing, read diagnostics (didYouMean) before saying nothing exists.
+how many were returned out of how many (total, linkCounts) and why (reasons). When query_records or
+traverse_records finds nothing, read diagnostics (didYouMean) before saying nothing exists; say two records
+are not connected only when connect_records' completeness is complete.
 State the exact filter you used (appliedQuery shows how it was read, with absolute date ranges). Read
 the notes and say plainly when values could not be read, records are hidden, or a list is truncated or
 incomplete. Say when the model does not hold the information, and never state a fact that no returned
@@ -492,7 +498,7 @@ async def get_related_records(
     then_relations: the relationships of an optional second step, followed from the records reached by the first (e.g. relations=["a pour participant"], then_relations=["désigne"] goes Message -> Participation -> Correspondant). A second step must name its relationships.
     concepts: keep only related records of these concepts (applied to the last step). data: "published" (default) or "draft". max_records: 1 to 100.
     fields: the fields to return with each record (names from describe_model, or ["*"] for all); without it only names and key fields come back. Values longer than 1500 characters are cut (truncatedFields).
-    linkCounts gives, for one step, the EXACT number of records linked per relationship and concept (count, and hidden for those the user cannot see), even when fewer were returned. To read more linked records than max_records, use query_records on the linked concept with linked_to.
+    linkCounts gives, for one step, the EXACT number of records linked per relationship and concept (count, and hidden for those the user cannot see), even when fewer were returned. To read more linked records than max_records, use query_records on the linked concept with linked_to. To count or filter across more than two links use traverse_records; to find how two given records are connected use connect_records.
     completeness says whether the answer holds everything: complete, returned, total, hasMore, hiddenRecords, reasons. Report the result honestly, using notes and completeness: when complete is false, say the list is incomplete and how many exist. Never infer a fact that is not in a field or a link of a returned record."""
     try:
         ids = string_list(record_ids, "record_ids") or []
@@ -541,7 +547,10 @@ def group_spec(item: Any) -> dict[str, Any]:
         return {"field": item}
     if not isinstance(item, dict) or not isinstance(item.get("field"), str):
         raise ValueError('each group_by item must be a field name or {"field": ..., "bucket": ...}')
-    return compact({"field": item["field"], "bucket": item.get("bucket"), "as": item.get("as")})
+    step = item.get("step")
+    if step is not None and (isinstance(step, bool) or not isinstance(step, int) or not 0 <= step <= 6):
+        raise ValueError("group_by step must be a whole number from 0 (the start of the walk) to 6")
+    return compact({"field": item["field"], "bucket": item.get("bucket"), "as": item.get("as"), "step": step})
 
 
 def aggregate_spec(item: Any) -> dict[str, Any]:
@@ -591,10 +600,10 @@ async def query_records(
     concept: a concept key or label (from describe_model). Fields are named by key or label; "name" is the record name.
     filters: [{"field": "Sender domain", "op": "eq", "value": "acme.com"}]. ops: eq, ne, contains, starts_with, ends_with, in (list), gt, gte, lt, lte, between ([from, to] or one relative period), is_empty, not_empty. Text compares ignore case and accents; ne also keeps records with no value.
     Dates (date fields): an ISO date "2026-07-14", a month "2026-07" or a year "2026" (each covers the whole period), or a period resolved on the server in UTC: today, yesterday, last_7_days, last_N_days|weeks|months|years (N units up to today), this_week|month|quarter|year, last_week|month|quarter|year. Numbers compare as numbers on number fields.
-    A linked record: "field": "<relation>.<field>" keeps the records linked through that relation (key, label or inverse label) to a record whose field matches, e.g. {"field": "sent by.domain", "op": "eq", "value": "acme.com"}; "field": "<relation>" with is_empty / not_empty keeps the records with no / some linked record.
-    linked_to: [{"relation": "<relation>", "record_ids": ["<entityId>", ...]}] keeps only the records linked through that relation to those exact records (entityId from find_records or query_records), on top of the filters. Use it to read or summarise the records linked to a record, e.g. concept="Fait", linked_to=[{"relation": "énonce", "record_ids": [the e-mail's entityId]}]: unlike get_related_records it returns their fields and an exact total.
+    A linked record: "field": "<relation>.<field>" keeps the records linked through that relation (key, label or inverse label) to a record whose field matches, e.g. {"field": "sent by.domain", "op": "eq", "value": "acme.com"}; further away, chain up to 4 relations: "<relation>.<relation>.<field>" (e.g. "énoncé par.a pour participant.désigne.domaine"); "field": "<relation>" (or a chain) with is_empty / not_empty keeps the records with no / some linked record.
+    linked_to: [{"relation": "<relation>", "record_ids": ["<entityId>", ...]}] (or "<relation>.<relation>" for records further away) keeps only the records linked through that relation to those exact records (entityId from find_records or query_records), on top of the filters. Use it to read or summarise the records linked to a record, e.g. concept="Fait", linked_to=[{"relation": "énonce", "record_ids": [the e-mail's entityId]}]: unlike get_related_records it returns their fields and an exact total.
     "as": "date"|"number"|"text"|"boolean" in a filter, group or aggregate reads a field with another type than declared (dates kept in a text field). match: "all" (default) or "any" of the filters.
-    group_by: up to 2 fields, e.g. [{"field": "Received", "bucket": "month"}, "Sender"]; bucket (date fields): day, week, month, quarter, year. aggregates: [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}, {"op": "sum", "field": "Amount"}] with count, count_distinct, sum, avg, min, max; [count] by default with group_by. Groups come back sorted (dates in order, otherwise largest count first), at most 500.
+    group_by: up to 2 fields, e.g. [{"field": "Received", "bucket": "month"}, "Sender"]; bucket (date fields): day, week, month, quarter, year. A linked record's field groups by linked records ("sent by.name": per sender): a record linked to several counts in each of their groups (groupsOverlap), entityIds names each group's record. For conditions at several steps of a chain, use traverse_records. aggregates: [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}, {"op": "sum", "field": "Amount"}] with count, count_distinct, sum, avg, min, max; [count] by default with group_by. Groups come back sorted (dates in order, otherwise largest count first), at most 500.
     Without group_by: total (exact) and a page of records {entityId, name, keyFields, values}, ordered by order_by [{"field": "Received", "direction": "desc"}]; fields: the fields to return (default all; ask only for what you need); long values are cut at 1500 characters (truncated). limit: 0 to 200 (0 returns only total and totals); offset pages through: call again with offset=nextOffset.
     data: "published" (default) or "draft".
     Report honestly: status invalid_query or not_represented comes with errors naming the wrong part and the names available: fix the query from them, never guess. appliedQuery shows how the query was read (field keys, absolute date ranges): state the filter you used. notes say when values could not be read (unparsable), records are hidden from the user, or groups or records were left out: say so in the answer. completeness (complete, returned, total, hasMore, hiddenRecords, reasons) sums it up: answer "all" only when complete is true.
@@ -618,6 +627,126 @@ async def query_records(
     if not payload.get("concept"):
         return fail("concept must name one concept of the model")
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/records-query", require_acting_user_id(), payload))
+
+
+def hops_spec(value: Any) -> dict[str, int]:
+    """How many times a step repeats: 2, "1..3" or [1, 3]."""
+    if isinstance(value, str) and ".." in value:
+        low, _, high = value.partition("..")
+        try:
+            value = [int(low), int(high)]
+        except ValueError as exc:
+            raise ValueError('hops must be a whole number, "from..to" or [from, to]') from exc
+    if isinstance(value, list) and len(value) == 2:
+        low, high = value
+    else:
+        low = high = value
+    for item in (low, high):
+        if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= 4:
+            raise ValueError("hops must be from 1 to 4")
+    if low > high:
+        raise ValueError("hops must go from the smaller to the larger number")
+    return {"minHops": low, "maxHops": high}
+
+
+def step_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        item = {"relation": item}
+    if not isinstance(item, dict) or not isinstance(item.get("relation"), str) or not item["relation"].strip():
+        raise ValueError('each step must be a relationship name or {"relation": ..., "filters": [...]}')
+    spec: dict[str, Any] = {"relation": item["relation"].strip()}
+    if item.get("direction") is not None:
+        spec["direction"] = choice(item["direction"], "direction", ("outgoing", "incoming"))
+    if item.get("hops") is not None:
+        spec.update(hops_spec(item["hops"]))
+    filters = [filter_spec(entry) for entry in parse_json(item.get("filters"), "filters", list) or []]
+    if filters:
+        spec["filters"] = filters
+        spec["match"] = choice(item.get("match", "all"), "match", MATCH_CHOICES)
+    return spec
+
+
+def start_spec(value: Any) -> dict[str, Any]:
+    item = parse_json(value, "start", dict)
+    if not item or not isinstance(item.get("concept"), str) or not item["concept"].strip():
+        raise ValueError('start must be {"concept": ..., "record_ids": [...]} or {"concept": ..., "filters": [...]}')
+    spec: dict[str, Any] = {"concept": item["concept"].strip()}
+    ids = string_list(item.get("record_ids", item.get("recordIds")), "record_ids")
+    if ids:
+        spec["recordIds"] = ids
+    filters = [filter_spec(entry) for entry in parse_json(item.get("filters"), "filters", list) or []]
+    if filters:
+        spec["filters"] = filters
+        spec["match"] = choice(item.get("match", "all"), "match", MATCH_CHOICES)
+    return spec
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def traverse_records(
+    model_id: str,
+    start: dict[str, Any] | str,
+    steps: list[Any] | str,
+    group_by: list[Any] | str | None = None,
+    aggregates: list[Any] | str | None = None,
+    order_by: list[Any] | str | None = None,
+    fields: list[str] | str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    data: str = "published",
+) -> SemanticModelMcpResultV1:
+    """Walk several links at once and count, group or list the records reached, with exact totals over all the data. Use it for questions that cross several relationships: facts per correspondent, e-mails whose attachment states a penalty, contracts of the customers of a region. No change is made.
+    start: the start records, {"concept": "Correspondant", "record_ids": ["<entityId>"]} or {"concept": "Correspondant", "filters": [{"field": "domaine", "op": "eq", "value": "acme.com"}]} (no record_ids and no filters: every record of the concept).
+    steps: the relationships to follow in order, each named as seen from the records the step before reached (name or inverse name from describe_model), with optional conditions on the records it reaches: [{"relation": "désigné par", "filters": [{"field": "rôle", "op": "eq", "value": "from"}]}, {"relation": "participe à"}, {"relation": "énonce", "filters": [{"field": "texte", "op": "contains", "value": "pénalité"}]}]. A step may be just the relationship name. Filters take the same ops as query_records, linked fields too ("<relation>.<field>").
+    hops: a relationship between records of one concept (reports to, part of) can repeat: {"relation": "rend compte à", "hops": "1..3"}; direction (outgoing or incoming) picks which way to read it. A walk that comes back to the start concept leaves out its own start record.
+    The answer is about the records of the LAST step: total, a page of records (fields, limit 0 to 200, offset=nextOffset), or groups: group_by fields of those records, or {"field": "name", "step": 0} to group by the start records (step k groups by the records reached at step k). A record linked to several start records counts in each of their groups; entityIds gives each group's record. aggregates and order_by work as in query_records.
+    Report honestly: status invalid_query comes with errors naming the wrong part (steps[1].relation...) and the names available: fix the walk from them. appliedQuery.path shows how each step was read. When nothing is reached, diagnostics says how many start records matched (startRecords), how many records each condition keeps, and didYouMean values. completeness: answer "all" only when complete is true."""
+    try:
+        payload = compact({
+            "start": start_spec(start),
+            "steps": [step_spec(item) for item in parse_json(steps, "steps", list) or []],
+            "groupBy": [group_spec(item) for item in parse_json(group_by, "group_by", list) or []] or None,
+            "aggregates": [aggregate_spec(item) for item in parse_json(aggregates, "aggregates", list) or []] or None,
+            "orderBy": [order_spec(item) for item in parse_json(order_by, "order_by", list) or []] or None,
+            "fields": string_list(fields, "fields") or None,
+            "limit": bounded(limit, "limit", 0, 200),
+            "offset": bounded(offset, "offset", 0, 100000),
+            "data": choice(data, "data", DATA_CHOICES),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not 1 <= len(payload["steps"]) <= 6:
+        return fail("steps must hold 1 to 6 relationships to follow")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/records-traverse", require_acting_user_id(), payload))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def connect_records(
+    model_id: str,
+    from_record_id: str,
+    to_record_id: str,
+    max_links: int = 4,
+    relations: list[str] | str | None = None,
+    max_paths: int = 5,
+    data: str = "published",
+) -> SemanticModelMcpResultV1:
+    """How two records are connected: the shortest chains of real links between them (entityId from find_records or query_records), links read both ways. No change is made.
+    max_links: the longest chain to look for, 1 to 6 (default 4). relations: follow only these relationships (names from describe_model). max_paths: how many chains of the shortest length to return, 1 to 10.
+    paths: each chain as its records (concept, name) and its steps {from, relation, direction, to}; describe the connection from these steps only. status: connected (links = the length), not_connected (no chain of at most max_links links: raise max_links before concluding), not_found (a record does not exist or is hidden from the user), same_record.
+    completeness: complete false (reasons search_cut) means the search stopped early on records with very many links, so "not connected" is not a proof: say so."""
+    try:
+        payload = compact({
+            "fromRecordId": from_record_id.strip() if isinstance(from_record_id, str) else from_record_id,
+            "toRecordId": to_record_id.strip() if isinstance(to_record_id, str) else to_record_id,
+            "maxLinks": bounded(max_links, "max_links", 1, 6),
+            "maxPaths": bounded(max_paths, "max_paths", 1, 10),
+            "relations": string_list(relations, "relations") or None,
+            "data": choice(data, "data", DATA_CHOICES),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not payload.get("fromRecordId") or not payload.get("toRecordId"):
+        return fail("from_record_id and to_record_id must be entityId values from find_records or query_records")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/records-connect", require_acting_user_id(), payload))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

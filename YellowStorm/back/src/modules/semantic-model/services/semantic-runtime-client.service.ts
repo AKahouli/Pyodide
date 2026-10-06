@@ -478,7 +478,8 @@ export interface RuntimeGraphSearchIndexStatus {
 }
 
 export interface RuntimeRecordsFilter { field: string; op: string; value?: unknown; as?: string }
-export interface RuntimeRecordsGroupBy { field: string; bucket?: string; as?: string }
+/** step (traverse only): group on the records of that point of the walk, 0 being its start. */
+export interface RuntimeRecordsGroupBy { field: string; bucket?: string; as?: string; step?: number }
 export interface RuntimeRecordsAggregate { op: string; field?: string; as?: string }
 export interface RuntimeRecordsOrderBy { field: string; direction?: 'asc' | 'desc'; as?: string }
 
@@ -542,6 +543,9 @@ export interface RuntimeRecordsAppliedQuery {
 export interface RuntimeRecordsDiagnostics {
   readableRecords: number;
   checks: Array<{ part: string; field: string; op: string; matches: number; didYouMean?: string[] }>;
+  /** traverse only: how many start records match on their own, and why none did. */
+  startRecords?: number;
+  start?: RuntimeRecordsDiagnostics;
 }
 
 export interface RuntimeRecordsQueryResult {
@@ -565,7 +569,69 @@ export interface RuntimeRecordsQueryResult {
   diagnostics?: RuntimeRecordsDiagnostics;
   buckets?: Record<string, unknown>[];
   bucketsTruncated?: boolean;
+  /** Grouped on linked records: a record counts in the group of each record it is linked to. */
+  groupsOverlap?: boolean;
   aggregates?: Record<string, unknown>;
+}
+
+/** A walk: start records, then relationships step by step, each with conditions on the records it reaches. */
+export interface RuntimeTraverseStep {
+  relation: string;
+  direction?: 'outgoing' | 'incoming';
+  minHops?: number;
+  maxHops?: number;
+  filters?: RuntimeRecordsFilter[];
+  match?: 'all' | 'any';
+}
+
+export interface RuntimeTraverseRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  allowedWorkspaceIds?: string[] | null;
+  start: { concept: string; recordIds?: string[]; filters?: RuntimeRecordsFilter[]; match?: 'all' | 'any' };
+  steps: RuntimeTraverseStep[];
+  groupBy?: RuntimeRecordsGroupBy[];
+  aggregates?: RuntimeRecordsAggregate[];
+  orderBy?: RuntimeRecordsOrderBy[];
+  fields?: string[];
+  limit?: number;
+  offset?: number;
+  catalog: RuntimeRecordsCatalog;
+}
+
+export interface RuntimeConnectRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  allowedWorkspaceIds?: string[] | null;
+  fromEntityId: string;
+  toEntityId: string;
+  maxLinks?: number;
+  maxPaths?: number;
+  relations?: string[];
+  catalog: RuntimeRecordsCatalog;
+}
+
+export interface RuntimeConnectResult {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  status: 'connected' | 'not_connected' | 'not_found' | 'same_record';
+  links?: number;
+  maxLinks: number;
+  searchedLinks: number;
+  paths: Array<{
+    records: string[];
+    steps: Array<{ fromEntityId: string; relationId: string; relationKey: string; direction: 'outgoing' | 'incoming'; toEntityId: string }>;
+  }>;
+  records: Array<{ entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown> }>;
+  unknownRecords?: string[];
+  morePaths?: boolean;
+  /** The search stopped at a limit: a chain may exist that it did not reach. */
+  truncated: boolean;
+  graphLayout?: 'typed' | 'entity';
 }
 
 export interface RuntimeRecordsOverview {
@@ -1125,6 +1191,16 @@ export class SemanticRuntimeClientService {
   /** Filters, counts, groups and lists the records of one concept in the data bound to one environment. */
   async recordsQuery(body: RuntimeRecordsQueryRequest): Promise<RuntimeRecordsQueryResult> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/records-query', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** A walk from start records along the stored links, with conditions at each step: the records it reaches, counted, grouped or listed. */
+  async traverseRecords(body: RuntimeTraverseRequest): Promise<RuntimeRecordsQueryResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/traverse', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** The shortest chains of links between two records. */
+  async connectRecords(body: RuntimeConnectRequest): Promise<RuntimeConnectResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/connect', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
   }
 
   /** The concepts and relations of the bound data, with the number of records the actor may see. */

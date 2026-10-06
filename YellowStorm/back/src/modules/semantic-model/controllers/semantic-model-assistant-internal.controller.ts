@@ -13,7 +13,10 @@ import {
   AssistantProfileDto,
   AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
-import { AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
+import {
+  AssistantConnectRecordsDto, AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryRecordsDto, AssistantRelatedRecordsDto,
+  AssistantTraverseRecordsDto,
+} from '../dto/semantic-graph-search.dto';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
@@ -216,6 +219,22 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(READ, 'any')
   queryRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantQueryRecordsDto) {
     return this.assistant.queryRecords(assistantActorFrom(request.headers).userId, modelId, dto);
+  }
+
+  @Post('models/:modelId/records-traverse')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Walk several links from start records, with conditions at each step, and count, group or list the records reached' })
+  @RequirePermissions(READ, 'any')
+  traverseRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantTraverseRecordsDto) {
+    return this.assistant.traverseRecords(assistantActorFrom(request.headers).userId, modelId, dto);
+  }
+
+  @Post('models/:modelId/records-connect')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'The shortest chains of links between two records' })
+  @RequirePermissions(READ, 'any')
+  connectRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantConnectRecordsDto) {
+    return this.assistant.connectRecords(assistantActorFrom(request.headers).userId, modelId, dto);
   }
 
   @Post('models/:modelId/publish')

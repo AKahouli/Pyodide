@@ -1,4 +1,5 @@
 import type {
+  RuntimeConnectResult,
   RuntimeGraphExpandResult,
   RuntimeGraphSearchResult,
   RuntimeRecordsQueryResult,
@@ -13,7 +14,8 @@ export type IncompleteReason =
   | 'index_not_ready'   // the search index is being built: only exact keys and names were searched
   | 'index_partial'     // some records are not in the search index
   | 'values_unreadable' // some values could not be read with the field's type and were left out
-  | 'values_cut';       // some long values were cut
+  | 'values_cut'        // some long values were cut
+  | 'search_cut';       // a search for links stopped at a limit before covering every chain
 
 /** The same block on every read tool's answer, so the assistant can say plainly whether it has everything. */
 export interface AnswerCompleteness {
@@ -64,7 +66,18 @@ export function relatedCompleteness(result: RuntimeGraphExpandResult, oneStep: b
   return block({ returned: linked.length, total, hasMore, hiddenRecords: hidden, reasons, dataRevisionId: result.dataRevisionId });
 }
 
-/** query_records: exact totals; complete when the page or groups hold everything and every value could be read. */
+/** connect_records: the shortest chains, complete when the search was not cut (then "not connected" is a proof). */
+export function connectCompleteness(result: RuntimeConnectResult): AnswerCompleteness {
+  const reasons: IncompleteReason[] = [];
+  if (result.truncated) reasons.push('search_cut');
+  if (result.morePaths) reasons.push('more_results');
+  return block({
+    returned: result.paths.length, total: null, hasMore: Boolean(result.morePaths), hiddenRecords: 0, reasons,
+    dataRevisionId: result.dataRevisionId,
+  });
+}
+
+/** query_records and traverse_records: exact totals; complete when the page or groups hold everything and every value could be read. */
 export function queryCompleteness(result: RuntimeRecordsQueryResult): AnswerCompleteness {
   const grouped = Boolean(result.buckets);
   const hasMore = grouped ? Boolean(result.bucketsTruncated) : result.nextOffset !== null && result.nextOffset !== undefined;

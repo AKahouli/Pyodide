@@ -25,6 +25,7 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.graph_search.connect import MAX_LINKS, MAX_PATHS, connect
 from app.graph_search.embeddings import profile_from_env
 from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
                                       settings_for_revision)
@@ -98,7 +99,7 @@ class ExpandQuery(_Pinned):
 class RecordFilter(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    field: str = Field(max_length=300)
+    field: str = Field(max_length=600)
     op: str = Field(max_length=30)
     value: Any = None
     as_: str | None = Field(default=None, alias="as", max_length=20)
@@ -107,16 +108,19 @@ class RecordFilter(BaseModel):
 class LinkedTo(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    relation: str = Field(max_length=300)
+    # A relationship, or several in a row: "<relation>.<relation>".
+    relation: str = Field(max_length=600)
     record_ids: list[str] = Field(alias="recordIds", min_length=1, max_length=200)
 
 
 class GroupBy(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    field: str = Field(max_length=300)
+    field: str = Field(max_length=600)
     bucket: str | None = Field(default=None, max_length=20)
     as_: str | None = Field(default=None, alias="as", max_length=20)
+    # traverse-records only: group on the records of that point of the walk (0 is its start).
+    step: int | None = Field(default=None, ge=0, le=10)
 
 
 class Aggregate(BaseModel):
@@ -185,6 +189,49 @@ class RecordsQuery(_Pinned):
     limit: int = 50
     offset: int = 0
     catalog: Catalog = Field(default_factory=Catalog)
+
+
+class TraverseStart(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    concept: str = Field(min_length=1, max_length=300)
+    record_ids: list[str] | None = Field(default=None, alias="recordIds", min_length=1, max_length=200)
+    filters: list[RecordFilter] = Field(default_factory=list, max_length=50)
+    match: str = Field(default="all", max_length=10)
+
+
+class TraverseStep(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    relation: str = Field(min_length=1, max_length=300)
+    direction: Literal["outgoing", "incoming"] | None = None
+    min_hops: int = Field(default=1, alias="minHops", ge=1, le=10)
+    max_hops: int | None = Field(default=None, alias="maxHops", ge=1, le=10)
+    filters: list[RecordFilter] = Field(default_factory=list, max_length=50)
+    match: str = Field(default="all", max_length=10)
+
+
+class TraverseQuery(_Pinned):
+    """A walk: start records, then relationships step by step, each with conditions on the
+    records it reaches; answered like records-query on the records of the last step."""
+    start: TraverseStart
+    steps: list[TraverseStep] = Field(min_length=1, max_length=10)
+    group_by: list[GroupBy] = Field(default_factory=list, alias="groupBy", max_length=10)
+    aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
+    order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
+    fields: list[str] | None = Field(default=None, max_length=200)
+    limit: int = 50
+    offset: int = 0
+    catalog: Catalog = Field(default_factory=Catalog)
+
+
+class ConnectQuery(_Pinned):
+    from_entity_id: str = Field(alias="fromEntityId", min_length=1, max_length=300)
+    to_entity_id: str = Field(alias="toEntityId", min_length=1, max_length=300)
+    max_links: int = Field(default=4, alias="maxLinks", ge=1, le=MAX_LINKS)
+    max_paths: int = Field(default=5, alias="maxPaths", ge=1, le=MAX_PATHS)
+    relations: list[str] | None = Field(default=None, max_length=20)
+    catalog: Catalog | None = None
 
 
 class OverviewQuery(_Pinned):
@@ -390,6 +437,82 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
     except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
         raise HTTPException(status_code=422, detail="query_too_slow") from exc
     return {**pinned, **result}
+
+
+@router.post("/traverse", status_code=status.HTTP_200_OK)
+async def traverse_records(command: TraverseQuery, request: Request) -> dict[str, object]:
+    """Follow a walk from start records along the stored links, with conditions at each
+    step, and count, group or list the records it reaches (exact, over all the data). The
+    last step's filters are the query's own; ``groupBy`` with ``step`` groups on the records
+    of an earlier point of the walk (0: its start). Answered like records-query."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True)
+    dumped = command.model_dump(by_alias=True, exclude_none=True)
+    steps = [{key: value for key, value in step.items() if key in ("relation", "direction", "minHops", "maxHops",
+                                                                   "filters", "match")}
+             for step in dumped["steps"]]
+    last = steps[-1]
+    query = {key: dumped[key] for key in ("groupBy", "aggregates", "orderBy", "fields", "limit", "offset")
+             if key in dumped}
+    query.update(filters=last.pop("filters", []), match=last.pop("match", "all"))
+    traversal = {"start": dumped["start"], "steps": steps}
+    now = datetime.now(timezone.utc)
+    plan, errors, applied = compile_query(
+        compiled, catalog, query, model_id=command.model_id, revision_id=binding["data_revision_id"],
+        allowed_workspaces=command.allowed_workspace_ids, now=now, traversal=traversal)
+    pinned = _pinned(binding, command.environment)
+    if plan is None:
+        outcome = "not_represented" if errors and errors[0]["reason"] == "unknown_concept" else "invalid_query"
+        return {**pinned, "status": outcome, "errors": errors, "appliedQuery": applied}
+    try:
+        result = await run_query(pool, plan)
+        if result["total"] == 0:
+            result["diagnostics"] = await diagnose(pool, plan)
+            # How many start records there are on their own, and the values a start filter may have meant.
+            start = dumped["start"]
+            start_query = {"concept": start["concept"], "filters": start.get("filters") or [],
+                           "match": start.get("match", "all"), "limit": 0,
+                           **({"recordIds": start["recordIds"]} if start.get("recordIds") else {})}
+            start_plan, _, _ = compile_query(
+                compiled, catalog, start_query, model_id=command.model_id, revision_id=binding["data_revision_id"],
+                allowed_workspaces=command.allowed_workspace_ids, now=now)
+            if start_plan is not None:
+                counted = await run_query(pool, start_plan)
+                result["diagnostics"]["startRecords"] = counted["total"]
+                if counted["total"] == 0 and start_plan.checks:
+                    result["diagnostics"]["start"] = await diagnose(pool, start_plan)
+    except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=422, detail="query_too_slow") from exc
+    return {**pinned, **result}
+
+
+@router.post("/connect", status_code=status.HTTP_200_OK)
+async def connect_records(command: ConnectQuery, request: Request) -> dict[str, object]:
+    """The shortest chains of links between two records (up to ``maxLinks`` links, both ways),
+    over the revision's AGE graph."""
+    pool = _pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    if age_pool is None:
+        raise HTTPException(status_code=503, detail="age_projection_unavailable")
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True) if command.catalog else {}
+    relations = None
+    if command.relations:
+        relations, unknown = resolve_relations(compiled, command.relations, catalog)
+        if unknown:
+            raise HTTPException(status_code=422, detail="unknown_relation")
+    try:
+        result = await connect(pool, age_pool, revision_id=binding["data_revision_id"],
+                               projection_ref=binding["projection_ref"], compiled=compiled,
+                               from_id=command.from_entity_id, to_id=command.to_entity_id,
+                               max_links=command.max_links, max_paths=command.max_paths,
+                               relations=relations or None, allowed_workspaces=command.allowed_workspace_ids)
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    return {**_pinned(binding, command.environment), **result}
 
 
 @router.post("/records-overview", status_code=status.HTTP_200_OK)

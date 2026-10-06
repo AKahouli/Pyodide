@@ -15,6 +15,15 @@ Checks, per concept (a sample of records each):
   count_by_value   query_records(field eq a stored value)  -> total = stored count
   did_you_mean     query_records(field eq a misspelled value) -> nothing, and didYouMean has the value
 
+Walks (chains of 2 and 3 relationships between different concepts, a sample of them):
+  traverse_count   traverse_records(one start record, the chain)        -> total = the records the
+                                                                           stored links reach
+  traverse_groups  traverse_records(every start record, group by start) -> each start's exact count
+  chain_filter     query_records(last concept, "<rel>.<rel>.name" eq a start's name)
+                                                                        -> total = the records it reaches
+  connect          connect_records(a, b 1 to 4 links apart) -> connected at that many links, along stored links
+  not_connected    connect_records(a, b more than 4 links apart) -> not connected
+
   conda run -n meta python scripts/eval_search.py <model-id> [production|draft] [--sample N] [--json out.json]
 """
 
@@ -109,7 +118,56 @@ class Eval:
                 for check, items in self.results.items()}
 
 
-async def run(model_id: str, environment: str, sample: int, seed: int) -> dict[str, Any]:
+def _other(relation: dict[str, Any], concept: str) -> str:
+    return relation["targetConceptId"] if relation["sourceConceptId"] == concept else relation["sourceConceptId"]
+
+
+def _chains(relations: dict[str, Any]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """(start concept, relationships) of every chain of 2 or 3 relationships between
+    different concepts, never the same relationship twice in a row."""
+    plain = [item for item in relations.values() if item["sourceConceptId"] != item["targetConceptId"]]
+    chains = []
+    for first in plain:
+        for start in (first["sourceConceptId"], first["targetConceptId"]):
+            middle = _other(first, start)
+            for second in plain:
+                if second is first or middle not in (second["sourceConceptId"], second["targetConceptId"]):
+                    continue
+                chains.append((start, [first, second]))
+                end = _other(second, middle)
+                for third in plain:
+                    if third is not second and end in (third["sourceConceptId"], third["targetConceptId"]):
+                        chains.append((start, [first, second, third]))
+    return chains
+
+
+def _walk(linked: dict[tuple[str, str, str], set[str]], ids: set[str], start: str,
+          chain: list[dict[str, Any]]) -> set[str]:
+    """The records the stored links reach from ``ids`` (of concept ``start``) along ``chain``."""
+    concept, frontier = start, set(ids)
+    for relation in chain:
+        direction = "outgoing" if relation["sourceConceptId"] == concept else "incoming"
+        frontier = {other for record in frontier
+                    for other in linked.get((record, relation["relationId"], direction), ())}
+        concept = _other(relation, concept)
+    return frontier
+
+
+def _distances(adjacent: dict[str, set[str]], origin: str, limit: int) -> dict[str, int]:
+    """How many links (read both ways) each record is from ``origin``, up to ``limit``."""
+    seen, frontier = {origin: 0}, [origin]
+    for depth in range(1, limit + 1):
+        reached = []
+        for record in frontier:
+            for other in adjacent.get(record, ()):
+                if other not in seen:
+                    seen[other] = depth
+                    reached.append(other)
+        frontier = reached
+    return seen
+
+
+async def run(model_id: str, environment: str, sample: int, seed: int, walks: int = 12) -> dict[str, Any]:
     rng = random.Random(seed)
     pool = await asyncpg.create_pool(os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=4)
     age = await asyncpg.create_pool(os.environ["SEMANTIC_AGEGRAPH_DATABASE_URL"], min_size=1, max_size=2,
@@ -225,6 +283,7 @@ async def run(model_id: str, environment: str, sample: int, seed: int) -> dict[s
                                      for item in check.get("didYouMean", [])]
                         ev.record("did_you_mean", answer.get("total") == 0 and value in suggested, concept=key,
                                   field=field, query=typo, want=value, got=suggested[:5])
+            await _walks(ev, rng, walks, concepts, relations, by_concept, linked, concept_of, links)
             return {"modelId": model_id, "environment": environment, "dataRevisionId": revision,
                     "graph": binding["projection_ref"], "records": len(rows), "links": len(links),
                     "checks": ev.summary()}
@@ -233,16 +292,95 @@ async def run(model_id: str, environment: str, sample: int, seed: int) -> dict[s
         await age.close()
 
 
+async def _walks(ev: Eval, rng: random.Random, count: int, concepts: dict[str, Any], relations: dict[str, Any],
+                 by_concept: dict[str, list[dict[str, Any]]], linked: dict[tuple[str, str, str], set[str]],
+                 concept_of: dict[str, str], links: list[Any]) -> None:
+    def key(concept_id: str) -> str:
+        return concepts.get(concept_id, {}).get("key") or concept_id
+
+    chains = _chains(relations)
+    rng.shuffle(chains)
+    for start, chain in chains[:count]:
+        keys = [relation["key"] for relation in chain]
+        steps = [{"relation": relation_key} for relation_key in keys]
+        records = by_concept.get(start, [])
+        # A walk back to records of its start concept leaves out the record it started from.
+        reach = {record["id"]: _walk(linked, {record["id"]}, start, chain) - {record["id"]} for record in records}
+        reaching = [record for record in records if reach[record["id"]]]
+        for record in rng.sample(reaching, min(3, len(reaching))):
+            answer = await ev.post("traverse", {"start": {"concept": key(start), "recordIds": [record["id"]]},
+                                                "steps": steps, "limit": 0})
+            ev.record("traverse_count", answer.get("total") == len(reach[record["id"]]), start=key(start),
+                      chain=keys, record=record["id"], got=answer.get("total"), want=len(reach[record["id"]]),
+                      status=answer.get("status"))
+        if reaching:
+            answer = await ev.post("traverse", {"start": {"concept": key(start)}, "steps": steps,
+                                                "groupBy": [{"field": "name", "step": 0}]})
+            if not answer.get("bucketsTruncated"):
+                got = {bucket.get("entityIds", {}).get("start.name"): bucket["count"]
+                       for bucket in answer.get("buckets", [])}
+                want = {record_id: len(ends) for record_id, ends in reach.items() if ends}
+                wrong = {record_id: [got.get(record_id), want.get(record_id)]
+                         for record_id in set(got) | set(want) if got.get(record_id) != want.get(record_id)}
+                ev.record("traverse_groups", not wrong, start=key(start), chain=keys, status=answer.get("status"),
+                          wrong=dict(list(wrong.items())[:5]))
+        if len(chain) == 2:
+            # The chain read backwards from its last concept, by key: the runtime orients each link.
+            end = _other(chain[1], _other(chain[0], start))
+            names: dict[str, list[str]] = defaultdict(list)
+            for record in records:
+                names[fold(record["label"])].append(record["id"])
+            unique = [record for record in reaching if record["label"] and len(names[fold(record["label"])]) == 1]
+            for record in rng.sample(unique, min(2, len(unique))):
+                field = f"{keys[1]}.{keys[0]}.name"
+                want = _walk(linked, {record["id"]}, start, chain)
+                answer = await ev.post("records-query", {"concept": key(end), "limit": 0, "filters": [
+                    {"field": field, "op": "eq", "value": record["label"]}]})
+                ev.record("chain_filter", answer.get("total") == len(want), concept=key(end), field=field,
+                          value=record["label"], got=answer.get("total"), want=len(want), status=answer.get("status"))
+    # The shortest chains between two records, links read both ways.
+    adjacent: dict[str, set[str]] = defaultdict(set)
+    for link in links:
+        adjacent[link["source_entity_id"]].add(link["target_entity_id"])
+        adjacent[link["target_entity_id"]].add(link["source_entity_id"])
+    stored = {(link["source_entity_id"], link["relation_id"], link["target_entity_id"]) for link in links}
+    for origin in rng.sample(sorted(adjacent), min(count, len(adjacent))):
+        distances = _distances(adjacent, origin, 4)
+        for depth in range(1, 5):
+            at = sorted(record_id for record_id, value in distances.items() if value == depth)
+            if not at:
+                continue
+            target = rng.choice(at)
+            answer = await ev.post("connect", {"fromEntityId": origin, "toEntityId": target, "maxLinks": 4})
+            paths = answer.get("paths") or []
+            along_links = all(
+                ((step["fromEntityId"], step["relationId"], step["toEntityId"]) if step["direction"] == "outgoing"
+                 else (step["toEntityId"], step["relationId"], step["fromEntityId"])) in stored
+                for path in paths for step in path["steps"])
+            ends = all(path["records"][0] == origin and path["records"][-1] == target
+                       and len(path["steps"]) == depth for path in paths)
+            ev.record("connect", answer.get("status") == "connected" and answer.get("links") == depth and bool(paths)
+                      and along_links and ends, origin=origin, target=target, want=depth, got=answer.get("links"),
+                      status=answer.get("status"), truncated=answer.get("truncated"))
+        far = sorted(record_id for record_id in concept_of if record_id not in distances)
+        if far:
+            target = rng.choice(far)
+            answer = await ev.post("connect", {"fromEntityId": origin, "toEntityId": target, "maxLinks": 4})
+            ev.record("not_connected", answer.get("status") == "not_connected", origin=origin, target=target,
+                      status=answer.get("status"), links=answer.get("links"), truncated=answer.get("truncated"))
+
+
 def main() -> None:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("model_id")
     parser.add_argument("environment", nargs="?", default="production", choices=("production", "draft"))
     parser.add_argument("--sample", type=int, default=20, help="records per concept (default 20)")
+    parser.add_argument("--walks", type=int, default=12, help="chains and record pairs to walk (default 12)")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--json", help="write the full report there")
     args = parser.parse_args()
-    report = asyncio.run(run(args.model_id, args.environment, args.sample, args.seed))
+    report = asyncio.run(run(args.model_id, args.environment, args.sample, args.seed, args.walks))
     print(f"{report['modelId']} ({report['environment']}, {report['records']} records, {report['links']} links, "
           f"graph {report['graph']})")
     for check, result in report["checks"].items():
