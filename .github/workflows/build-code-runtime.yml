@@ -26,6 +26,11 @@ jobs:
           login-server: yscrmetachatbot001.azurecr.io
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: "Stage observability SDK (required by the file: dependency)"
         run: node scripts/observability/build-sdks.mjs
 
