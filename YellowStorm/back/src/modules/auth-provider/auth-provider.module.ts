@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthProviderService } from './services/auth-provider.service';
 import { OAuthFlowService } from './services/oauth-flow.service';
 import { ProviderLinkService } from './services/provider-link.service';
-import { AuthProviderHealthService } from './services/auth-provider-health.service';
 import { OAuthController } from './controllers/oauth.controller';
 import { AuthProviderAdminController } from './controllers/auth-provider-admin.controller';
 import { CryptoService } from '@common/services/crypto.service';
@@ -34,13 +33,13 @@ import {
     AuthProviderService,
     OAuthFlowService,
     ProviderLinkService,
-    AuthProviderHealthService,
+
     // Mongo-backed until the 1A cutover; swap useClass to the Pg* stores then.
     PgAuthProviderStore,
     PgOAuthStateStore,
     PgProviderLinkTokenStore,
     PgUserProviderLinkStore,
   ],
-  exports: [AuthProviderService, ProviderLinkService, AuthProviderHealthService],
+  exports: [AuthProviderService, ProviderLinkService],
 })
 export class AuthProviderModule {}

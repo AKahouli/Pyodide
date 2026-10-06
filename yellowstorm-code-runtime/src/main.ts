@@ -6,10 +6,9 @@ import { createExecuteHandler } from "./api/execute.js";
 import { QuickJsExecutor } from "./runtime/quickjs-executor.js";
 import { Metrics } from "./telemetry/metrics.js";
 import { CephS3Store } from "./workspace/ceph-s3.js";
-import type { Executor } from "./runtime/executor.js";
 import type { ObjectStore } from "./workspace/types.js";
 
-export function buildServer(config: ServiceConfig, executor: Executor, store: ObjectStore) {
+export function buildServer(config: ServiceConfig, executor: QuickJsExecutor, store: ObjectStore) {
   const metrics = new Metrics();
   const execute = createExecuteHandler(config, executor, store, metrics);
   return createServer((request, response) => {

@@ -26,7 +26,6 @@ class Settings:
     timeout_seconds: float
     port: int
     max_response_bytes: int
-    list_limit_max: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,7 +36,6 @@ class Settings:
             timeout_seconds=float(os.getenv("AGENT_MCP_TIMEOUT_SECONDS", "60")),
             port=int(os.getenv("MCP_PORT", "8026")),
             max_response_bytes=int(os.getenv("AGENT_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
-            list_limit_max=int(os.getenv("AGENT_MCP_LIST_LIMIT_MAX", "25")),
         )
 
     def validate(self) -> None:
@@ -53,5 +51,3 @@ class Settings:
             raise ValueError("AGENT_MCP_TIMEOUT_SECONDS must be between 1 and 300")
         if not 1024 <= self.max_response_bytes <= 8 * 1024 * 1024:
             raise ValueError("AGENT_MCP_MAX_RESPONSE_BYTES must be between 1024 and 8388608")
-        if not 1 <= self.list_limit_max <= 100:
-            raise ValueError("AGENT_MCP_LIST_LIMIT_MAX must be between 1 and 100")
