@@ -1,4 +1,4 @@
-name: CI/CD MCP images
+name: CI/CD MCP (playbook agent semantic)
 
 on:
   pull_request:
