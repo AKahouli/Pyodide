@@ -108,9 +108,9 @@ export function applyChunksToComponents(components: StreamingComponent[], chunks
   for (const { action, component } of chunks) {
     if (action === 'add') {
       const existingIndex = result.findIndex((item) => item.id === component.id);
-      if (component.type === 'toolActivity' && existingIndex >= 0) {
+      if (['toolActivity', 'agentActivity'].includes(component.type) && existingIndex >= 0) {
         const existing = result[existingIndex];
-        result[existingIndex] = { ...existing, data: mergeStreamingData('toolActivity', existing.data, component.data) };
+        result[existingIndex] = { ...existing, data: mergeStreamingData(existing.type, existing.data, component.data) };
       } else {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }

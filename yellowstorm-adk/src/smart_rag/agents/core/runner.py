@@ -538,7 +538,7 @@ class AgentRunner:
                     )
                     if not is_thought and part.text:
                         thought_activity_tracker.end_for_visible_text()
-                    if part.function_call or part.function_response:
+                    if (part.function_call or part.function_response) and getattr(event, "partial", None) is not True:
                         thought_activity_tracker.end_for_tool_boundary()
 
                     if (
