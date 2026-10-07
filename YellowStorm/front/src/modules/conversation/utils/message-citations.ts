@@ -7,10 +7,43 @@ import type { MessageComponent } from '../types';
  * (across pages or markers) collapse into a single sources-list entry.
  */
 function citationKey(citation: CitationData): string {
+  if (citation.record) return ['record', citation.record.modelId, citation.record.entityId].join('|');
   return [citation.source, citation.fileName ?? ''].join('|');
 }
 
+export const citationText = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+/** A cited semantic model record, from the persisted (camelCase) or streamed (snake_case) component. */
+export function buildRecordCitation(data: Record<string, unknown>): CitationData['record'] | undefined {
+  const source = (data.record_source as Record<string, unknown> | undefined)
+    ?? (data.sourceType === 'record' || data.sourceKind === 'record' ? data : undefined);
+  const entityId = citationText(source?.entityId) || citationText(source?.entity_id);
+  const modelId = citationText(source?.modelId) || citationText(source?.model_id);
+  if (!source || !entityId || !modelId) return undefined;
+  const keys = (source.keyFields ?? source.key_fields) as Record<string, unknown> | undefined;
+  return {
+    modelId, entityId,
+    modelName: citationText(source.modelName) || citationText(source.model_name),
+    data: (source.data === 'draft' ? 'draft' : 'published'),
+    dataRevisionId: citationText(source.dataRevisionId) || citationText(source.data_revision_id),
+    concept: citationText(source.concept),
+    name: citationText(source.name),
+    keyFields: Object.fromEntries(Object.entries(keys && typeof keys === 'object' ? keys : {}).map(([key, value]) => [key, String(value)])),
+    ...(citationText(source.field) ? { field: citationText(source.field) } : {}),
+    ...(citationText(source.quote) ? { quote: citationText(source.quote) } : {}),
+  };
+}
+
+
 function toCitationData(data: Record<string, unknown>): CitationData | null {
+  const record = buildRecordCitation(data);
+  if (record) {
+    return {
+      parentId: citationText(data.parentId), sourceType: 'record', sourceKind: 'record', source: record.name || record.entityId,
+      externalId: '', page: '', pageContent: record.quote ?? '', workspaceId: '',
+      ...(citationText(data.reference) ? { reference: citationText(data.reference) } : {}), record,
+    };
+  }
   if (typeof data.source !== 'string' || !data.source) return null;
   return {
     parentId: typeof data.parentId === 'string' ? data.parentId : '',
@@ -61,11 +94,13 @@ export function collectMessageCitations(components: MessageComponent[] | undefin
 
 /** Display label for the sources list: file name, else the path/URL tail. */
 export function getCitationEntryLabel(citation: CitationData, fallback: string): string {
+  if (citation.record) return [citation.record.concept, citation.record.name].filter(Boolean).join(' · ') || fallback;
   const source = citation.fileName || citation.path || citation.source;
   return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
 }
 
 /** True when the citation points at a web URL rather than a stored document. */
 export function isUrlCitation(citation: CitationData): boolean {
+  if (citation.record) return false;
   return /^https?:\/\//i.test(citation.source);
 }

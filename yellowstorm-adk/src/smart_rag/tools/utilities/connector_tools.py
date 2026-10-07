@@ -27,6 +27,15 @@ _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_WEB_SOURCES = "_connector_web_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+_STATE_KEY_CONNECTOR_RECORD_SOURCES = "_connector_record_sources"
+_RECORD_EVIDENCE = "record_evidence"
+# Records of one result that get a number: the ones shown first (the back already caps the list).
+_MAX_RECORD_CITATIONS = 30
+_RECORD_CITATION_GUIDANCE = (
+    "Each record that can be cited carries cite \"[n]\". When a sentence of your answer relies on a record, "
+    "put its [n] right after that sentence (\"The contract ends on 31/12/2025 [3].\"). Cite only these numbers, "
+    "never a record you did not read here."
+)
 _MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
@@ -296,14 +305,95 @@ def _register_connector_text_source(
     return source
 
 
+def _record_source_signature(source: Dict[str, Any]) -> str:
+    # One number per record of a model in a conversation, whichever result showed it.
+    return "::".join(["record", str(source.get("modelId") or ""), str(source.get("data") or ""), str(source.get("entityId") or "")])
+
+
+def _stamp_record_citations(value: Any, references: Dict[str, str]) -> Any:
+    """Copy of a result where every record listed with a number carries ``cite`` ("[n]")."""
+    if isinstance(value, list):
+        return [_stamp_record_citations(item, references) for item in value]
+    if not isinstance(value, dict):
+        return value
+    stamped = {key: _stamp_record_citations(item, references) for key, item in value.items()}
+    reference = references.get(str(value.get("entityId") or ""))
+    if reference:
+        stamped["cite"] = f"[{reference}]"
+    return stamped
+
+
+def _register_record_citations(response: Dict[str, Any], tool_context: ToolContext) -> Dict[str, Any]:
+    """Number the records a semantic model result lists (``data.citationSources``) so the answer can
+    cite them; the records shown in the result carry their number as ``cite``."""
+    data = response.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("citationSources"), list):
+        return response
+    data = dict(data)
+    sources = [source for source in data.pop("citationSources") if isinstance(source, dict)
+               and source.get("type") == "record" and source.get("entityId") and source.get("modelId")]
+    response = {**response, "data": data}
+    if not sources:
+        return response
+    state = tool_context.state
+    signatures = state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
+    record_sources = state.setdefault(_STATE_KEY_CONNECTOR_RECORD_SOURCES, [])
+    references: Dict[str, str] = {}
+    for source in sources[:_MAX_RECORD_CITATIONS]:
+        signature = _record_source_signature(source)
+        reference = signatures.get(signature)
+        if not reference:
+            reference = str(int(state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1)
+            state[_STATE_KEY_CONNECTOR_REFERENCE_COUNTER] = int(reference)
+            signatures[signature] = reference
+            key_fields = source.get("keyFields") if isinstance(source.get("keyFields"), dict) else {}
+            record_sources.append({
+                "reference": reference,
+                "object": {"content": {
+                    "model_id": str(source.get("modelId") or ""),
+                    "model_name": str(source.get("modelName") or ""),
+                    "data": str(source.get("data") or "published"),
+                    "data_revision_id": str(source.get("dataRevisionId") or ""),
+                    "entity_id": str(source.get("entityId") or ""),
+                    "concept": str(source.get("concept") or ""),
+                    "name": str(source.get("name") or ""),
+                    "key_fields": {str(key): str(value) for key, value in key_fields.items()},
+                    "field": str(source.get("field") or ""),
+                    "quote": str(source.get("quote") or ""),
+                }},
+            })
+        references[str(source["entityId"])] = reference
+    # Reassigned, not only mutated: ADK saves the keys written in this turn, and these exist from earlier turns.
+    state[_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES] = dict(signatures)
+    state[_STATE_KEY_CONNECTOR_RECORD_SOURCES] = list(record_sources)
+    response["data"] = _stamp_record_citations(data, references)
+    # The result's own text repeats the data without the numbers: the guidance replaces it.
+    response["text"] = _RECORD_CITATION_GUIDANCE
+    logger.info(
+        "CONVERSATION_MCP_RECORD_CITATIONS assigned_references=%s record_source_total=%s",
+        sorted(set(references.values()), key=int), len(record_sources),
+    )
+    return response
+
+
+def _lists_record_sources(response: Dict[str, Any]) -> bool:
+    """A semantic model read result: it lists the records it shows as citation sources, whatever the action's mode."""
+    data = response.get("data")
+    sources = data.get("citationSources") if isinstance(data, dict) else None
+    return isinstance(sources, list) and any(isinstance(item, dict) and item.get("type") == "record" for item in sources)
+
+
 def _register_connector_response_sources(
     response: Any,
     tool_context: Optional[ToolContext],
     action_key: str = "",
     trusted_web_result: bool = False,
+    citation_mode: str = "none",
 ) -> Any:
     if not tool_context or not isinstance(response, dict):
         return response
+    if citation_mode == _RECORD_EVIDENCE or _lists_record_sources(response):
+        return _register_record_citations(_strip_legacy_citation_fields(response), tool_context)
     if not trusted_web_result and not _keeps_citation_fields(action_key):
         return _strip_legacy_citation_fields(response)
 
@@ -1187,6 +1277,7 @@ def create_connector_tools(
                     tool_context,
                     action_key=_action_key,
                     trusted_web_result=_result_kind in {"web_search", "web_fetch"},
+                    citation_mode=_citation_mode,
                 )
                 return registered_response
 

@@ -30,7 +30,7 @@ from app.graph_search.embeddings import profile_from_env
 from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
                                       settings_for_revision)
 from app.graph_search.record_query import compile_query, diagnose, field_keys_by_concept, overview, run_query
-from app.graph_search.retrieval import find_seeds, resolve_concepts, resolve_relations
+from app.graph_search.retrieval import describe_entity, find_seeds, is_visible, resolve_concepts, resolve_relations
 from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
@@ -236,6 +236,13 @@ class ConnectQuery(_Pinned):
 
 class OverviewQuery(_Pinned):
     pass
+
+
+class CitedRecordQuery(_Pinned):
+    """One record an answer cited. ``expectedDataRevisionId`` is the revision it was cited from:
+    unlike other reads, a newer revision is read rather than refused (``changed``), since a
+    record keeps its id while its key does not change."""
+    entity_id: str = Field(alias="entityId", min_length=1, max_length=300)
 
 
 class IndexCommand(BaseModel):
@@ -535,6 +542,40 @@ async def connect_records(command: ConnectQuery, request: Request) -> dict[str, 
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
     return {**_pinned(binding, command.environment), **result}
+
+
+# A cited record's value longer than this is cut (``truncatedFields``): the drawer shows a record, not a document.
+MAX_CITED_VALUE_CHARS = 4000
+
+
+@router.post("/record", status_code=status.HTTP_200_OK)
+async def cited_record(command: CitedRecordQuery, request: Request) -> dict[str, object]:
+    """One record of the data in use, as an answer cites it: its values, where each value came
+    from (file, page, row) and the files it was read from. A record read from a workspace the
+    actor cannot open is ``hidden``; one no longer in the data is ``missing``."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    revision_id = binding["data_revision_id"]
+    base = {**_pinned(binding, command.environment),
+            "changed": command.expected_data_revision_id not in (None, revision_id)}
+    entity = (await search_store.entity_rows(pool, revision_id, [command.entity_id])).get(command.entity_id)
+    if entity is None:
+        return {**base, "status": "missing"}
+    if not is_visible(entity, command.allowed_workspace_ids):
+        return {**base, "status": "hidden"}
+    compiled = await _compiled(pool, revision_id)
+    concept = compiled["concepts"].get(entity["conceptId"]) or {}
+    values = (await search_store.entity_attributes(pool, revision_id, [command.entity_id])).get(command.entity_id) or {}
+    truncated = []
+    for field, value in values.items():
+        if isinstance(value, str) and len(value) > MAX_CITED_VALUE_CHARS:
+            values[field] = value[:MAX_CITED_VALUE_CHARS]
+            truncated.append(field)
+    origins = (await store.list_entity_origins(pool, revision_id, [command.entity_id])).get(command.entity_id) or {}
+    return {**base, "status": "ok", "record": {
+        **describe_entity(entity, compiled), "conceptKey": concept.get("key", ""),
+        "values": values, "truncatedFields": truncated, "origins": origins,
+    }}
 
 
 @router.post("/records-overview", status_code=status.HTTP_200_OK)

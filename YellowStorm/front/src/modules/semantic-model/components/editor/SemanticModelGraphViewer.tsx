@@ -45,6 +45,11 @@ interface Props {
   /** Owners and editors may take the whole graph out of the app as a file. */
   canExport?: boolean;
   onRebuildStarted?: (jobId: string) => void;
+  /** A record to open once the graph is read (a chat citation's "Open in graph"); found says whether it is drawn. */
+  initialRecordId?: string | null;
+  onInitialRecord?: (found: boolean) => void;
+  /** A centred window over the page (opened from a chat citation) instead of the whole screen. */
+  modal?: boolean;
 }
 
 /** Same-named records of a concept are told apart by their first date. */
@@ -65,7 +70,7 @@ function useSettled<T>(value: T, delay = 250) {
   return settled;
 }
 
-export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionId, onDataRevision, canEdit = false, canExport = false, onRebuildStarted }: Props) {
+export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionId, onDataRevision, canEdit = false, canExport = false, onRebuildStarted, initialRecordId, onInitialRecord, modal = false }: Props) {
   const { t, language } = useModuleTranslation('semantic-model');
   const canvas = useRef<GraphCanvasHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -201,6 +206,16 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     setTimeout(() => canvas.current?.centerOn(id), 120);
   }, [index, drawn]);
 
+  // The record asked for is opened once, after the graph it belongs to is read.
+  const openedInitial = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || loading || !outline || !initialRecordId || openedInitial.current === initialRecordId) return;
+    openedInitial.current = initialRecordId;
+    const found = index.byId.has(initialRecordId);
+    if (found) goTo(initialRecordId);
+    onInitialRecord?.(found);
+  }, [open, loading, outline, initialRecordId, index, goTo, onInitialRecord]);
+
   const onlyConcept = useCallback((concept: string) => setHidden(new Set(index.concepts.filter((item) => item.key !== concept).map((item) => item.key))), [index]);
   const onCanvasSelect = useCallback((id: string | null) => {
     if (id?.startsWith(CONCEPT_PREFIX)) { onlyConcept(id.slice(CONCEPT_PREFIX.length)); return; }
@@ -271,7 +286,11 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const pressed = 'bg-white/15 text-white';
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#0f0f1a' }}>
+    <div className={modal ? 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-8' : 'contents'}
+      onMouseDown={modal ? (event) => { if (event.target === event.currentTarget) onClose(); } : undefined}>
+    <div role={modal ? 'dialog' : undefined} aria-modal={modal || undefined} aria-label={modal ? t('graphViewer.title') : undefined}
+      className={modal ? 'flex h-full max-h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl border border-white/10 shadow-2xl' : 'fixed inset-0 z-50 flex flex-col'}
+      style={{ background: '#0f0f1a' }}>
       {/* Header */}
       <div className="shrink-0 space-y-1.5 border-b border-white/10 px-4 py-2.5">
       <div className="flex items-center gap-3">
@@ -407,6 +426,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           onRebuildStarted={onRebuildStarted} onSelect={goTo} onCenter={(id) => canvas.current?.centerOn(id)} onClose={() => setSelectedId(null)} />}
       </div>
       {canExport && exportOpen && <GraphExportDialog open={exportOpen} onOpenChange={setExportOpen} index={index} modelId={modelId} dataRevisionId={revision} colorOf={colorOf} drawLimit={drawLimit} maxDraw={MAX_DRAW_LIMIT} />}
+    </div>
     </div>
   );
 }

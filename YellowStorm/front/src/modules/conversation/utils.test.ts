@@ -73,6 +73,29 @@ describe('conversation utils', () => {
     }
   });
 
+  it('maps a cited semantic model record, persisted or streamed', () => {
+    const persisted = {
+      parentId: 'p1', sourceType: 'record', sourceKind: 'record', reference: '[3]', modelId: 'm-1', modelName: 'Mails', data: 'published',
+      dataRevisionId: 'rev-1', entityId: 'e-1', concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' }, field: 'Body', quote: 'ends in 2025', source: 'CT001',
+    };
+    const streamed = { parent_id: 'p1', record_source: {
+      reference: '[3]', model_id: 'm-1', model_name: 'Mails', data: 'published', data_revision_id: 'rev-1', entity_id: 'e-1',
+      concept: 'Contract', name: 'CT001', key_fields: { id: 'CT001' }, field: 'Body', quote: 'ends in 2025',
+    } };
+    for (const data of [persisted, streamed]) {
+      const parts = mapComponentsToContentParts([
+        { id: 'p1', type: 'text', data: { content: 'It ends in 2025 [3].' } } as never,
+        { type: 'citation', data } as never,
+      ]);
+      expect(parts).toHaveLength(1);
+      if (parts[0]?.type !== 'text') throw new Error('text expected');
+      expect(parts[0].citations?.[0]).toMatchObject({
+        sourceType: 'record', reference: '[3]', source: 'CT001',
+        record: { modelId: 'm-1', entityId: 'e-1', dataRevisionId: 'rev-1', concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' }, field: 'Body', quote: 'ends in 2025', data: 'published' },
+      });
+    }
+  });
+
   it('attaches unparented bracketed playbook citations to matching text', () => {
     const parts = mapComponentsToContentParts([
       { type: 'text', data: { content: 'Risque financier majeur [2].' } } as never,

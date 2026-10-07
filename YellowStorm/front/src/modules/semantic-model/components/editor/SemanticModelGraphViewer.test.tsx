@@ -83,6 +83,16 @@ describe('SemanticModelGraphViewer', () => {
     expect(screen.queryByRole('button', { name: 'graphViewer.addNode' })).not.toBeInTheDocument();
   });
 
+  it('opens as a centred window that closes from its backdrop', async () => {
+    const onClose = vi.fn();
+    renderViewer({ modal: true, onClose });
+    const dialog = await screen.findByRole('dialog', { name: 'graphViewer.title' });
+    await userEvent.setup().click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.setup().click(dialog.parentElement!);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('reads the requested data revision', async () => {
     renderViewer({ dataRevisionId: 'rev-1' });
     await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenCalledWith('model-1', 'rev-1'));
@@ -133,6 +143,18 @@ describe('SemanticModelGraphViewer', () => {
       expect(within(panel).queryByText('Message key')).not.toBeInTheDocument();
       await user.click(within(panel).getByRole('button', { name: 'graphViewer.missingCount' }));
       expect(within(panel).getByText('Message key')).toBeInTheDocument();
+    });
+
+    it('opens on the record a chat citation names, and says when it is gone', async () => {
+      const found = vi.fn();
+      renderViewer({ initialRecordId: 'm2', onInitialRecord: found });
+      const panel = await screen.findByRole('complementary', { name: 'graphViewer.recordPanel' });
+      expect(within(panel).getByRole('heading', { name: 'Invoice' })).toBeInTheDocument();
+      expect(found).toHaveBeenCalledWith(true);
+
+      const missing = vi.fn();
+      renderViewer({ initialRecordId: 'gone', onInitialRecord: missing });
+      await waitFor(() => expect(missing).toHaveBeenCalledWith(false));
     });
 
     it('lists linked records by relationship and moves to one', async () => {

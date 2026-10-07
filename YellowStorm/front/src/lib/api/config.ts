@@ -462,6 +462,7 @@ export const API_ENDPOINTS = {
     graphSearch: (id: string) => `/semantic-models/${id}/age-graph/search`,
     graphRecord: (id: string, recordId: string) => `/semantic-models/${id}/age-graph/records/${encodeURIComponent(recordId)}`,
     graphExport: (id: string) => `/semantic-models/${id}/age-graph/export`,
+    citedRecord: (id: string, entityId: string) => `/semantic-models/${id}/cited-records/${encodeURIComponent(entityId)}`,
     bindings: (id: string) => `/semantic-models/${id}/bindings`,
     binding: (id: string, bindingId: string) => `/semantic-models/${id}/bindings/${bindingId}`,
     workspaces: (id: string) => `/semantic-models/${id}/workspaces`,

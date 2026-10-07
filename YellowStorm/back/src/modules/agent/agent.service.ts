@@ -27,6 +27,7 @@ import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
+import { ConnectorCitationMode } from '../connector/connector.types';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
@@ -77,6 +78,17 @@ export function semanticModelChatActionKeys(connector: IConnectorResponse, selec
     .filter((action) => action.isEnabled !== false && (action.safety ?? 'read') === 'read')
     .map((action) => action.key)
     .filter((key) => !selected || selected.has(key)));
+}
+
+/**
+ * The semantic connector's results name records the answer can cite: its actions left without a citation mode get
+ * record_evidence, so the runtime numbers the records each result lists (citationSources) and the chat can open them.
+ */
+export function markRecordCitations(binding: Record<string, unknown>): void {
+  const actions = Array.isArray(binding.actions) ? binding.actions as Array<Record<string, unknown>> : [];
+  for (const action of actions) {
+    if (!action.citation_mode || action.citation_mode === ConnectorCitationMode.NONE) action.citation_mode = ConnectorCitationMode.RECORD_EVIDENCE;
+  }
 }
 
 export interface PlaybookPlannerAgentConfig {
@@ -876,8 +888,17 @@ export class AgentService {
         : [];
       if (semanticFixedParamKeys.length) {
         for (const binding of connectorBindings) {
-          if (binding.connector_id === semanticSearchConnectorId) this.hideFixedParamsFromModel(binding, semanticFixedParamKeys);
+          if (binding.connector_id !== semanticSearchConnectorId) continue;
+          this.hideFixedParamsFromModel(binding, semanticFixedParamKeys);
         }
+      }
+      // Records read from a semantic model are citable whether or not the chat is pinned to one model.
+      const semanticConnectorSlug = this.configService.get<string>('semanticModel.searchConnectorSlug', '') ?? '';
+      for (const binding of connectorBindings) {
+        const connectorId = String(binding.connector_id ?? '');
+        const isSemantic = connectorId === semanticSearchConnectorId
+          || (semanticConnectorSlug !== '' && connectorsMap.get(connectorId)?.slug === semanticConnectorSlug);
+        if (isSemantic) markRecordCitations(binding);
       }
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {

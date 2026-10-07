@@ -536,6 +536,21 @@ export function SemanticModelEditorPage() {
     setChoosingFor(suggestion);
   };
 
+  // A chat citation's "Open in graph": the graph opens on the record cited.
+  const wantedRecord = searchParams.get('record');
+  const [graphRecord, setGraphRecord] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wantedRecord) return;
+    setGraphRecord(wantedRecord);
+    setGraphViewerOpen(true);
+    setSearchParams((params) => { params.delete('record'); return params; }, { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedRecord]);
+  const onGraphRecord = useCallback((found: boolean) => {
+    setGraphRecord(null);
+    if (!found) showError(t('citedRecord.graphRecordMissing'));
+  }, [t]);
+
   const wantedSuggestion = searchParams.get('suggestion');
   const wantsSuggestions = searchParams.get('sources') === '1';
   // Wait for this model's graph: right after navigating, the previous model's graph is still loaded.
@@ -970,6 +985,8 @@ export function SemanticModelEditorPage() {
           canEdit={canEdit}
           canExport={model.data?.role === "owner" || model.data?.role === "editor"}
           onRebuildStarted={setPopulationJobId}
+          initialRecordId={graphRecord}
+          onInitialRecord={onGraphRecord}
         />
       )}
       <Dialog open={saveStatus === "conflict"}>

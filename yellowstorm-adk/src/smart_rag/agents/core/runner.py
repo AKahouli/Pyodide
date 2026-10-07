@@ -96,6 +96,7 @@ _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_WEB_SOURCES = "_connector_web_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+_STATE_KEY_CONNECTOR_RECORD_SOURCES = "_connector_record_sources"
 
 
 def _is_locate_answer_citations_tool(tool_name: str) -> bool:
@@ -1821,6 +1822,10 @@ class AgentRunner:
             if _matches_reference(source):
                 return {"source_object": source.get("object", {}), "type": "web"}
 
+        for source in (session_state or {}).get(_STATE_KEY_CONNECTOR_RECORD_SOURCES, []):
+            if _matches_reference(source):
+                return {"source_object": source.get("object", {}), "type": "record"}
+
         logger.info("[CITATION LOOKUP] not_found reference=%s", citation_ref)
         return None
 
@@ -2247,7 +2252,25 @@ class AgentRunner:
         content = source_obj.get("content", {})
 
         # Build component data based on type
-        if source_type == "web":
+        if source_type == "record":
+            component_data = {
+                "parent_id": parent_text_component_id,
+                "record_source": {
+                    "type": "record",
+                    "reference": citation_ref,
+                    "model_id": content.get("model_id", ""),
+                    "model_name": content.get("model_name", ""),
+                    "data": content.get("data", "published"),
+                    "data_revision_id": content.get("data_revision_id", ""),
+                    "entity_id": content.get("entity_id", ""),
+                    "concept": content.get("concept", ""),
+                    "name": content.get("name", ""),
+                    "key_fields": dict(content.get("key_fields") or {}),
+                    "field": content.get("field", ""),
+                    "quote": content.get("quote", ""),
+                },
+            }
+        elif source_type == "web":
             component_data = {
                 "parent_id": parent_text_component_id,
                 "web_source": {

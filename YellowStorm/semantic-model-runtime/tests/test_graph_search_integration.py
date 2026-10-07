@@ -282,6 +282,21 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
             "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}],
             "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
         assert hidden_links["linkCounts"][0]["count"] == 2
+        # A cited record: its values and where each came from; a newer revision is read, not refused.
+        cited_query = {"actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+                       "entityId": related["CT001"]["entityId"]}
+        cited = (await client.post("/v1/semantic-model-search/record", json=cited_query)).json()
+        assert cited["status"] == "ok" and cited["changed"] is False, cited
+        assert cited["record"]["label"] == "CT001" and cited["record"]["conceptKey"] == "contract"
+        assert cited["record"]["values"].get("title") and cited["record"]["provenance"][0]["assetId"]
+        assert any(origin.get("assetId") for origin in cited["record"]["origins"].values()), cited["record"]["origins"]
+        older = (await client.post("/v1/semantic-model-search/record",
+                                   json={**cited_query, "expectedDataRevisionId": "older-revision"})).json()
+        assert older["status"] == "ok" and older["changed"] is True
+        assert (await client.post("/v1/semantic-model-search/record",
+                                  json={**cited_query, "allowedWorkspaceIds": []})).json()["status"] == "hidden"
+        assert (await client.post("/v1/semantic-model-search/record",
+                                  json={**cited_query, "entityId": "no-such-record"})).json()["status"] == "missing"
         # Incoming from a contract finds its customer; the wrong direction finds nothing.
         contract = related["CT002"]["entityId"]
         back = (await client.post("/v1/semantic-model-search/expand", json={

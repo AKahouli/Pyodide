@@ -663,6 +663,28 @@ export interface RuntimeConnectResult {
   graphLayout?: 'typed' | 'entity';
 }
 
+/** One record an answer cited, read again from the data in use (changed: the data was rebuilt since). */
+export interface RuntimeCitedRecord {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  changed: boolean;
+  status: 'ok' | 'hidden' | 'missing';
+  record?: {
+    entityId: string;
+    conceptId: string;
+    conceptKey: string;
+    conceptLabel: string;
+    label: string;
+    keyFields: Record<string, unknown>;
+    provenance: Array<{ assetId: string; workspaceId?: string; rowNumbers?: number[] }>;
+    values: Record<string, unknown>;
+    truncatedFields: string[];
+    origins: Record<string, RuntimeValueOrigin>;
+  };
+}
+
 export interface RuntimeRecordsOverview {
   modelId: string;
   environment: RuntimeSearchEnvironment;
@@ -1230,6 +1252,12 @@ export class SemanticRuntimeClientService {
   /** The shortest chains of links between two records. */
   async connectRecords(body: RuntimeConnectRequest): Promise<RuntimeConnectResult> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/connect', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** One record an answer cited: its values, where each came from, and the files it was read from. */
+  async citedRecord(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment; allowedWorkspaceIds?: string[] | null;
+    entityId: string; expectedDataRevisionId?: string }): Promise<RuntimeCitedRecord> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/record', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
   }
 
   /** The concepts and relations of the bound data, with the number of records the actor may see. */

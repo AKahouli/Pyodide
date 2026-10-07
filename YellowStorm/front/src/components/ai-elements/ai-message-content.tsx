@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { getMimeTypeFromFilename, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { openRecordCitation, type RecordCitationTarget } from '@/modules/semantic-model/citations/record-citation-store';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
@@ -51,8 +52,8 @@ export type CitationBBox = [number, number, number, number];
 
 export interface CitationData {
   parentId: string;
-  sourceType: 'text' | 'image' | 'web';
-  sourceKind?: 'document' | 'image' | 'web';
+  sourceType: 'text' | 'image' | 'web' | 'record';
+  sourceKind?: 'document' | 'image' | 'web' | 'record';
   source: string;
   fileName?: string;
   externalId: string;
@@ -71,6 +72,8 @@ export interface CitationData {
   prefix?: string;
   suffix?: string;
   evidenceOrigin?: 'page_content' | 'search_snippet';
+  /** A record of a semantic model: it opens in the record drawer, not the file viewer. */
+  record?: RecordCitationTarget;
 }
 
 export interface TextPart {
@@ -461,6 +464,7 @@ function normalizeCitationReference(reference?: string): string | undefined {
 }
 
 function getCitationDisplayName(citation: CitationData, fallback: string): string {
+  if (citation.record) return citation.record.name || fallback;
   const source = citation.fileName ||
     (citation.sourceType === 'image' ? citation.path || citation.source : citation.source || citation.path);
   return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
@@ -476,6 +480,10 @@ export async function openCitationSource(
   defaultLabel: string,
   citationScope?: { conversationId: string; messageId: string },
 ): Promise<void> {
+  if (citation.record) {
+    openRecordCitation(citation.record);
+    return;
+  }
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
 
@@ -798,14 +806,35 @@ const SingleInlineCitation = ({ citation: c, citationScope }: { citation: Citati
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
               <InlineCitationCarouselItem>
-                <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
-                {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+                <CitationCardContent citation={c} />
               </InlineCitationCarouselItem>
             </InlineCitationCarouselContent>
           </InlineCitationCarousel>
         </InlineCitationCardBody>
       </InlineCitationCard>
     </InlineCitation>
+  );
+};
+
+/** What a citation's hover card shows: a document and its page, or a record and its model. */
+const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  if (c.record) {
+    const keys = Object.entries(c.record.keyFields).map(([key, value]) => `${key}: ${value}`).join(' · ');
+    const description = [c.record.concept, c.record.modelName ? tCommon('ai.citations.recordOf', { model: c.record.modelName }) : '', keys].filter(Boolean).join(' · ');
+    return (
+      <>
+        <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultRecord'))} description={description || undefined} />
+        {c.record.quote && <InlineCitationQuote>{c.record.quote}</InlineCitationQuote>}
+        <p className='mt-2 text-xs text-muted-foreground'>{tCommon('ai.citations.openRecord')}</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+      {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+    </>
   );
 };
 
@@ -834,8 +863,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
                   <InlineCitationCarouselItem>
-                    <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
-                    {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+                    <CitationCardContent citation={c} />
                   </InlineCitationCarouselItem>
                 </InlineCitationCarouselContent>
               </InlineCitationCarousel>
@@ -868,6 +896,7 @@ const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationP
         highlightText: citation.highlightText,
         highlightBBox: citation.highlightBBox,
         blockBBox: citation.blockBBox,
+        record: citation.record,
       },
     ]}
   />

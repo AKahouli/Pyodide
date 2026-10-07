@@ -48,6 +48,7 @@ import { SemanticDataGrantRevocationService } from './services/semantic-data-gra
 import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
 import { SemanticModelAssistantService } from './services/semantic-model-assistant.service';
 import { SemanticGraphSearchService } from './services/semantic-graph-search.service';
+import { SemanticRecordCitationService } from './services/semantic-record-citation.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
 
@@ -78,6 +79,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticAccessEventHandler,
     SemanticModelAssistantService,
     SemanticGraphSearchService,
+    SemanticRecordCitationService,
     SemanticAssistantActorGuard,
     SemanticAssistantModelGuard,
   ],

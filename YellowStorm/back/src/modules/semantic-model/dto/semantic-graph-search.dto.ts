@@ -35,6 +35,20 @@ export class GraphSearchEnvironmentQueryDto {
 
 export class GraphSearchIndexDto extends GraphSearchEnvironmentQueryDto {}
 
+/** A record a chat answer cited: which data it was read from (published by default) and the revision then. */
+export class CitedRecordQueryDto {
+  @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' })
+  @IsOptional()
+  @IsIn(ASSISTANT_DATA)
+  data: AssistantData = 'published';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dataRevisionId?: string;
+}
+
 export class GraphSearchDto {
   @ApiPropertyOptional({ enum: SEARCH_ENVIRONMENTS, default: 'draft' })
   @IsOptional()

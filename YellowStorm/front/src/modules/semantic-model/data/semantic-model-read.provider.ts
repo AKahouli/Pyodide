@@ -84,6 +84,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   getAgeGraph: 'evidence-read',
   getGraphOutline: 'evidence-read',
   getGraphRecord: 'evidence-read',
+  getCitedRecord: 'evidence-read',
   searchGraph: 'evidence-read',
   exportGraph: 'command',
   getExtractionDefaults: 'curated-read',

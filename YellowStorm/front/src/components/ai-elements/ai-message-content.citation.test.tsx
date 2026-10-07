@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { openCitationSource, type CitationData } from './ai-message-content';
 import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { useRecordCitationStore } from '@/modules/semantic-model/citations/record-citation-store';
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: vi.fn(),
@@ -26,6 +27,16 @@ function makeCitation(overrides: Partial<CitationData>): CitationData {
 describe('openCitationSource', () => {
   beforeEach(() => {
     vi.mocked(openFileViewerFromUrlLoader).mockClear();
+  });
+
+  it('opens a cited record in the record drawer, not the file viewer', async () => {
+    const record = { modelId: 'm-1', modelName: 'Mails', data: 'published' as const, dataRevisionId: 'rev-1', entityId: 'e-1',
+      concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' } };
+    await openCitationSource(makeCitation({ sourceType: 'record', source: 'CT001', record }), 'sidebar', 'Source',
+      { conversationId: 'conv-1', messageId: 'msg-1' });
+    expect(useRecordCitationStore.getState().target).toEqual(record);
+    expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
+    useRecordCitationStore.getState().close();
   });
 
   it('opens web citations directly in a new tab without calling the citations API', async () => {

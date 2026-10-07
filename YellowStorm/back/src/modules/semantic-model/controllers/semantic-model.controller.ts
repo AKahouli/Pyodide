@@ -51,7 +51,8 @@ import { SemanticPopulationRefreshService } from '../services/semantic-populatio
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
-import { GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { CitedRecordQueryDto, GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { SemanticRecordCitationService } from '../services/semantic-record-citation.service';
 import { SemanticGraphSearchService } from '../services/semantic-graph-search.service';
 
 @ApiTags('Semantic Models')
@@ -73,6 +74,7 @@ export class SemanticModelController {
     private readonly reviewQueue: SemanticReviewQueueService,
     private readonly assistant: SemanticModelAssistantService,
     private readonly graphSearch: SemanticGraphSearchService,
+    private readonly recordCitations: SemanticRecordCitationService,
   ) {}
 
   @Get()
@@ -178,6 +180,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   graphRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('recordId') recordId: string,@Query('dataRevisionId') dataRevisionId?: string) {
     return this.populationRefresh.graphRecord(user._id.toString(), modelId, recordId, dataRevisionId);
+  }
+
+  @Get(':modelId/cited-records/:entityId')
+  @ApiOperation({ summary: 'A record a chat answer cited: its values, where each came from, and the documents the person may open' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  citedRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('entityId') entityId: string,@Query() query: CitedRecordQueryDto) {
+    return this.recordCitations.citedRecord(user._id.toString(), modelId, { entityId, data: query.data, dataRevisionId: query.dataRevisionId });
   }
 
   @Post(':modelId/age-graph/export')

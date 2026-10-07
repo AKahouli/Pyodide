@@ -143,6 +143,45 @@ export interface GraphOutline {
 
 export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null }
 
+/** A document a cited record was read from, as the file viewer opens it. */
+export interface CitedRecordDocument { documentId: string; workspaceId: string; name: string; path: string; mimeType: string }
+
+export interface CitedRecordField {
+  key: string;
+  label: string;
+  value: unknown;
+  truncated?: boolean;
+  origin?: {
+    kind: 'source' | 'metadata' | 'ai' | 'human';
+    documentId?: string;
+    page?: number;
+    row?: number;
+    column?: string;
+    sheet?: string;
+    fromRecord?: { entityId: string; name: string };
+    corrected?: boolean;
+  };
+}
+
+/** The record behind a chat citation, read again for the person opening it. */
+export interface CitedRecordView {
+  model: { id: string; name: string };
+  data: 'published' | 'draft';
+  dataRevisionId: string;
+  changed: boolean;
+  status: 'ok' | 'hidden' | 'missing';
+  record?: {
+    entityId: string;
+    concept: string;
+    conceptKey: string;
+    name: string;
+    keyFields: Record<string, unknown>;
+    fields: CitedRecordField[];
+    sources: Array<CitedRecordDocument & { rows?: number[] }>;
+    unavailableSources: number;
+  };
+}
+
 export type GraphExportChoice = 'full' | 'short' | 'exclude';
 
 export interface GraphExportContent {

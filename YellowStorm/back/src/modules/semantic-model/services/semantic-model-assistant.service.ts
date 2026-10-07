@@ -227,6 +227,47 @@ const HOW_TO_QUERY = 'query_records(concept, filters=[{field, op, value}], match
   + 'shortest chains of links between two records.';
 
 /** The answer of a valid records query: groups, or a page of records with optional totals. */
+/** The records of one answer the chat can cite (it numbers each one); more are shown but not cited. */
+export const MAX_CITED_RECORDS = 30;
+const CITED_QUOTE_CHARS = 300;
+const CITED_KEY_FIELDS = 5;
+
+/** A record an answer may cite: enough to name it and to open it again (model, data, revision, id). */
+export interface RecordCitationSource {
+  type: 'record';
+  modelId: string;
+  modelName: string;
+  data: AssistantDataChoice;
+  dataRevisionId: string;
+  entityId: string;
+  concept: string;
+  name: string;
+  keyFields: Record<string, string>;
+  /** The field the quote is taken from, when the record was found by a passage of it. */
+  field?: string;
+  quote?: string;
+}
+
+/** The citable records of a read result, once each, in the order shown, without hidden or unnamed ones. */
+export function recordCitations(model: { id: string; name: string }, data: AssistantDataChoice, dataRevisionId: string,
+  records: Array<{ entityId: string; concept: string; name: string; keyFields?: Record<string, unknown>; field?: string; quote?: string }>): RecordCitationSource[] {
+  const cited = new Map<string, RecordCitationSource>();
+  for (const record of records) {
+    if (cited.size >= MAX_CITED_RECORDS) break;
+    if (!record.entityId || cited.has(record.entityId)) continue;
+    const keyFields = Object.fromEntries(Object.entries(record.keyFields ?? {}).slice(0, CITED_KEY_FIELDS)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '').map(([key, value]) => [key, String(value)]));
+    const quote = record.quote?.trim();
+    cited.set(record.entityId, {
+      type: 'record', modelId: model.id, modelName: model.name, data, dataRevisionId, entityId: record.entityId,
+      concept: record.concept, name: record.name || Object.values(keyFields)[0] || record.entityId, keyFields,
+      ...(record.field ? { field: record.field } : {}),
+      ...(quote ? { quote: quote.length > CITED_QUOTE_CHARS ? `${quote.slice(0, CITED_QUOTE_CHARS - 1)}…` : quote } : {}),
+    });
+  }
+  return [...cited.values()];
+}
+
 function queryResultBody(result: RuntimeRecordsQueryResult) {
   const common = { total: result.total ?? 0, ...(result.unparsable && Object.keys(result.unparsable).length ? { unparsable: result.unparsable } : {}) };
   if (result.buckets) return { ...common, groups: result.buckets, truncated: Boolean(result.bucketsTruncated) };
@@ -1114,6 +1155,11 @@ export class SemanticModelAssistantService {
       notes.push(`Only ${String(result.coverage.indexedCount + result.coverage.exactOnlyCount)} of ${String(result.coverage.expectedCount)} records are in the search index: matching records may be missing.`);
     }
     if (completeness.hiddenRecords) notes.push(`${String(completeness.hiddenRecords)} records come from sources the user cannot open: they were not searched or shown.`);
+    const citationSources = recordCitations(model, data, result.dataRevisionId, result.seeds.map((seed) => {
+      const passage = seed.matchedIn === 'passage' ? seed.passages?.[0] : undefined;
+      return { entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
+        field: passage?.field, quote: passage?.text };
+    }));
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
@@ -1130,7 +1176,7 @@ export class SemanticModelAssistantService {
           ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
         };
       }),
-      coverage: result.coverage, completeness, notes,
+      coverage: result.coverage, completeness, notes, citationSources,
     };
   }
 
@@ -1184,6 +1230,8 @@ export class SemanticModelAssistantService {
       })),
       links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
       linkCounts, completeness, notes,
+      citationSources: recordCitations(model, data, result.dataRevisionId, result.nodes.map((node) => ({
+        entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields }))),
     };
   }
 
@@ -1300,6 +1348,10 @@ export class SemanticModelAssistantService {
         steps: path.steps.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
       })),
       completeness, notes,
+      citationSources: recordCitations(model, data, result.dataRevisionId, result.paths.flatMap((path) => path.records).map((id) => {
+        const record = records.get(id);
+        return { entityId: id, concept: record?.conceptLabel ?? '', name: record?.label ?? '', keyFields: record?.keyFields };
+      })),
     };
   }
 
@@ -1323,6 +1375,8 @@ export class SemanticModelAssistantService {
     return {
       ...base, concept: result.concept?.label, ...queryResultBody(result),
       ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}), completeness: queryCompleteness(result), notes,
+      ...(result.records?.length ? { citationSources: recordCitations(model, data, result.dataRevisionId, result.records.map((record) => ({
+        entityId: record.entityId, concept: result.concept?.label ?? '', name: record.name, keyFields: record.keyFields }))) } : {}),
     };
   }
 
