@@ -1361,7 +1361,11 @@ describe('design message API', () => {
         mediaType: 'image/png',
         size: file.size,
       });
-      expect(fetchMock).toHaveBeenCalledWith('https://storage.example/upload', { method: 'PUT', body: file });
+      expect(fetchMock).toHaveBeenCalledWith('https://storage.example/upload', {
+        method: 'PUT',
+        headers: { 'x-ms-blob-type': 'BlockBlob', 'Content-Type': 'image/png' },
+        body: file,
+      });
       expect(apiClientMock.post).toHaveBeenNthCalledWith(
         2,
         '/playbooks/playbook-1/assistant/attachments/attachment-1/confirm',

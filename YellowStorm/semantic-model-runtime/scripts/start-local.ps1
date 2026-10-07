@@ -2,6 +2,21 @@ param([int]$Port = 8010)
 
 $ErrorActionPreference = 'Stop'
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
+$python = @(
+  (Join-Path $runtimeRoot 'venv311\Scripts\python.exe'),
+  (Join-Path $runtimeRoot '.venv\Scripts\python.exe'),
+  (Join-Path $runtimeRoot 'venv\Scripts\python.exe')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $python) { $python = 'python' }
+
+# The task bodies use asyncio.timeout(), added in Python 3.11. On 3.10 a task
+# dies deep inside the fetch with a bare AttributeError and the job surfaces an
+# unrelated error code, so refuse to start rather than fail unreadably later.
+& $python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'
+if ($LASTEXITCODE -ne 0) {
+  $found = (& $python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+  throw "Python 3.11+ required (app/workers uses asyncio.timeout); $python is $found. Recreate the virtualenv with a 3.11 interpreter."
+}
 
 function Import-DotEnv([string]$Path) {
   foreach ($line in [System.IO.File]::ReadAllLines((Resolve-Path $Path))) {
@@ -21,28 +36,28 @@ if (-not $env:YELLOWSTORM_BACKEND_URL) { throw 'YELLOWSTORM_BACKEND_URL is missi
 $workers = @()
 Push-Location $runtimeRoot
 try {
-  $workers += Start-Process -FilePath 'conda' -ArgumentList @(
-    'run', '--no-capture-output', '-n', 'meta', 'python', '-m', 'celery',
+  $workers += Start-Process -FilePath $python -ArgumentList @(
+    '-m', 'celery',
     '-A', 'app.workers.datasource_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-datasource.preview,semantic-model-datasource.batch',
     '--hostname', 'semantic-datasource@%h'
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
-  $workers += Start-Process -FilePath 'conda' -ArgumentList @(
-    'run', '--no-capture-output', '-n', 'meta', 'python', '-m', 'celery',
+  $workers += Start-Process -FilePath $python -ArgumentList @(
+    '-m', 'celery',
     '-A', 'app.workers.population_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-population.batch,semantic-model-population.corrections',
     '--hostname', 'semantic-population@%h'
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
-  $workers += Start-Process -FilePath 'conda' -ArgumentList @(
-    'run', '--no-capture-output', '-n', 'meta', 'python', '-m', 'celery',
+  $workers += Start-Process -FilePath $python -ArgumentList @(
+    '-m', 'celery',
     '-A', 'app.workers.graph_search_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
     '--queues', 'semantic-model-search.index',
     '--hostname', 'semantic-search@%h'
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
-  & conda run --no-capture-output -n meta python -m uvicorn app.main:app --host 127.0.0.1 --port $Port
+  & $python -m uvicorn app.main:app --host 127.0.0.1 --port $Port
   if ($LASTEXITCODE) { throw "Semantic runtime exited with code $LASTEXITCODE" }
 } finally {
   foreach ($worker in $workers) {
