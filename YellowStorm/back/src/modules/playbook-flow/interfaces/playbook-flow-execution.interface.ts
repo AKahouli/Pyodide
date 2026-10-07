@@ -1,4 +1,4 @@
-import { HitlEventLog, PendingApproval } from '../schemas/playbook-flow-execution.schema';
+import { HitlEventLog, PendingApproval } from '../models/playbook-flow-execution.model';
 import type { ReplayPlanningSummary } from './playbook-flow-replay-plan.interface';
 import {
   FlowLlmPromptTraceItem,
@@ -8,7 +8,7 @@ import {
 } from './playbook-flow-observability.interface';
 import { PublicReasoningTraceItem } from './playbook-flow-reasoning.interface';
 import type { FlowExecutionJudgeHistoryEntry, FlowExecutionJudgeResult } from './playbook-flow-execution-advisor.interface';
-import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode } from '../models/playbook-flow.model';
 import type { ApprovalDecision } from '../dto/resume-playbook-flow-approval.dto';
 
 export interface IFlowExecutionResponse {
@@ -59,9 +59,9 @@ export interface IFlowTaskResultResponse {
   output?: unknown;
   displayText?: string;
   outputs?: Record<string, unknown>;
-  artifacts?: Array<Record<string, unknown>>;
-  components?: Array<Record<string, unknown>>;
-  iteratorIterations?: Array<Record<string, unknown>>;
+  artifacts?: Record<string, unknown>[];
+  components?: Record<string, unknown>[];
+  iteratorIterations?: Record<string, unknown>[];
   error?: string;
   startedAt?: Date;
   endedAt?: Date;
@@ -90,7 +90,7 @@ export interface IFlowTaskResultResponse {
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {
   taskResults: IFlowTaskResultResponse[];
   routerDecisions: IFlowRouterDecisionResponse[];
-  dynamicReasoningAttempts: Array<Record<string, unknown>>;
+  dynamicReasoningAttempts: Record<string, unknown>[];
 }
 
 export interface IFlowRouterDecisionResponse {

@@ -1,3 +1,5 @@
+import type { FieldSearchIndexSettings } from './semantic-search-settings.types';
+
 export const semanticModelKinds = ['workspace_default', 'designed'] as const;
 export const semanticModelStatuses = ['draft', 'published', 'archived'] as const;
 export const nodeCategories = ['business_object', 'classification', 'system_collection'] as const;
@@ -22,6 +24,10 @@ export interface AttributeDefinition {
   required: boolean;
   description?: string;
   options?: string[];
+  /** Business synonyms for this field, e.g. "Client no." for "Customer number". */
+  aliases?: string[];
+  /** This field's own search passage settings (graph search); anything left out uses the admin's. */
+  searchIndex?: FieldSearchIndexSettings;
 }
 
 export interface SemanticNodeType {
@@ -81,7 +87,7 @@ export type SemanticGraphOperation =
   | { type: 'record_relation.create'; entity: SemanticRecordRelation }
   | { type: 'record_relation.update'; id: string; changes: Pick<SemanticRecordRelation, 'values'> }
   | { type: 'record_relation.delete'; id: string }
-  | { type: 'layout.update'; positions: Array<{ id: string; position: CanvasPosition }> };
+  | { type: 'layout.update'; positions: { id: string; position: CanvasPosition }[] };
 
 export interface SemanticGraph {
   modelId: string;
@@ -98,5 +104,7 @@ export interface ValidationIssue {
   severity: 'error' | 'warning';
   targetKind: 'model' | 'node_type' | 'relation_type' | 'record' | 'binding' | 'workspace';
   targetId?: string;
+  /** Business name of the target, so a finding never reads as anonymous. */
+  targetLabel?: string;
   message: string;
 }

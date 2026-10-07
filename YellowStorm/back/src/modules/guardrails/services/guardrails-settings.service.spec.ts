@@ -4,6 +4,7 @@ import {
   normalizeAdminGuardrailsSettings,
 } from './guardrails-settings.service';
 import type { GuardrailsSettingsStore } from '../persistence/guardrails-settings.store';
+import { PgGuardrailsSettingsStore } from '../persistence/pg-guardrails-settings.store';
 
 describe('GuardrailsSettingsService', () => {
   it('normalizes legacy prompt injection and tool-call fields into separate policies', () => {
@@ -28,7 +29,7 @@ describe('GuardrailsSettingsService', () => {
       toolActionReview: { ...DEFAULT_TOOL_ACTION_REVIEW, enabled: true },
     };
     const upsert = jest.fn().mockResolvedValue(undefined);
-    const store = { find: jest.fn().mockResolvedValue(persisted), upsert } as unknown as GuardrailsSettingsStore;
+    const store = { find: jest.fn().mockResolvedValue(persisted), upsert } as unknown as PgGuardrailsSettingsStore;
     const service = new GuardrailsSettingsService(store);
 
     await service.updateSettings({ promptInjection: { outputEnabled: false } });

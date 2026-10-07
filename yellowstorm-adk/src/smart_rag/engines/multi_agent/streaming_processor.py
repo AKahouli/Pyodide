@@ -420,8 +420,10 @@ class StreamingEventProcessor:
                         self._get_actor_info(event, manager_agent),
                     )
 
-            # Track function calls to agents
-            elif part.function_call:
+            # Track function calls to agents. Skip partial events: ADK 2.11
+            # re-carries the in-progress call on every streamed chunk and only
+            # the non-partial event is executed.
+            elif part.function_call and not event.partial:
                 accumulated_manager_text = ""
                 delegation_count += 1
                 func_name = part.function_call.name
@@ -488,7 +490,7 @@ class StreamingEventProcessor:
                     # Extract code from function arguments
                     code = ""
                     if hasattr(part.function_call, "args") and part.function_call.args:
-                        args_dict = dict(part.function_call.args)
+                        args_dict = dict(part.function_call.args or {})
                         code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                     # Use function_call.id as component_id for tracking

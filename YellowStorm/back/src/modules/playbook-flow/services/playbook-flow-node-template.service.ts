@@ -1,7 +1,5 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { FlowNodeTemplate, FlowNodeTemplateDocument } from '../schemas/playbook-flow-node-template.schema';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { isObjectId, isUniqueViolation } from '@common/postgres';
 import {
   FlowNodeTemplateListResponse,
   FlowNodeTemplateImportPayload,
@@ -9,68 +7,69 @@ import {
   CreateFlowNodeTemplateRequest,
   UpdateFlowNodeTemplateRequest,
 } from '../interfaces/playbook-flow-node-template.interface';
+import {
+  NodeTemplateRepository,
+  type NewNodeTemplate,
+  type NodeTemplateFields,
+  type NodeTemplateRecord,
+} from '../persistence/node-template.repository';
+import { TEMPLATE_MAX_LENGTHS } from '../persistence/template-cast';
+
+const DUPLICATE_KEY = 'A template with this key already exists';
+
+/**
+ * The varchar columns refuse what Mongoose's `maxlength` only checked on create (updates and imports
+ * stored any length): an over-long value is a 400 instead of a database error.
+ */
+function assertLengths(fields: Partial<Record<keyof typeof TEMPLATE_MAX_LENGTHS, string | null | undefined>>): void {
+  for (const [field, max] of Object.entries(TEMPLATE_MAX_LENGTHS)) {
+    const value = fields[field as keyof typeof TEMPLATE_MAX_LENGTHS];
+    if (typeof value === 'string' && value.trim().length > max) {
+      throw new BadRequestException(`${field} must be at most ${max} characters`);
+    }
+  }
+}
 
 @Injectable()
-export class PlaybookFlowNodeTemplateService implements OnModuleInit {
+export class PlaybookFlowNodeTemplateService {
   private cachedItems: FlowNodeTemplateResponse[] | null = null;
   private cachedAt = 0;
   private static readonly CACHE_TTL_MS = 30_000;
 
-  constructor(
-    @InjectModel(FlowNodeTemplate.name)
-    private readonly templateModel: Model<FlowNodeTemplateDocument>,
-  ) {}
+  constructor(private readonly templates: NodeTemplateRepository) {}
 
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.templateModel.collection.dropIndex('type_1');
-    } catch (error: unknown) {
-      const mongoError = error as { code?: number; codeName?: string };
-      const isAlreadyAbsent = mongoError.code === 26
-        || mongoError.code === 27
-        || mongoError.codeName === 'NamespaceNotFound'
-        || mongoError.codeName === 'IndexNotFound';
-      if (!isAlreadyAbsent) throw error;
-    }
-
-    await this.templateModel.updateMany(
-      { type: { $exists: true } },
-      { $unset: { type: 1 } },
-    ).exec();
-  }
-
-  private deriveNodeType(doc: Pick<FlowNodeTemplate, 'nodeType'>): FlowNodeTemplateResponse['nodeType'] {
-    if (doc.nodeType) return doc.nodeType;
+  private deriveNodeType(record: Pick<NodeTemplateRecord, 'nodeType'>): FlowNodeTemplateResponse['nodeType'] {
+    if (record.nodeType) return record.nodeType;
     return 'agent';
   }
 
-  private toResponse(doc: FlowNodeTemplateDocument | FlowNodeTemplate): FlowNodeTemplateResponse {
+  private toResponse(record: NodeTemplateRecord): FlowNodeTemplateResponse {
     return {
-      id: (doc as any)._id.toString(),
-      key: doc.key,
-      nodeType: this.deriveNodeType(doc),
-      title: doc.title,
-      description: doc.description,
-      icon: doc.icon,
-      color: doc.color,
-      category: doc.category,
-      inputPorts: doc.inputPorts || [],
-      outputPorts: doc.outputPorts || [],
-      promptTemplate: doc.promptTemplate || '',
-      recommendedAgentTypeSlug: doc.recommendedAgentTypeSlug ?? null,
-      requiredToolNames: doc.requiredToolNames || [],
-      assignedAgentId: doc.assignedAgentId ?? null,
-      selectedAction: doc.selectedAction ?? null,
-      iteratorConfig: doc.iteratorConfig ?? null,
-      routerConfig: doc.routerConfig ?? null,
-    humanApprovalConfig: doc.humanApprovalConfig ?? null,
-    retryPolicy: doc.retryPolicy ?? null,
-    modelId: doc.modelId ?? null,
-    enabled: doc.enabled,
-      version: doc.version,
-      isBuiltIn: doc.isBuiltIn,
-      createdAt: doc.createdAt?.toISOString?.() || new Date().toISOString(),
-      updatedAt: doc.updatedAt?.toISOString?.() || new Date().toISOString(),
+      id: record.id,
+      key: record.key,
+      nodeType: this.deriveNodeType(record),
+      title: record.title,
+      description: record.description ?? undefined,
+      icon: record.icon ?? undefined,
+      color: record.color ?? undefined,
+      category: record.category,
+      inputPorts: record.inputPorts || [],
+      outputPorts: record.outputPorts || [],
+      promptTemplate: record.promptTemplate || '',
+      recommendedAgentTypeSlug: record.recommendedAgentTypeSlug ?? null,
+      requiredToolNames: record.requiredToolNames || [],
+      assignedAgentId: record.assignedAgentId ?? null,
+      selectedAction: record.selectedAction ?? null,
+      iteratorConfig: record.iteratorConfig ?? null,
+      routerConfig: record.routerConfig ?? null,
+      humanApprovalConfig: record.humanApprovalConfig ?? null,
+      retryPolicy: record.retryPolicy ?? null,
+      modelId: record.modelId ?? null,
+      enabled: record.enabled,
+      version: record.version,
+      isBuiltIn: record.isBuiltIn,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
     };
   }
 
@@ -84,32 +83,31 @@ export class PlaybookFlowNodeTemplateService implements OnModuleInit {
     if (this.cachedItems && now - this.cachedAt < PlaybookFlowNodeTemplateService.CACHE_TTL_MS) {
       return { items: this.cachedItems };
     }
-    const docs = await this.templateModel.find({}).sort({ category: 1, title: 1 }).exec();
-    const items = docs.map((doc) => this.toResponse(doc));
+    const records = await this.templates.list();
+    const items = records.map((record) => this.toResponse(record));
     this.cachedItems = items;
     this.cachedAt = now;
     return { items };
   }
 
   async findEnabled(): Promise<FlowNodeTemplateListResponse> {
-    const docs = await this.templateModel.find({ enabled: true }).sort({ category: 1, title: 1 }).exec();
-    return { items: docs.map((doc) => this.toResponse(doc)) };
+    const records = await this.templates.list({ enabledOnly: true });
+    return { items: records.map((record) => this.toResponse(record)) };
   }
 
   async findById(id: string): Promise<FlowNodeTemplateResponse | null> {
-    if (!Types.ObjectId.isValid(id)) return null;
-    const doc = await this.templateModel.findById(id).exec();
-    return doc ? this.toResponse(doc) : null;
+    if (!isObjectId(id)) return null;
+    const record = await this.templates.findById(id);
+    return record ? this.toResponse(record) : null;
   }
 
   async create(dto: CreateFlowNodeTemplateRequest, userId: string): Promise<FlowNodeTemplateResponse> {
     const normalizedKey = String(dto.key || '').trim();
     if (!normalizedKey) throw new BadRequestException('Key is required');
 
-    const existing = await this.templateModel.findOne({ key: normalizedKey }).exec();
-    if (existing) throw new ConflictException('A template with this key already exists');
+    if (await this.templates.keyTaken(normalizedKey)) throw new ConflictException(DUPLICATE_KEY);
 
-    const created = await this.templateModel.create({
+    const input: NewNodeTemplate = {
       key: normalizedKey, nodeType: dto.nodeType,
       title: dto.title.trim(), description: dto.description?.trim() || '',
       icon: dto.icon?.trim() || '', color: dto.color?.trim() || '',
@@ -125,61 +123,68 @@ export class PlaybookFlowNodeTemplateService implements OnModuleInit {
       retryPolicy: dto.retryPolicy ?? null,
       modelId: dto.modelId ?? null,
       enabled: dto.enabled ?? true, version: 1, isBuiltIn: false,
-      createdBy: new Types.ObjectId(userId), updatedBy: new Types.ObjectId(userId),
-    });
-    this.invalidateCache();
-    return this.toResponse(created);
+      createdBy: userId, updatedBy: userId,
+    };
+    assertLengths(input);
+    try {
+      const created = await this.templates.create(input);
+      this.invalidateCache();
+      return this.toResponse(created);
+    } catch (error) {
+      // A concurrent create of the same key lost the race on the unique index.
+      if (isUniqueViolation(error, 'uq_playbook_node_templates_key')) throw new ConflictException(DUPLICATE_KEY);
+      throw error;
+    }
   }
 
   async update(id: string, dto: UpdateFlowNodeTemplateRequest, userId: string): Promise<FlowNodeTemplateResponse> {
-    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid template id');
-    const existing = await this.templateModel.findById(id).exec();
+    if (!isObjectId(id)) throw new BadRequestException('Invalid template id');
+    const existing = await this.templates.findById(id);
     if (!existing) throw new NotFoundException('Template not found');
 
     if (dto.key) {
       const normalizedKey = dto.key ? String(dto.key).trim() : existing.key;
-      const conflict = await this.templateModel.findOne({
-        _id: { $ne: new Types.ObjectId(id) },
-        key: normalizedKey,
-      }).exec();
-      if (conflict) throw new ConflictException('A template with this key already exists');
+      if (await this.templates.keyTaken(normalizedKey, id)) throw new ConflictException(DUPLICATE_KEY);
     }
 
-    const updatePayload: Record<string, unknown> = {
-      updatedBy: new Types.ObjectId(userId), version: (existing.version || 0) + 1,
-    };
-    if (dto.key !== undefined) updatePayload.key = dto.key.trim();
-    if (dto.nodeType !== undefined) updatePayload.nodeType = dto.nodeType;
-    if (dto.title !== undefined) updatePayload.title = dto.title.trim();
-    if (dto.description !== undefined) updatePayload.description = dto.description.trim();
-    if (dto.icon !== undefined) updatePayload.icon = dto.icon.trim();
-    if (dto.color !== undefined) updatePayload.color = dto.color.trim();
-    if (dto.category !== undefined) updatePayload.category = dto.category.trim();
-    if (dto.inputPorts !== undefined) updatePayload.inputPorts = dto.inputPorts;
-    if (dto.outputPorts !== undefined) updatePayload.outputPorts = dto.outputPorts;
-    if (dto.promptTemplate !== undefined) updatePayload.promptTemplate = dto.promptTemplate;
-    if (dto.recommendedAgentTypeSlug !== undefined) updatePayload.recommendedAgentTypeSlug = dto.recommendedAgentTypeSlug;
-    if (dto.requiredToolNames !== undefined) updatePayload.requiredToolNames = dto.requiredToolNames;
-    if (dto.assignedAgentId !== undefined) updatePayload.assignedAgentId = dto.assignedAgentId;
-    if (dto.selectedAction !== undefined) updatePayload.selectedAction = dto.selectedAction;
-    if (dto.iteratorConfig !== undefined) updatePayload.iteratorConfig = dto.iteratorConfig;
-    if (dto.routerConfig !== undefined) updatePayload.routerConfig = dto.routerConfig;
-    if (dto.humanApprovalConfig !== undefined) updatePayload.humanApprovalConfig = dto.humanApprovalConfig;
-    if (dto.retryPolicy !== undefined) updatePayload.retryPolicy = dto.retryPolicy;
-    if (dto.modelId !== undefined) updatePayload.modelId = dto.modelId;
-    if (dto.enabled !== undefined) updatePayload.enabled = dto.enabled;
+    const fields: NodeTemplateFields = { updatedBy: userId };
+    if (dto.key !== undefined) fields.key = dto.key.trim();
+    if (dto.nodeType !== undefined) fields.nodeType = dto.nodeType;
+    if (dto.title !== undefined) fields.title = dto.title.trim();
+    if (dto.description !== undefined) fields.description = dto.description.trim();
+    if (dto.icon !== undefined) fields.icon = dto.icon.trim();
+    if (dto.color !== undefined) fields.color = dto.color.trim();
+    if (dto.category !== undefined) fields.category = dto.category.trim();
+    if (dto.inputPorts !== undefined) fields.inputPorts = dto.inputPorts;
+    if (dto.outputPorts !== undefined) fields.outputPorts = dto.outputPorts;
+    if (dto.promptTemplate !== undefined) fields.promptTemplate = dto.promptTemplate;
+    if (dto.recommendedAgentTypeSlug !== undefined) fields.recommendedAgentTypeSlug = dto.recommendedAgentTypeSlug;
+    if (dto.requiredToolNames !== undefined) fields.requiredToolNames = dto.requiredToolNames;
+    if (dto.assignedAgentId !== undefined) fields.assignedAgentId = dto.assignedAgentId;
+    if (dto.selectedAction !== undefined) fields.selectedAction = dto.selectedAction;
+    if (dto.iteratorConfig !== undefined) fields.iteratorConfig = dto.iteratorConfig;
+    if (dto.routerConfig !== undefined) fields.routerConfig = dto.routerConfig;
+    if (dto.humanApprovalConfig !== undefined) fields.humanApprovalConfig = dto.humanApprovalConfig;
+    if (dto.retryPolicy !== undefined) fields.retryPolicy = dto.retryPolicy;
+    if (dto.modelId !== undefined) fields.modelId = dto.modelId;
+    if (dto.enabled !== undefined) fields.enabled = dto.enabled;
+    assertLengths(fields);
 
-    const updated = await this.templateModel.findByIdAndUpdate(id, { $set: updatePayload }, { new: true }).exec();
+    let updated: NodeTemplateRecord | null;
+    try {
+      updated = await this.templates.update(id, fields);
+    } catch (error) {
+      if (isUniqueViolation(error, 'uq_playbook_node_templates_key')) throw new ConflictException(DUPLICATE_KEY);
+      throw error;
+    }
     if (!updated) throw new NotFoundException('Template not found');
     this.invalidateCache();
     return this.toResponse(updated);
   }
 
   async delete(id: string): Promise<void> {
-    if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Invalid template id');
-    const existing = await this.templateModel.findById(id).exec();
-    if (!existing) throw new NotFoundException('Template not found');
-    await this.templateModel.findByIdAndDelete(id).exec();
+    if (!isObjectId(id)) throw new BadRequestException('Invalid template id');
+    if (!(await this.templates.delete(id))) throw new NotFoundException('Template not found');
     this.invalidateCache();
   }
 
@@ -188,8 +193,7 @@ export class PlaybookFlowNodeTemplateService implements OnModuleInit {
     if (keys.some((key) => !key)) throw new BadRequestException('Import contains an empty template key');
     if (new Set(keys).size !== keys.length) throw new BadRequestException('Import contains duplicate template keys');
 
-    const userObjectId = new Types.ObjectId(userId);
-    const docs = payload.items.map((item) => ({
+    const items: NewNodeTemplate[] = payload.items.map((item) => ({
       key: item.key.trim(), nodeType: item.nodeType,
       title: item.title.trim(), description: item.description?.trim() || '',
       icon: item.icon?.trim() || '', color: item.color?.trim() || '',
@@ -205,19 +209,11 @@ export class PlaybookFlowNodeTemplateService implements OnModuleInit {
       retryPolicy: item.retryPolicy ?? null,
       modelId: item.modelId ?? null,
       enabled: item.enabled ?? true, version: 1, isBuiltIn: item.isBuiltIn ?? false,
-      createdBy: userObjectId, updatedBy: userObjectId,
+      createdBy: userId, updatedBy: userId,
     }));
+    items.forEach(assertLengths);
 
-    if (docs.length) {
-      await this.templateModel.bulkWrite(docs.map((doc) => ({
-        updateOne: {
-          filter: { key: doc.key },
-          update: { $set: doc },
-          upsert: true,
-        },
-      })), { ordered: true });
-    }
-    await this.templateModel.deleteMany({ key: { $nin: keys } }).exec();
+    await this.templates.replaceAll(items);
     this.invalidateCache();
     return this.findAll();
   }

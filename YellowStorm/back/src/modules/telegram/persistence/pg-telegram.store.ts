@@ -1,5 +1,5 @@
 import { Inject } from '@nestjs/common';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
@@ -9,17 +9,21 @@ import {
   TELEGRAM_BINDING_STORE,
   TELEGRAM_INTEGRATION_STORE,
   TELEGRAM_LINK_CODE_STORE,
+  TELEGRAM_VALIDATION_STORE,
   type TelegramBindingRow,
   type TelegramBindingStore,
   type TelegramIntegrationRow,
   type TelegramIntegrationStore,
   type TelegramLinkCodeRow,
   type TelegramLinkCodeStore,
+  type TelegramValidationRow,
+  type TelegramValidationStore,
 } from './telegram.store';
 
 type IntRow = typeof schema.channelsTelegramIntegrations.$inferSelect;
 type BindRow = typeof schema.channelsTelegramChatBindings.$inferSelect;
 type CodeRow = typeof schema.channelsTelegramLinkCodes.$inferSelect;
+type ValidationRow = typeof schema.channelsTelegramHumanValidations.$inferSelect;
 
 function intToRow(r: IntRow): TelegramIntegrationRow {
   return {
@@ -48,6 +52,7 @@ function bindToRow(r: BindRow): TelegramBindingRow {
     telegramChatId: r.telegramChatId,
     telegramUserId: r.telegramUserId ?? null,
     conversationId: r.conversationId ?? null,
+    bindingType: r.bindingType,
     lastMessageAt: r.lastMessageAt ?? null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -77,6 +82,17 @@ export class PgTelegramIntegrationStore implements TelegramIntegrationStore {
       .where(eq(schema.channelsTelegramIntegrations.id, id))
       .limit(1);
     return row ? intToRow(row) : null;
+  }
+
+  async listEnabled(): Promise<TelegramIntegrationRow[]> {
+    const rows = await this.q
+      .select()
+      .from(schema.channelsTelegramIntegrations)
+      .where(and(
+        eq(schema.channelsTelegramIntegrations.enabled, true),
+        sql`${schema.channelsTelegramIntegrations.encryptedBotToken} <> ''`,
+      ));
+    return rows.map(intToRow);
   }
 
   async insert(row: {
@@ -150,12 +166,39 @@ export class PgTelegramBindingStore implements TelegramBindingStore {
     return row ? bindToRow(row) : null;
   }
 
+  async findByConversation(integrationId: string, conversationId: string): Promise<TelegramBindingRow | null> {
+    const [row] = await this.q
+      .select()
+      .from(schema.channelsTelegramChatBindings)
+      .where(and(
+        eq(schema.channelsTelegramChatBindings.integrationId, integrationId),
+        eq(schema.channelsTelegramChatBindings.conversationId, conversationId),
+      ))
+      .limit(1);
+    return row ? bindToRow(row) : null;
+  }
+
+  async findOwnerBinding(integrationId: string, userId: string): Promise<TelegramBindingRow | null> {
+    const [row] = await this.q
+      .select()
+      .from(schema.channelsTelegramChatBindings)
+      .where(and(
+        eq(schema.channelsTelegramChatBindings.integrationId, integrationId),
+        eq(schema.channelsTelegramChatBindings.userId, userId),
+        eq(schema.channelsTelegramChatBindings.bindingType, 'member'),
+      ))
+      .orderBy(desc(schema.channelsTelegramChatBindings.createdAt))
+      .limit(1);
+    return row ? bindToRow(row) : null;
+  }
+
   async upsert(row: {
     integrationId: string;
     userId: string;
     agentId: string;
     telegramChatId: string;
     telegramUserId: string | null;
+    bindingType: string;
     lastMessageAt: Date;
   }): Promise<TelegramBindingRow> {
     const [inserted] = await this.q
@@ -167,6 +210,7 @@ export class PgTelegramBindingStore implements TelegramBindingStore {
           userId: row.userId,
           agentId: row.agentId,
           telegramUserId: row.telegramUserId,
+          bindingType: row.bindingType,
           lastMessageAt: row.lastMessageAt,
           updatedAt: new Date(),
         },
@@ -239,5 +283,113 @@ export class PgTelegramLinkCodeStore implements TelegramLinkCodeStore {
 
   async deleteAllForIntegration(integrationId: string): Promise<void> {
     await this.q.delete(schema.channelsTelegramLinkCodes).where(eq(schema.channelsTelegramLinkCodes.integrationId, integrationId));
+  }
+}
+
+function validationToRow(r: ValidationRow): TelegramValidationRow {
+  return {
+    id: r.id,
+    integrationId: r.integrationId,
+    agentId: r.agentId,
+    conversationId: r.conversationId,
+    guestTelegramChatId: r.guestTelegramChatId,
+    guestLabel: r.guestLabel ?? null,
+    question: r.question,
+    choices: r.choices ?? [],
+    status: r.status,
+    answer: r.answer ?? null,
+    answeredAt: r.answeredAt ?? null,
+    expiresAt: r.expiresAt,
+    ownerMessageId: r.ownerMessageId ?? null,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
+}
+
+export class PgTelegramValidationStore implements TelegramValidationStore {
+  constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+
+  private get q(): PgQueryable<typeof schema> {
+    return resolveQueryable(this.db);
+  }
+
+  async insert(row: {
+    integrationId: string;
+    agentId: string;
+    conversationId: string;
+    guestTelegramChatId: string;
+    guestLabel: string | null;
+    question: string;
+    choices: string[];
+    status: string;
+    expiresAt: Date;
+  }): Promise<TelegramValidationRow> {
+    const [inserted] = await this.q
+      .insert(schema.channelsTelegramHumanValidations)
+      .values({ id: newObjectId(), ...row })
+      .returning();
+    return validationToRow(inserted);
+  }
+
+  async findById(id: string): Promise<TelegramValidationRow | null> {
+    const [row] = await this.q
+      .select()
+      .from(schema.channelsTelegramHumanValidations)
+      .where(eq(schema.channelsTelegramHumanValidations.id, id))
+      .limit(1);
+    return row ? validationToRow(row) : null;
+  }
+
+  async findPendingByIntegration(integrationId: string): Promise<TelegramValidationRow[]> {
+    const rows = await this.q
+      .select()
+      .from(schema.channelsTelegramHumanValidations)
+      .where(and(
+        eq(schema.channelsTelegramHumanValidations.integrationId, integrationId),
+        eq(schema.channelsTelegramHumanValidations.status, 'pending'),
+        gt(schema.channelsTelegramHumanValidations.expiresAt, new Date()),
+      ))
+      .orderBy(desc(schema.channelsTelegramHumanValidations.createdAt));
+    return rows.map(validationToRow);
+  }
+
+  async hasPendingForConversation(
+    integrationId: string,
+    conversationId: string,
+    since?: Date,
+  ): Promise<boolean> {
+    const [row] = await this.q
+      .select({ id: schema.channelsTelegramHumanValidations.id })
+      .from(schema.channelsTelegramHumanValidations)
+      .where(and(
+        eq(schema.channelsTelegramHumanValidations.integrationId, integrationId),
+        eq(schema.channelsTelegramHumanValidations.conversationId, conversationId),
+        eq(schema.channelsTelegramHumanValidations.status, 'pending'),
+        gt(schema.channelsTelegramHumanValidations.expiresAt, new Date()),
+        ...(since ? [gte(schema.channelsTelegramHumanValidations.createdAt, since)] : []),
+      ))
+      .limit(1);
+    return !!row;
+  }
+
+  async setOwnerMessageId(id: string, ownerMessageId: number): Promise<void> {
+    await this.q
+      .update(schema.channelsTelegramHumanValidations)
+      .set({ ownerMessageId, updatedAt: new Date() })
+      .where(eq(schema.channelsTelegramHumanValidations.id, id));
+  }
+
+  async markAnswered(id: string, answer: string): Promise<void> {
+    await this.q
+      .update(schema.channelsTelegramHumanValidations)
+      .set({ status: 'answered', answer, answeredAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.channelsTelegramHumanValidations.id, id));
+  }
+
+  async markExpired(id: string): Promise<void> {
+    await this.q
+      .update(schema.channelsTelegramHumanValidations)
+      .set({ status: 'expired', updatedAt: new Date() })
+      .where(eq(schema.channelsTelegramHumanValidations.id, id));
   }
 }

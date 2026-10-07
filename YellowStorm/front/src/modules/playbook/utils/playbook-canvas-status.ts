@@ -59,6 +59,7 @@ export function canReuseExecutionForTask(
 
 export function getVisibleExecutionStatus(execution?: PlaybookExecution | null): PlaybookExecution['status'] | null {
   if (!execution) return null;
+  if (!isActiveExecutionStatus(execution.status)) return execution.status;
   if (execution.taskResults.some((taskResult) => taskResult.status === 'running')) return 'running';
   if (execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')) return 'interrupted';
   return execution.status;

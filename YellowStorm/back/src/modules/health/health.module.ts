@@ -5,8 +5,7 @@ import { AdminPostgresHealthController } from './admin-postgres-health.controlle
 import { PostgresHealthService } from './postgres-health.service';
 import { AuthorizationModule } from '../authorization';
 import { HealthService } from './health.service';
-import { HealthHistoryService } from './health-history.service';
-import { HEALTH_HISTORY_STORE } from './persistence/health-history.store';
+import { HealthHistoryService } from './health-history.service';
 import { PgHealthHistoryStore } from './persistence/pg-health-history.store';
 import { UsageModule } from '../usage';
 import { ModelsModule } from '../models';
@@ -29,7 +28,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     HealthHistoryService,
     PostgresHealthService,
     // Health history cutover (plan 1B.2.4): fresh start on ops.health_history.
-    { provide: HEALTH_HISTORY_STORE, useClass: PgHealthHistoryStore },
+    PgHealthHistoryStore,
   ],
   exports: [HealthService, HealthHistoryService],
 })

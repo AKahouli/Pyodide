@@ -13,10 +13,7 @@
 
 import { useEffect } from 'react';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
-import { playbookFeatures } from '../features';
 import { usePlaybookStore } from '../store';
-import { dispatchPlaybookStreamEvent } from '../stream/queryEventDispatcher';
-import type { PlaybookStreamEvent } from '../stream/eventTypes';
 import type {
   DynamicReasoningStreamUpdate,
   PlaybookIteratorChildStepUpdateEvent,
@@ -36,6 +33,8 @@ const BASE_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const SSE_HEARTBEAT_TIMEOUT_MS = 30_000;
 const STEP_UPDATE_BATCH_MS = 32;
+
+export const PLAYBOOK_SHARED_EVENT = 'yellowstorm:playbook-shared';
 
 // ===== Tab identity =====
 
@@ -102,21 +101,6 @@ const SSE_EVENT_TYPES = [
   'playbook_runtime_subgraph_failed',
   'playbook_shared',
 ] as const;
-
-const ZUSTAND_PROJECTION_EVENT_TYPES = new Set<string>([
-  'playbook_connected',
-  'playbook_execution_start',
-  'playbook_step_start',
-  'playbook_step_update',
-  'playbook_step_complete',
-  'playbook_iterator_child_step_start',
-  'playbook_iterator_child_step_update',
-  'playbook_iterator_child_step_complete',
-  'playbook_execution_complete',
-  'playbook_execution_error',
-  'playbook_interrupt',
-  'playbook_hitl_interrupt_created',
-]);
 
 // ===== Timer helpers =====
 
@@ -218,23 +202,12 @@ function handleSsePayload(raw: string) {
       flushPendingStepUpdates();
     }
 
-    if (playbookFeatures.querySseEnabled) {
-      dispatchPlaybookStreamEvent({ type: eventType, data: eventData } as PlaybookStreamEvent);
-    }
-
     if (eventType === 'playbook_heartbeat') {
       resetSseHeartbeat();
       return;
     }
 
-    const shouldUpdateZustandProjection =
-      !playbookFeatures.querySseEnabled
-      || playbookFeatures.querySseMirrorZustandEnabled
-      || ZUSTAND_PROJECTION_EVENT_TYPES.has(eventType);
-
-    if (shouldUpdateZustandProjection) {
-      handleStoreEvent(eventType, eventData);
-    }
+    handleStoreEvent(eventType, eventData);
   } catch (err) {
     console.warn('[PlaybookSSE] Failed to parse event', err);
   }
@@ -314,6 +287,7 @@ function handleStoreEvent(eventType: string, eventData: unknown) {
         break;
       case 'playbook_shared':
         store.fetchPlaybooks();
+        window.dispatchEvent(new CustomEvent(PLAYBOOK_SHARED_EVENT, { detail: eventData }));
         break;
     }
 }

@@ -38,7 +38,7 @@ function baseRow(overrides: Partial<Row> = {}): Row {
 }
 
 const emptyJunctions: AgentJunctions = {
-  tools: [], skills: [], disabledSkills: [], connectors: [], knowledgeBases: [], connectorActions: [],
+  tools: [], skills: [], disabledSkills: [], connectors: [], knowledgeBases: [], connectorActions: [], delegateAgents: [], delegateTeams: [],
 };
 
 describe('rowToRecord', () => {

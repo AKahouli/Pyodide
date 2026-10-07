@@ -65,3 +65,67 @@ export interface AppEndUserSummary {
   grants: AppEndUserGrants;
   createdAt: string;
 }
+
+export type TemplateStatus = 'draft' | 'published';
+
+export interface TemplateCategory {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string;
+  templateCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppTemplate {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  title: string;
+  description: string;
+  /** Presigned read URL for the Ceph cover object ('' when none). */
+  coverImage: string;
+  status: TemplateStatus;
+  revisionId: string | null;
+  platformReport: TemplatePlatformReport | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TemplatePlatformStatus = 'ready' | 'needs_normalization' | 'incompatible';
+
+/** Platform Kit analysis computed by the backend when the ZIP is published. */
+export interface TemplatePlatformReport {
+  kitVersion: number;
+  analyzedAt: string;
+  status: TemplatePlatformStatus;
+  injectedFiles: string[];
+  violations: string[];
+  warnings: string[];
+  entry: string;
+  appRoot: string;
+}
+
+/** File entry from GET …/templates/:id/preview/files. */
+export interface TemplatePreviewFileEntry {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+/** Response for listing template revision files used by NodePod preview hydrate. */
+export interface TemplatePreviewFilesResponse {
+  revisionId: string;
+  files: TemplatePreviewFileEntry[];
+}
+
+/** One path → short-lived Ceph URL from POST …/preview/presign. */
+export interface TemplatePreviewPresignItem {
+  path: string;
+  url: string;
+}
+
+export interface TemplatePreviewPresignResponse {
+  items: TemplatePreviewPresignItem[];
+}

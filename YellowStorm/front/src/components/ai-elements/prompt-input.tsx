@@ -8,10 +8,19 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } fro
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ChatStatus, FileUIPart } from 'ai';
 import { CornerDownLeftIcon, ImageIcon, Loader2Icon, MicIcon, PaperclipIcon, PlusIcon, SquareIcon, XIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { type ChangeEvent, type ChangeEventHandler, Children, type ClipboardEventHandler, type ComponentProps, createContext, type FormEvent, type FormEventHandler, Fragment, forwardRef, type HTMLAttributes, type KeyboardEventHandler, type PropsWithChildren, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+
+// Local shapes previously imported from the 'ai' package.
+type FileUIPart = {
+  type: 'file';
+  mediaType: string;
+  filename?: string;
+  url: string;
+};
+
+type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error';
 
 // ============================================================================
 // Provider Context & Types

@@ -1,18 +1,16 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
 import { PlaybookFlowStreamGatewayService } from './playbook-flow-stream-gateway.service';
-import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../schemas/playbook-flow-execution.schema';
 import type {
   FlowExecutionJudgeHistoryEntry,
   FlowExecutionJudgeResult,
 } from '../interfaces/playbook-flow-execution-advisor.interface';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
-import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
+import { ExecutionRepository } from '../persistence/execution.repository';
+import { TaskResultRepository } from '../persistence/task-result.repository';
+import {
+  DynamicReasoningAttemptRepository,
+  toDynamicReasoningAttemptJson,
+} from '../persistence/dynamic-reasoning-attempt.repository';
 
 @Injectable()
 export class PlaybookFlowStreamEventsService {
@@ -22,15 +20,12 @@ export class PlaybookFlowStreamEventsService {
 
   constructor(
     private readonly streamGateway: PlaybookFlowStreamGatewayService,
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
     private readonly configService: ConfigService,
     @Optional()
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel?: Model<FlowTaskResultDocument>,
+    private readonly taskResultRepository?: TaskResultRepository,
     @Optional()
-    @InjectModel(FlowDynamicReasoningAttempt.name)
-    private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
+    private readonly dynamicReasoningAttemptRepository?: DynamicReasoningAttemptRepository,
   ) {}
 
   cacheOwner(executionId: string, ownerId: string): void {
@@ -39,6 +34,13 @@ export class PlaybookFlowStreamEventsService {
 
   releaseOwner(executionId: string): void {
     this.executionOwnerCache.delete(executionId);
+  }
+
+  emitPlaybookShared(userId: string, playbookId: string): void {
+    this.streamGateway.sendToUser(userId, {
+      type: 'playbook_shared',
+      data: { playbookId },
+    });
   }
 
   async emitExecutionStart(
@@ -57,7 +59,7 @@ export class PlaybookFlowStreamEventsService {
       replayPlanningByTask?: Record<string, unknown> | null;
     },
   ): Promise<void> {
-    const count = await this.executionModel.countDocuments({ flowId });
+    const count = await this.executionRepository.countByFlow(flowId);
     this.cacheOwner(executionId, ownerId);
 
     this.streamGateway.sendToUser(ownerId, {
@@ -86,7 +88,7 @@ export class PlaybookFlowStreamEventsService {
     if (!ownerId) return;
 
     try {
-      const execution = await this.executionModel.findById(executionId).lean();
+      const execution = await this.executionRepository.findById(executionId);
       if (!execution) return;
 
       if (ownerId) {
@@ -95,7 +97,7 @@ export class PlaybookFlowStreamEventsService {
           data: {
             executionId,
             status,
-            error: error !== undefined ? error : execution.error,
+            error: error !== undefined ? error : execution.error ?? undefined,
             durationMs: durationMs !== undefined ? durationMs : undefined,
           },
         });
@@ -182,8 +184,8 @@ export class PlaybookFlowStreamEventsService {
     output?: string,
     error?: string,
     iteration?: number,
-    artifacts?: Array<Record<string, unknown>>,
-    components?: Array<Record<string, unknown>>,
+    artifacts?: Record<string, unknown>[],
+    components?: Record<string, unknown>[],
     observability?: {
       toolTrace?: unknown[];
       reasoningChain?: unknown[];
@@ -194,7 +196,7 @@ export class PlaybookFlowStreamEventsService {
       modelName?: string | null;
       semanticMatch?: unknown;
       traceMetadata?: Record<string, unknown>;
-      iteratorIterations?: Array<Record<string, unknown>>;
+      iteratorIterations?: Record<string, unknown>[];
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
@@ -259,8 +261,8 @@ export class PlaybookFlowStreamEventsService {
       status: string;
       output?: string;
       error?: string;
-      components?: Array<Record<string, unknown>>;
-      artifacts?: Array<Record<string, unknown>>;
+      components?: Record<string, unknown>[];
+      artifacts?: Record<string, unknown>[];
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
@@ -478,20 +480,15 @@ export class PlaybookFlowStreamEventsService {
   }
 
   async emitConnected(userId: string): Promise<void> {
-    const activeExecutions = await this.executionModel.find(
-      {
-        ownerId: userId,
-        status: { $in: ['queued', 'running', 'pending_approval'] },
-      },
-      'flowId status startedAt createdAt updatedAt threadId singleStepTaskId pendingApproval advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes replayPlanningByTask',
-    ).lean().exec();
-    const activeExecutionIds = activeExecutions.map((execution) => execution._id.toString());
+    // Oldest first, the order clients have always received them in.
+    const activeExecutions = (await this.executionRepository.listActive(userId)).reverse();
+    const activeExecutionIds = activeExecutions.map((execution) => execution.id);
     const [activeTaskResults, activeDynamicAttempts] = await Promise.all([
-      this.taskResultModel
-        ? this.taskResultModel.find({ executionId: { $in: activeExecutionIds } }).lean().exec()
+      this.taskResultRepository
+        ? this.taskResultRepository.listForExecutions(activeExecutionIds, { light: true, with: ['output'] })
         : Promise.resolve([]),
-      this.dynamicReasoningAttemptModel
-        ? this.dynamicReasoningAttemptModel.find({ executionId: { $in: activeExecutionIds } }).lean().exec()
+      this.dynamicReasoningAttemptRepository
+        ? this.dynamicReasoningAttemptRepository.listForExecutions(activeExecutionIds)
         : Promise.resolve([]),
     ]);
 
@@ -500,14 +497,14 @@ export class PlaybookFlowStreamEventsService {
       data: {
         connectionId: `${userId}:${Date.now()}`,
         activeExecutions: activeExecutions.map((execution) => ({
-          id: execution._id.toString(),
+          id: execution.id,
           playbookId: execution.flowId,
           executedBy: '',
           executionNumber: 0,
           status: execution.status,
           executionMode: execution.executionMode ?? 'live',
           executionTrigger: 'manual',
-          stepExecutionModes: (execution as Record<string, unknown>).stepExecutionModes ?? {},
+          stepExecutionModes: execution.stepExecutionModes ?? {},
           reflectionEnabled: execution.reflectionEnabled ?? false,
           advisorScoringMode: execution.advisorScoringMode ?? 'llm',
           advisorAutopilotEnabled: execution.advisorAutopilotEnabled ?? false,
@@ -520,23 +517,23 @@ export class PlaybookFlowStreamEventsService {
           judgeSummaryStatus: 'idle',
           judgeSummary: null,
           replaySourceByTask: null,
-          replayPlanningByTask: (execution as Record<string, unknown>).replayPlanningByTask ?? null,
+          replayPlanningByTask: execution.replayPlanningByTask ?? null,
           taskResults: activeTaskResults
-            .filter((result) => result.executionId === execution._id.toString())
+            .filter((result) => result.executionId === execution.id)
             .map((result) => ({
               taskId: result.taskId,
               iteration: result.iteration,
               status: result.status,
               output: result.output ?? null,
               error: result.error ?? null,
-              parentTaskId: result.parentTaskId,
-              runtimeSubgraphId: result.runtimeSubgraphId,
-              generatedLocalNodeId: result.generatedLocalNodeId,
-              generatedNodeTitle: result.generatedNodeTitle,
+              parentTaskId: result.parentTaskId ?? undefined,
+              runtimeSubgraphId: result.runtimeSubgraphId ?? undefined,
+              generatedLocalNodeId: result.generatedLocalNodeId ?? undefined,
+              generatedNodeTitle: result.generatedNodeTitle ?? undefined,
             })),
-          dynamicReasoningAttempts: activeDynamicAttempts.filter(
-            (attempt) => attempt.executionId === execution._id.toString(),
-          ),
+          dynamicReasoningAttempts: activeDynamicAttempts
+            .filter((attempt) => attempt.executionId === execution.id)
+            .map(toDynamicReasoningAttemptJson),
           threadId: execution.threadId ?? null,
           interruptPayload: execution.pendingApproval
             ? {

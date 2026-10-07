@@ -678,7 +678,7 @@ describe('ConversationAssistantBubble', () => {
       messageId='message-1'
       isStreaming
       components={[
-        { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'running' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'running', actorId: 'private-agent-id', actorName: 'Smart Agent' } },
         { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', displayKey: 'runCode', summary: 'Read the research explanation', renderKind: 'run_code', status: 'running', actorName: 'smart_agent', actorId: 'private-agent-id', paramsJson: '{"path":"/tmp/private.txt"}' } },
       ]}
     />);
@@ -725,7 +725,7 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(screen.getAllByText(/Smart Agent/)).not.toHaveLength(0);
-    expect(container.querySelector('[data-agent-activity-mobile]')).toHaveTextContent('Smart Agent');
+    expect(container.querySelector('[data-agent-activity-mobile]')).toHaveTextContent('stream.activity.agentNameUnavailable');
     expect(container.querySelector('[data-agent-activity-mobile]')).not.toHaveTextContent('Agent child-1');
     expect(container).not.toHaveTextContent('agent_child-1');
   });

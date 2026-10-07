@@ -9,16 +9,14 @@ Classes:
 """
 
 import json
-from typing import Optional, List, Any, Dict
+from typing import Optional, List
 from src.config.settings import get_settings
 import re2 as re
 
-from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.logger.logging import get_logger
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
 from src.smart_rag.engines.multi_agent.config import FUNCTION_NAME_PATTERN, DEFAULT_AGENT_NAME
-from src.smart_rag.tools import build_tree
 
 logger = get_logger("api.routers.agentic_rag.AgentHelper")
 settings = get_settings()
@@ -494,7 +492,7 @@ You have access to delegate functions for each agent. Use the appropriate delega
 
 
     @staticmethod
-    def _prepare_agent_data(agent_dict, user_request, team) -> dict:
+    def _prepare_agent_data(agent_dict, user_request, team, *, inherit_request_context=True) -> dict:
         """Prepare agent data with brain documents/relations and tool adjustments.
 
         Processes agent configuration to ensure proper tool assignment and brain data
@@ -514,13 +512,14 @@ You have access to delegate functions for each agent. Use the appropriate delega
 
         if 'search' in tool_names:
             doc_helper= DocumentHelpers()
-            agent_data = doc_helper._populate_brain_data(agent_data, user_request, team)
+            if inherit_request_context:
+                agent_data = doc_helper._populate_brain_data(agent_data, user_request, team)
             agent_data, tools = AgentHelper._remove_search_if_empty(agent_data, tools)
 
         # Mono agents are their own executor: give them the backend-built
         # bounded attachment context (teams inject it per executor instead).
         attachment_context = getattr(user_request, 'attachment_context', None)
-        if attachment_context:
+        if inherit_request_context and attachment_context:
             agent_data['prompt'] = f"{agent_data.get('prompt', '')}\n\n{attachment_context}"
 
         agent_data['tools'] = tools

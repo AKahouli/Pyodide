@@ -10,7 +10,7 @@ step by step with pauses for real mail/Teams replies.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import grpc, psycopg2
+import grpc, psycopg
 from src.grpc_generated import companion_ai_pb2 as pb, companion_ai_pb2_grpc as pb_grpc
 import scripts.worky_e2e_runtask as base
 
@@ -23,7 +23,7 @@ def stub():
 
 
 def status(sid):
-    c = psycopg2.connect(RM); cur = c.cursor()
+    c = psycopg.connect(RM); cur = c.cursor()
     cur.execute("select status, interrupt_id from sessions where id=%s", (sid,))
     s = cur.fetchone() or ("?", None)
     print(f"session status={s[0]}  interrupt={s[1]}")

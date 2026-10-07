@@ -59,6 +59,20 @@ def match_value(value: Any, strategy: str) -> str | None:
     raise PopulationError("invalid_matching_strategy")
 
 
+MAX_SAMPLE_FIELDS = 20
+MAX_SAMPLE_TEXT = 200
+
+
+def row_sample(row: dict[str, Any]) -> dict[str, Any]:
+    """What a row held, bounded, so a person can see why it was left out."""
+    sample: dict[str, Any] = {}
+    for key, value in row.items():
+        if key.startswith("_") or len(sample) >= MAX_SAMPLE_FIELDS:
+            continue
+        sample[key] = value[:MAX_SAMPLE_TEXT] if isinstance(value, str) else value
+    return sample
+
+
 def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                           source_ref: dict[str, Any]) -> dict[str, Any]:
     """Map prepared rows to entities and source assertions for one concept.
@@ -70,6 +84,7 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
     key_components: list[str] = compiled["keyComponents"]
     allowed = set(compiled["allowedFields"])
     label_field = source_ref.get("labelField")
+    constant_fields = set(source_ref.get("constantFields", []))
     entities: dict[str, dict[str, Any]] = {}
     assertions: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
@@ -94,7 +109,9 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
             normalized = normalize_identity_value(row.get(component))
             if normalized is None:
                 gaps.append({"kind": "missing_identity", "conceptId": compiled["conceptId"],
-                             "rowNumber": row_number, "detail": f"identity component '{component}' is empty"})
+                             "rowNumber": row_number, "detail": f"identity component '{component}' is empty",
+                             "field": component, "assetRef": source_ref.get("assetRef"),
+                             "values": row_sample(row)})
                 missing = True
                 break
             identity[component] = normalized
@@ -137,10 +154,12 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                     continue
                 entity["attributes"][field] = value
                 assertions.append({"entityId": key, "attribute": field, "value": value,
-                                   "origin": "source",
+                                   "origin": "human" if field in constant_fields else "source",
                                    "evidence": {"assetRef": source_ref.get("assetRef"),
                                                 "rowNumber": row_number, "column": field,
-                                                "mappingVersion": source_ref.get("mappingVersion")}})
+                                                "mappingVersion": source_ref.get("mappingVersion"),
+                                                # A row expanded into items: which of its items.
+                                                **({"item": row["_item"]} if row.get("_item") is not None else {})}})
             elif current != value:
                 gaps.append({"kind": "conflicting_values", "conceptId": compiled["conceptId"],
                              "rowNumber": row_number,
@@ -204,45 +223,69 @@ def merge_concept_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             "counts": counts}
 
 
+def _match_side(entity: dict[str, Any], field: str) -> tuple[Any, bool]:
+    """The value an entity offers for matching, and whether it came from its (case-folded) identity."""
+    value = entity["attributes"].get(field)
+    if value is not None:
+        return value, False
+    return entity["identity"].get(field), True
+
+
 def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str, Any]],
-                        target_entities: list[dict[str, Any]], reference_field: str) -> dict[str, Any]:
+                        target_entities: list[dict[str, Any]], reference_field: str,
+                        target_field: str) -> dict[str, Any]:
     """Establish relationships through an approved reference role (P5.9).
 
-    ``reference_field`` is the source-entity attribute holding the target
-    identity string, bound by the population payload's compiled matching plan.
-    Matching runs on the normalized identity space: identities are stored
-    trim/lowercased at construction, so the reference is normalized identically
-    before the strategy applies. An exact occurrence of the reference proves
-    presence, never the business role, and an ambiguous reference never
-    auto-links (T06/T09).
+    The fields come from an approved relation rule in the population payload.
+    Multiple matching targets are valid only for to-many cardinalities; an
+    ambiguous to-one reference never auto-links (T06/T09).
     """
     strategy = compiled["matchingStrategy"]
-    targets: dict[str, list[dict[str, Any]]] = {}
+    # Identity values are stored case-folded, so a side that falls back to the identity is
+    # compared case-insensitively; two plain attribute values keep the strategy as is.
+    exact_targets: dict[str, list[dict[str, Any]]] = {}
+    folded_targets: dict[str, list[dict[str, Any]]] = {}
+    identity_targets: dict[str, list[dict[str, Any]]] = {}
     for entity in target_entities:
-        key = match_value("|".join(entity["identity"].values()), strategy)
-        if key is not None:
-            targets.setdefault(key, []).append(entity)
+        raw, from_identity = _match_side(entity, target_field)
+        key = match_value(raw, strategy)
+        if key is None:
+            continue
+        folded_targets.setdefault(key.lower(), []).append(entity)
+        if from_identity:
+            identity_targets.setdefault(key.lower(), []).append(entity)
+        else:
+            exact_targets.setdefault(key, []).append(entity)
     relationships: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
     for source in source_entities:
-        raw = source["attributes"].get(reference_field, source["identity"].get(reference_field))
-        reference = match_value(normalize_identity_value(raw), strategy)
+        raw, from_identity = _match_side(source, reference_field)
+        reference = match_value(raw, strategy)
         if reference is None:
-            gaps.append({"kind": "missing_reference", "relationId": compiled["relationId"],
-                         "sourceEntityId": source["entityId"],
-                         "detail": f"reference field '{reference_field}' is empty"})
+            # An empty reference means this record links to nothing (a message that answers
+            # no other one); a value that is required is already reported as a missing value.
             continue
-        candidates = targets.get(reference, [])
+        if from_identity:
+            candidates = folded_targets.get(reference.lower(), [])
+        else:
+            candidates = exact_targets.get(reference, []) + identity_targets.get(reference.lower(), [])
         if not candidates:
+            # On the "one" side of a one-to-many link, finding nothing is normal: a message
+            # without attachments, an attachment that states no fact.
+            if compiled["cardinality"] == "one_to_many":
+                continue
             gaps.append({"kind": "unresolved_reference", "relationId": compiled["relationId"],
-                         "sourceEntityId": source["entityId"], "detail": "no approved target matches"})
-        elif len(candidates) > 1:
+                         "sourceEntityId": source["entityId"], "referenceField": reference_field,
+                         "referenceValue": raw[:MAX_SAMPLE_TEXT] if isinstance(raw, str) else raw,
+                         "targetField": target_field, "detail": "no approved target matches"})
+        elif len(candidates) > 1 and compiled["cardinality"] not in ("one_to_many", "many_to_many"):
             gaps.append({"kind": "ambiguous_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"],
                          "detail": f"{len(candidates)} targets share the normalized reference"})
         else:
-            relationships.append({"relationId": compiled["relationId"],
+            relationships.extend({"relationId": compiled["relationId"],
                                   "sourceEntityId": source["entityId"],
-                                  "targetEntityId": candidates[0]["entityId"],
-                                  "matchingStrategy": strategy})
+                                  "targetEntityId": candidate["entityId"],
+                                  "matchingStrategy": strategy}
+                                 for candidate in candidates)
     return {"relationships": relationships, "gaps": gaps}

@@ -1,11 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { DEPLOYMENT_STORE, type DeploymentStore, type GovernanceDeploymentCreateInput, type GovernanceDeploymentPatch } from '../deployment-store';
+import { type DeploymentStore,  type GovernanceDeploymentCreateInput,  type GovernanceDeploymentPatch } from '../deployment-store';
 import type { GovernanceDeploymentRecord } from '../governance-records';
 
 const DEPLOYMENTS = schema.governanceDeployments;
@@ -125,7 +125,7 @@ export class PgDeploymentStore implements DeploymentStore {
         and(
           eq(DEPLOYMENTS.id, deploymentId),
           eq(DEPLOYMENTS.currentDraftRevisionId, draftRevisionId),
-          ne(DEPLOYMENTS.currentPublishedRevisionId, revisionId),
+          or(isNull(DEPLOYMENTS.currentPublishedRevisionId), ne(DEPLOYMENTS.currentPublishedRevisionId, revisionId)),
         ),
       )
       .returning();

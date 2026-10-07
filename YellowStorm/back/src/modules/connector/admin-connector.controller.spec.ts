@@ -5,15 +5,18 @@ describe('AdminConnectorController MCP inspection', () => {
 
   const playbookConnector = {
     id: 'connector-1',
-    slug: 'playbook-mcp',
-    isSystem: true,
-    authSourceType: 'server_config',
+    slug: 'mcp-playbook',
+    isSystem: false,
+    authSourceType: 'credential',
     connectedAppKey: '',
-    runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
+    runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer' },
     mcpTransportType: 'streamable_http',
     mcpServerUrl: 'http://localhost:8025/mcp',
     mcpServerConfig: {},
   };
+  const config = { get: jest.fn((key: string, fallback?: string) => (
+    key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp/' : fallback
+  )) };
 
   function createController(connector = playbookConnector) {
     const connectorService = {
@@ -31,34 +34,27 @@ describe('AdminConnectorController MCP inspection', () => {
       {} as never,
       {} as never,
       connectorAuthService as never,
+      config as never,
     );
     return { controller, connectorService, connectorAuthService };
   }
 
-  it('uses persisted server auth and a complete actor envelope for Playbook MCP inspection', async () => {
-    const { controller, connectorService, connectorAuthService } = createController();
+  it('sends a complete actor envelope when the connector points at a trusted internal MCP server, whatever its slug', async () => {
+    const { controller, connectorService } = createController();
 
     await controller.inspectMcp({
       connectorId: 'connector-1',
       transportType: 'streamable_http',
       serverUrl: 'http://localhost:8025/mcp',
-      runtimeAuthConfig: {
-        strategy: 'http_header_bearer',
-        headerName: 'Authorization',
-        headerPrefix: 'Bearer browser-secret',
-      },
     }, user);
 
-    expect(connectorAuthService.resolveRuntimeAuth).toHaveBeenCalledWith('user-1', expect.objectContaining({
-      runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
-    }));
     expect(connectorService.inspectMcp).toHaveBeenCalledWith(
       'streamable_http',
       'http://localhost:8025/mcp',
       {},
       undefined,
       undefined,
-      expect.any(Object),
+      undefined,
       undefined,
       {
         Authorization: 'Bearer server-secret',
@@ -71,11 +67,9 @@ describe('AdminConnectorController MCP inspection', () => {
   });
 
   it.each([
-    ['non-system connector', { isSystem: false }],
-    ['different slug', { slug: 'external-mcp' }],
-    ['credential auth', { authSourceType: 'credential' }],
-    ['different server secret', { runtimeAuthConfig: { secretKey: 'other' } }],
-  ])('does not send trusted identity headers to a %s', async (_name, override) => {
+    ['an untrusted server', { mcpServerUrl: 'https://example.com/mcp' }],
+    ['a reused slug on another server', { slug: 'playbook-mcp', isSystem: true, mcpServerUrl: 'https://example.com/mcp' }],
+  ])('does not send identity headers to %s', async (_name, override) => {
     const connector = { ...playbookConnector, ...override };
     const { controller, connectorService } = createController(connector);
 

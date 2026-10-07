@@ -176,6 +176,28 @@ describe('SemanticCrossSourceService boundaries', () => {
     expect(database.transaction).not.toHaveBeenCalled();
   });
 
+  it('rejects identity fields that are not fields of the concept', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValueOnce({ rows: [{ attributes: [{ key: 'number' }] }] });
+    await expect(service.saveIdentityRule('user', 'model', 'concept', { expectedRevision: 1, fields: ['unknown'] }))
+      .rejects.toThrow('belong to this concept');
+    expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it('saves and clears the identity chosen on the concept', async () => {
+    const { service, database, models } = buildService();
+    const client = { query: jest.fn() };
+    database.transaction.mockImplementation(async (work: (client: unknown) => unknown) => work(client));
+    models.advanceRevision.mockResolvedValue(2);
+    database.query.mockResolvedValue({ rows: [{ attributes: [{ key: 'number' }, { key: 'country' }] }] });
+    await expect(service.saveIdentityRule('user', 'model', 'concept', { expectedRevision: 1, fields: ['number', 'country', 'number'] }))
+      .resolves.toEqual({ revision: 2, conceptId: 'concept', fields: ['number', 'country'] });
+    expect(client.query.mock.calls[0][0]).toContain('INSERT INTO semantic_model.identity_rules');
+    expect(client.query.mock.calls[0][1]).toEqual(['model', 'concept', JSON.stringify(['number', 'country']), 'user']);
+    await service.saveIdentityRule('user', 'model', 'concept', { expectedRevision: 2, fields: [] });
+    expect(client.query.mock.calls[1][0]).toContain('DELETE FROM semantic_model.identity_rules');
+  });
+
   it('lets viewers inspect conflicts without writing review items', async () => {
     const { service, database, models, sourceMappings } = buildService();
     models.requireActiveRole.mockResolvedValue({ id: 'model', currentDraftVersionId: 'version', role: 'viewer' });

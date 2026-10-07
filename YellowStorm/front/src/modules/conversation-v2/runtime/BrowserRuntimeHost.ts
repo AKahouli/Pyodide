@@ -18,6 +18,7 @@ import {
   type ToolInvokePayload,
   type RuntimeRehydratePayload,
   type RuntimeTicketResponse,
+  type PreviewInspectResult,
 } from './runtime.types';
 
 const LOG = '[BrowserRuntimeHost]';
@@ -96,6 +97,17 @@ let aiPreviewTicketFetcher: AiPreviewTicketFetcher | null = null;
 
 export function setAiPreviewTicketFetcher(fetcher: AiPreviewTicketFetcher | null): void {
   aiPreviewTicketFetcher = fetcher;
+}
+
+/** Studio catalog model id forced onto preview chat/completions (overrides agent literals). */
+let aiDefaultModelId: string | null = null;
+
+export function setAiDefaultModelId(modelId: string | null): void {
+  aiDefaultModelId = modelId?.trim() || null;
+}
+
+export function getAiDefaultModelId(): string | null {
+  return aiDefaultModelId;
 }
 
 /** appDataId from a data-plane URL (`/v1/apps/{id}/…` or legacy gateway). */
@@ -359,12 +371,38 @@ function installAiFetchProxyOnce(): void {
     }
 
     // Preview AI is non-streaming through postMessage (full JSON body).
+    // Also rewrite `model` to the studio session catalog id so agent-invented
+    // literals like gpt-4o-mini never hit the AI proxy.
     let requestBody = body as BodyInit | undefined;
     if (typeof requestBody === 'string' && requestBody.length > 0) {
       try {
         const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+        let changed = false;
         if (parsed.stream === true) {
           parsed.stream = false;
+          changed = true;
+        }
+        if (
+          aiDefaultModelId &&
+          /\/chat\/completions\/?$/.test(new URL(absoluteUrl).pathname) &&
+          typeof parsed.model === 'string' &&
+          parsed.model.trim() !== aiDefaultModelId
+        ) {
+          console.log(LOG, 'AI proxy rewriting model to studio session default', {
+            from: parsed.model,
+            to: aiDefaultModelId,
+          });
+          parsed.model = aiDefaultModelId;
+          changed = true;
+        } else if (
+          aiDefaultModelId &&
+          /\/chat\/completions\/?$/.test(new URL(absoluteUrl).pathname) &&
+          (parsed.model == null || parsed.model === '')
+        ) {
+          parsed.model = aiDefaultModelId;
+          changed = true;
+        }
+        if (changed) {
           requestBody = JSON.stringify(parsed);
         }
       } catch {
@@ -495,8 +533,10 @@ export class BrowserRuntimeHost {
   private externalRelayPeers: WindowProxy[] = [];
   /** Provision completed before host reached ready — restart once ready. */
   private pendingAppDataRestart = false;
-  /** Catalog model id injected as VITE_YM_AI_DEFAULT_MODEL (conversation-v2 selection preferred). */
+  /** Catalog model id injected as VITE_YM_AI_DEFAULT_MODEL (same as Studio composer). */
   private defaultAiModelId: string | null = null;
+  /** Keep AI Proxy default in lockstep with Composer model changes. */
+  private selectedModelUnsub: (() => void) | null = null;
 
   /**
    * Vite env for NodePod Dev Preview.
@@ -530,10 +570,9 @@ export class BrowserRuntimeHost {
   }
 
   /**
-   * Resolve catalog model id for AI Proxy preview clients.
-   * Prefer conversation-v2 composer selection → isConversationV2Default →
-   * platform isDefault → first active. Always re-resolve (selection can change
-   * between Vite starts). Injects catalog `id` (not litellmModel).
+   * Resolve catalog model id for AI Proxy — same cascade as Studio Composer stream:
+   * composer selection → conversation-v2 default → platform default → first active.
+   * Catalog `id` only (AI Proxy allowlist), never invent gpt-4o / provider literals.
    */
   private async ensureDefaultAiModelId(): Promise<void> {
     try {
@@ -551,7 +590,7 @@ export class BrowserRuntimeHost {
         ?? models[0]?.id
         ?? null;
       if (pick && pick !== this.defaultAiModelId) {
-        console.log(LOG, 'default AI model', {
+        console.log(LOG, 'default AI model (studio stream)', {
           model: pick,
           source: selected?.id
             ? 'conversation-v2-selection'
@@ -561,6 +600,7 @@ export class BrowserRuntimeHost {
         });
       }
       this.defaultAiModelId = pick;
+      setAiDefaultModelId(pick);
     } catch (err) {
       console.warn(
         LOG,
@@ -568,6 +608,21 @@ export class BrowserRuntimeHost {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  /**
+   * Composer `setSelectedModelId` must immediately update the AI Proxy relay
+   * default so preview chat uses the same model as Studio streaming.
+   */
+  private wireStudioModelSync(): void {
+    this.selectedModelUnsub?.();
+    let prevSelected = useConversationV2Store.getState().selectedModelId;
+    this.selectedModelUnsub = useConversationV2Store.subscribe((state) => {
+      if (this._destroyed) return;
+      if (state.selectedModelId === prevSelected) return;
+      prevSelected = state.selectedModelId;
+      void this.ensureDefaultAiModelId();
+    });
   }
 
   private setupAppDataFetchProxy(): void {
@@ -732,6 +787,13 @@ export class BrowserRuntimeHost {
     }
   }
 
+  private assertPreviewAfterDevServer(): void {
+    if (this.previewCtrl.previewUrl) return;
+    throw new Error(
+      'The dev server did not become reachable inside NodePod. Check the browser console for Vite/npm errors.',
+    );
+  }
+
   /**
    * Full lifecycle: ticket -> connect -> hydrate -> boot -> install -> dev server -> register -> heartbeat.
    *
@@ -753,6 +815,7 @@ export class BrowserRuntimeHost {
     // Owner data tickets for relayed preview App Data calls (refreshed on 401).
     setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
     setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
+    this.wireStudioModelSync();
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -820,6 +883,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
       this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -858,6 +922,58 @@ export class BrowserRuntimeHost {
   }
 
   /**
+   * Template ZIP validation: boot NodePod from in-memory files only (no runtime
+   * ticket, Ceph hydration, or Conversation v2 session).
+   */
+  async startFromLocalFiles(sessionId: string, files: VfsFiles): Promise<void> {
+    if (this._destroyed) return;
+    if (this._status !== 'idle') return;
+    this.sessionId = sessionId;
+    this.reconnectAttempts = 0;
+    this.legacyMode = true;
+    this.ticket = null;
+    this.revisionId = 'rev_validation';
+    this.setupAppDataFetchProxy();
+
+    try {
+      this.setStatus('hydrating');
+      await this.adapter.boot(files, sessionId, this.revisionId);
+      if (this._destroyed) return;
+
+      this.revisions.seed(await this.adapter.shaManifest(), this.revisionId);
+
+      this.setStatus('installing');
+      await this.adapter.ensureDeps({
+        onProgress: (phase, msg) => console.log(LOG, 'local validation install', { phase, msg }),
+      });
+      if (this._destroyed) return;
+
+      this.setStatus('starting');
+      await this.adapter.startDevServer(
+        this.previewCtrl,
+        () => this._destroyed,
+        undefined,
+        this.buildAppDataViteEnv(),
+        { hardTimeoutMs: 240_000, promotePolicy: 'direct' },
+      );
+      if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
+      await this.refreshPreview();
+      if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
+      this.flushPendingIframe();
+
+      this.setStatus('ready');
+      console.log(LOG, 'local validation ready', { previewUrl: this.previewCtrl.previewUrl });
+    } catch (err) {
+      if (this._destroyed) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(LOG, 'local validation start failed', msg);
+      this.setStatus('error', msg);
+    }
+  }
+
+  /**
    * Rollback path for already-generated apps: hydrate from Ceph and run Nodepod
    * without a runtime ticket / Socket.IO. No MCP tool dispatch in this mode.
    */
@@ -889,6 +1005,7 @@ export class BrowserRuntimeHost {
       await this.ensureDefaultAiModelId();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
       this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -1217,15 +1334,12 @@ export class BrowserRuntimeHost {
       filesTree?: FilesTreeNode | null;
     },
   ): Promise<VfsFiles> {
+    let revisionError: string | undefined;
     try {
       return await this.hydrator.hydrateFromRevision(sessionId, opts.revisionId);
     } catch (err) {
-      console.warn(
-        LOG,
-        'revision hydration failed',
-        { revisionId: opts.revisionId },
-        err instanceof Error ? err.message : String(err),
-      );
+      revisionError = err instanceof Error ? err.message : String(err);
+      console.warn(LOG, 'revision hydration failed', { revisionId: opts.revisionId }, revisionError);
     }
 
     if (opts.cephPath && opts.filesTree) {
@@ -1236,8 +1350,9 @@ export class BrowserRuntimeHost {
       );
     }
 
+    const detail = revisionError ? ` ${revisionError}` : '';
     throw new Error(
-      `Cannot hydrate workspace from Ceph for revision ${opts.revisionId}. ` +
+      `Cannot hydrate workspace from Ceph for revision ${opts.revisionId}.${detail} ` +
         'Ensure the starter manifest exists in Ceph and revision APIs are reachable.',
     );
   }
@@ -1250,6 +1365,15 @@ export class BrowserRuntimeHost {
    * Register the preview iframe for `preview_inspect` / `preview_action`. The
    * iframe usually mounts before the pod exists, so it is queued until boot.
    */
+  /** Live DOM inspection for template validation / preview_inspect tooling. */
+  async inspectLivePreview(): Promise<PreviewInspectResult> {
+    const pod = this.adapter.currentPod;
+    if (!pod) {
+      throw new Error('NodePod is not running.');
+    }
+    return this.previewCtrl.inspectPreview(pod);
+  }
+
   attachPreviewIframe(iframe: HTMLIFrameElement): void {
     this.removeHiddenPreviewIframe();
     if (this.pendingIframe && this.pendingIframe !== iframe) {
@@ -1452,6 +1576,70 @@ export class BrowserRuntimeHost {
   }
 
   /**
+   * After a draft local preview (`startFromLocalFiles`), attach the live runtime
+   * ticket + Socket.IO register for a real session — without rebooting Vite/NodePod.
+   */
+  async attachLiveSession(sessionId: string): Promise<void> {
+    if (this._destroyed) return;
+    this.sessionId = sessionId;
+    this.reconnectAttempts = 0;
+    this.legacyMode = false;
+    this.setupAppDataFetchProxy();
+    setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
+    setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
+    this.wireStudioModelSync();
+
+    const keepPreviewVisible = Boolean(this.previewCtrl.previewUrl);
+    try {
+      if (!keepPreviewVisible) this.setStatus('connecting');
+      this.ticket = await conversationV2Api.createRuntimeTicket(sessionId);
+      this.revisionId = this.ticket.revisionId;
+      this.workspaceId = this.ticket.workspaceId;
+      this.appDataTickets.clear();
+      this.aiPreviewTicketCache = null;
+
+      // Relabel the local history to the backend revision; files stay in the pod.
+      this.revisions.seed(await this.adapter.shaManifest(), this.revisionId);
+
+      await this.client.connect(this.ticket.ticket);
+      if (this._destroyed) return;
+
+      if (this.ticket.appDataRuntimeEnv) {
+        void this.acquireAppDataTicket(
+          this.ticket.appDataRuntimeEnv.appDataId,
+          false,
+          this.ticket.appDataRuntimeEnv.environment,
+        );
+      }
+      void this.acquireAiPreviewTicket(false);
+
+      this.wireClientEvents();
+
+      if (!keepPreviewVisible) this.setStatus('registering');
+      const ack = await this.client.register({
+        runtimeSessionId: this.ticket.runtimeSessionId,
+        workspaceId: this.ticket.workspaceId,
+        revisionId: this.revisionId,
+        capabilities: NODEPOD_CAPABILITIES,
+      });
+      if (!ack.ok) {
+        this.setStatus('error', `Registration failed: ${ack.error ?? 'unknown'}`);
+        return;
+      }
+
+      this.client.startHeartbeat(this.ticket.workspaceId, () => this.revisionId);
+      this.setStatus('ready');
+      console.log(LOG, 'attached live session', { sessionId, revisionId: this.revisionId });
+    } catch (err) {
+      if (this._destroyed) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(LOG, 'attachLiveSession failed', msg);
+      this.setStatus('error', msg);
+      throw err;
+    }
+  }
+
+  /**
    * Tear down sockets, preview, and pod state. Retry keeps React subscribers
    * so connecting/ready/error still reach the mounted preview hook.
    */
@@ -1473,6 +1661,10 @@ export class BrowserRuntimeHost {
     this.workspaceId = null;
     this.ticket = null;
     this.aiPreviewTicketCache = null;
+    this.defaultAiModelId = null;
+    setAiDefaultModelId(null);
+    this.selectedModelUnsub?.();
+    this.selectedModelUnsub = null;
     this.legacyMode = false;
     this.rehydrating = false;
     this.reconnectAttempts = 0;

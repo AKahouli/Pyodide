@@ -189,7 +189,7 @@ export class AdminAppBuilderAiController {
     const items = await this.offers.list(true);
     return {
       items: items.map((o) => ({
-        id: o._id.toString(),
+        id: o.id,
         name: o.name,
         slug: o.slug,
         description: o.description,
@@ -209,14 +209,14 @@ export class AdminAppBuilderAiController {
   @RequirePermissions(Permissions.APP_BUILDER_AI_MANAGE)
   async createOffer(@Body() body: CreateOfferDto) {
     const o = await this.offers.create(body);
-    return { id: o._id.toString(), slug: o.slug, name: o.name };
+    return { id: o.id, slug: o.slug, name: o.name };
   }
 
   @Put('offers/:id')
   @RequirePermissions(Permissions.APP_BUILDER_AI_MANAGE)
   async updateOffer(@Param('id') id: string, @Body() body: UpdateOfferDto) {
     const o = await this.offers.update(id, body);
-    return { id: o._id.toString(), slug: o.slug, name: o.name };
+    return { id: o.id, slug: o.slug, name: o.name };
   }
 
   @Delete('offers/:id')

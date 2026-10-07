@@ -11,6 +11,8 @@
  *   --dry-run         report orphans only, change nothing
  *   --delete-orphans  export then delete dangling rows for specs that carry a
  *                     `cleanup` (never without the JSON export)
+ *   --keep-orphans=a,b  with --delete-orphans, leave the dangling rows of the named
+ *                     specs alone (the constraint stays NOT VALID and the exit code is 1)
  *   --drop            remove every managed constraint (module rollback)
  *
  * A single dedicated connection is used with lock_timeout set, so an ALTER TABLE
@@ -39,6 +41,15 @@ export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Pr
   const drop = process.argv.includes('--drop');
   const dryRun = process.argv.includes('--dry-run');
   const deleteOrphans = process.argv.includes('--delete-orphans');
+  const keepOrphans = new Set(
+    (process.argv.find((a) => a.startsWith('--keep-orphans='))?.slice('--keep-orphans='.length) ?? '')
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean),
+  );
+  for (const name of keepOrphans) {
+    if (!specs.some((s) => s.name === name)) throw new Error(`--keep-orphans: no spec named ${name} in this script`);
+  }
   const client = new Client({
     host: process.env.POSTGRES_HOST,
     port: Number(process.env.POSTGRES_PORT || '5432'),
@@ -102,6 +113,8 @@ export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Pr
           console.log(
             `${spec.name}: ${rows[0].n} orphan refs — rerun with --delete-orphans to export + delete (opt-in)`,
           );
+        } else if (keepOrphans.has(spec.name)) {
+          console.log(`${spec.name}: ${rows[0].n} orphan refs kept on purpose (--keep-orphans), nothing deleted`);
         } else {
           const dangling = await client.query(spec.cleanup.selectSql);
           const outDir = path.resolve(__dirname, 'out');

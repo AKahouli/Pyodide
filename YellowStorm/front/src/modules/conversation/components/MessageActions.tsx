@@ -18,7 +18,10 @@ import { useFileViewerDisplayMode } from '@/components/ai-elements/message-conte
 import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
-import { MessagePdfExport } from './MessagePdfExport';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { PdfExportPortal } from './PdfExportPortal';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
 import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
@@ -56,6 +59,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
   const playbookMcpAssistant = useFeatureVisibilityStore((state) => state.visibility.playbookMcpAssistant);
+  const platformCopilotEnabled = useFeatureVisibilityStore((state) => state.visibility.platformCopilot);
+  const { canUseFeature } = usePermissions();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
@@ -80,7 +85,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       openHandoff(handoff);
     },
   });
-  const canPrepareHandoff = playbookMcpAssistant && message.isComplete && !message.isStreaming;
+  const canPrepareHandoff = playbookMcpAssistant && platformCopilotEnabled && canUseFeature('platformCopilot') && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')
@@ -132,6 +137,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   };
 
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
+  const exportMarkdown = useMemo(() => componentsToMarkdown(message.components || []), [message.components]);
 
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
@@ -388,7 +394,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      {isExportingPdf && <MessagePdfExport message={message} title={currentConversation?.title?.trim() || t('exportPdf.untitledConversation')} subtitle={`${formattedCreatedAt} · ${modelName}`} onFinish={handlePdfExportFinish} />}
+      {isExportingPdf && (
+        <PdfExportPortal title={exportTitle} subtitle={`${formattedCreatedAt} · ${modelName}`} contentKey={exportMarkdown} onFinish={handlePdfExportFinish}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{exportMarkdown}</ReactMarkdown>
+        </PdfExportPortal>
+      )}
     </>
   );
 });

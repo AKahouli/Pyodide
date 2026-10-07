@@ -6,7 +6,7 @@ import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto, ChatMessageRole } from './dto/chat-completion.dto';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { ModelsService } from '../models/models.service';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AiProxyStreamService } from './ai-proxy-stream.service';
 import { AiProxyUsageService } from './ai-proxy-usage.service';
 
@@ -15,6 +15,7 @@ describe('AiProxyService', () => {
   const modelsService = {
     validateModelActive: jest.fn(),
     findAll: jest.fn(),
+    findByIdOrLitellmModel: jest.fn(),
   } as unknown as jest.Mocked<ModelsService>;
   const connectionService = {
     getHttpClient: jest.fn(),
@@ -22,7 +23,7 @@ describe('AiProxyService', () => {
   const configService = {
     get: jest.fn(),
   } as unknown as ConfigService;
-  const user = { _id: { toString: () => 'user-123' } } as unknown as UserDocument;
+  const user = { _id: { toString: () => 'user-123' } } as unknown as AuthUser;
   const streamService = {
     streamChatCompletion: jest.fn(),
   } as unknown as AiProxyStreamService;
@@ -46,7 +47,7 @@ describe('AiProxyService', () => {
     recordChatCompletionUsage: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiProxyUsageService;
   const body: ChatCompletionDto = {
-    model: 'gpt-4o',
+    model: 'catalog-chat-model',
     messages: [{ role: ChatMessageRole.USER, content: 'Hello' }],
     stream: false,
   };
@@ -66,9 +67,12 @@ describe('AiProxyService', () => {
       key === 'litellm.appBuilderApiKey' ? 'app-builder-key' : fallback
     ));
     connectionService.getHttpClient.mockReturnValue({ post } as unknown as AxiosInstance);
+    modelsService.findByIdOrLitellmModel.mockResolvedValue({
+      id: 'catalog-chat-model',
+    } as never);
     modelsService.validateModelActive.mockResolvedValue({
       valid: true,
-      model: null,
+      model: { id: 'catalog-chat-model' } as never,
       inactive: false,
       unsupported: false,
     });
@@ -87,11 +91,11 @@ describe('AiProxyService', () => {
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     });
 
-    expect(modelsService.validateModelActive).toHaveBeenCalledWith('gpt-4o', 'chat');
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith('catalog-chat-model', 'chat');
     expect(post).toHaveBeenCalledWith(
       '/v1/chat/completions',
       expect.objectContaining({
-        model: 'gpt-4o',
+        model: 'catalog-chat-model',
         stream: false,
         max_tokens: 4096,
       }),
@@ -106,7 +110,7 @@ describe('AiProxyService', () => {
     expect(usageService.recordChatCompletionUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'user-123',
-        model: 'gpt-4o',
+        model: 'catalog-chat-model',
         success: true,
         streaming: false,
         litellmRequestId: 'chatcmpl-1',
@@ -117,6 +121,9 @@ describe('AiProxyService', () => {
   });
 
   it('uses max_completion_tokens (not max_tokens) for reasoning / omitTemperature models', async () => {
+    modelsService.findByIdOrLitellmModel.mockResolvedValue({
+      id: 'gpt-5.6-luna',
+    } as never);
     modelsService.validateModelActive.mockResolvedValue({
       valid: true,
       model: {
@@ -138,6 +145,35 @@ describe('AiProxyService', () => {
     expect(forwarded).not.toHaveProperty('temperature');
     expect(forwarded).not.toHaveProperty('max_tokens');
     expect(forwarded.max_completion_tokens).toBe(2048);
+  });
+
+  it('normalizes a litellmModel alias to the catalog id before LiteLLM', async () => {
+    modelsService.findByIdOrLitellmModel.mockResolvedValue({
+      id: 'studio-catalog-id',
+      litellmModel: 'azure/gpt-4.1',
+    } as never);
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: {
+        id: 'studio-catalog-id',
+        litellmModel: 'azure/gpt-4.1',
+      } as never,
+      inactive: false,
+      unsupported: false,
+    });
+
+    await createService().proxyChatCompletion(
+      { ...body, model: 'azure/gpt-4.1' },
+      user,
+    );
+
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith(
+      'studio-catalog-id',
+      'chat',
+    );
+    expect(post.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ model: 'studio-catalog-id' }),
+    );
   });
 
   it('records unknown tokens when LiteLLM omits usage', async () => {
@@ -194,12 +230,15 @@ describe('AiProxyService', () => {
       createService().proxyChatCompletion({ ...body, stream: true }, user),
     ).rejects.toThrow('Streaming response is unavailable');
 
-    expect(modelsService.validateModelActive).toHaveBeenCalledWith('gpt-4o', 'chat');
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith('catalog-chat-model', 'chat');
     expect(streamService.streamChatCompletion).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
   });
 
   it('strips temperature when the catalog model has omitTemperature', async () => {
+    modelsService.findByIdOrLitellmModel.mockResolvedValue({
+      id: 'gpt-5.6-luna',
+    } as never);
     modelsService.validateModelActive.mockResolvedValue({
       valid: true,
       model: { id: 'gpt-5.6-luna', omitTemperature: true } as never,
@@ -228,7 +267,7 @@ describe('AiProxyService', () => {
     });
 
     await expect(createService().proxyChatCompletion({ ...body }, user)).rejects.toThrow(
-      "Model 'gpt-4o' is not available",
+      "Model 'catalog-chat-model' is not available",
     );
 
     expect(post).not.toHaveBeenCalled();
@@ -251,7 +290,7 @@ describe('AiProxyService', () => {
     });
 
     await expect(createService().proxyChatCompletion({ ...body }, user)).rejects.toThrow(
-      "Model 'gpt-4o' is not available",
+      "Model 'catalog-chat-model' is not available",
     );
     expect(post).not.toHaveBeenCalled();
   });

@@ -6,9 +6,8 @@ dist/
 build/
 graphify-out/
 # Environment
-.env
+*.env
 .env.local
-.env.*.local
 
 # IDE
 .idea/
@@ -33,7 +32,7 @@ coverage/
 *.tgz
 .eslintcache
 
-*.env
+
 *.env.*.local
 .env.local
 .env.development.local
@@ -65,4 +64,19 @@ $/.scannerwork/
 .scannerwork/
 .scannerwork/
 ops/backup/.env
-$
+.understand-anything/knowledge-graph.json
+docs/architecture/yellowstorm-architecture.html
+docs/architecture/*.visual-check.*
+*.err
+.codex/*.png
+.codex/*/*.png
+docs/architecture/yellowstorm-architecture.json
+.understand-anything/
+
+# staged observability SDK artifacts (plan §11.2)
+.generated/
+YellowStorm/back/.generated/
+yellowstorm-code-runtime/.generated/
+
+# python packaging artifacts
+*.egg-info/

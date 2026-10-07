@@ -1,6 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosInstance } from 'axios';
 import { LoggerService } from '../logger';
 import { RequestContextService } from '../request-context';
 import type {
@@ -17,7 +16,6 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
   private readonly apiUrl: string;
   private readonly vectorstoreApiKey: string;
   private readonly webhookUrl: string;
-  private readonly httpClient: AxiosInstance;
 
   constructor(
     private readonly configService: ConfigService,
@@ -31,34 +29,25 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
     const backendUrl = this.configService.get<string>('app.backendUrl', 'http://localhost:3000');
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
     this.webhookUrl = `${backendUrl}/${apiPrefix}/v1/indexing/webhook`;
+  }
 
-    this.httpClient = axios.create({
-      baseURL: this.apiUrl,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    // Attach API key to every request
-    this.httpClient.interceptors.request.use((config) => {
-      if (this.vectorstoreApiKey) {
-        config.headers['x-api-key'] = this.vectorstoreApiKey;
-      }
-      return config;
-    });
-
-    // Propagate request/correlation IDs to external API
-    this.httpClient.interceptors.request.use((config) => {
-      const requestId = this.requestContextService.getRequestId();
-      const correlationId = this.requestContextService.getCorrelationId();
-      if (requestId) {
-        config.headers['X-Request-ID'] = requestId;
-      }
-      if (correlationId) {
-        config.headers['X-Correlation-ID'] = correlationId;
-      }
-      return config;
-    });
+  /** Replaces the former axios request interceptors: static API key + request/correlation ID propagation. */
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.vectorstoreApiKey) {
+      headers['x-api-key'] = this.vectorstoreApiKey;
+    }
+    const requestId = this.requestContextService.getRequestId();
+    const correlationId = this.requestContextService.getCorrelationId();
+    if (requestId) {
+      headers['X-Request-ID'] = requestId;
+    }
+    if (correlationId) {
+      headers['X-Correlation-ID'] = correlationId;
+    }
+    return headers;
   }
 
   async onModuleInit(): Promise<void> {
@@ -113,34 +102,33 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       deep_research: request.deepSearch || false,
     };
 
-    try {
-      const response = await this.httpClient.post(
-        '/vectorstores/indexDocumentFromCephStore',
-        requestBody,
-      );
+    const res = await fetch(`${this.apiUrl}/vectorstores/indexDocumentFromCephStore`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+      body: JSON.stringify(requestBody),
+    });
 
-      const { download_id, indexing_id } = response.data;
-      this.logger.log('Indexing API call successful', {
+    if (!res.ok) {
+      const body = await res.text();
+      let data: unknown = body;
+      try { data = JSON.parse(body) as unknown; } catch { /* non-JSON error body */ }
+      const message = `Indexing API error: ${res.status} - ${JSON.stringify(data) || 'request failed'}`;
+      this.logger.error(message, {
         documentId: request.documentId,
-        download_id,
-        indexing_id,
-        request: requestBody,
+        status: res.status,
+        responseData: data,
       });
-      return { download_id, indexing_id };
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const data = error.response?.data;
-        const message = `Indexing API error: ${status} - ${JSON.stringify(data) || error.message}`;
-        this.logger.error(message, {
-          documentId: request.documentId,
-          status,
-          responseData: data,
-        });
-        throw new Error(message);
-      }
-      throw error;
+      throw new Error(message);
     }
+
+    const { download_id, indexing_id } = await res.json() as { download_id: string; indexing_id: string };
+    this.logger.log('Indexing API call successful', {
+      documentId: request.documentId,
+      download_id,
+      indexing_id,
+      request: requestBody,
+    });
+    return { download_id, indexing_id };
   }
 
   async getIndexStatus(externalId: string): Promise<IndexStatus> {
@@ -165,13 +153,27 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
     });
 
     try {
-      await this.httpClient.delete('/vectorstores/vectorIds/V2', {
-        data: {
+      const res = await fetch(`${this.apiUrl}/vectorstores/vectorIds/V2`, {
+        method: 'DELETE',
+        headers: this.buildHeaders(),
+        body: JSON.stringify({
           workspace_name: request.workspaceName,
           file_path: request.filePath,
           file_name: request.fileName,
-        },
+        }),
       });
+
+      if (!res.ok) {
+        const body = await res.text();
+        let data: unknown = body;
+        try { data = JSON.parse(body) as unknown; } catch { /* non-JSON error body */ }
+        const message = `Delete index API error: ${res.status} - ${JSON.stringify(data) || 'request failed'}`;
+        this.logger.warn(message, {
+          documentId: request.documentId,
+          status: res.status,
+        });
+        return { success: false, error: message };
+      }
 
       this.logger.debug('Delete index API success', {
         documentId: request.documentId,
@@ -179,16 +181,6 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
 
       return { success: true };
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const data = error.response?.data;
-        const message = `Delete index API error: ${status} - ${JSON.stringify(data) || error.message}`;
-        this.logger.warn(message, {
-          documentId: request.documentId,
-          status,
-        });
-        return { success: false, error: message };
-      }
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',

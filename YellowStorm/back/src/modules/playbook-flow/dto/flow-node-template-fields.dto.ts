@@ -90,6 +90,17 @@ export class FlowNodeTemplateRouterConfigDto {
   @IsOptional()
   @IsString()
   defaultLabel?: string;
+
+  @ApiPropertyOptional({ enum: ['ai', 'deterministic'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['ai', 'deterministic'])
+  mode?: 'ai' | 'deterministic';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  prompt?: string;
 }
 
 export class FlowNodeTemplateIteratorConfigDto {

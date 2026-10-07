@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { ConversationResponse } from '@modules/conversation/interfaces/conversation.interface';
@@ -6,20 +7,24 @@ import { ConflictException, NotFoundException, ServiceUnavailableException } fro
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { ForbiddenException } from '@modules/exceptions';
-import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
 import { CreateGovernedConversationDto } from '../dto';
 import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
+import { publishedRootWork } from './governance-root-snapshot';
 
 @Injectable()
 export class GovernedConversationService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly conversationService: ConversationService,
     private readonly featureVisibility: FeatureVisibilityService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async create(userId: string, dto: CreateGovernedConversationDto): Promise<ConversationResponse> {
@@ -35,6 +40,10 @@ export class GovernedConversationService {
     const revision = await this.revisionStore.findByDeploymentAndId(deployment.id, deployment.currentPublishedRevisionId);
     if (!revision || revision.status !== 'published') throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     const allowedAgentIds = (revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId ?? '']).filter(Boolean);
+    const rootWork = publishedRootWork(revision.agentSnapshot, revision.id, this.config?.get<string>('INTERNAL_SERVICE_SECRET'));
+    if (rootWork && (rootWork.pool.rootAgentId !== revision.agentId || !allowedAgentIds.includes(rootWork.pool.rootAgentId))) {
+      throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+    }
     // No title: governed conversations follow the standard flow and get their
     // name generated from the first message like normal conversations.
     return this.conversationService.createGoverned(userId, {
@@ -47,6 +56,7 @@ export class GovernedConversationService {
       primaryAgentId: revision.agentId ?? '',
       allowedAgentIds,
       workspaceIds: revision.workspaceIds,
+      ...(rootWork ? { rootAgentId: rootWork.pool.rootAgentId } : {}),
     });
   }
 

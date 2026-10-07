@@ -67,7 +67,21 @@ describe('ConversationV2GrpcClientService', () => {
     const id = await service.createSession('u1');
     expect(id).toBe('sess-1');
     expect(mockGrpcClient.CreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 'u1' }),
+      expect.objectContaining({ user_id: 'u1', capability: 'web_app' }),
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+    );
+  });
+
+  it('createSession forwards database_design capability', async () => {
+    mockGrpcClient.CreateSession.mockImplementation(
+      (_req, _meta, _opts, cb) => cb(null, { session_id: 'sess-schema' }),
+    );
+    const id = await service.createSession('u1', [], 'database_design');
+    expect(id).toBe('sess-schema');
+    expect(mockGrpcClient.CreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'u1', capability: 'database_design' }),
       expect.anything(),
       expect.anything(),
       expect.any(Function),
@@ -110,19 +124,19 @@ describe('ConversationV2GrpcClientService', () => {
       },
     });
 
-    handlers['data']?.({
+    handlers.data?.({
       event_id: 'e1',
       timestamp: 1,
       payload: 'message',
       message: { role: 'assistant', content: 'hi', attachments: [] },
     });
-    handlers['data']?.({
+    handlers.data?.({
       event_id: 'e2',
       timestamp: 2,
       payload: 'done',
       done: {},
     });
-    handlers['end']?.();
+    handlers.end?.();
 
     expect(sub.closed).toBe(true);
   });
@@ -133,6 +147,27 @@ describe('ConversationV2GrpcClientService', () => {
     const sub = service.chat('u1', 's1', 'm').subscribe();
     sub.unsubscribe();
     expect(fakeStream.cancel).toHaveBeenCalled();
+  });
+
+  it('chat passes app_ai_model when provided', () => {
+    const fakeStream: any = { on: jest.fn().mockReturnThis(), cancel: jest.fn() };
+    mockGrpcClient.Chat.mockReturnValue(fakeStream);
+
+    const sub = service
+      .chat('u1', 's1', 'm', 'litellm/model', undefined, undefined, undefined, 'catalog-model-id')
+      .subscribe();
+
+    expect(mockGrpcClient.Chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'u1',
+        session_id: 's1',
+        message: 'm',
+        model: 'litellm/model',
+        app_ai_model: 'catalog-model-id',
+      }),
+      expect.anything(),
+    );
+    sub.unsubscribe();
   });
 
   describe('worky', () => {

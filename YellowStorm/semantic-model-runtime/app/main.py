@@ -20,7 +20,7 @@ import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .api import datasource_routes, health_routes, index_routes, job_routes, population_routes
+from .api import datasource_routes, graph_search_routes, health_routes, job_routes, population_routes
 from .jobs.dispatcher import OutboxDispatcher, OutboxRepository
 from .jobs.service import JobRepository, JobService
 from .persistence.postgres_jobs import PostgresJobRepository
@@ -99,8 +99,8 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         # A test may inject a fake; lifespan never overwrites it.
         if getattr(app.state, "population_pool", None) is None:
             app.state.population_pool = pool
-        # Phase 4 index pool. A test may inject a fake; otherwise creation is
-        # best-effort so the API stays up when the index is unreachable.
+        # Phase 4 index pool (document preview reads). A test may inject a fake;
+        # otherwise creation is best-effort so the API stays up when the index is unreachable.
         index_pool = getattr(app.state, "index_pool", None)
         index_owned = False
         if index_pool is None and os.environ.get("SEMANTIC_INDEX_DATABASE_URL"):
@@ -115,11 +115,14 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         app.state.index_pool = index_pool
         app.state.index_pool_owned = index_owned
         if getattr(app.state, "age_pool", None) is None and os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL"):
+            from app.graph_search.traversal import init_age_connection
+
             age_pool = await asyncpg.create_pool(
                 os.environ["SEMANTIC_AGEGRAPH_DATABASE_URL"],
                 min_size=1,
                 max_size=int(os.environ.get("SEMANTIC_AGEGRAPH_POOL_MAX", "3")),
                 command_timeout=30,
+                init=init_age_connection,
                 server_settings={
                     "application_name": "semantic-model-runtime-age",
                     "search_path": 'ag_catalog, "$user", public',
@@ -203,9 +206,9 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
 
     app.include_router(health_routes.router)
     app.include_router(datasource_routes.router)
-    app.include_router(index_routes.router)
     app.include_router(population_routes.router)
     app.include_router(job_routes.router)
+    app.include_router(graph_search_routes.router)
     return app
 
 

@@ -190,6 +190,195 @@
       "when": 1790019745486,
       "tag": "0025_cross_schema_fks",
       "statements": []
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0026_conversation_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0027_app_builder_ai_offers",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790300000000,
+      "tag": "0028_app_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790400000000,
+      "tag": "0029_telegram_evolutions",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0031_agent_evaluation",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790784000000,
+      "tag": "0026_model_drop_params",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790790000000,
+      "tag": "0032_drop_whatsapp_channels",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0033_knowledge_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0034_classifier",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0035_integration_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0036_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791200000000,
+      "tag": "0037_conversation_app_runtime_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0038_worky",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0039_fk_leading_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0040_playbook",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0041_classifier_runs_playbook_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791700000000,
+      "tag": "0042_root_execution_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0043_root_work_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0044_root_background_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0045_root_model_capacity",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792100000000,
+      "tag": "0042_yellowmind_semantic_model_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0047_connector_worker_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0030_conversation_v2_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792310000000,
+      "tag": "0031_template_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792320000000,
+      "tag": "0042_template_platform_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792330000000,
+      "tag": "0043_yellowmind_linked_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792340000000,
+      "tag": "0044_yellowmind_answer_completeness",
+      "breakpoints": true
     }
   ]
 }

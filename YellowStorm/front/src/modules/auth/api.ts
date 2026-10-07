@@ -82,7 +82,8 @@ export async function resetPassword(token: string, password: string): Promise<{ 
  */
 export async function getAuthProviders(): Promise<AuthProviderPublic[]> {
   const response = await apiClient.get<ApiResponse<AuthProviderPublic[]>>(API_ENDPOINTS.auth.oauthProviders);
-  return response.data.data;
+  // A misconfigured base URL makes nginx return the SPA HTML with 200, so `data` is missing.
+  return response.data.data ?? [];
 }
 
 /**

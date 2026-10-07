@@ -20,9 +20,10 @@ from google.adk.runners import InMemoryRunner
 from google.adk.workflow import START, Workflow
 from google.genai import types
 
-from src.companion_ai import graph, hitl, mail_token, nodes
+from src.companion_ai import mail_token
+from src.companion_ai.adk import graph, hitl, nodes
 from src.companion_ai.plan import Plan, Status, Step
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.adk.service import OrchestratorService
 
 
 def _task_turn(agent) -> str:
@@ -704,7 +705,7 @@ def test_the_planner_is_told_when_to_await_a_reply():
     an await_reply step, the planner either emits one or the plan sends a mail
     and invents the answer. Pins the contract the prompt must keep stating.
     (That the model obeys is checked against the live planner, not here.)"""
-    from src.companion_ai.service import PLANNER_INSTRUCTION
+    from src.companion_ai.adk.service import PLANNER_INSTRUCTION
 
     assert '"await_reply"' in PLANNER_INSTRUCTION
     # It must be a separate step from the send, linked by depends_on — that link
@@ -870,7 +871,7 @@ def test_dep_gate_deferral_emits_no_terminal_event():
     from google.adk.workflow import START, Workflow
     from google.adk.workflow.utils._rehydration_utils import is_terminal_event
     from google.genai import types as gt
-    from src.companion_ai import nodes as nm
+    from src.companion_ai.adk import nodes as nm
     from src.companion_ai.plan import Step
 
     class _Dummy(BaseLlm):

@@ -1,18 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  ClassifierFolder,
-  ClassifierFolderDocument,
-} from '../schemas/classifier-folder.schema';
-import {
-  ClassifierFileAssignment,
-  ClassifierFileAssignmentDocument,
-} from '../schemas/classifier-file-assignment.schema';
+import { isObjectId, isUniqueViolation, normalizeObjectId } from '@common/postgres';
+import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
 import { CreateFolderDto } from '../dto/create-folder.dto';
 import { UpdateFolderDto } from '../dto/update-folder.dto';
 import { MoveFolderDto } from '../dto/move-folder.dto';
 import { IClassifierFolderResponse } from '../interfaces/classifier.interface';
+import type { ClassifierFolderRecord, FolderCounts } from '../classifier.types';
 import {
   BadRequestException,
   ConflictException,
@@ -23,18 +16,10 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import { ClassifierAccessService } from './classifier-access.service';
 
-interface FolderCounts {
-  childCount: number;
-  fileCount: number;
-}
-
 @Injectable()
 export class ClassifierFolderService {
   constructor(
-    @InjectModel(ClassifierFolder.name)
-    private readonly folderModel: Model<ClassifierFolderDocument>,
-    @InjectModel(ClassifierFileAssignment.name)
-    private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
+    private readonly folders: ClassifierFolderRepository,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
   ) {
@@ -47,22 +32,17 @@ export class ClassifierFolderService {
   ): Promise<IClassifierFolderResponse[]> {
     await this.access.assertWorkspaceAccess(workspaceId, userId);
 
-    const folders = await this.folderModel
-      .find({ workspaceId: new Types.ObjectId(workspaceId) })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
+    const folders = await this.folders.listByWorkspace(workspaceId);
     if (folders.length === 0) return [];
 
-    const counts = await this.computeCounts(workspaceId, folders.map((f) => f._id));
-    return folders.map((f) => this.toResponse(f, counts.get(f._id.toString())));
+    const counts = await this.folders.computeCounts(workspaceId, folders.map((f) => f.id));
+    return folders.map((f) => this.toResponse(f, counts.get(f.id)));
   }
 
   async findById(userId: string, folderId: string): Promise<IClassifierFolderResponse> {
     const folder = await this.getOwnedFolder(userId, folderId);
-    const counts = await this.computeCounts(folder.workspaceId.toString(), [folder._id]);
-    return this.toResponse(folder, counts.get(folder._id.toString()));
+    const counts = await this.folders.computeCounts(folder.workspaceId, [folder.id]);
+    return this.toResponse(folder, counts.get(folder.id));
   }
 
   async create(
@@ -82,16 +62,12 @@ export class ClassifierFolderService {
 
     await this.assertNameUnique(workspaceId, parentId, name);
 
-    const folder = await this.folderModel.create({
-      workspaceId: new Types.ObjectId(workspaceId),
-      parentId: parentId ? new Types.ObjectId(parentId) : null,
-      name,
-      description,
-      createdBy: new Types.ObjectId(userId),
-    });
+    const folder = await this.persisting(() =>
+      this.folders.create({ workspaceId, parentId, name, description, createdBy: userId }),
+    );
 
     this.logger.log('Classifier folder created', {
-      folderId: folder._id.toString(),
+      folderId: folder.id,
       workspaceId,
       userId,
     });
@@ -104,29 +80,28 @@ export class ClassifierFolderService {
     folderId: string,
     dto: UpdateFolderDto,
   ): Promise<IClassifierFolderResponse> {
-    const folder = await this.getOwnedFolder(userId, folderId);
+    let folder = await this.getOwnedFolder(userId, folderId);
 
+    const patch: { name?: string; description?: string } = {};
     if (dto.name !== undefined) {
       const newName = dto.name.trim();
       if (newName !== folder.name) {
-        await this.assertNameUnique(
-          folder.workspaceId.toString(),
-          folder.parentId ? folder.parentId.toString() : null,
-          newName,
-          folder._id.toString(),
-        );
-        folder.name = newName;
+        await this.assertNameUnique(folder.workspaceId, folder.parentId, newName, folder.id);
+        patch.name = newName;
       }
     }
-
     if (dto.description !== undefined) {
-      folder.description = dto.description.trim();
+      patch.description = dto.description.trim();
     }
 
-    await folder.save();
+    if (Object.keys(patch).length > 0) {
+      const updated = await this.persisting(() => this.folders.update(folder.id, patch));
+      if (!updated) throw new NotFoundException(ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND);
+      folder = updated;
+    }
 
-    const counts = await this.computeCounts(folder.workspaceId.toString(), [folder._id]);
-    return this.toResponse(folder, counts.get(folder._id.toString()));
+    const counts = await this.folders.computeCounts(folder.workspaceId, [folder.id]);
+    return this.toResponse(folder, counts.get(folder.id));
   }
 
   async move(
@@ -134,56 +109,43 @@ export class ClassifierFolderService {
     folderId: string,
     dto: MoveFolderDto,
   ): Promise<IClassifierFolderResponse> {
-    const folder = await this.getOwnedFolder(userId, folderId);
+    let folder = await this.getOwnedFolder(userId, folderId);
 
-    const newParentId = dto.parentId ?? null;
-    const currentParentId = folder.parentId ? folder.parentId.toString() : null;
-    if (newParentId === currentParentId) {
+    const newParentId = dto.parentId ? normalizeObjectId(dto.parentId) : null;
+    if (newParentId === folder.parentId) {
       return this.findById(userId, folderId);
     }
 
     if (newParentId) {
-      await this.assertParentBelongsToWorkspace(newParentId, folder.workspaceId.toString());
-      await this.assertNotDescendant(folder._id.toString(), newParentId);
+      await this.assertParentBelongsToWorkspace(newParentId, folder.workspaceId);
+      await this.assertNotDescendant(folder.id, newParentId);
     }
 
-    await this.assertNameUnique(
-      folder.workspaceId.toString(),
-      newParentId,
-      folder.name,
-      folder._id.toString(),
-    );
+    await this.assertNameUnique(folder.workspaceId, newParentId, folder.name, folder.id);
 
-    folder.parentId = newParentId ? new Types.ObjectId(newParentId) : null;
-    await folder.save();
+    const moved = await this.persisting(() => this.folders.setParent(folder.id, newParentId));
+    if (!moved) throw new NotFoundException(ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND);
+    folder = moved;
 
     this.logger.log('Classifier folder moved', {
-      folderId: folder._id.toString(),
+      folderId: folder.id,
       newParentId,
       userId,
     });
 
-    const counts = await this.computeCounts(folder.workspaceId.toString(), [folder._id]);
-    return this.toResponse(folder, counts.get(folder._id.toString()));
+    const counts = await this.folders.computeCounts(folder.workspaceId, [folder.id]);
+    return this.toResponse(folder, counts.get(folder.id));
   }
 
   async delete(userId: string, folderId: string): Promise<void> {
     const folder = await this.getOwnedFolder(userId, folderId);
 
-    const descendants = await this.collectDescendantIds(folder._id);
-    const allIds = [folder._id, ...descendants];
-
-    // Unassign every file that was mapped to one of the removed folders.
-    await this.assignmentModel.updateMany(
-      { folderId: { $in: allIds } },
-      { $set: { folderId: null, assignmentSource: 'manual' } },
-    );
-
-    await this.folderModel.deleteMany({ _id: { $in: allIds } });
+    // Sub-folders go with it and every file mapped to one of them becomes unassigned, atomically.
+    const cascadedFolders = await this.folders.deleteWithDescendants(folder.id);
 
     this.logger.log('Classifier folder deleted', {
-      folderId: folder._id.toString(),
-      cascadedFolders: descendants.length,
+      folderId: folder.id,
+      cascadedFolders,
       userId,
     });
   }
@@ -197,16 +159,16 @@ export class ClassifierFolderService {
   async getOwnedFolder(
     userId: string,
     folderId: string,
-  ): Promise<ClassifierFolderDocument> {
-    if (!Types.ObjectId.isValid(folderId)) {
+  ): Promise<ClassifierFolderRecord> {
+    if (!isObjectId(folderId)) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND);
     }
-    const folder = await this.folderModel.findById(folderId).exec();
+    const folder = await this.folders.findById(folderId);
     if (!folder) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND);
     }
     try {
-      await this.access.assertWorkspaceAccess(folder.workspaceId.toString(), userId);
+      await this.access.assertWorkspaceAccess(folder.workspaceId, userId);
     } catch (err) {
       // Translate workspace access errors into folder-scoped errors for clarity.
       if (err instanceof ForbiddenException) {
@@ -217,16 +179,24 @@ export class ClassifierFolderService {
     return folder;
   }
 
+  /** The database unique index closes the race the name pre-check leaves open. */
+  private async persisting<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (error) {
+      if (isUniqueViolation(error, 'uq_classifier_folders_location')) {
+        throw new ConflictException(ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS);
+      }
+      throw error;
+    }
+  }
+
   private async assertParentBelongsToWorkspace(parentId: string, workspaceId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(parentId)) {
+    if (!isObjectId(parentId)) {
       throw new BadRequestException(ErrorCode.CLASSIFIER_FOLDER_INVALID_PARENT);
     }
-    const parent = await this.folderModel
-      .findById(parentId)
-      .select({ workspaceId: 1 })
-      .lean()
-      .exec();
-    if (!parent || parent.workspaceId.toString() !== workspaceId) {
+    const parent = await this.folders.findById(parentId);
+    if (!parent || parent.workspaceId !== normalizeObjectId(workspaceId)) {
       throw new BadRequestException(ErrorCode.CLASSIFIER_FOLDER_INVALID_PARENT);
     }
   }
@@ -237,16 +207,7 @@ export class ClassifierFolderService {
     name: string,
     excludeFolderId?: string,
   ): Promise<void> {
-    const filter: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      parentId: parentId ? new Types.ObjectId(parentId) : null,
-      name,
-    };
-    if (excludeFolderId) {
-      filter._id = { $ne: new Types.ObjectId(excludeFolderId) };
-    }
-    const duplicate = await this.folderModel.findOne(filter).select({ _id: 1 }).lean().exec();
-    if (duplicate) {
+    if (await this.folders.nameTaken(workspaceId, parentId, name, excludeFolderId)) {
       throw new ConflictException(ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS);
     }
   }
@@ -258,88 +219,27 @@ export class ClassifierFolderService {
     if (folderId === candidateParentId) {
       throw new ConflictException(ErrorCode.CLASSIFIER_FOLDER_CYCLE);
     }
-    const descendants = await this.collectDescendantIds(new Types.ObjectId(folderId));
-    if (descendants.some((id) => id.toString() === candidateParentId)) {
+    const descendants = await this.folders.descendantIds(folderId);
+    if (descendants.includes(candidateParentId)) {
       throw new ConflictException(ErrorCode.CLASSIFIER_FOLDER_CYCLE);
     }
   }
 
-  private async collectDescendantIds(rootId: Types.ObjectId): Promise<Types.ObjectId[]> {
-    const collected: Types.ObjectId[] = [];
-    let frontier: Types.ObjectId[] = [rootId];
-    // Breadth-first walk; bounded by workspace folder depth (small in practice).
-    while (frontier.length > 0) {
-      const children = await this.folderModel
-        .find({ parentId: { $in: frontier } })
-        .select({ _id: 1 })
-        .lean()
-        .exec();
-      if (children.length === 0) break;
-      const ids = children.map((c) => c._id);
-      collected.push(...ids);
-      frontier = ids;
-    }
-    return collected;
-  }
-
-  private async computeCounts(
-    workspaceId: string,
-    folderIds: Types.ObjectId[],
-  ): Promise<Map<string, FolderCounts>> {
-    const result = new Map<string, FolderCounts>();
-    folderIds.forEach((id) => result.set(id.toString(), { childCount: 0, fileCount: 0 }));
-
-    const wsObjectId = new Types.ObjectId(workspaceId);
-
-    const [childCounts, fileCounts] = await Promise.all([
-      this.folderModel.aggregate<{ _id: Types.ObjectId; count: number }>([
-        {
-          $match: {
-            workspaceId: wsObjectId,
-            parentId: { $in: folderIds },
-          },
-        },
-        { $group: { _id: '$parentId', count: { $sum: 1 } } },
-      ]),
-      this.assignmentModel.aggregate<{ _id: Types.ObjectId; count: number }>([
-        {
-          $match: {
-            workspaceId: wsObjectId,
-            folderId: { $in: folderIds },
-          },
-        },
-        { $group: { _id: '$folderId', count: { $sum: 1 } } },
-      ]),
-    ]);
-
-    childCounts.forEach((c) => {
-      const entry = result.get(c._id.toString());
-      if (entry) entry.childCount = c.count;
-    });
-    fileCounts.forEach((c) => {
-      const entry = result.get(c._id.toString());
-      if (entry) entry.fileCount = c.count;
-    });
-
-    return result;
-  }
-
   private toResponse(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    doc: any,
+    folder: ClassifierFolderRecord,
     counts: FolderCounts | undefined,
   ): IClassifierFolderResponse {
     return {
-      id: (doc._id as { toString(): string }).toString(),
-      workspaceId: (doc.workspaceId as { toString(): string }).toString(),
-      parentId: doc.parentId ? (doc.parentId as { toString(): string }).toString() : null,
-      name: doc.name as string,
-      description: doc.description as string,
-      createdBy: (doc.createdBy as { toString(): string }).toString(),
+      id: folder.id,
+      workspaceId: folder.workspaceId,
+      parentId: folder.parentId,
+      name: folder.name,
+      description: folder.description,
+      createdBy: folder.createdBy,
       childCount: counts?.childCount ?? 0,
       fileCount: counts?.fileCount ?? 0,
-      createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
-      updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
+      createdAt: folder.createdAt.toISOString(),
+      updatedAt: folder.updatedAt.toISOString(),
     };
   }
 }

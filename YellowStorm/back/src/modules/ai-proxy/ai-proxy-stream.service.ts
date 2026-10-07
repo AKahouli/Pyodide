@@ -3,7 +3,7 @@ import { AxiosError, AxiosInstance } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { Readable } from 'node:stream';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   BadGatewayException,
   ServiceUnavailableException,
@@ -36,7 +36,7 @@ export class AiProxyStreamService {
     request: Request,
     response: Response,
     body: ChatCompletionDto,
-    user: UserDocument,
+    user: AuthUser,
     pricing?: AiProxyModelPricing | null,
   ): Promise<void> {
     const httpClient = this.connectionService.getHttpClient();
@@ -82,7 +82,7 @@ export class AiProxyStreamService {
         user,
         abortController.signal,
       );
-      upstreamStream = upstreamResponse.data as Readable;
+      upstreamStream = upstreamResponse.data;
 
       if (clientClosed || response.destroyed || response.writableEnded) {
         closeUpstream();
@@ -148,7 +148,7 @@ export class AiProxyStreamService {
         }
       });
 
-      upstreamStream.pipe(response as unknown as NodeJS.WritableStream);
+      upstreamStream.pipe(response);
     } catch (error) {
       cleanup();
       closeUpstream();
@@ -186,7 +186,7 @@ export class AiProxyStreamService {
   private async requestStream(
     httpClient: AxiosInstance,
     body: ChatCompletionDto,
-    user: UserDocument,
+    user: AuthUser,
     signal: AbortSignal,
   ) {
     return httpClient.post<Readable>(

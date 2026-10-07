@@ -3,8 +3,8 @@
  * served at {appOrigin}/widget-embed.js.
  *
  * API base resolution (same pattern as the SPA in src/lib/api/config.ts):
- * - VITE_API_URL when explicitly provided (local override only)
- * - otherwise MY_APP_VITE_API_URL — replaced at container start by env.sh
+ * - VITE_API_URL when set (local emit or build)
+ * - otherwise empty — widget resolves via window.__APP_CONFIG__.API_URL or script origin
  *
  * Never bake http://localhost:3000 into the committed public asset: that breaks
  * production when the file is deployed as-is.
@@ -29,7 +29,7 @@ function resolveApiBaseUrl() {
     return explicit.replace(/\/$/, '');
   }
 
-  return 'MY_APP_VITE_API_URL';
+  return '';
 }
 
 const apiBaseUrl = resolveApiBaseUrl();

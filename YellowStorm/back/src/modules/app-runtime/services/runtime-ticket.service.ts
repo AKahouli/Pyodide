@@ -1,16 +1,11 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable,  Logger,  Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
-import {
-  AppRuntimeTicket,
-  AppRuntimeTicketDocument,
-} from '../schemas/app-runtime-ticket.schema';
 import type { RuntimeTicketResult } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
+import { PgRuntimeTicketStore } from '../persistence/pg-runtime-ticket.store';
 
 export interface IssueRuntimeTicketParams {
   conversationSessionId: string;
@@ -34,8 +29,7 @@ export class RuntimeTicketService {
   private readonly logger = new Logger(RuntimeTicketService.name);
 
   constructor(
-    @InjectModel(AppRuntimeTicket.name)
-    private readonly model: Model<AppRuntimeTicketDocument>,
+    private readonly store: PgRuntimeTicketStore,
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,
@@ -54,14 +48,13 @@ export class RuntimeTicketService {
     const ttlMs = this.config.get<number>('appRuntime.ticketTtlMs', 60_000);
     const expiresAt = new Date(Date.now() + ttlMs);
 
-    await this.model.create({
+    await this.store.create({
       runtimeSessionId,
       ticketHash: this.tokens.hash(ticket),
       bindingId: binding.bindingId,
       workspaceId: binding.workspaceId,
       userId,
       expiresAt,
-      consumedAt: null,
     });
 
     this.logger.debug(
@@ -69,7 +62,7 @@ export class RuntimeTicketService {
     );
 
     const appDataRuntimeEnv = this.appDataDeployment
-      ? await this.appDataDeployment.getRuntimeEnvForWorkspace(binding.workspaceId, 'dev')
+      ? await this.appDataDeployment.ensureDevRuntimeEnv(binding.workspaceId, binding.userId)
       : null;
 
     return {
@@ -90,18 +83,7 @@ export class RuntimeTicketService {
   async consume(ticket: string): Promise<ConsumedRuntimeTicket | null> {
     if (!ticket) return null;
 
-    const consumed = await this.model
-      .findOneAndUpdate(
-        {
-          ticketHash: this.tokens.hash(ticket),
-          consumedAt: null,
-          expiresAt: { $gt: new Date() },
-        },
-        { $set: { consumedAt: new Date() } },
-        { new: true },
-      )
-      .lean()
-      .exec();
+    const consumed = await this.store.consumeByHash(this.tokens.hash(ticket));
 
     if (!consumed) return null;
 

@@ -35,7 +35,7 @@ import { WorkyMobileStream } from './WorkyMobileStream';
 const asMock = (fn: unknown) => fn as any;
 const model = {
   plan: null, session: null, health: 'planning' as const, runtimeAsks: [], interactions: [], pendingApprovals: [],
-  currentWork: [], delegations: [], summary: { total: 0, completed: 0, active: 0, waitingExternal: 0, needsInput: 0 },
+  currentWork: [], allTasks: [], completedTasks: [], deliveryPaths: [], recentTasks: [], delegations: [], summary: { total: 0, completed: 0, active: 0, blocked: 0, remaining: 0, waitingExternal: 0, needsInput: 0 },
 };
 
 beforeEach(() => {
@@ -81,5 +81,23 @@ describe('WorkyMobileStream', () => {
     expect(screen.queryByText('voice-session-open')).toBeNull();
     await userEvent.click(screen.getByLabelText('nav.voice'));
     expect(screen.getByText('voice-session-open')).toBeTruthy();
+  });
+
+  it('keeps navigation visible but disables voice in read-only mode', () => {
+    render(
+      <MemoryRouter>
+        <WorkyMobileStream
+          streamId="s1"
+          approvalFor={null}
+          onApprovalClose={() => {}}
+          model={model}
+          readOnly
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('nav.home')).toBeTruthy();
+    expect(screen.getByText('Atlas')).toBeTruthy();
+    expect(screen.getByLabelText('nav.voice')).toBeDisabled();
   });
 });

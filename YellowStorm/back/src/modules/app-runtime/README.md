@@ -25,6 +25,21 @@ Set on APImanus: `APP_RUNTIME_MCP_LOCATION=apimanus` — MCP is served again at
 Set on YellowStorm: `APP_RUNTIME_LEGACY_TOOL_INVOKE=false` to return HTTP 410 on
 tool-invoke once the YellowStorm MCP path is validated in production.
 
+## Persistence
+
+All runtime persistence lives in the **`app_runtime`** PostgreSQL schema (migrated
+from MongoDB in P8). Store ports under `persistence/` abstract the Drizzle layer:
+
+| Store | Table | PK |
+|---|---|---|
+| `RuntimeBindingStore` | `app_runtime.bindings` | `binding_id` (arb_*) |
+| `RuntimeTicketStore` | `app_runtime.tickets` | `runtime_session_id` (rts_*) |
+| `RuntimeToolCallStore` | `app_runtime.tool_calls` | `tool_call_id` |
+| `RuntimeSourceRevisionStore` | `app_runtime.source_revisions` | `id` (objectId) |
+| `RuntimeFinalizedRevisionStore` | `app_runtime.finalized_revisions` | `id` (objectId) |
+
+AI preview tickets live in `app_runtime.ai_preview_tickets` (store in `ai-proxy/persistence/`).
+
 ## Credentials
 
 Two secrets, never mixed:
@@ -38,10 +53,22 @@ The browser never sees the `mcpToken`. A ticket is single use and short lived
 (`APP_RUNTIME_TICKET_TTL_MS`); redeeming it is an atomic `findOneAndUpdate`, so a
 replayed ticket is rejected even under a race. A reconnect needs a fresh ticket.
 
+### Bind auth (APImanus → YellowStorm)
+
+`POST /internal/app-runtime/bind` requires header `X-Internal-Token`.
+
+| Side | Env var |
+|---|---|
+| APImanus | `APP_RUNTIME_BIND_TOKEN` |
+| YellowStorm | `APP_RUNTIME_BIND_TOKEN` (preferred) or legacy `INTERNAL_SERVICE_SECRET` |
+
+Values must match. Prefer setting the same `APP_RUNTIME_BIND_TOKEN` on both services.
+
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `APP_RUNTIME_BIND_TOKEN` | — | Shared internal token for bind (alias of `INTERNAL_SERVICE_SECRET`) |
 | `APP_RUNTIME_MCP_ENABLED` | `true` | When false, MCP endpoint returns 503 |
 | `APP_RUNTIME_MCP_URL` | — | Explicit public MCP URL returned on bind |
 | `APP_RUNTIME_PUBLIC_BASE_URL` | — | Used to derive MCP URL if `MCP_URL` unset |
@@ -66,7 +93,7 @@ An invalid, expired or already consumed ticket is disconnected immediately.
 | Event | Payload | Notes |
 |---|---|---|
 | `runtime.register` | `{ runtimeSessionId, workspaceId, revisionId, capabilities, browserRuntimeId? }` | Must match the ticket, otherwise the socket is dropped. Moves the binding to `browser_active`. |
-| `runtime.heartbeat` | `{ workspaceId, revisionId? }` | Persisted to Mongo at most every 15s. |
+| `runtime.heartbeat` | `{ workspaceId, revisionId? }` | Persisted to Postgres at most every 15s. |
 | `tool.progress` | `{ toolCallId, phase?, message? }` | Rearms the tool timeout for long-running work. |
 | `tool.completed` | `{ toolCallId, result }` | `result` is the Runtime MCP output object, camelCase. |
 | `tool.failed` | `{ toolCallId, error: { code, message, data? } }` | `code` is relayed verbatim to MCP clients. |
@@ -121,7 +148,7 @@ Legacy `POST /internal/app-runtime/tool-invoke` always answers HTTP 200 with a f
 
 ## Finalized versions
 
-Successful `finalize` tool calls are recorded in Mongo (`app_finalized_revisions`)
+Successful `finalize` tool calls are recorded in Postgres (`app_runtime.finalized_revisions`)
 via `RuntimeFinalizedRevisionService.record()`. These stable revision ids are
 the only ones allowed for deployment (`GET /conversation-v2/sessions/:id/finalized-versions`,
 deploy whitelist in `ConversationV2Controller`).

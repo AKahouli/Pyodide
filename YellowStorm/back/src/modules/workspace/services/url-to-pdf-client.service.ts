@@ -1,13 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosInstance } from 'axios';
 import { LoggerService } from '../../logger';
 
 @Injectable()
 export class UrlToPdfClientService {
   private readonly apiUrl: string;
   private readonly apiKey: string;
-  private readonly httpClient: AxiosInstance;
 
   constructor(
     private readonly configService: ConfigService,
@@ -16,21 +14,6 @@ export class UrlToPdfClientService {
     this.logger.setContext('UrlToPdfClientService');
     this.apiUrl = this.configService.get<string>('indexing.urlToPdfApiUrl', 'http://localhost:5000');
     this.apiKey = this.configService.get<string>('indexing.urlToPdfApiKey', '');
-
-    // The upstream Gotenberg-wrapper endpoint consumes
-    // application/x-www-form-urlencoded, not JSON.
-    this.httpClient = axios.create({
-      baseURL: this.apiUrl,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 120_000,
-    });
-
-    this.httpClient.interceptors.request.use((config) => {
-      if (this.apiKey) {
-        config.headers['x-api-key'] = this.apiKey;
-      }
-      return config;
-    });
   }
 
   async convert(url: string, filename: string): Promise<Buffer> {
@@ -42,20 +25,34 @@ export class UrlToPdfClientService {
     body.append('print_background', 'true');
     body.append('prefer_css_page_size', 'true');
 
-    try {
-      const response = await this.httpClient.post('/convert-url-pdf', body, {
-        responseType: 'arraybuffer',
-      });
-      return Buffer.from(response.data);
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const data = error.response?.data;
-        const message = `URL-to-PDF API error: ${status} - ${JSON.stringify(data) || error.message}`;
-        this.logger.error(message, { url, status });
-        throw new Error(message);
-      }
-      throw error;
+    const headers: Record<string, string> = {
+      // The upstream Gotenberg-wrapper endpoint consumes
+      // application/x-www-form-urlencoded, not JSON.
+      'Content-Type': 'application/x-www-form-urlencoded',
+    };
+    if (this.apiKey) {
+      headers['x-api-key'] = this.apiKey;
     }
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.apiUrl}/convert-url-pdf`, {
+        method: 'POST',
+        headers,
+        body,
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+
+    if (!res.ok) {
+      const data = await res.text().catch(() => '');
+      const message = `URL-to-PDF API error: ${res.status} - ${JSON.stringify(data) || 'request failed'}`;
+      this.logger.error(message, { url, status: res.status });
+      throw new Error(message);
+    }
+
+    return Buffer.from(await res.arrayBuffer());
   }
 }

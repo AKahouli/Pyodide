@@ -1,9 +1,20 @@
 """Celery application configuration for api-metachatbot-adk."""
 
+import os
+
 from celery import Celery
+from celery.signals import task_postrun, task_prerun
+from structlog.contextvars import bind_contextvars, unbind_contextvars
 from src.config.settings import get_settings
+from src.logger.setup_logging import setup_logging
 
 settings = get_settings()
+
+# Celery worker processes never run the API startup path; boot unified logging here
+# so task logs flow through the SDK (idempotent per process; env-gated inside).
+# Prefork caveat: a forked child inherits a dead writer thread — current pools are
+# threads (docker-compose) / solo; re-init via worker_process_init before switching.
+setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Create Celery app with Redis broker and backend
 celery_app = Celery(
@@ -37,3 +48,15 @@ celery_app.conf.update(
         }
     }
 )
+
+# Job context envelopes (plan P05): every task execution carries its celery task id
+# as `run_id` in the unified-logging envelope context (SDK merges these contextvars).
+@task_prerun.connect
+def _bind_task_context(task=None, **_):
+    if task is not None and task.request.id:
+        bind_contextvars(run_id=task.request.id)
+
+
+@task_postrun.connect
+def _unbind_task_context(task=None, **_):
+    unbind_contextvars("run_id")

@@ -1,12 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyMemoryProposal,
-  WorkyMemoryProposalDocument,
-  WorkyMemoryEntry,
-  WorkyMemoryEntryDocument,
-} from '../schemas/worky-memory.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyMemoryRepository } from '../persistence/worky-memory.repository';
+import type { WorkyMemoryEntryRecord, WorkyMemoryProposalRecord } from '../worky.types';
 import { LoggerService } from '../../logger';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyAuditService } from './worky-audit.service';
@@ -61,15 +56,15 @@ const VALID_CATEGORIES: ReadonlySet<string> = new Set([
  * always *proposed* first and only become durable after the owner
  * confirms. Rejected proposals write nothing.
  *
- *   - `propose(input)`  creates a `WorkyMemoryProposal` row, emits
+ *   - `propose(input)`  creates a proposal row, emits
  *     `memory.proposed`. The runtime / frontend can present the
  *     proposal to the owner.
  *   - `confirm(id)`     transitions the proposal to `confirmed` and
- *     creates a `WorkyMemoryEntry` (the durable record). Emits
+ *     creates the durable entry, in one transaction. Emits
  *     `memory.confirmed`. The runtime can pull the new entry via
  *     `findForOwner`.
  *   - `reject(id)`      transitions the proposal to `rejected`. NO
- *     `WorkyMemoryEntry` is created. Emits `memory.rejected`.
+ *     entry is created. Emits `memory.rejected`.
  *   - `findProposals(ownerUserId, status?)` and `findForOwner(…)`
  *     return proposal / entry lists.
  *
@@ -80,10 +75,7 @@ const VALID_CATEGORIES: ReadonlySet<string> = new Set([
 @Injectable()
 export class WorkyMemoryService {
   constructor(
-    @InjectModel(WorkyMemoryProposal.name)
-    private readonly proposals: Model<WorkyMemoryProposalDocument>,
-    @InjectModel(WorkyMemoryEntry.name)
-    private readonly entries: Model<WorkyMemoryEntryDocument>,
+    private readonly memories: WorkyMemoryRepository,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
     private readonly logger: LoggerService,
@@ -92,30 +84,27 @@ export class WorkyMemoryService {
   }
 
   async propose(input: ProposeInput): Promise<IWorkyMemoryProposalResponse> {
-    if (!Types.ObjectId.isValid(input.ownerUserId)) {
+    if (!isObjectId(input.ownerUserId)) {
       throw new Error(`WorkyMemoryService.propose: invalid ownerUserId`);
     }
     if (!VALID_CATEGORIES.has(input.category)) {
       throw new Error(`WorkyMemoryService.propose: invalid category ${input.category}`);
     }
-    if (input.sourceStreamId && !Types.ObjectId.isValid(input.sourceStreamId)) {
+    if (input.sourceStreamId && !isObjectId(input.sourceStreamId)) {
       throw new Error(`WorkyMemoryService.propose: invalid sourceStreamId`);
     }
-    const doc = await this.proposals.create({
-      ownerUserId: new Types.ObjectId(input.ownerUserId),
-      sourceStreamId: input.sourceStreamId
-        ? new Types.ObjectId(input.sourceStreamId)
-        : null,
+    const proposal = await this.memories.createProposal({
+      ownerUserId: input.ownerUserId,
+      sourceStreamId: input.sourceStreamId || null,
       category: input.category,
       title: input.title,
       content: input.content,
-      status: 'pending',
     });
     this.events.emit(input.ownerUserId, input.sourceStreamId ?? '', {
       type: 'memory.proposed',
       emittedAt: Date.now(),
       payload: {
-        proposalId: doc._id.toString(),
+        proposalId: proposal.id,
         category: input.category,
         title: input.title,
       },
@@ -125,150 +114,142 @@ export class WorkyMemoryService {
       actorUserId: input.ownerUserId,
       action: 'memory.proposed',
       targetType: 'worky_memory_proposal',
-      targetId: doc._id.toString(),
+      targetId: proposal.id,
       details: { category: input.category, title: input.title },
     });
     this.logger.log('Worky memory proposal created', {
-      proposalId: doc._id.toString(),
+      proposalId: proposal.id,
       ownerUserId: input.ownerUserId,
       category: input.category,
     });
-    return this.toProposalResponse(doc);
+    return this.toProposalResponse(proposal);
   }
 
   async confirm(input: { proposalId: string; actorUserId: string }): Promise<IWorkyMemoryEntryResponse> {
-    if (!Types.ObjectId.isValid(input.proposalId)) {
+    if (!isObjectId(input.proposalId)) {
       throw new Error(`WorkyMemoryService.confirm: invalid proposalId`);
     }
-    const proposal = await this.proposals.findById(input.proposalId).exec();
-    if (!proposal) {
-      throw new Error(`WorkyMemoryService.confirm: proposal ${input.proposalId} not found`);
+    const proposal = await this.findProposalOrThrow('confirm', input.proposalId);
+    if (proposal.status !== 'pending') return this.alreadyDecided(proposal);
+    const confirmed = await this.memories.confirm(proposal.id);
+    if (!confirmed) {
+      // Decided concurrently: answer as if this call had come second.
+      return this.alreadyDecided(await this.findProposalOrThrow('confirm', input.proposalId));
     }
-    if (proposal.status !== 'pending') {
-      // Idempotent: return the existing entry if already confirmed,
-      // or throw on rejected.
-      if (proposal.status === 'confirmed') {
-        const entry = await this.entries.findOne({ sourceProposalId: proposal._id }).exec();
-        if (entry) return this.toEntryResponse(entry);
-      }
-      throw new Error(
-        `WorkyMemoryService.confirm: proposal is in status ${proposal.status}, cannot confirm`,
-      );
-    }
-    proposal.status = 'confirmed';
-    proposal.decidedAt = new Date();
-    await proposal.save();
-    const entry = await this.entries.create({
-      ownerUserId: proposal.ownerUserId,
-      sourceProposalId: proposal._id,
-      sourceStreamId: proposal.sourceStreamId,
-      category: proposal.category,
-      title: proposal.title,
-      content: proposal.content,
-    });
-    this.events.emit(proposal.ownerUserId.toString(), proposal.sourceStreamId?.toString() ?? '', {
+    const { proposal: decided, entry } = confirmed;
+    this.events.emit(decided.ownerUserId, decided.sourceStreamId ?? '', {
       type: 'memory.confirmed',
       emittedAt: Date.now(),
       payload: {
-        proposalId: proposal._id.toString(),
-        entryId: entry._id.toString(),
-        category: proposal.category,
+        proposalId: decided.id,
+        entryId: entry.id,
+        category: decided.category,
       },
     });
     await this.audit.append({
-      streamId: proposal.sourceStreamId?.toString() ?? proposal.ownerUserId.toString(),
+      streamId: decided.sourceStreamId ?? decided.ownerUserId,
       actorUserId: input.actorUserId,
       action: 'memory.confirmed',
       targetType: 'worky_memory_entry',
-      targetId: entry._id.toString(),
-      details: { proposalId: proposal._id.toString(), category: proposal.category },
+      targetId: entry.id,
+      details: { proposalId: decided.id, category: decided.category },
     });
     return this.toEntryResponse(entry);
   }
 
   async reject(input: { proposalId: string; actorUserId: string; reason?: string }): Promise<IWorkyMemoryProposalResponse> {
-    if (!Types.ObjectId.isValid(input.proposalId)) {
+    if (!isObjectId(input.proposalId)) {
       throw new Error(`WorkyMemoryService.reject: invalid proposalId`);
     }
-    const proposal = await this.proposals.findById(input.proposalId).exec();
-    if (!proposal) {
-      throw new Error(`WorkyMemoryService.reject: proposal ${input.proposalId} not found`);
+    const proposal = await this.findProposalOrThrow('reject', input.proposalId);
+    if (proposal.status !== 'pending') throw this.cannotReject(proposal);
+    const rejected = await this.memories.reject(proposal.id);
+    if (!rejected) {
+      // Decided concurrently: answer as if this call had come second.
+      throw this.cannotReject(await this.findProposalOrThrow('reject', input.proposalId));
     }
-    if (proposal.status !== 'pending') {
-      throw new Error(
-        `WorkyMemoryService.reject: proposal is in status ${proposal.status}, cannot reject`,
-      );
-    }
-    proposal.status = 'rejected';
-    proposal.decidedAt = new Date();
-    await proposal.save();
-    this.events.emit(proposal.ownerUserId.toString(), proposal.sourceStreamId?.toString() ?? '', {
+    this.events.emit(rejected.ownerUserId, rejected.sourceStreamId ?? '', {
       type: 'memory.rejected',
       emittedAt: Date.now(),
       payload: {
-        proposalId: proposal._id.toString(),
+        proposalId: rejected.id,
         reason: input.reason ?? null,
       },
     });
     await this.audit.append({
-      streamId: proposal.sourceStreamId?.toString() ?? proposal.ownerUserId.toString(),
+      streamId: rejected.sourceStreamId ?? rejected.ownerUserId,
       actorUserId: input.actorUserId,
       action: 'memory.rejected',
       targetType: 'worky_memory_proposal',
-      targetId: proposal._id.toString(),
+      targetId: rejected.id,
       details: { reason: input.reason ?? null },
     });
-    return this.toProposalResponse(proposal);
+    return this.toProposalResponse(rejected);
   }
 
   async findProposals(
     ownerUserId: string,
     status?: 'pending' | 'confirmed' | 'rejected',
   ): Promise<IWorkyMemoryProposalResponse[]> {
-    if (!Types.ObjectId.isValid(ownerUserId)) return [];
-    const filter: Record<string, unknown> = { ownerUserId: new Types.ObjectId(ownerUserId) };
-    if (status) filter.status = status;
-    const docs = await this.proposals
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .exec();
-    return docs.map((d) => this.toProposalResponse(d));
+    if (!isObjectId(ownerUserId)) return [];
+    const proposals = await this.memories.listProposals(ownerUserId, status, 100);
+    return proposals.map((p) => this.toProposalResponse(p));
   }
 
   async findForOwner(ownerUserId: string): Promise<IWorkyMemoryEntryResponse[]> {
-    if (!Types.ObjectId.isValid(ownerUserId)) return [];
-    const docs = await this.entries
-      .find({ ownerUserId: new Types.ObjectId(ownerUserId) })
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .exec();
-    return docs.map((d) => this.toEntryResponse(d));
+    if (!isObjectId(ownerUserId)) return [];
+    const entries = await this.memories.listEntries(ownerUserId, 200);
+    return entries.map((e) => this.toEntryResponse(e));
   }
 
-  private toProposalResponse(doc: WorkyMemoryProposalDocument): IWorkyMemoryProposalResponse {
+  private async findProposalOrThrow(method: 'confirm' | 'reject', proposalId: string): Promise<WorkyMemoryProposalRecord> {
+    const proposal = await this.memories.findProposal(proposalId);
+    if (!proposal) {
+      throw new Error(`WorkyMemoryService.${method}: proposal ${proposalId} not found`);
+    }
+    return proposal;
+  }
+
+  /** Idempotent confirm: the existing entry if already confirmed, otherwise an error. */
+  private async alreadyDecided(proposal: WorkyMemoryProposalRecord): Promise<IWorkyMemoryEntryResponse> {
+    if (proposal.status === 'confirmed') {
+      const entry = await this.memories.findEntryByProposal(proposal.id);
+      if (entry) return this.toEntryResponse(entry);
+    }
+    throw new Error(
+      `WorkyMemoryService.confirm: proposal is in status ${proposal.status}, cannot confirm`,
+    );
+  }
+
+  private cannotReject(proposal: WorkyMemoryProposalRecord): Error {
+    return new Error(
+      `WorkyMemoryService.reject: proposal is in status ${proposal.status}, cannot reject`,
+    );
+  }
+
+  private toProposalResponse(row: WorkyMemoryProposalRecord): IWorkyMemoryProposalResponse {
     return {
-      id: doc._id.toString(),
-      ownerUserId: doc.ownerUserId.toString(),
-      sourceStreamId: doc.sourceStreamId ? doc.sourceStreamId.toString() : null,
-      category: doc.category,
-      title: doc.title,
-      content: doc.content,
-      status: doc.status,
-      createdAt: doc.createdAt.toISOString(),
+      id: row.id,
+      ownerUserId: row.ownerUserId,
+      sourceStreamId: row.sourceStreamId,
+      category: row.category,
+      title: row.title,
+      content: row.content,
+      status: row.status,
+      createdAt: row.createdAt.toISOString(),
     };
   }
 
-  private toEntryResponse(doc: WorkyMemoryEntryDocument): IWorkyMemoryEntryResponse {
+  private toEntryResponse(row: WorkyMemoryEntryRecord): IWorkyMemoryEntryResponse {
     return {
-      id: doc._id.toString(),
-      ownerUserId: doc.ownerUserId.toString(),
-      category: doc.category,
-      title: doc.title,
-      content: doc.content,
-      sourceStreamId: doc.sourceStreamId ? doc.sourceStreamId.toString() : null,
-      sourceProposalId: doc.sourceProposalId ? doc.sourceProposalId.toString() : null,
-      createdAt: doc.createdAt.toISOString(),
+      id: row.id,
+      ownerUserId: row.ownerUserId,
+      category: row.category,
+      title: row.title,
+      content: row.content,
+      sourceStreamId: row.sourceStreamId,
+      sourceProposalId: row.sourceProposalId,
+      createdAt: row.createdAt.toISOString(),
     };
   }
 }

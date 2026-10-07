@@ -129,7 +129,7 @@ describe('ResponseReliabilityService lifecycle', () => {
     });
 
     expect(messageService.rerunReliabilityEvaluation).toHaveBeenCalledWith('conversation-1', 'message-1');
-    expect((service as unknown as { queue: Array<{ manual: boolean }> }).queue).toEqual([expect.objectContaining({ manual: true })]);
+    expect((service as unknown as { queue: { manual: boolean }[] }).queue).toEqual([expect.objectContaining({ manual: true })]);
   });
 
   it('does not enqueue automatic work after a manual claim has won', async () => {

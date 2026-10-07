@@ -32,7 +32,7 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
 
     let user: { _id: { toString(): string }; email?: string; profile?: { firstName?: string; lastName?: string } } | null = null;
     try {
-      user = (await this.userService.findById(userId)) as any;
+      user = (await this.userService.findById(userId));
     } catch (error) {
       this.logger.warn('Failed to load user for dynamic header resolution', {
         userId,
@@ -104,22 +104,6 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
     const strategy = (config.strategy as string) || 'http_header_bearer';
 
     if (connector.authSourceType === 'server_config') {
-      if (config.secretKey === 'playbook_mcp_ingress') {
-        const token = this.configService?.get<string>('playbook-flow.mcpIngressToken', '') ?? '';
-        if (!token) {
-          this.logger.warn('Playbook MCP ingress token is not configured');
-          return empty;
-        }
-        return { headers: { Authorization: `Bearer ${token}` }, env: {} };
-      }
-      if (config.secretKey === 'agent_mcp_ingress') {
-        const token = this.configService?.get<string>('agentMcp.mcpIngressToken', '') ?? '';
-        if (!token) {
-          this.logger.warn('Agent MCP ingress token is not configured');
-          return empty;
-        }
-        return { headers: { Authorization: `Bearer ${token}` }, env: {} };
-      }
       return empty;
     }
 

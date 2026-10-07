@@ -29,7 +29,7 @@ export async function assertUrlIsSafe(url: string): Promise<void> {
     );
   }
 
-  let addresses: Array<{ address: string; family: number }>;
+  let addresses: { address: string; family: number }[];
   try {
     addresses = await lookup(hostname, { all: true });
   } catch {
@@ -80,7 +80,7 @@ function isIpv4InCidr(ip: string, base: string, prefixLen: number): boolean {
  * the cloud metadata endpoint (169.254.169.254 falls under 169.254.0.0/16).
  */
 export function isPrivateIpv4Address(ip: string): boolean {
-  const disallowedRanges: Array<[string, number]> = [
+  const disallowedRanges: [string, number][] = [
     ['10.0.0.0', 8],
     ['172.16.0.0', 12],
     ['192.168.0.0', 16],
@@ -114,7 +114,7 @@ export function isPrivateIpv6Address(ip: string): boolean {
 
   if (address === '::1' || address === '::') return true;
 
-  const mappedIpv4 = address.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  const mappedIpv4 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(address);
   if (mappedIpv4) return isPrivateIpv4Address(mappedIpv4[1]);
 
   const firstHextet = firstIpv6Hextet(address);

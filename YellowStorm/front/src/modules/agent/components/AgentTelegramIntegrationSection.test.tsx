@@ -103,6 +103,23 @@ describe('AgentTelegramIntegrationSection', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows the bot share block once a bot is connected', async () => {
+    getAgentTelegramIntegrationMock.mockResolvedValue({
+      enabled: true,
+      hasToken: true,
+      botUsername: 'my_agent_bot',
+    });
+
+    render(<AgentTelegramIntegrationSection agentId="a1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('telegram-share-block')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('@my_agent_bot')).toBeInTheDocument();
+    expect(screen.getByText('createEdit.fields.telegramShareTitle')).toBeInTheDocument();
+  });
+
   it('refuses to save when enabled is on, no token exists yet, and the input is empty', async () => {
     getAgentTelegramIntegrationMock.mockResolvedValue(null);
 

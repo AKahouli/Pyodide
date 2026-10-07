@@ -1,6 +1,6 @@
 import { ConnectedAppTokenService } from './connected-app-token.service';
 import { describeIntegration, makeTestDb } from '../../postgres/testing/pg-integration';
-import { USER_APP_CONNECTION_STORE, type UserAppConnectionStore } from '../persistence/connected-app.store';
+import { type UserAppConnectionStore } from '../persistence/connected-app.store';
 import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 import * as schema from '@modules/postgres/schema';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -14,7 +14,7 @@ jest.setTimeout(60000);
  */
 describeIntegration('ConnectedAppTokenService single-flight refresh (integration)', () => {
   const { db, close } = makeTestDb();
-  const store: UserAppConnectionStore = new PgUserAppConnectionStore(db as never);
+  const store = new PgUserAppConnectionStore(db as never);
   const service = new ConnectedAppTokenService(
     store,
     db as unknown as NodePgDatabase<typeof schema>,

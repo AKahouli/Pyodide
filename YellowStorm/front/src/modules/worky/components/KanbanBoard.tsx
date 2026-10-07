@@ -99,7 +99,12 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
                     <KanbanCard
                       task={task}
                       assigneeName={
-                        task.assigneeKey ? nameByKey.get(task.assigneeKey) ?? task.assigneeKey : null
+                        // Prefer the per-step assignee (Electric plan_steps.assignee_name):
+                        // persona steps carry their human's name here while assigneeKey is
+                        // null, so resolving only via the roster hid them behind the generic
+                        // assigneeType label. Fall back to roster-resolved key when absent.
+                        task.assigneeName ??
+                        (task.assigneeKey ? nameByKey.get(task.assigneeKey) ?? task.assigneeKey : null)
                       }
                     />
                   </button>

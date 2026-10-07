@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { MessageController } from './message.controller';
+import { ConflictException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 describe('MessageController.sendMessage sticky routing', () => {
   const userId = new Types.ObjectId();
@@ -32,13 +34,14 @@ describe('MessageController.sendMessage sticky routing', () => {
     ensureSystemWorkspace: jest.Mock;
     assertPlatformCopilotAgent: jest.Mock;
     resolvePlatformCopilotAgent: jest.Mock;
+    findPlatformCopilotAgentId: jest.Mock;
   };
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
   let requestContext: { getRequestId: jest.Mock };
   let choiceInteractionService: { canonicalize: jest.Mock; canonicalizeMany: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
-  let semanticModelService: { resolveSearchSchema: jest.Mock };
+  let semanticModelService: { resolveChatModel: jest.Mock };
   let conversationArtifactService: { resolveDownloadUrl: jest.Mock; resolveCitationUrl: jest.Mock };
   let playbookHandoffService: { bind: jest.Mock; attachUserMessage: jest.Mock };
   let logger: {
@@ -99,13 +102,14 @@ describe('MessageController.sendMessage sticky routing', () => {
       ensureSystemWorkspace: jest.fn().mockResolvedValue(undefined),
       assertPlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
       resolvePlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
+      findPlatformCopilotAgentId: jest.fn().mockResolvedValue(null),
     };
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
-    semanticModelService = { resolveSearchSchema: jest.fn().mockResolvedValue('sem_test') };
+    semanticModelService = { resolveChatModel: jest.fn().mockResolvedValue({ id: 'model-1', name: 'Contracts' }) };
     conversationArtifactService = { resolveDownloadUrl: jest.fn(), resolveCitationUrl: jest.fn() };
     playbookHandoffService = {
       bind: jest.fn().mockResolvedValue(undefined),
@@ -545,7 +549,7 @@ describe('MessageController.sendMessage sticky routing', () => {
 
     await controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any);
 
-    expect(semanticModelService.resolveSearchSchema).toHaveBeenCalledWith(userId.toString(), semanticModelId);
+    expect(semanticModelService.resolveChatModel).toHaveBeenCalledWith(userId.toString(), semanticModelId);
     expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
       replayContext: expect.objectContaining({ semanticModelId }),
     }));
@@ -560,6 +564,54 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       expect.objectContaining({ requestId: 'req-1' }),
     );
+  });
+
+  it('has Yellowmind answer a turn on a semantic model, keeping the sticky agents and dropping the picked effort', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [stickyAgentId] });
+    conversationService.findPlatformCopilotAgentId.mockResolvedValue('yellowmind-agent');
+    modelsService.validateModelActive.mockResolvedValue({ valid: true });
+    (modelsService as any).findById = jest.fn().mockResolvedValue({ isActive: true, supportsReasoning: true, reasoning: { efforts: [{ id: 'high' }] } });
+
+    await controller.sendMessage(user, conversationId,
+      { content: 'question', semanticModelId, agentIds: ['other-agent'], modelId: 'model-x', reasoningEffort: 'high' } as any);
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ semanticModelId, agentIds: ['yellowmind-agent'] }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
+    );
+    const request = streamService.startStream.mock.calls[0][3];
+    expect(request.reasoningEffort).toBeUndefined();
+    expect(conversationService.replaceTaggedAgentIds).not.toHaveBeenCalled();
+  });
+
+  it('lets the picked agent answer a turn on a semantic model when Yellowmind is turned off', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    conversationService.findPlatformCopilotAgentId.mockResolvedValue(null);
+
+    await controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any);
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ semanticModelId, agentIds: undefined }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
+    );
+  });
+
+  it('refuses a semantic model that is not published before creating the message or stream', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    semanticModelService.resolveChatModel.mockRejectedValueOnce(
+      new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Publish this semantic model to use it in chat'),
+    );
+
+    await expect(controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
   });
 
   it('forwards the frontend paint report to the message service with route identifiers', async () => {

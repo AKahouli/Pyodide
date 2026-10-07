@@ -1,0 +1,7 @@
+{
+  "name": "nonfinite-number",
+  "description": "NaN/Infinity attribute values. Not valid JSON; must not produce invalid partial JSON output.",
+  "input": null,
+  "input_note": "Attribute values NaN and -Infinity (Python float('nan'), float('-inf')).",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192, "emits": "safe_event_or_invalid_counter" }
+}

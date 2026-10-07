@@ -64,7 +64,7 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
   },
   router: {
     requiresAgent: false,
-    supportsModel: false,
+    supportsModel: true,
     supportsDynamicReasoning: false,
     supportsExpectedResult: false,
     supportsReference: false,

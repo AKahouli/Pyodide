@@ -1,26 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
-import {
-  WorkyMessageComponent,
-  WorkyMessageComponentDocument,
-} from '../schemas/worky-message-component.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyMessageRepository } from '../persistence/worky-message.repository';
+import type { WorkyStreamRecord } from '../worky.types';
 import { BadRequestException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyEventService } from './worky-event.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
+import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
 
 @Injectable()
 export class WorkyPlanningService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyMessage.name)
-    private readonly messages: Model<WorkyMessageDocument>,
-    @InjectModel(WorkyMessageComponent.name)
-    private readonly messageComponents: Model<WorkyMessageComponentDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly messages: WorkyMessageRepository,
     private readonly events: WorkyEventService,
   ) {}
 
@@ -29,7 +22,7 @@ export class WorkyPlanningService {
     streamId: string,
     dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnId: string | null }> {
-    const stream = await this.loadStream(streamId, userId);
+    const stream = await this.loadStream(streamId, userId, true);
     if (stream.status === 'archived') {
       throw new BadRequestException(
         ErrorCode.WORKY_STREAM_PHASE_INVALID,
@@ -37,25 +30,23 @@ export class WorkyPlanningService {
       );
     }
     const message = await this.messages.create({
-      streamId: stream._id,
+      streamId: stream.id,
       role: 'owner',
       content: dto.content,
       turnId: dto.turnId ?? null,
-      planDeltaRef: null,
-      emittedAt: new Date(),
     });
     this.events.emit(userId, streamId, {
       type: 'message.appended',
       emittedAt: Date.now(),
       payload: {
-        id: (message._id as Types.ObjectId).toString(),
+        id: message.id,
         role: 'owner',
         content: dto.content,
         turnId: dto.turnId ?? null,
       },
     });
     return {
-      id: (message._id as Types.ObjectId).toString(),
+      id: message.id,
       content: dto.content,
       createdAt: message.createdAt.toISOString(),
       turnId: dto.turnId ?? null,
@@ -76,26 +67,24 @@ export class WorkyPlanningService {
     role: 'owner' | 'manager',
     content: string,
   ): Promise<{ id: string }> {
+    const stream = await this.loadStream(streamId, userId, true);
     const message = await this.messages.create({
-      streamId: new Types.ObjectId(streamId),
+      streamId: stream.id,
       role,
       content,
-      planDeltaRef: null,
       origin: 'voice',
-      emittedAt: new Date(),
     });
-    const id = (message._id as Types.ObjectId).toString();
     this.events.emit(userId, streamId, {
       type: 'message.appended',
       emittedAt: Date.now(),
-      payload: { id, role, content },
+      payload: { id: message.id, role, content },
     });
-    return { id };
+    return { id: message.id };
   }
 
   async getVoicePrompt(userId: string, streamId: string): Promise<{ prompt: string | null }> {
     const stream = await this.loadStream(streamId, userId);
-    return { prompt: stream.voicePrompt ?? null };
+    return { prompt: stream.voicePrompt };
   }
 
   async setVoicePrompt(
@@ -103,11 +92,19 @@ export class WorkyPlanningService {
     streamId: string,
     prompt: string | null,
   ): Promise<{ prompt: string | null }> {
-    const stream = await this.loadStream(streamId, userId);
+    const stream = await this.loadStream(streamId, userId, true);
     const trimmed = typeof prompt === 'string' ? prompt.trim() : '';
-    stream.voicePrompt = trimmed || null;
-    await stream.save();
-    return { prompt: stream.voicePrompt };
+    const voicePrompt = trimmed || null;
+    if (voicePrompt !== stream.voicePrompt) {
+      const updated = await this.streams.update(stream.id, { voicePrompt });
+      if (!updated) {
+        throw new NotFoundException(
+          ErrorCode.WORKY_STREAM_NOT_FOUND,
+          'Worky stream not found.',
+        );
+      }
+    }
+    return { prompt: voicePrompt };
   }
 
   async listMessages(
@@ -115,73 +112,66 @@ export class WorkyPlanningService {
     streamId: string,
     limit = 200,
   ): Promise<
-    Array<{
+    {
       id: string;
       role: string;
       content: string;
       turnId: string | null;
       planDeltaRef: string | null;
       createdAt: string;
-      components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
-    }>
+      components: { id: string; type: string; data: Record<string, unknown> }[];
+    }[]
   > {
-    await this.loadStream(streamId, userId);
-    const streamObjectId = new Types.ObjectId(streamId);
-    const docs = await this.messages
-      .find({ streamId: streamObjectId })
-      .sort({ createdAt: 1 })
-      .limit(limit)
-      .lean()
-      .exec();
-    const externalIds = docs
+    const stream = await this.loadStream(streamId, userId);
+    // The newest `limit` messages, oldest first.
+    const messages = await this.messages.listRecent(stream.id, limit);
+    const externalIds = messages
       .map((message) => message.externalId)
-      .filter((value): value is string => typeof value === 'string');
-    const componentDocs = externalIds.length
-      ? await this.messageComponents
-          .find({ streamId: streamObjectId, messageExternalId: { $in: externalIds } })
-          .sort({ ordinal: 1 })
-          .lean()
-          .exec()
-      : [];
+      .filter((value): value is string => value !== null);
+    const components = await this.messages.listComponents(stream.id, externalIds);
     const componentsByMessage = new Map<
       string,
-      Array<{ id: string; type: string; data: Record<string, unknown> }>
+      { id: string; type: string; data: Record<string, unknown> }[]
     >();
-    for (const component of componentDocs) {
-      const key = component.messageExternalId as string;
-      const components = componentsByMessage.get(key) ?? [];
-      components.push({
-        id: (component.externalId as string) ?? '',
-        type: component.type as string,
-        data: (component.data as Record<string, unknown>) ?? {},
+    for (const component of components) {
+      const list = componentsByMessage.get(component.messageExternalId) ?? [];
+      list.push({
+        id: component.externalId ?? '',
+        type: component.type,
+        data: component.data,
       });
-      componentsByMessage.set(key, components);
+      componentsByMessage.set(component.messageExternalId, list);
     }
-    return docs.map((message) => ({
-      id: (message._id as Types.ObjectId).toString(),
-      role: message.role as string,
-      content: message.content as string,
-      turnId: typeof message.turnId === 'string' ? message.turnId : null,
-      planDeltaRef: message.planDeltaRef
-        ? (message.planDeltaRef as Types.ObjectId).toString()
-        : null,
-      createdAt: (message.createdAt as Date).toISOString(),
+    return messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      turnId: message.turnId,
+      planDeltaRef: message.planDeltaRef,
+      createdAt: message.createdAt.toISOString(),
       components:
-        typeof message.externalId === 'string'
+        message.externalId !== null
           ? componentsByMessage.get(message.externalId) ?? []
           : [],
     }));
   }
 
-  private async loadStream(streamId: string, userId: string): Promise<WorkyStreamDocument> {
-    if (!Types.ObjectId.isValid(streamId)) {
+  private async loadStream(
+    streamId: string,
+    userId: string,
+    requireWrite = false,
+  ): Promise<WorkyStreamRecord> {
+    if (!isObjectId(streamId)) {
       throw new NotFoundException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
         'Worky stream not found.',
       );
     }
-    const stream = await this.streams.findById(streamId).exec();
-    if (!stream || stream.ownerUserId.toString() !== userId) {
+    const stream = await this.streams.findById(streamId);
+    const allowed = stream && (requireWrite
+      ? canWriteWorkyStream(stream, userId)
+      : Boolean(getWorkyStreamAccess(stream, userId)));
+    if (!stream || !allowed) {
       throw new NotFoundException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
         'Worky stream not found.',

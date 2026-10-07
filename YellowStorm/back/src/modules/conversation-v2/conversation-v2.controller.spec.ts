@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import { ConversationV2Controller } from './conversation-v2.controller';
 import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc-client.service';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
@@ -16,6 +15,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
@@ -130,6 +130,10 @@ describe('ConversationV2Controller', () => {
     detectAndPersist: jest.fn().mockResolvedValue(false),
     markHasAiFeatures: jest.fn().mockResolvedValue(undefined),
   };
+  const mockTemplates = {
+    requirePublished: jest.fn(),
+    requireUsableForUser: jest.fn(),
+  };
 
   const emptyRevisionCatalog = {
     lastDeployedRevisionId: null,
@@ -159,6 +163,7 @@ describe('ConversationV2Controller', () => {
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
         { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
         { provide: ConversationV2AppAiFeaturesService, useValue: mockAppAiFeatures },
+        { provide: ConversationV2TemplateService, useValue: mockTemplates },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -195,9 +200,9 @@ describe('ConversationV2Controller', () => {
   // --- POST /sessions ---
 
   it('POST /sessions creates draft + system workspace + gRPC session, then attaches', async () => {
-    const draftId = new Types.ObjectId();
+    const draftId = 'a'.repeat(24);
     mockWorkspaceService.findIdsByOwner.mockResolvedValueOnce(['w1']);
-    mockSessions.createDraft.mockResolvedValueOnce({ _id: draftId });
+    mockSessions.createDraft.mockResolvedValueOnce({ id: draftId });
     mockWorkspaceService.createSystemWorkspace.mockResolvedValueOnce({ id: 'sysws' });
     mockClient.createSession.mockResolvedValueOnce('ai-1');
     mockSessions.attachAiSession.mockResolvedValueOnce(undefined);
@@ -205,20 +210,20 @@ describe('ConversationV2Controller', () => {
     const result = await controller.createSession({ id: 'u1' } as never);
 
     expect(result).toEqual({
-      sessionId: draftId.toString(),
+      sessionId: draftId,
       workspaceIds: ['w1'],
       systemWorkspaceId: 'sysws',
     });
     // Empty selection expands to the owner's workspaces, which are forwarded to gRPC.
-    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1']);
+    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1'], 'web_app');
     expect(mockSessions.attachAiSession).toHaveBeenCalledWith(draftId, 'ai-1', 'sysws');
   });
 
   it('POST /sessions rollback drops the draft before the system workspace', async () => {
-    const draftId = new Types.ObjectId();
+    const draftId = 'a'.repeat(24);
     const calls: string[] = [];
     mockWorkspaceService.findIdsByOwner.mockResolvedValueOnce(['w1']);
-    mockSessions.createDraft.mockResolvedValueOnce({ _id: draftId });
+    mockSessions.createDraft.mockResolvedValueOnce({ id: draftId });
     mockWorkspaceService.createSystemWorkspace.mockResolvedValueOnce({ id: 'sysws' });
     mockClient.createSession.mockRejectedValueOnce(new Error('grpc down'));
     mockSessions.deleteDraft.mockImplementationOnce(async () => {
@@ -257,9 +262,9 @@ describe('ConversationV2Controller', () => {
   // --- GET /sessions/:id ---
 
   it('GET /sessions/:id returns the pointer payload', async () => {
-    const id = new Types.ObjectId();
+    const id = 'a'.repeat(24);
     mockSessions.getById.mockResolvedValueOnce({
-      _id: id,
+      id,
       ownerId: 'u1',
       title: 't',
       status: 'active',
@@ -268,16 +273,18 @@ describe('ConversationV2Controller', () => {
       lastEventAt: new Date('2024-01-01T00:00:00.000Z'),
       eventCount: 3,
       systemWorkspaceId: 'sysws',
+      starterRevisionId: 'template_tpl1',
     });
-    const result = await controller.getSession(id.toString(), {
+    const result = await controller.getSession(id, {
       conversationV2Access: {
         viewerRole: 'owner',
         permissions: ['session.read', 'events.read', 'stream.write'],
       },
     } as never);
-    expect(result.sessionId).toBe(id.toString());
+    expect(result.sessionId).toBe(id);
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
+    expect(result.starterRevisionId).toBe('template_tpl1');
     expect(result.viewerRole).toBe('owner');
     expect(result.permissions).toContain('session.read');
   });
@@ -612,7 +619,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
     );
     expect(mockFinalizedRevisions.resolveLatestFinalized).toHaveBeenCalledWith('conversation-1');
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
       1,
       'user-1',
@@ -656,7 +663,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
       'rev_15',
     );
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
   });
 
   it('POST /sessions/:id/deploy rejects non-finalized explicit revisionId', async () => {
@@ -723,10 +730,10 @@ describe('ConversationV2Controller', () => {
   // --- GET /share/v2/:token ---
 
   it('GET /share/v2/:token returns the session payload + events for a valid token', async () => {
-    const id = new Types.ObjectId();
+    const id = 'a'.repeat(24);
     mockShare.hashToken.mockReturnValueOnce('hsh');
     mockSessions.getByShareToken.mockResolvedValueOnce({
-      _id: id,
+      id,
       title: 't',
       status: 'active',
       isShared: true,
@@ -735,7 +742,7 @@ describe('ConversationV2Controller', () => {
     });
     mockEventStore.listSince.mockResolvedValueOnce([]);
     const result = await controller.getShared('tok');
-    expect(result.session.sessionId).toBe(id.toString());
+    expect(result.session.sessionId).toBe(id);
     expect(result.events).toEqual([]);
     expect(mockShare.hashToken).toHaveBeenCalledWith('tok');
     expect(mockSessions.getByShareToken).toHaveBeenCalledWith('hsh');

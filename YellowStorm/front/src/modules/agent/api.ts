@@ -197,6 +197,7 @@ export async function getActiveSkills(): Promise<SkillOption[]> {
 }
 
 export interface ConnectorOption {
+  workerPolicy?: { enabled: boolean; defaultExecutionKind: 'leaf' | 'unknown'; agentLaunchEnabled: boolean };
   id: string;
   name: string;
   description: string;
@@ -217,6 +218,13 @@ export interface ConnectorOption {
 export async function getActiveConnectors(): Promise<ConnectorOption[]> {
   const response = await apiClient.get<ApiResponse<ConnectorOption[]>>(
     API_ENDPOINTS.connectors.list
+  );
+  return response.data.data;
+}
+
+export async function getConnectorById(id: string): Promise<ConnectorOption> {
+  const response = await apiClient.get<ApiResponse<ConnectorOption>>(
+    API_ENDPOINTS.connectors.byId(id)
   );
   return response.data.data;
 }

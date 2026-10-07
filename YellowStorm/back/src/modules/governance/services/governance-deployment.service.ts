@@ -1,28 +1,25 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { GovernanceRootPublicationService } from './governance-root-publication.service';
+import { assertNoClientRootWork } from './governance-root-snapshot';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDeploymentDto, CreateGovernanceRevisionDto, PublishGovernanceDeploymentDto, UpdateGovernanceDeploymentDto, UpdateGovernanceRevisionDto } from '../dto';
-import {
-  BINDING_STORE,
-  DEPLOYMENT_STORE,
-  DRY_RUN_STORE,
-  PUBLICATION_ATTEMPT_STORE,
-  REVISION_STORE,
-  type BindingStore,
-  type DeploymentStore,
-  type DryRunStore,
-  type GovernanceDeploymentRecord,
-  type GovernanceRevisionRecord,
-  type PublicationAttemptStore,
-  type RevisionStore,
-  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
-} from '../persistence';
+import {          
+  type GovernanceDeploymentRecord,           
+  type GovernanceRevisionRecord,           
+  type RevisionStore,            PASSTHROUGH_TRANSACTION} from '../persistence';
 import type { GovernancePublicationAttemptStatus } from '../domain/governance-types';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgPublicationAttemptStore } from '../persistence/postgres/pg-publication-attempt.store';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
 export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; allowedAgentIds: string[]; workspaceIds: string[]; workspaceBindingSnapshot: Record<string, unknown>; configurationFingerprint?: string; scopeSnapshot: Record<string, unknown>; audienceSnapshot: Record<string, unknown>; previousAudienceSnapshot: Record<string, unknown>; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
@@ -32,17 +29,18 @@ export interface GovernanceReadinessCheck { key: string; label: string; status: 
 @Injectable()
 export class GovernanceDeploymentService {
   constructor(
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(PUBLICATION_ATTEMPT_STORE) private readonly attemptStore: PublicationAttemptStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly attemptStore: PgPublicationAttemptStore,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparationService: GovernanceDraftPreparationService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
+    private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
+    @Optional() private readonly rootPublication?: GovernanceRootPublicationService,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
@@ -79,6 +77,7 @@ export class GovernanceDeploymentService {
   }
 
   async createRevision(actorId: string, actorEmail: string, deploymentId: string, dto: CreateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
+    assertNoClientRootWork(dto.agentSnapshot);
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
     const allowedAgentIds = this.normalizeAllowedAgentIds(dto.agentId, dto.allowedAgentIds);
@@ -114,6 +113,7 @@ export class GovernanceDeploymentService {
   }
 
   async updateRevision(actorId: string, deploymentId: string, revisionId: string, dto: UpdateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
+    assertNoClientRootWork(dto.agentSnapshot);
     await this.findOwnedDeployment(actorId, deploymentId);
     const revision = await this.revisionStore.findByDeploymentAndId(deploymentId, revisionId);
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
@@ -167,10 +167,18 @@ export class GovernanceDeploymentService {
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
       if (revision.status === 'published' || revision.status === 'rejected') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
       if (!revision.agentId || !revision.allowedAgentIds?.length) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      await this.assertAgentsBelongToScope(actorId, deployment.programId, deployment.scopeId, revision.allowedAgentIds);
+      await this.assertWorkspacesBelongToScope(deployment.programId, deployment.scopeId, revision.workspaceIds);
+      if (!this.rootPublication) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      const rootWork = await this.rootPublication.capture(actorId, revision);
+      const { rootWork: _untrustedRootWork, ...agentSnapshot } = revision.agentSnapshot ?? {};
       // Revision status and the deployment's published pointer commit together; a lost
       // publish race throws and rolls the revision status back.
       const publishDeployment = await this.tx.run(async () => {
-        await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date() });
+        await this.rootPublication!.assertUnchanged(rootWork, revision, actorId);
+        const committed = await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date(),
+          agentSnapshot: { ...agentSnapshot, ...(rootWork ? { rootWork } : {}) } }, revision);
+        if (!committed) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
         const published = await this.deploymentStore.publishGuarded(deployment.id, revisionId, revision.id);
         if (published) return published;
         const observedDeployment = await this.deploymentStore.findById(deployment.id);

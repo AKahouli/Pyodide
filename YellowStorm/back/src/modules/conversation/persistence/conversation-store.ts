@@ -13,7 +13,7 @@ export interface ConversationMemberRecord {
   joinedAt: Date;
   status: 'owner' | 'member';
   job?: string;
-  mentions: Array<{ messageId: string; seenAt?: Date }>;
+  mentions: { messageId: string; seenAt?: Date }[];
 }
 
 export interface ConversationInviteRecord {
@@ -52,6 +52,8 @@ export interface ConversationRecord {
   runtimeMode: 'standard' | 'governed';
   runtimePurpose: 'chat' | 'platform_copilot';
   pinnedAgentId?: string | null;
+  rootAgentId?: string | null;
+  rootWorkEpoch?: number;
   platformCopilotCreationRequestId?: string;
   governedCreationRequestId?: string;
   title: string;
@@ -87,6 +89,7 @@ export interface CreateConversationRecord {
   runtimeMode?: ConversationRecord['runtimeMode'];
   runtimePurpose?: ConversationRecord['runtimePurpose'];
   pinnedAgentId?: string;
+  rootAgentId?: string;
   platformCopilotCreationRequestId?: string;
   governedCreationRequestId?: string;
   governanceContext?: ConversationGovernanceContext;

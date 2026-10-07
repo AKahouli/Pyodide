@@ -2329,13 +2329,6 @@ export const useDocuments = () => {
 };
 
 // Hook to get all documents as a flat array for tree view
-export const useAllDocuments = () => {
-  const documentsMap = useWorkspaceStore((state) => state.documents) ?? new Map();
-  const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
-  // Flatten all documents from the Map into a single array
-  const allDocuments = Array.from(documentsMap.values()).flat();
-  return { documents: allDocuments, currentPage };
-};
 
 // Hook to get all folders for sidebar tree view
 export const useAllFolders = () => {
@@ -2348,7 +2341,6 @@ export const useWorkspacePagination = () => {
   return { currentPage, totalPages };
 };
 
-export const useActiveTab = () => useWorkspaceStore((state) => state.activeTab);
 
 export const useSelectedWorkspaceRole = () =>
   useWorkspaceStore((state) => state.selectedWorkspaceRole);

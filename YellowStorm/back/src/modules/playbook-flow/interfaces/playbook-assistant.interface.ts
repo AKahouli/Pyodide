@@ -1,4 +1,4 @@
-import type { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 import type { PlaybookIntentSuggestion } from '../services/playbook-flow-intent.service';
 
 export interface PlaybookAssistantDiagnostic {
@@ -58,7 +58,7 @@ export interface PlaybookTaskOptimizationResult {
   taskId: string;
   definitionRevision: number;
   dimensions: string[];
-  findings: Array<{ dimension: string; severity: 'info' | 'warning'; message: string }>;
+  findings: { dimension: string; severity: 'info' | 'warning'; message: string }[];
   evidence: { validationDiagnostics: PlaybookAssistantDiagnostic[]; remediationItems: unknown[] };
   mutationApplied: false;
 }

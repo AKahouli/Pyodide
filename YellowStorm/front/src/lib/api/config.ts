@@ -2,41 +2,105 @@
  * API Configuration
  */
 
+declare global {
+  interface Window {
+    __APP_CONFIG__?: {
+      API_URL?: string;
+      SOCKET_BASE_URL?: string;
+      [key: string]: unknown;
+    };
+  }
+}
+
+const isDev = process.env.NODE_ENV === 'development';
+
+const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
+
+/** HTTP(S) URL or root-relative path (e.g. /api/v1 behind a reverse proxy). */
+export function isValidApiUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/');
+}
+
+/**
+ * Resolve the public backend URL the browser must call.
+ *
+ * Precedence:
+ * 1. `window.__APP_CONFIG__.API_URL` from `/config.js` (container `VITE_API_URL` via env.sh)
+ * 2. Build-time `import.meta.env.VITE_API_URL` (`.env` or Docker `--build-arg`)
+ * 3. Dev default `http://localhost:3000/api/v1`
+ * 4. Empty string in production when unset
+ */
+export function resolveApiBaseUrl(
+  runtimeUrl: string = (typeof window !== 'undefined' && window.__APP_CONFIG__?.API_URL) || '',
+  buildTimeUrl: string = import.meta.env.VITE_API_URL ?? '',
+  dev: boolean = isDev,
+): string {
+  const runtimeValue = runtimeUrl.trim();
+  if (isValidApiUrl(runtimeValue)) {
+    return runtimeValue;
+  }
+
+  const buildTimeValue = buildTimeUrl.trim();
+  if (isValidApiUrl(buildTimeValue)) {
+    return buildTimeValue;
+  }
+
+  return dev ? 'http://localhost:3000/api/v1' : '';
+}
+
+const baseURL = resolveApiBaseUrl();
+
+export function isApiConfigured(): boolean {
+  return isValidApiUrl(API_CONFIG.baseURL);
+}
+
+if (import.meta.env.PROD && !isValidApiUrl(baseURL)) {
+  console.error(
+    '[api-config] No backend URL configured. Set VITE_API_URL on the container '
+      + '(e.g. -e VITE_API_URL=https://api.example.com/api/v1) or pass --build-arg VITE_API_URL=... when building the image.',
+  );
+} else if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
+  console.error(
+    `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
+      + 'cannot reach the backend. Set VITE_API_URL on the container or rebuild with a public API URL.',
+  );
+}
+
 export const API_CONFIG = {
-  baseURL: process.env.NODE_ENV === 'development'
-    ? import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
-    : 'MY_APP_VITE_API_URL',
+  baseURL,
   timeout: 30000,
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
-/**
- * Prod: env.sh replaces this literal with a real origin (e.g. https://poc.back.yellowmind.ai).
- * Do not compare against another copy of the same placeholder — sed replaces both sides.
- * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
- * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
- */
-const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
-
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
-  if (process.env.NODE_ENV === 'development') {
-    const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
-    if (devOverride && isHttpUrl(devOverride)) {
-      return new URL(devOverride).origin;
+  const windowSocketUrl = typeof window !== 'undefined'
+    ? window.__APP_CONFIG__?.SOCKET_BASE_URL?.trim()
+    : undefined;
+  if (windowSocketUrl && isValidApiUrl(windowSocketUrl)) {
+    try {
+      return new URL(windowSocketUrl, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
     }
-  } else if (isHttpUrl(SOCKET_BASE_INJECTED)) {
-    return new URL(SOCKET_BASE_INJECTED).origin;
+  }
+
+  const configured = (import.meta.env.VITE_SOCKET_BASE_URL ?? '').trim();
+  if (configured && isValidApiUrl(configured)) {
+    try {
+      return new URL(configured, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
+    }
   }
 
   const base = API_CONFIG.baseURL;
-  if (isHttpUrl(base)) {
+  if (isValidApiUrl(base)) {
     try {
-      return new URL(base).origin;
+      return new URL(base, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
     } catch {
       /* fall through */
     }
@@ -126,11 +190,25 @@ export const API_ENDPOINTS = {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',
   },
+  adminPlatformSettings: {
+    base: '/admin/platform-settings',
+  },
+  adminSystemSettings: {
+    export: '/admin/system-settings/export',
+    import: '/admin/system-settings/import',
+  },
   adminGuardrails: {
     base: '/admin/guardrails',
   },
   adminEvaluationSettings: {
     base: '/admin/evaluation-settings',
+  },
+  adminSemanticModelSettings: {
+    base: '/admin/semantic-model-settings',
+    runLimits: '/admin/semantic-model-settings/run-limits',
+  },
+  semanticModelSettings: {
+    extraction: '/semantic-model-settings/extraction',
   },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
@@ -219,6 +297,13 @@ export const API_ENDPOINTS = {
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
+    rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
+    rootBackgroundInput: (id: string, executionId: string) => `/conversations/${id}/root-inputs/background/${executionId}`,
+    rootWork: (id: string) => `/conversations/${id}/root-work`,
+    rootWorkStop: (id: string) => `/conversations/${id}/root-work/stop`,
+    rootWorkEvents: (id: string) => `/conversations/${id}/root-work/events`,
+    rootResult: (id: string, executionId: string) => `/conversations/${id}/root-results/${executionId}`,
+    rootEvidence: (id: string, executionId: string, evidenceId: string) => `/conversations/${id}/root-results/${executionId}/evidence/${evidenceId}`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
     toolResult: (convId: string, msgId: string, componentId: string) => `/conversations/${convId}/messages/${msgId}/tools/${componentId}/result`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
@@ -379,26 +464,14 @@ export const API_ENDPOINTS = {
     graph: (id: string) => `/semantic-models/${id}/graph`,
     operations: (id: string) => `/semantic-models/${id}/graph/operations`,
     validate: (id: string) => `/semantic-models/${id}/graph/validate`,
-    generateOntology: (id: string) => `/semantic-models/${id}/ontology/generate`,
-    evidenceSearch: (id: string) => `/semantic-models/${id}/evidence/search`,
-    mappingProposals: (id: string) => `/semantic-models/${id}/mapping/proposals`,
-    mappingProposalJobs: (id: string) => `/semantic-models/${id}/mapping/proposals/jobs`,
-    mappingProposalJob: (id: string, jobId: string) => `/semantic-models/${id}/mapping/proposals/jobs/${jobId}`,
-    mappingPlanApply: (id: string, jobId: string) => `/semantic-models/${id}/mapping/jobs/${jobId}/apply`,
     ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
-    ageGraphRebuild: (id: string) => `/semantic-models/${id}/age-graph/rebuild`,
-    ageGraphIndex: (id: string) => `/semantic-models/${id}/age-graph/index`,
-    ageGraphOperations: (id: string) => `/semantic-models/${id}/age-graph/operations`,
-    corpus: (id: string) => `/semantic-models/${id}/corpus`,
-    builds: (id: string) => `/semantic-models/${id}/builds`,
-    latestBuild: (id: string) => `/semantic-models/${id}/builds/latest`,
-    build: (id: string, buildId: string) => `/semantic-models/${id}/builds/${buildId}`,
     bindings: (id: string) => `/semantic-models/${id}/bindings`,
     binding: (id: string, bindingId: string) => `/semantic-models/${id}/bindings/${bindingId}`,
     workspaces: (id: string) => `/semantic-models/${id}/workspaces`,
     workspace: (id: string, workspaceId: string) => `/semantic-models/${id}/workspaces/${workspaceId}`,
     versions: (id: string) => `/semantic-models/${id}/versions`,
     publish: (id: string) => `/semantic-models/${id}/versions/publish`,
+    compareVersions: (id: string) => `/semantic-models/${id}/versions/compare`,
     restore: (id: string, versionId: string) => `/semantic-models/${id}/versions/${versionId}/restore`,
     workspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model`,
     workspaceModels: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-models`,
@@ -410,17 +483,50 @@ export const API_ENDPOINTS = {
     sourceAssetJob: (id: string, jobId: string) => `/semantic-models/${id}/source-assets/jobs/${jobId}`,
     sourceMappings: (id: string) => `/semantic-models/${id}/source-mappings`,
     bulkDocumentSourceMappings: (id: string) => `/semantic-models/${id}/source-mappings/bulk-documents`,
+    workspaceSourceMapping: (id: string) => `/semantic-models/${id}/source-mappings/workspace`,
+    conceptRecords: (id: string, conceptId: string) => `/semantic-models/${id}/concepts/${conceptId}/records`,
+    searchIndex: (id: string) => `/semantic-models/${id}/search-index`,
+    assistantChanges: (id: string) => `/semantic-models/${id}/assistant/changes`,
+    assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
+    derivedSources: (id: string) => `/semantic-models/${id}/derived-sources`,
+    derivedSourcePreview: (id: string) => `/semantic-models/${id}/derived-sources/preview`,
+    derivedSource: (id: string, derivedSourceId: string) => `/semantic-models/${id}/derived-sources/${derivedSourceId}`,
+    mappingPresets: (id: string) => `/semantic-models/${id}/mapping-presets`,
+    mappingPreset: (id: string, presetId: string) => `/semantic-models/${id}/mapping-presets/${presetId}`,
+    lastUsedMapping: (id: string) => `/semantic-models/${id}/mapping-presets/last-used`,
     sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
+    sourceMappingDocumentLabels: (id: string) => `/semantic-models/${id}/source-mappings/document-labels`,
+    computedFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/computed-preview`,
+    sheetFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/sheet-preview`,
     relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
     relationResolutionPreview: (id: string, ruleId: string) => `/semantic-models/${id}/relation-resolution-rules/${ruleId}/preview`,
+    identityRules: (id: string) => `/semantic-models/${id}/identity-rules`,
+    identityRule: (id: string, conceptId: string) => `/semantic-models/${id}/identity-rules/${conceptId}`,
+    labelFields: (id: string) => `/semantic-models/${id}/label-fields`,
+    labelField: (id: string, conceptId: string) => `/semantic-models/${id}/label-fields/${conceptId}`,
     sourceResolutionPolicies: (id: string) => `/semantic-models/${id}/source-resolution-policies`,
     sourceResolutionPolicy: (id: string, conceptId: string) => `/semantic-models/${id}/source-resolution-policies/${conceptId}`,
     dataPreview: (id: string) => `/semantic-models/${id}/data-preview`,
+    corrections: (id: string) => `/semantic-models/${id}/corrections`,
+    undoCorrection: (id: string, sequence: number) => `/semantic-models/${id}/corrections/${sequence}/undo`,
     populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
+    populationRebuild: (id: string) => `/semantic-models/${id}/population/rebuild`,
+    populationReproject: (id: string) => `/semantic-models/${id}/population/reproject`,
+    populationGraphStatus: (id: string) => `/semantic-models/${id}/population/graph-status`,
+    populationJob: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}`,
+    populationJobs: (id: string) => `/semantic-models/${id}/population/jobs`,
+    populationJobStop: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}/stop`,
+    populationActive: (id: string) => `/semantic-models/${id}/population/active`,
+    sourceSuggestions: (id: string) => `/semantic-models/${id}/source-suggestions`,
+    sourceFiles: (id: string) => `/semantic-models/${id}/source-files`,
+    sourceSuggestionStatus: (id: string, conceptKey: string) => `/semantic-models/${id}/source-suggestions/${encodeURIComponent(conceptKey)}/status`,
+    populationFreshness: (id: string) => `/semantic-models/${id}/population/freshness`,
+    canvasPositions: (id: string) => `/semantic-models/${id}/canvas-positions`,
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
+    reviewQueue: (id: string) => `/semantic-models/${id}/review-queue`,
     resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
     dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },
@@ -555,6 +661,10 @@ export const API_ENDPOINTS = {
     assistantAttachments: (id: string) => `/playbooks/${id}/assistant/attachments`,
     assistantAttachmentConfirm: (id: string, attachmentId: string) => `/playbooks/${id}/assistant/attachments/${attachmentId}/confirm`,
     assistantMessages: (id: string) => `/playbooks/${id}/assistant/messages`,
+    assistantSourceFiles: '/playbooks/assistant/source-files',
+    assistantPendingSources: '/playbooks/assistant/pending-sources',
+    assistantClarificationSources: (continuationId: string) => `/playbooks/assistant/clarifications/${encodeURIComponent(continuationId)}/sources`,
+    assistantClarificationQuestionSources: (continuationId: string, questionId: string) => `/playbooks/assistant/clarifications/${encodeURIComponent(continuationId)}/questions/${encodeURIComponent(questionId)}/sources`,
     intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}`,
@@ -731,6 +841,8 @@ export const API_ENDPOINTS = {
   worky: {
     streams: '/worky/streams',
     streamById: (id: string) => `/worky/streams/${id}`,
+    streamShares: (id: string) => `/worky/streams/${id}/shares`,
+    streamShareById: (id: string, shareId: string) => `/worky/streams/${id}/shares/${shareId}`,
     streamEvents: (id: string) => `/worky/streams/${id}/events`,
     streamMessages: (id: string) => `/worky/streams/${id}/messages`,
     streamBoard: (id: string) => `/worky/streams/${id}/board`,

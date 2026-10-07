@@ -208,7 +208,7 @@ export class AppDataPolicyService {
         throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, `Policy ${op} must be an array`);
       }
       for (const p of list) {
-        if (!APP_DATA_PRINCIPALS.includes(p as AppDataPrincipal)) {
+        if (!APP_DATA_PRINCIPALS.includes(p)) {
           throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, `Invalid principal: ${p}`);
         }
       }

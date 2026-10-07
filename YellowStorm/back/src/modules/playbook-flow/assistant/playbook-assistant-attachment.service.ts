@@ -1,11 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { createHash, randomUUID } from 'crypto';
 import { DocumentService } from '@modules/document/document.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { PlaybookAssistantAttachment, PlaybookAssistantAttachmentDocument } from '../schemas/playbook-assistant-attachment.schema';
+import {
+  PlaybookAssistantAttachmentRepository,
+  type PlaybookAssistantAttachmentRecord,
+} from '../persistence/assistant-attachment.repository';
 import type { PlaybookIntentImageInputDto } from '../dto/request-playbook-flow-intent.dto';
 
 const ALLOWED_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
@@ -19,8 +20,7 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
   private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(
-    @InjectModel(PlaybookAssistantAttachment.name)
-    private readonly attachmentModel: Model<PlaybookAssistantAttachmentDocument>,
+    private readonly attachments: PlaybookAssistantAttachmentRepository,
     private readonly documentService: DocumentService,
   ) {}
 
@@ -48,11 +48,7 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
     if (!Number.isInteger(input.size) || input.size < 1 || input.size > MAX_ATTACHMENT_BYTES) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Assistant image exceeds the allowed size');
     }
-    const existingCount = await this.attachmentModel.countDocuments({
-      ownerId: input.ownerId,
-      requestId: input.requestId,
-      expiresAt: { $gt: new Date() },
-    }).exec();
+    const existingCount = await this.attachments.countLiveForRequest(input.ownerId, input.requestId);
     if (existingCount >= 4) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Cannot attach more than four images');
     }
@@ -60,7 +56,7 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
     const extension = this.extensionFor(input.mediaType);
     const objectKey = `playbook-assistant/${input.ownerId}/${attachmentId}.${extension}`;
     const expiresAt = new Date(Date.now() + ATTACHMENT_TTL_MS);
-    await this.attachmentModel.create({
+    await this.attachments.insert({
       attachmentId,
       requestId: input.requestId,
       ownerId: input.ownerId,
@@ -69,14 +65,13 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
       objectKey,
       mediaType: input.mediaType,
       declaredSize: input.size,
-      status: 'pending',
       expiresAt,
     });
     try {
       const uploadUrl = await this.documentService.generateSasUrl(objectKey, { permissions: 'cw', expiryMinutes: 10 });
       return { attachmentId, uploadUrl, expiresAt: expiresAt.toISOString() };
     } catch (error) {
-      await this.attachmentModel.deleteOne({ attachmentId }).exec();
+      await this.attachments.deleteByAttachmentId(attachmentId);
       throw error;
     }
   }
@@ -93,10 +88,7 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
       await this.safeDelete(attachment.objectKey);
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Uploaded assistant image content is invalid');
     }
-    await this.attachmentModel.updateOne(
-      { attachmentId, ownerId, playbookId },
-      { $set: { status: 'confirmed', actualSize: bytes.length, contentSha256: this.digest(bytes) } },
-    ).exec();
+    await this.attachments.confirm(attachmentId, ownerId, playbookId, { actualSize: bytes.length, contentSha256: this.digest(bytes) });
     return { attachmentId, status: 'confirmed' as const };
   }
 
@@ -111,15 +103,13 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid assistant attachment set');
     }
     if (input.attachmentIds.length === 0) return;
-    const count = await this.attachmentModel.countDocuments({
-      attachmentId: { $in: input.attachmentIds },
+    const count = await this.attachments.countConfirmedBindings({
+      attachmentIds: input.attachmentIds,
       ownerId: input.ownerId,
       playbookId: input.playbookId,
       requestId: input.requestId,
       expectedDefinitionRevision: input.expectedDefinitionRevision,
-      status: 'confirmed',
-      expiresAt: { $gt: new Date() },
-    }).exec();
+    });
     if (count !== input.attachmentIds.length) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant attachment binding is invalid or expired');
     }
@@ -133,7 +123,7 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
     attachmentIds: string[];
   }): Promise<PlaybookIntentImageInputDto[]> {
     await this.assertBindings(input);
-    const attachments = await this.attachmentModel.find({ attachmentId: { $in: input.attachmentIds } }).lean().exec();
+    const attachments = await this.attachments.findByAttachmentIds(input.attachmentIds);
     const byId = new Map(attachments.map((attachment) => [attachment.attachmentId, attachment]));
     return Promise.all(input.attachmentIds.map(async (attachmentId) => {
       const attachment = byId.get(attachmentId)!;
@@ -149,8 +139,8 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
     }));
   }
 
-  private async findOwned(ownerId: string, playbookId: string, attachmentId: string): Promise<PlaybookAssistantAttachment> {
-    const attachment = await this.attachmentModel.findOne({ attachmentId, ownerId, playbookId }).lean().exec();
+  private async findOwned(ownerId: string, playbookId: string, attachmentId: string): Promise<PlaybookAssistantAttachmentRecord> {
+    const attachment = await this.attachments.findOwned(attachmentId, ownerId, playbookId);
     if (!attachment || attachment.expiresAt.getTime() <= Date.now()) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant attachment not found or expired');
     }
@@ -158,13 +148,13 @@ export class PlaybookAssistantAttachmentService implements OnModuleInit, OnModul
   }
 
   private async cleanupExpired(): Promise<void> {
-    const expired = await this.attachmentModel.find({ expiresAt: { $lte: new Date() } }).limit(100).lean().exec();
+    const expired = await this.attachments.listExpired(100);
     const deletedIds: string[] = [];
     for (const attachment of expired) {
       if (await this.safeDelete(attachment.objectKey)) deletedIds.push(attachment.attachmentId);
     }
     if (deletedIds.length > 0) {
-      await this.attachmentModel.deleteMany({ attachmentId: { $in: deletedIds } }).exec();
+      await this.attachments.deleteByAttachmentIds(deletedIds);
     }
   }
 

@@ -4,26 +4,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CryptoService } from '../../../common/services/crypto.service';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
+import { SKILL_STORE,   type SkillStore } from '../../skill/persistence/skill.store';
 import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
-import type { ConnectorCredentialRow } from '../persistence/connector.store';
-import {
-  CONNECTED_APP_DEFINITION_STORE,
-  USER_APP_CONNECTION_STORE,
-  type ConnectedAppDefinitionStore,
-  type UserAppConnectionStore,
-} from '../../connected-app/persistence/connected-app.store';
+import type { ConnectorCredentialRow } from '../persistence/connector.store';
 import { ConnectionStatus } from '../../connected-app/connected-app.types';
-import {
-  CONNECTOR_ADMIN_AUTH_STORE,
-  CONNECTOR_CATEGORY_STORE,
-  CONNECTOR_CREDENTIAL_STORE,
-  CONNECTOR_STORE,
-  type ConnectorCategoryStore,
-  type ConnectorCredentialStore,
-  type ConnectorAdminAuthRow,
-  type ConnectorAdminAuthStore,
-  type ConnectorStore,
+import {      
+  type ConnectorAdminAuthRow,        
 } from '../persistence/connector.store';
 import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -40,6 +26,13 @@ import {
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
+import { PgSkillCategoryStore } from '../../skill/persistence/pg-skill.store';
+import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
+import { PgConnectorCredentialStore } from '../persistence/pg-connector.store';
+import { PgConnectorCategoryStore } from '../persistence/pg-connector.store';
+import { PgConnectorStore } from '../persistence/pg-connector.store';
+import { PgConnectedAppDefinitionStore } from '../../connected-app/persistence/pg-connected-app.store';
+import { PgUserAppConnectionStore } from '../../connected-app/persistence/pg-connected-app.store';
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -47,14 +40,14 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 @Injectable()
 export class CatalogTransferService {
   constructor(
-    @Inject(CONNECTOR_STORE) private readonly connectorStore: ConnectorStore,
-    @Inject(CONNECTOR_CATEGORY_STORE) private readonly connectorCategoryStore: ConnectorCategoryStore,
-    @Inject(CONNECTOR_CREDENTIAL_STORE) private readonly credentialStore: ConnectorCredentialStore,
-    @Inject(CONNECTOR_ADMIN_AUTH_STORE) private readonly adminAuthStore: ConnectorAdminAuthStore,
+    private readonly connectorStore: PgConnectorStore,
+    private readonly connectorCategoryStore: PgConnectorCategoryStore,
+    private readonly credentialStore: PgConnectorCredentialStore,
+    private readonly adminAuthStore: PgConnectorAdminAuthStore,
     @Inject(SKILL_STORE) private readonly skillStore: SkillStore,
-    @Inject(SKILL_CATEGORY_STORE) private readonly skillCategoryStore: SkillCategoryStore,
-    @Inject(CONNECTED_APP_DEFINITION_STORE) private readonly appDefinitionStore: ConnectedAppDefinitionStore,
-    @Inject(USER_APP_CONNECTION_STORE) private readonly appConnectionStore: UserAppConnectionStore,
+    private readonly skillCategoryStore: PgSkillCategoryStore,
+    private readonly appDefinitionStore: PgConnectedAppDefinitionStore,
+    private readonly appConnectionStore: PgUserAppConnectionStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly cryptoService: CryptoService,
   ) {}
@@ -159,8 +152,8 @@ export class CatalogTransferService {
   private async buildArchive(
     userId: string,
     resource: 'connectors' | 'skills',
-    connectors: Array<Record<string, any>>,
-    skills: Array<Record<string, any>>,
+    connectors: Record<string, any>[],
+    skills: Record<string, any>[],
     includeSecurity: boolean,
   ): Promise<CatalogArchiveV1> {
     const connectorCategoryIds = Array.from(new Set(connectors.flatMap((item) => item.categoryId ? [String(item.categoryId)] : [])));
@@ -195,7 +188,7 @@ export class CatalogTransferService {
     return archive;
   }
 
-  private async exportSecurity(userId: string, connectors: Array<Record<string, any>>) {
+  private async exportSecurity(userId: string, connectors: Record<string, any>[]) {
     const connectorIds = connectors.map((connector) => String(connector.id ?? connector._id));
     const connectorSlugById = new Map(connectors.map((connector) => [String(connector.id ?? connector._id), connector.slug]));
     const appKeys = Array.from(new Set(connectors.map((connector) => connector.connectedAppKey).filter(Boolean)));
@@ -214,8 +207,8 @@ export class CatalogTransferService {
     const adminAuth = adminAuthRows.filter(
       (a): a is ConnectorAdminAuthRow => a !== null && appKeySet.has(a.appKey),
     );
-    void definitions;
-    void connections;
+    definitions;
+    connections;
     return {
       connectorCredentials: credentials.map((credential) => ({
         connectorSlug: connectorSlugById.get(credential.connectorId.toString()) ?? '',
@@ -447,6 +440,7 @@ export class CatalogTransferService {
         connectedAppKey: connector.connectedAppKey ?? '',
         mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
         mcpServerUrl: connector.mcpServerUrl ?? '',
+        ...(connector.workerPolicy ? { workerPolicy: connector.workerPolicy } : {}),
         skillIds: connector.referencedSkillSlugs.map((slug) => skillIds.get(slug)!),
         isActive: connector.isActive ?? true,
       };
@@ -593,7 +587,7 @@ export class CatalogTransferService {
       const payload: Partial<Pick<ConnectorCredentialRow, 'displayName' | 'authPayload' | 'status' | 'expiresAt' | 'lastValidatedAt'>> = {
         displayName: credential.displayName,
         authPayload: credential.authPayload ?? {},
-        status: (credential.status as string) ?? 'active',
+        status: (credential.status) ?? 'active',
         lastValidatedAt: this.optionalDate(credential.lastValidatedAt),
         expiresAt: this.optionalDate(credential.expiresAt),
       };
@@ -682,6 +676,7 @@ export class CatalogTransferService {
       mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: connector.mcpServerUrl ?? '',
       mcpServerConfig: protect(connector.mcpServerConfig ?? {}),
+      workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
       dynamicHeaders: (connector.dynamicHeaders ?? []).map((header: Record<string, any>) => ({
         headerName: header.headerName,
         source: header.source,
@@ -694,6 +689,8 @@ export class CatalogTransferService {
         parameterSchema: action.parameterSchema ?? {},
         outputSchema: action.outputSchema ?? {},
         safety: action.safety ?? 'read',
+        workerAccess: action.workerAccess ?? 'inherit',
+        executionKind: action.executionKind ?? 'inherit',
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
@@ -775,6 +772,19 @@ export class CatalogTransferService {
       .find((slug) => !SLUG_PATTERN.test(slug));
     if (invalidSlug) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, `The archive contains an invalid slug: ${invalidSlug}.`);
+    }
+    for (const connector of archive.connectors) {
+      const policy = connector.workerPolicy;
+      if (policy && (typeof policy.enabled !== 'boolean' || typeof policy.agentLaunchEnabled !== 'boolean'
+        || !['leaf', 'unknown'].includes(policy.defaultExecutionKind))) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid connector worker policy.');
+      }
+      for (const action of connector.actions ?? []) {
+        if ((action.workerAccess !== undefined && !['inherit', 'allow', 'block'].includes(action.workerAccess))
+          || (action.executionKind !== undefined && !['inherit', 'leaf', 'orchestration', 'unknown'].includes(action.executionKind))) {
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid connector worker action policy.');
+        }
+      }
     }
     for (const skill of archive.skills) {
       for (const file of skill.files) {

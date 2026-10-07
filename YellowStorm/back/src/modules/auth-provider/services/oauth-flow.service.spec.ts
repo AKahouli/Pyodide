@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
-import { OAUTH_STATE_STORE, PROVIDER_LINK_TOKEN_STORE } from '../persistence/auth-provider.stores';
 import { ProviderLinkService } from './provider-link.service';
 import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
@@ -14,6 +13,8 @@ import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
 import { UserStatus } from '@modules/user/user.types';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgProviderLinkTokenStore } from '../persistence/pg-auth-provider.stores';
+import { PgOAuthStateStore } from '../persistence/pg-auth-provider.stores';
 
 // Mock global fetch
 const mockFetch = jest.fn();
@@ -148,9 +149,9 @@ describe('OAuthFlowService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OAuthFlowService,
-        { provide: OAUTH_STATE_STORE, useValue: { create: oauthStateModel.create, consumeByState: oauthStateModel.findOneAndDelete } },
+        { provide: PgOAuthStateStore, useValue: { create: oauthStateModel.create, consumeByState: oauthStateModel.findOneAndDelete } },
         {
-          provide: PROVIDER_LINK_TOKEN_STORE,
+          provide: PgProviderLinkTokenStore,
           useValue: {
             create: providerLinkTokenModel.create,
             consumeByToken: providerLinkTokenModel.findOneAndDelete,

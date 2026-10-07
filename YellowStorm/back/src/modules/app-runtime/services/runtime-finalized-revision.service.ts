@@ -3,15 +3,14 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
 import {
-  AppFinalizedRevision,
-  AppFinalizedRevisionDocument,
-} from '../schemas/app-finalized-revision.schema';
+  APPLICATION_COMPONENT_EVENT_SOURCE,
+  type ApplicationComponentEventSource,
+} from '../ports/application-component-events.port';
+import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
 
 export interface FinalizedRevisionRecord {
   revisionId: string;
@@ -41,48 +40,32 @@ export class RuntimeFinalizedRevisionService {
   private readonly logger = new Logger(RuntimeFinalizedRevisionService.name);
 
   constructor(
-    @InjectModel(AppFinalizedRevision.name)
-    private readonly model: Model<AppFinalizedRevisionDocument>,
-    @Inject(forwardRef(() => ConversationV2EventStoreService))
-    private readonly eventStore: ConversationV2EventStoreService,
+    private readonly store: PgRuntimeFinalizedRevisionStore,
+    // forwardRef: the Conversation V2 implementation of this port depends on
+    // StreamService, which depends on this service (cross-module DI cycle).
+    @Optional()
+    @Inject(forwardRef(() => APPLICATION_COMPONENT_EVENT_SOURCE))
+    private readonly applicationComponents?: ApplicationComponentEventSource,
   ) {}
 
   async record(input: RecordFinalizedRevisionInput): Promise<void> {
     const finalizedAt = input.finalizedAt ?? new Date();
-    try {
-      await this.model.updateOne(
-        { workspaceId: input.workspaceId, revisionId: input.revisionId },
-        {
-          $set: {
-            title: input.title,
-            finalizedAt,
-            eventId: input.eventId,
-            fileCount: input.fileCount ?? null,
-            cephManifestPath: input.cephManifestPath ?? null,
-          },
-          $setOnInsert: {
-            workspaceId: input.workspaceId,
-            revisionId: input.revisionId,
-          },
-        },
-        { upsert: true },
-      );
-    } catch (error) {
-      if ((error as { code?: number } | null)?.code !== 11000) {
-        throw error;
-      }
-    }
+    await this.store.upsert({
+      workspaceId: input.workspaceId,
+      revisionId: input.revisionId,
+      title: input.title,
+      finalizedAt,
+      eventId: input.eventId,
+      fileCount: input.fileCount ?? null,
+      cephManifestPath: input.cephManifestPath ?? null,
+    });
     this.logger.log(
       `Recorded finalized revision workspaceId=${input.workspaceId} revisionId=${input.revisionId}`,
     );
   }
 
   async listByWorkspace(workspaceId: string): Promise<FinalizedRevisionRecord[]> {
-    const rows = await this.model
-      .find({ workspaceId })
-      .sort({ finalizedAt: -1 })
-      .lean()
-      .exec();
+    const rows = await this.store.listByWorkspace(workspaceId);
     return rows.map((row) => ({
       revisionId: row.revisionId,
       title: row.title,
@@ -92,59 +75,17 @@ export class RuntimeFinalizedRevisionService {
   }
 
   async resolveLatestFinalized(workspaceId: string): Promise<string | null> {
-    const row = await this.model
-      .findOne({ workspaceId })
-      .sort({ finalizedAt: -1 })
-      .select({ revisionId: 1 })
-      .lean()
-      .exec();
-    return row?.revisionId ?? null;
+    return this.store.resolveLatestFinalized(workspaceId);
   }
 
   async summarizeByWorkspaces(
     workspaceIds: string[],
   ): Promise<Map<string, FinalizedRevisionWorkspaceSummary>> {
-    const uniqueIds = [...new Set(workspaceIds.filter((id) => id.trim()))];
-    if (!uniqueIds.length) return new Map();
-
-    const rows = await this.model
-      .aggregate<{
-        _id: string;
-        latestRevisionId: string;
-        latestFinalizedAt: Date;
-        versionCount: number;
-      }>([
-        { $match: { workspaceId: { $in: uniqueIds } } },
-        { $sort: { finalizedAt: -1 } },
-        {
-          $group: {
-            _id: '$workspaceId',
-            latestRevisionId: { $first: '$revisionId' },
-            latestFinalizedAt: { $first: '$finalizedAt' },
-            versionCount: { $sum: 1 },
-          },
-        },
-      ])
-      .exec();
-
-    return new Map(
-      rows.map((row) => [
-        row._id,
-        {
-          latestRevisionId: row.latestRevisionId,
-          latestFinalizedAt: row.latestFinalizedAt.toISOString(),
-          versionCount: row.versionCount,
-        },
-      ]),
-    );
+    return this.store.summarizeByWorkspaces(workspaceIds);
   }
 
   async assertFinalized(workspaceId: string, revisionId: string): Promise<void> {
-    const found = await this.model
-      .findOne({ workspaceId, revisionId })
-      .select({ _id: 1 })
-      .lean()
-      .exec();
+    const found = await this.store.existsByWorkspaceAndRevision(workspaceId, revisionId);
     if (!found) {
       throw new BadRequestException(
         `Revision ${revisionId} is not a finalized version for this app`,
@@ -160,17 +101,13 @@ export class RuntimeFinalizedRevisionService {
     sessionPointerId: string,
     workspaceId: string,
   ): Promise<void> {
-    const existing = await this.model
-      .findOne({ workspaceId })
-      .select({ _id: 1 })
-      .lean()
-      .exec();
-    if (existing) return;
+    const existing = await this.store.existsByWorkspaceAndRevision(workspaceId, '');
+    // existsByWorkspaceAndRevision with '' won't match; use listByWorkspace instead.
+    const list = await this.store.listByWorkspace(workspaceId);
+    if (list.length > 0) return;
 
-    const rows = await this.eventStore.listByType(
-      sessionPointerId,
-      'application_component',
-    );
+    const rows =
+      (await this.applicationComponents?.listApplicationComponents(sessionPointerId)) ?? [];
 
     for (const row of rows) {
       const revisionId = row.payload.revision_id;

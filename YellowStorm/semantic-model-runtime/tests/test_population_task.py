@@ -25,7 +25,8 @@ def command(spec=None, sources=None, bindings=None, purpose="build",
         "payload": {
             "modelVersionId": "v1",
             "specHash": canonical_spec_hash(spec) if spec_hash is None else spec_hash,
-            "purpose": purpose, "specification": spec, "sources": sources,
+            "purpose": purpose, "scope": {"kind": "model"},
+            "specification": spec, "sources": sources,
             "relationBindings": [] if bindings is None else bindings,
         },
     }
@@ -39,6 +40,18 @@ def test_valid_command_compiles():
     assert validated["purpose"] == "build"
 
 
+def test_legacy_binding_infers_single_target_identity():
+    sources = [{"conceptId": "c2", "source": dict(SOURCE), "options": {},
+                "columnMapping": {"agreement_no": "agreement_no", "parent_ref": "parent_ref",
+                                  "status": "status", "country": "country"},
+                "mappingVersion": "map-v2"}]
+    validated = run_population_for_payload(command(sources=sources, bindings=[{
+        "relationId": "r1", "referenceField": "parent_ref"}]))
+    assert validated["ok"] is True
+    assert validated["relationBindings"] == [{
+        "relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
+
+
 def test_valid_document_command_compiles_without_llm_configuration():
     source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
     validated = run_population_for_payload(command(sources=[{
@@ -50,6 +63,46 @@ def test_valid_document_command_compiles_without_llm_configuration():
     }]))
     assert validated["ok"] is True
     assert validated["sources"][0]["sourceKind"] == "document"
+
+
+def _document_command(field_mappings: list[dict]) -> dict:
+    source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
+    return command(sources=[{
+        "conceptId": "c1", "sourceKind": "document", "source": source,
+        "fieldMappings": field_mappings, "mappingVersion": "map-v1",
+    }])
+
+
+def test_document_command_accepts_an_explicit_extraction_strategy():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
+         "extractionStrategy": "deterministic"},
+        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["ok"] is True
+    assert validated["sources"][0]["fieldMappings"][0]["extractionStrategy"] == "deterministic"
+
+
+def test_document_command_rejects_unknown_extraction_strategy():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
+         "extractionStrategy": "magic"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"
+
+
+def test_document_command_rejects_strategy_on_a_non_extract_mapping():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata",
+         "extractionStrategy": "ai"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"
+
+
+def test_validator_rejects_execution_fingerprint_mismatch():
+    payload = command()
+    payload["payload"]["populationExecutionFingerprint"] = "sha256:" + "0" * 64
+    assert run_population_for_payload(payload)["errorCode"] == "execution_fingerprint_mismatch"
 
 
 def test_validator_rejects_before_any_fetch():
@@ -71,8 +124,13 @@ def test_validator_rejects_before_any_fetch():
     unmapped = command(sources=[{"conceptId": "c1", "source": dict(SOURCE),
                                  "columnMapping": {"name": "name"}}])
     assert run_population_for_payload(unmapped)["errorCode"] == "unmapped_identity"
-    bad_binding = command(bindings=[{"relationId": "nope", "referenceField": "x"}])
+    bad_binding = command(bindings=[{
+        "relationId": "nope", "referenceField": "x", "targetField": "y"}])
     assert run_population_for_payload(bad_binding)["errorCode"] == "unknown_relation"
+    non_identity_binding = command(bindings=[{
+        "relationId": "r1", "referenceField": "parent_ref", "targetField": "country"}])
+    assert run_population_for_payload(non_identity_binding)["errorCode"] == \
+        "invalid_relation_bindings"
     missing_filter = command(sources=[{"conceptId": "c2", "source": dict(SOURCE),
                                        "columnMapping": {"agreement_no": "agreement_no",
                                                          "country": "country"}}])
@@ -104,12 +162,12 @@ def fake_prepare(source: dict, options: dict | None, data: bytes, output) -> dic
     return {"datasetId": "ds_0123456789abcdef01234567", "rowCount": 2}
 
 
-def fake_query(path, *, columns=None, filters=None, limit=100) -> dict:  # type: ignore[no-untyped-def]
+def fake_query(path, *, columns=None, filters=None, limit=100, offset=0) -> dict:  # type: ignore[no-untyped-def]
     assert "__sheetRow" in (columns or [])
     return {"columns": columns, "rows": [
         {"__sheetRow": 2, "customer_id": "C-1", "name": "Acme"},
         {"__sheetRow": 3, "customer_id": "C-2", "name": "Globex"},
-    ], "returnedRows": 2, "limit": limit}
+    ][offset:offset + limit], "returnedRows": max(0, 2 - offset), "limit": limit, "offset": offset}
 
 
 @pytest.mark.asyncio
@@ -123,6 +181,48 @@ async def test_task_populates_from_prepared_rows():
     assert {a["attribute"] for a in outcome["assertions"]} == {"name"}
     assert outcome["relationships"] == []
     assert outcome["sourceObservations"][0]["datasetId"] == "ds_0123456789abcdef01234567"
+
+
+@pytest.mark.asyncio
+async def test_a_mapping_to_a_renamed_column_reads_its_replacement():
+    """A mapping saved on the e-mail reader's former ``apercu`` column reads ``corps``."""
+    sources = [{"conceptId": "c1", "source": dict(SOURCE), "options": {},
+                "columnMapping": {"customer_id": "customer_id", "apercu": "name"},
+                "mappingVersion": "map-v1"}]
+    asked: list[list[str]] = []
+
+    def prepare(source, options, data, output):  # type: ignore[no-untyped-def]
+        output.write_bytes(b"parquet-bytes")
+        return {"datasetId": "ds_0123456789abcdef01234567", "rowCount": 1,
+                "columns": ["__sheetRow", "customer_id", "corps"]}
+
+    def query(path, *, columns=None, filters=None, limit=100, offset=0):  # type: ignore[no-untyped-def]
+        asked.append(list(columns or []))
+        rows = [{"__sheetRow": 2, "customer_id": "C-1", "corps": "Le texte entier"}][offset:]
+        return {"columns": columns, "rows": rows, "returnedRows": len(rows), "limit": limit, "offset": offset}
+
+    outcome = await run_population_for_task(command(sources=sources), fetch=fake_fetch,
+                                            prepare=prepare, query=query)
+    assert outcome["ok"] is True
+    assert "corps" in asked[0] and "apercu" not in asked[0]
+    assert {a["attribute"]: a["value"] for a in outcome["assertions"]} == {"name": "Le texte entier"}
+
+
+@pytest.mark.asyncio
+async def test_task_reads_rows_after_first_page():
+    rows = [{"__sheetRow": index + 2, "customer_id": f"C-{index}", "name": "X"}
+            for index in range(1001)]
+
+    def paged(path, *, columns=None, filters=None, limit=100, offset=0):  # type: ignore[no-untyped-def]
+        page = rows[offset:offset + limit]
+        return {"columns": columns, "rows": page, "returnedRows": len(page),
+                "limit": limit, "offset": offset}
+
+    outcome = await run_population_for_task(command(), fetch=fake_fetch,
+                                            prepare=fake_prepare, query=paged)
+    assert outcome["counts"]["materialized"] == 1001
+    assert any(entity["identity"]["customer_id"] == "c-1000"
+               for entity in outcome["entities"])
 
 
 @pytest.mark.asyncio
@@ -157,11 +257,59 @@ async def test_task_merges_tabular_and_document_sources(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_task_reports_capped_enumeration_and_fetch_failures():
-    def capped(path, *, columns=None, filters=None, limit=100) -> dict:  # type: ignore[no-untyped-def]
+async def test_task_reports_progress_source_by_source(monkeypatch: pytest.MonkeyPatch):
+    import app.population.document as document
+    from app.workers.population_tasks import PopulationProgress
+
+    async def populate(_connection, entry, _concept, _actor, **kwargs):
+        assert kwargs["cache"] is cache
+        return {"entities": [{"entityId": "crm:doc", "conceptId": entry["conceptId"],
+                              "namespace": "crm", "identity": {"customer_id": "c-3"},
+                              "label": "C-3", "attributes": {}, "provenance": {"sources": []}}],
+                "assertions": [], "gaps": [], "reused": True,
+                "counts": {"scanned": 1, "excluded": 0, "queryable": 0, "materialized": 1, "gaps": 0},
+                "coverage": {"assetRef": {}, "status": "processed_complete"},
+                "sourceObservation": {"assetRef": {"assetVersionId": "sha256:doc"}},
+                "indexObservation": None}
+
+    monkeypatch.setattr(document, "populate_document", populate)
+    sources = command()["payload"]["sources"] + [{
+        "conceptId": "c1", "sourceKind": "document",
+        "source": {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"},
+        "fieldMappings": [{"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"}],
+        "mappingVersion": "map-v1",
+    }]
+    reports: list[dict] = []
+    cache = MemoryCache()
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    outcome = await run_population_for_task(
+        command(sources=sources), fetch=fake_fetch, prepare=fake_prepare, query=fake_query,
+        index_connection=object(), progress=PopulationProgress(report, min_interval=0),
+        extraction_cache=cache)
+    assert outcome["ok"] is True
+    assert reports[0] == {**reports[0], "phase": "reading", "total": 2, "done": 0}
+    finished = [item for item in reports if item["done"] == 2][0]
+    assert finished["reused"] == 1 and finished["records"] == 3
+    assert [item["name"] for item in finished["recent"]] == ["agreement.pdf", SOURCE["assetId"]]
+    assert finished["recent"][0]["reused"] is True
+    assert reports[-1]["phase"] == "linking"
+    assert "reused" not in outcome["entities"][0]
+
+
+@pytest.mark.asyncio
+async def test_task_reports_capped_enumeration_and_fetch_failures(monkeypatch: pytest.MonkeyPatch):
+    import app.workers.population_tasks as tasks
+
+    monkeypatch.setattr(tasks, "MAX_TOTAL_ASSERTIONS", 1000)
+
+    def capped(path, *, columns=None, filters=None, limit=100, offset=0) -> dict:  # type: ignore[no-untyped-def]
         rows = [{"__sheetRow": i, "customer_id": f"C-{i}", "name": "X"}
                 for i in range(2, 1002)]
-        return {"columns": columns, "rows": rows, "returnedRows": 1000, "limit": limit}
+        return {"columns": columns, "rows": rows, "returnedRows": 1000,
+                "limit": limit, "offset": offset}
 
     outcome = await run_population_for_task(command(), fetch=fake_fetch,
                                             prepare=fake_prepare, query=capped)
@@ -199,6 +347,7 @@ async def test_persist_population_revision_writes_canonical_rows():
     spec_hash = canonical_spec_hash(base_spec())
     outcome = {
         "specHash": spec_hash,
+        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
         "entities": [{"entityId": "crm:aaa", "conceptId": "c1", "namespace": "crm",
                       "identity": {"customer_id": "x"}, "label": "X",
                       "attributes": {"name": "X"}, "provenance": {}}],
@@ -209,14 +358,14 @@ async def test_persist_population_revision_writes_canonical_rows():
         "gaps": [], "counts": {}, "datasetFingerprints": ["sha256:abc"],
     }
     revision = await persist_population_revision(FakePool(), command(), outcome)
-    assert revision == revision_id_for("v1", spec_hash, ["sha256:abc"], 0)
+    assert revision == revision_id_for(
+        "v1", outcome["executionFingerprint"], ["sha256:abc"], 0)
     statements = [sql for _, sql, *_ in calls]
     assert any("semantic_runtime.specifications" in sql for sql in statements)
     assert any("semantic_population.data_revisions" in sql for sql in statements)
     assert any("semantic_population.entities" in sql for sql in statements)
     assert any("semantic_population.assertions" in sql for sql in statements)
     assert any("semantic_population.relationships" in sql for sql in statements)
-    assert any("semantic_search.entity_projections" in sql for sql in statements)
     assert any("validation_state" in sql for sql in statements)
 
 
@@ -251,4 +400,295 @@ def test_job_summary_uses_storage_counts_not_submitted_rows():
 def test_lease_covers_sources_within_bounds():
     assert population_lease_seconds(1, 30) == 300
     assert population_lease_seconds(25, 300) == 1800
+    assert population_lease_seconds(5000, 300) == 1800
     assert 300 <= population_lease_seconds(3, 30) <= 1800
+
+
+def test_summarize_gaps_groups_missing_values_and_links():
+    from app.workers.population_tasks import summarize_gaps
+
+    specification = {"concepts": [{"conceptId": "c1", "allowedFields": ["id", "city", "name"],
+                                   "identity": {"keyComponents": ["id"]}}]}
+    outcome = {"entities": [{"conceptId": "c1", "attributes": {"name": "A"}},
+                            {"conceptId": "c1", "attributes": {"name": "B", "city": "Paris"}}],
+               "gaps": [{"kind": "unresolved_reference", "relationId": "r1", "sourceEntityId": "e1",
+                         "referenceField": "customer_id", "referenceValue": "C099", "targetField": "id"},
+                        {"kind": "unresolved_reference", "relationId": "r1"},
+                        {"kind": "missing_identity", "conceptId": "c1", "rowNumber": 4, "field": "id",
+                         "assetRef": {"workspaceId": "w1", "assetId": "a1", "assetVersionId": "v1"},
+                         "values": {"name": "C"}}]}
+    assert summarize_gaps(outcome, specification) == {
+        "missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1, "total": 2}],
+        "unresolvedLinks": [{"relationId": "r1", "kind": "unresolved_reference", "count": 2}],
+        "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1, "fields": ["id"]}],
+        # Examples keep where each gap comes from; a link gap without its record is only counted.
+        "rowSamples": [{"conceptId": "c1", "kind": "missing_identity", "field": "id", "rowNumber": 4,
+                        "asset": {"workspaceId": "w1", "assetId": "a1"}, "values": {"name": "C"}}],
+        "linkSamples": [{"relationId": "r1", "kind": "unresolved_reference", "sourceEntityId": "e1",
+                         "referenceField": "customer_id", "referenceValue": "C099", "targetField": "id"}],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_after_checks", [1, 2])
+async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: pytest.MonkeyPatch, stop_after_checks: int):
+    """Stopped while reading (first progress report) or just before saving: nothing is saved."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls: dict[str, int] = {"checks": 0, "cancel": 0, "complete": 0, "requeue": 0, "persist": 0}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def cancel_requested(_self, job_id):
+        assert job_id == "job-1"
+        calls["checks"] += 1
+        return calls["checks"] >= stop_after_checks
+
+    async def count(name):
+        async def record(*_args, **_kwargs):
+            calls[name] += 1
+            return {"jobId": "job-1", "state": "cancelled"}
+        return record
+
+    async def run(_payload, *, progress, **_kwargs):
+        await progress.begin(1)
+        return {"ok": True, "purpose": "build", "jobState": "completed"}
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", cancel_requested)
+    for name, method in (("cancel", "cancel_task"), ("complete", "complete_task"), ("requeue", "requeue_task")):
+        monkeypatch.setattr(PostgresJobRepository, method, await count(name))
+    monkeypatch.setattr(tasks, "persist_population_revision", await count("persist"))
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+
+    assert await tasks._run_task(7, "worker") == {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
+    assert calls["checks"] == stop_after_checks
+    assert (calls["cancel"], calls["complete"], calls["requeue"], calls["persist"]) == (1, 0, 0, 0)
+
+
+def test_only_gaps_that_lose_data_block_serving():
+    from app.population.serving_policy import blocking_gap_kinds, serving_decision
+
+    assert blocking_gap_kinds([{"kind": "unresolved_reference"}, {"kind": "conflicting_values"},
+                               {"kind": "unresolved_document_field"}, {"kind": "ai_extraction_unresolved"},
+                               {"kind": "budget_exhausted", "scope": "read"}]) == []
+    assert blocking_gap_kinds([{"kind": "enumeration_capped"}, {"kind": "source_unavailable"},
+                               {"kind": "budget_exhausted", "scope": "retrieval"},
+                               {"kind": "enumeration_capped"}]) == ["budget_exhausted", "enumeration_capped", "source_unavailable"]
+    assert serving_decision([], has_current_draft=True) == "activate"
+    assert serving_decision(["source_unavailable"], has_current_draft=True) == "keep_previous"
+    # Nothing to protect yet: the partial graph is better than none.
+    assert serving_decision(["source_unavailable"], has_current_draft=False) == "activate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("gaps", "has_draft", "decision", "finalized"), [
+    ([], True, "activate", 1),
+    ([{"kind": "unresolved_reference"}], True, "activate", 1),
+    ([{"kind": "source_unavailable"}], True, "keep_previous", 0),
+    ([{"kind": "source_unavailable"}], False, "activate", 1),
+])
+async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPatch, gaps, has_draft, decision, finalized):
+    """The revision is always saved; only a result not missing data replaces an existing draft graph."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence import population_store
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls = {"persist": 0, "finalize": 0}
+    completed: dict = {}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def not_cancelled(*_args, **_kwargs):
+        return False
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def complete(_self, **kwargs):
+        completed.update(kwargs)
+
+    async def run(_payload, *, progress, **_kwargs):
+        return {"ok": True, "purpose": "build", "gaps": gaps,
+                "jobState": "completed_with_gaps" if gaps else "completed"}
+
+    async def persist(*_args, **_kwargs):
+        calls["persist"] += 1
+        return "rev-2"
+
+    async def counts(*_args, **_kwargs):
+        return {"entities": 1, "assertions": 1, "relationships": 0}
+
+    async def finalize(*_args, **_kwargs):
+        calls["finalize"] += 1
+        return {"projectionRef": "pop_rev-2", "environment": "draft"}
+
+    async def binding(_pool, model_id, environment="production"):
+        assert (model_id, environment) == ("m1", "draft")
+        return {"version": 3} if has_draft else None
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", not_cancelled)
+    monkeypatch.setattr(PostgresJobRepository, "complete_task", complete)
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+    monkeypatch.setattr(tasks, "persist_population_revision", persist)
+    monkeypatch.setattr(population_store, "count_revision_rows", counts)
+    monkeypatch.setattr(population_store, "get_active_binding", binding)
+    monkeypatch.setattr(tasks, "finalize_whole_model_build", finalize)
+
+    await tasks._run_task(7, "worker")
+    assert calls == {"persist": 1, "finalize": finalized}
+    assert completed["result"]["servingDecision"] == decision
+    assert completed["result"]["dataRevisionId"] == "rev-2"
+    assert ("boundEnvironment" in completed["result"]) is bool(finalized)
+
+
+class MemoryCache:
+    """Stands in for the stored readings: a JSON round trip, as the database does."""
+
+    def __init__(self):  # type: ignore[no-untyped-def]
+        self.rows: dict = {}
+
+    async def get(self, key):  # type: ignore[no-untyped-def]
+        import json
+        return json.loads(self.rows[key]) if key in self.rows else None
+
+    async def put(self, key, *, concept_id, asset_id, output):  # type: ignore[no-untyped-def]
+        import json
+        self.rows[key] = json.dumps(output, default=str)
+
+
+@pytest.mark.asyncio
+async def test_unchanged_sheet_reuses_its_reading():
+    from app.workers.population_tasks import PopulationProgress
+
+    cache = MemoryCache()
+    prepared: list[int] = []
+
+    def counting_prepare(*args, **kwargs):  # type: ignore[no-untyped-def]
+        prepared.append(1)
+        return fake_prepare(*args, **kwargs)
+
+    first = await run_population_for_task(command(), fetch=fake_fetch, prepare=counting_prepare,
+                                          query=fake_query, extraction_cache=cache)
+    progress = PopulationProgress()
+    second = await run_population_for_task(command(), fetch=fake_fetch, prepare=counting_prepare,
+                                           query=fake_query, extraction_cache=cache, progress=progress)
+    assert prepared == [1]
+    assert progress.reused == 1 and progress.recent[0]["reused"] is True
+    assert second["entities"] == first["entities"]
+    assert second["assertions"] == first["assertions"]
+    assert second["sourceObservations"] == first["sourceObservations"]
+
+    # A changed mapping reads the sheet again.
+    changed = command()
+    changed["payload"]["sources"][0]["mappingVersion"] = "map-v2"
+    await run_population_for_task(changed, fetch=fake_fetch, prepare=counting_prepare,
+                                  query=fake_query, extraction_cache=cache)
+    assert prepared == [1, 1]
+
+
+def test_compare_revisions_counts_changes_and_names_files_no_longer_read():
+    from app.workers.population_tasks import compare_revisions
+
+    def entity(entity_id, asset, **attributes):  # type: ignore[no-untyped-def]
+        return {"entityId": entity_id, "label": entity_id, "attributes": attributes,
+                "provenance": {"sources": [{"assetRef": {"assetId": asset}}]}}
+
+    before = [entity("a", "sheet", name="A"), entity("b", "sheet", name="B"),
+              entity("gone", "old.pdf", title="T"), entity("typed", "manual:1", name="X")]
+    after = [entity("a", "sheet", name="A"), entity("b", "sheet", name="B2"),
+             entity("new", "sheet", name="N")]
+    assert compare_revisions(before, after, {"sheet"}) == {
+        "added": 1, "removed": 2, "changed": 1,
+        "removedSources": [{"assetId": "old.pdf", "records": 1}]}
+
+
+def test_lease_owners_name_the_worker_node_and_this_process():
+    from app.workers.population_tasks import WORKER_BOOT_ID, lease_owner_for, node_lease_prefix
+
+    owner = lease_owner_for("semantic-population@host")
+    assert owner.startswith(node_lease_prefix("semantic-population@host") + WORKER_BOOT_ID + ":")
+    assert owner != lease_owner_for("semantic-population@host")
+
+
+def test_concept_refresh_accepts_links_and_no_source_of_concepts_it_keeps():
+    binding = [{"relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
+    whole = command(bindings=binding)
+    # A whole build must read the fields a link matches on.
+    assert run_population_for_payload(whole)["errorCode"] == "invalid_relation_bindings"
+    refresh = command(bindings=binding)
+    refresh["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    # The kept concept's fields come from the data in use.
+    assert run_population_for_payload(refresh)["ok"] is True
+    unknown = command(bindings=[{**binding[0], "referenceField": "no_such_field"}])
+    unknown["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    assert run_population_for_payload(unknown)["errorCode"] == "invalid_relation_bindings"
+    # A concept made from another one alone has no source of its own.
+    derived_only = command(sources=[])
+    derived_only["payload"]["scope"] = {"kind": "concept", "conceptId": "c2"}
+    assert run_population_for_payload(derived_only)["ok"] is True
+    assert run_population_for_payload(command(sources=[]))["errorCode"] == "invalid_sources"
+
+
+@pytest.mark.asyncio
+async def test_progress_says_how_far_the_current_step_is_and_counts_ai_calls():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    progress = PopulationProgress(report, min_interval=0)
+    await progress.begin(1)
+    assert "step" not in reports[-1] and "ai" not in reports[-1]
+    await progress.advance("rows", 1000, 25000)
+    await progress.count_ai("planned", 40)
+    await progress.count_ai("answered")
+    await progress.count_ai("reused")
+    assert reports[-1]["step"] == {"unit": "rows", "done": 1000, "total": 25000}
+    assert reports[-1]["ai"] == {"planned": 40, "answered": 1, "reused": 1, "skipped": 0, "failed": 0}
+    # A finished source or a new phase has no step left; the AI tally runs for the whole run.
+    await progress.enter("linking")
+    assert "step" not in reports[-1] and reports[-1]["ai"]["planned"] == 40

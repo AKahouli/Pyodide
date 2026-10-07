@@ -136,7 +136,7 @@ export class WorkspaceDocumentService {
     mimeType: string,
     folderId?: string,
     deepSearch?: boolean,
-    autoIndex: boolean = true,
+    autoIndex = true,
   ): Promise<DocumentResponse> {
     return this.write.uploadSmallFile(workspaceId, userId, file, originalName, mimeType, folderId, deepSearch, autoIndex);
   }
@@ -183,7 +183,7 @@ export class WorkspaceDocumentService {
     return this.links.addLinks(workspaceId, userId, urls, options);
   }
 
-  crawlSite(_workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+  crawlSite(_workspaceId: string, url: string): Promise<{ pages: { url: string; title?: string }[]; truncated: boolean }> {
     return this.links.crawlSite(_workspaceId, url);
   }
 
@@ -191,7 +191,7 @@ export class WorkspaceDocumentService {
     return this.links.checkUrlReachable(url);
   }
 
-  checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<Record<string, unknown>> }> {
+  checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Record<string, unknown>[] }> {
     return this.read.checkUrls(workspaceId, urls);
   }
 
@@ -217,7 +217,7 @@ export class WorkspaceDocumentService {
     userId: string,
     sessionId: string,
     deepSearch?: boolean,
-    autoIndex: boolean = true,
+    autoIndex = true,
   ): Promise<BulkUploadCompleteResponse> {
     return this.uploadSessions.completeBulkUpload(workspaceId, userId, sessionId, deepSearch, autoIndex);
   }
@@ -240,6 +240,10 @@ export class WorkspaceDocumentService {
 
   generateReadUrl(path: string, options?: { allowExtensionless?: boolean }): Promise<string> {
     return this.read.generateReadUrl(path, options);
+  }
+
+  listAllInWorkspace(workspaceId: string): Promise<DocumentResponse[]> {
+    return this.read.listAllInWorkspace(workspaceId);
   }
 
   findAllByWorkspace(workspaceId: string, params: DocumentQueryParams): Promise<PaginatedDocuments> {

@@ -9,6 +9,12 @@ COPY index.html ./
 COPY vite.config.ts ./
 COPY tsconfig.json tsconfig.node.json ./
 ENV NODE_OPTIONS=--max-old-space-size=8192
+# Build-time config: Vite inlines VITE_* into the bundle. At container start, env.sh also
+# writes /config.js from the same VITE_API_URL / VITE_SOCKET_BASE_URL env vars.
+ARG VITE_API_URL
+ARG VITE_SOCKET_BASE_URL
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL
 RUN npm run build
 
 FROM nginx:stable-alpine-slim

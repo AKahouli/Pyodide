@@ -1,17 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { createHash } from 'crypto';
-import { Model } from 'mongoose';
 import {
   MUTATING_TOOLS,
   TOOL_REQUIRED_CAPABILITY,
 } from '../constants/app-runtime-capabilities';
 import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
-import {
-  AppRuntimeToolCall,
-  AppRuntimeToolCallDocument,
-} from '../schemas/app-runtime-tool-call.schema';
 import {
   AppRuntimeEvents,
   RuntimeToolError,
@@ -26,6 +20,7 @@ import {
   RuntimeConnectionRegistry,
 } from './runtime-connection.registry';
 import { RuntimeRevisionService } from './runtime-revision.service';
+import { PgRuntimeToolCallStore } from '../persistence/pg-runtime-tool-call.store';
 
 export interface InvokeToolParams {
   workspaceId: string;
@@ -71,8 +66,7 @@ export class RuntimeToolDispatcherService {
   private readonly inFlight = new Map<string, Promise<ToolInvokeEnvelope>>();
 
   constructor(
-    @InjectModel(AppRuntimeToolCall.name)
-    private readonly toolCalls: Model<AppRuntimeToolCallDocument>,
+    private readonly toolCalls: PgRuntimeToolCallStore,
     private readonly bindings: RuntimeBindingService,
     private readonly registry: RuntimeConnectionRegistry,
     private readonly revisions: RuntimeRevisionService,
@@ -116,17 +110,26 @@ export class RuntimeToolDispatcherService {
       );
     }
 
-    const connection = this.registry.get(workspaceId);
+    let connection = this.registry.get(workspaceId);
     if (!connection) {
       await this.bindings.markWaitingForBrowser(workspaceId);
-      return failure(
-        toolCallId,
-        runtimeError(
-          AppRuntimeErrorCodes.RUNTIME_OFFLINE,
-          'No browser runtime is connected for this workspace',
-          { bindingId: binding.bindingId },
-        ),
-      );
+      const waitMs = this.browserWaitMs();
+      if (waitMs > 0) {
+        this.logger.debug(
+          `Waiting up to ${waitMs}ms for browser register workspaceId=${workspaceId} tool=${tool}`,
+        );
+        connection = await this.registry.waitForConnection(workspaceId, waitMs);
+      }
+      if (!connection) {
+        return failure(
+          toolCallId,
+          runtimeError(
+            AppRuntimeErrorCodes.RUNTIME_OFFLINE,
+            'No browser runtime is connected for this workspace',
+            { bindingId: binding.bindingId },
+          ),
+        );
+      }
     }
 
     if (this.registry.isStale(connection)) {
@@ -143,7 +146,6 @@ export class RuntimeToolDispatcherService {
 
     const requiredCapability = TOOL_REQUIRED_CAPABILITY[tool];
     if (requiredCapability && !connection.capabilities[requiredCapability]) {
-      // No microVM fallback here: escalation is phase 5.
       return failure(
         toolCallId,
         runtimeError(
@@ -200,9 +202,6 @@ export class RuntimeToolDispatcherService {
     }
 
     const binding = await this.bindings.findByWorkspaceId(workspaceId);
-    // Prefer the live binding revision. MCP `baseRevisionId` is a snapshot from
-    // before the mutation lock; using it here rolls the browser back when a
-    // queued write still carries the previous revision.
     const expectedRevisionId =
       binding?.latestRevisionId ?? params.baseRevisionId ?? 'rev_0';
 
@@ -258,26 +257,16 @@ export class RuntimeToolDispatcherService {
         : undefined;
 
     if (revisionId) {
-      // Same rule as the APImanus broker: only mutating tools advance the
-      // binding revision, and the browser is already at that revision.
       await this.bindings.updateRevision(workspaceId, revisionId);
       this.registry.setRevision(workspaceId, revisionId);
     }
 
-    await this.toolCalls
-      .updateOne(
-        { toolCallId },
-        {
-          $set: {
-            status: 'succeeded',
-            result: outcome.result,
-            error: null,
-            resultingRevisionId: revisionId ?? null,
-            durationMs: await this.elapsedMs(toolCallId),
-          },
-        },
-      )
-      .exec();
+    await this.toolCalls.markSucceeded(
+      toolCallId,
+      outcome.result,
+      revisionId ?? null,
+      await this.elapsedMs(toolCallId),
+    );
 
     return { ok: true, toolCallId, result: outcome.result, revisionId };
   }
@@ -307,15 +296,14 @@ export class RuntimeToolDispatcherService {
         timer = setTimeout(onTimeout, timeoutMs);
       };
 
-      const onTimeout = (): void =>
-        settle({
+      const onTimeout = (): void => { settle({
           ok: false,
           error: runtimeError(
             AppRuntimeErrorCodes.TOOL_TIMEOUT,
             `Browser runtime did not answer "${tool}" in time`,
             { tool, timeoutMs },
           ),
-        });
+        }); };
 
       timer = setTimeout(onTimeout, timeoutMs);
       this.pending.set(toolCallId, { workspaceId, settle, rearmTimeout });
@@ -347,8 +335,6 @@ export class RuntimeToolDispatcherService {
   handleFailed(workspaceId: string, payload: ToolFailedPayload): void {
     const pending = this.pending.get(payload?.toolCallId);
     if (!pending || pending.workspaceId !== workspaceId) return;
-    // Codes raised by the browser (UNSUPPORTED_CAPABILITY for a native binary,
-    // PROCESS_FAILED, ...) are relayed untouched.
     pending.settle({
       ok: false,
       error: {
@@ -377,7 +363,7 @@ export class RuntimeToolDispatcherService {
     toolCallId: string,
     timeoutMs?: number,
   ): Promise<ToolInvokeEnvelope | null> {
-    const existing = await this.toolCalls.findOne({ toolCallId }).lean().exec();
+    const existing = await this.toolCalls.findByToolCallId(toolCallId);
     if (!existing) return null;
 
     const terminal = this.envelopeFromTerminal(toolCallId, existing);
@@ -436,7 +422,7 @@ export class RuntimeToolDispatcherService {
     const deadline = Date.now() + waitMs;
 
     while (true) {
-      const existing = await this.toolCalls.findOne({ toolCallId }).lean().exec();
+      const existing = await this.toolCalls.findByToolCallId(toolCallId);
       const terminal = existing
         ? this.envelopeFromTerminal(toolCallId, existing)
         : null;
@@ -465,37 +451,20 @@ export class RuntimeToolDispatcherService {
     bindingId: string,
     args: Record<string, unknown>,
   ): Promise<void> {
-    await this.toolCalls
-      .updateOne(
-        { toolCallId: params.toolCallId },
-        {
-          $set: {
-            bindingId,
-            workspaceId: params.workspaceId,
-            tool: params.tool,
-            argumentsHash: createHash('sha256')
-              .update(JSON.stringify(args))
-              .digest('hex'),
-            baseRevisionId: params.baseRevisionId ?? null,
-            status: 'running',
-            startedAtMs: Date.now(),
-            durationMs: null,
-            error: null,
-            result: null,
-          },
-        },
-        { upsert: true },
-      )
-      .exec();
+    await this.toolCalls.upsertRunning({
+      toolCallId: params.toolCallId,
+      bindingId,
+      workspaceId: params.workspaceId,
+      tool: params.tool,
+      argumentsHash: createHash('sha256')
+        .update(JSON.stringify(args))
+        .digest('hex'),
+      baseRevisionId: params.baseRevisionId ?? null,
+    });
   }
 
   private async elapsedMs(toolCallId: string): Promise<number | null> {
-    const doc = await this.toolCalls
-      .findOne({ toolCallId })
-      .select({ startedAtMs: 1 })
-      .lean()
-      .exec();
-    const startedAtMs = doc?.startedAtMs;
+    const startedAtMs = await this.toolCalls.getStartedAtMs(toolCallId);
     if (typeof startedAtMs !== 'number') return null;
     return Math.max(0, Date.now() - startedAtMs);
   }
@@ -504,22 +473,19 @@ export class RuntimeToolDispatcherService {
     toolCallId: string,
     error: RuntimeToolError,
   ): Promise<ToolInvokeEnvelope> {
-    await this.toolCalls
-      .updateOne(
-        { toolCallId },
-        {
-          $set: {
-            status: 'failed',
-            error,
-            durationMs: await this.elapsedMs(toolCallId),
-          },
-        },
-      )
-      .exec();
+    await this.toolCalls.markFailed(
+      toolCallId,
+      error as unknown as Record<string, unknown>,
+      await this.elapsedMs(toolCallId),
+    );
     return failure(toolCallId, error);
   }
 
   private mutationWaitMs(): number {
     return this.config.get<number>('appRuntime.mutationWaitMs', 30_000);
+  }
+
+  private browserWaitMs(): number {
+    return this.config.get<number>('appRuntime.browserWaitMs', 180_000);
   }
 }

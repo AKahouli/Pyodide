@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { UserService, type UserSummary } from '../../user/user.service';
 import { LoggerService } from '../../logger';
 import { ConflictException, NotFoundException } from '../../exceptions';
@@ -11,18 +11,18 @@ import type {
   ReportResponse,
   ReportStatus,
 } from '../interfaces/report.interface';
-import {
-  MESSAGE_STORE,
-  type MessageStore,
-  type ReportMessageRecord,
+import { 
+  type ReportMessageRecord,  
 } from '../persistence/message-store';
-import { REPORT_STORE, type ReportRecord, type ReportStore } from '../persistence/report-store';
+import { type ReportRecord} from '../persistence/report-store';
+import { PostgresReportStore } from '../persistence/postgres/postgres-report-store';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
 
 @Injectable()
 export class ReportService {
   constructor(
-    @Inject(REPORT_STORE) private readonly reportStore: ReportStore,
-    @Inject(MESSAGE_STORE) private readonly messageStore: MessageStore,
+    private readonly reportStore: PostgresReportStore,
+    private readonly messageStore: PostgresMessageStore,
     private readonly userService: UserService,
     private readonly logger: LoggerService,
   ) {

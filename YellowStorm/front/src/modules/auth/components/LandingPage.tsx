@@ -11,8 +11,8 @@ import { AuthScrollShell } from './AuthScrollShell';
 import { useAuthModalStore } from '../store';
 import { getAuthProviders } from '../api';
 import { ProviderIcon } from './ProviderIcon';
-import { API_CONFIG } from '@/lib/api/config';
-import { Loader2 } from 'lucide-react';
+import { API_CONFIG, isApiConfigured } from '@/lib/api/config';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import type { AuthProviderPublic } from '../types';
 
 export function LandingPage() {
@@ -23,9 +23,19 @@ export function LandingPage() {
   const [loadingProviders, setLoadingProviders] = React.useState(true);
 
   React.useEffect(() => {
+    if (!isApiConfigured()) {
+      setLoadingProviders(false);
+      return;
+    }
+
     getAuthProviders()
       .then(setProviders)
-      .catch(() => setProviders([]))
+      .catch((error: unknown) => {
+        // An unreachable backend and a backend with no providers enabled are indistinguishable
+        // in the UI below, so record which baseURL failed instead of swallowing the error.
+        console.error(`[auth] Could not load auth providers from ${API_CONFIG.baseURL}`, error);
+        setProviders([]);
+      })
       .finally(() => setLoadingProviders(false));
   }, []);
 
@@ -68,8 +78,25 @@ export function LandingPage() {
               </div>
             )}
 
+            {!loadingProviders && !isApiConfigured() && (
+              <div className='space-y-6'>
+                <div className='rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5 text-left backdrop-blur-sm'>
+                  <div className='flex items-center gap-2.5 text-amber-400 font-semibold mb-2'>
+                    <AlertTriangle className='h-5 w-5 shrink-0' />
+                    <span>{t('landing.unconfiguredApiTitle')}</span>
+                  </div>
+                  <p className='text-sm text-neutral-300 mb-3'>
+                    {t('landing.unconfiguredApi')}
+                  </p>
+                  <p className='text-xs text-neutral-400 font-mono bg-black/40 p-2.5 rounded-lg border border-neutral-800 break-all select-all'>
+                    {t('landing.unconfiguredApiHint')}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* No Providers — all auth methods disabled */}
-            {!loadingProviders && !hasAnyProvider && (
+            {!loadingProviders && isApiConfigured() && !hasAnyProvider && (
               <div className='space-y-6'>
                 <div className='space-y-3 text-center md:text-left'>
                   <h1 className='text-4xl tracking-tight text-center md:text-left'>{t('landing.noProvidersTitle')}</h1>

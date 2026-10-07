@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { BadRequestException } from '../../exceptions/exceptions/http.exceptions';
 import { RESERVED_LABELS } from '../constants/reserved-labels';

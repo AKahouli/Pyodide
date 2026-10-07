@@ -2,7 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowAdvisorModelService } from './advisor/playbook-flow-advisor-model.service';
-import type { FlowTaskSemanticMatch, FlowTaskSemanticFinding } from '../schemas/playbook-flow-task-result.schema';
+import type { FlowTaskSemanticMatch, FlowTaskSemanticFinding } from '../models/playbook-flow-task-result.model';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 
 type FindingSeverity = FlowTaskSemanticFinding['severity'];
@@ -141,7 +141,7 @@ Return strict JSON with these fields:
       ],
     }, { timeout: 30000 });
 
-    const content = (response.data as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content;
+    const content = (response.data as { choices?: { message?: { content?: string } }[] })?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
       throw new Error('Replay semantic judge returned no content.');
     }

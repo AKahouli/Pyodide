@@ -1,14 +1,22 @@
 import { createHash } from 'crypto';
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { DocumentService } from '@modules/document/document.service';
+import {
+  SYSTEM_REVISION_SOURCE,
+  type SystemRevisionSource,
+} from '../ports/system-revision-source.port';
+import {
+  TEMPLATE_REVISION_PREFIX,
+  systemManifestKey as templateManifestKey,
+} from '../constants/revision-id.constants';
 import {
   DEFAULT_STARTER_MANIFEST_KEY,
   DEFAULT_STARTER_REVISION_ID,
@@ -17,11 +25,9 @@ import {
 } from '../constants/starter-revisions';
 import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
 import { blobObjectKey } from '../utils/blob-object-key';
-import {
-  AppSourceRevision,
-  AppSourceRevisionDocument,
-  AppSourceRevisionFile,
-} from '../schemas/app-source-revision.schema';
+import { isTextSourcePath } from '../utils/source-path.util';
+import { type SourceRevisionFileRecord } from '../persistence/runtime-source-revision.store';
+import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
 export interface RevisionManifest {
   revisionId: string;
@@ -29,18 +35,18 @@ export interface RevisionManifest {
   parentRevisionId: string | null;
   manifestHash: string;
   manifestObjectKey: string;
-  files: AppSourceRevisionFile[];
+  files: SourceRevisionFileRecord[];
 }
 
 interface CephStarterManifestJson {
   revisionId?: string;
   parentRevisionId?: string | null;
-  files?: Array<{
+  files?: {
     path?: string;
     sha256?: string;
     objectKey?: string;
     size?: number;
-  }>;
+  }[];
 }
 
 @Injectable()
@@ -49,10 +55,12 @@ export class RuntimeRevisionService {
   private starterCache: RevisionManifest | null = null;
 
   constructor(
-    @InjectModel(AppSourceRevision.name)
-    private readonly model: Model<AppSourceRevisionDocument>,
+    private readonly store: PgRuntimeSourceRevisionStore,
     private readonly documents: DocumentService,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(SYSTEM_REVISION_SOURCE)
+    private readonly systemRevisions?: SystemRevisionSource,
   ) {}
 
   get starterRevisionId(): string {
@@ -81,10 +89,11 @@ export class RuntimeRevisionService {
       return this.getStarterManifest();
     }
 
-    const doc = await this.model
-      .findOne({ workspaceId, revisionId })
-      .lean()
-      .exec();
+    if (revisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      return this.loadTemplateRevision(revisionId);
+    }
+
+    const doc = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
 
     if (!doc) {
       throw new NotFoundException(
@@ -115,18 +124,12 @@ export class RuntimeRevisionService {
     return raw.toString('utf8');
   }
 
-  /**
-   * Ensure the workspace has a Mongo row for the starter revision (idempotent).
-   * Binding still points `latestRevisionId` at the shared starter id; this
-   * records the file list for later workspace-local children.
-   */
-  async ensureStarterRevision(workspaceId: string): Promise<RevisionManifest> {
-    const starter = await this.getStarterManifest();
-    const existing = await this.model
-      .findOne({ workspaceId, revisionId: starter.revisionId })
-      .lean()
-      .exec();
-
+  /** Ensure the workspace has a local row for its initial revision. */
+  async ensureWorkspaceRevision(
+    workspaceId: string,
+    revisionId: string,
+  ): Promise<RevisionManifest> {
+    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
     if (existing) {
       return {
         revisionId: existing.revisionId,
@@ -138,30 +141,28 @@ export class RuntimeRevisionService {
       };
     }
 
-    try {
-      await this.model.create({
-        revisionId: starter.revisionId,
-        workspaceId,
-        parentRevisionId: null,
-        manifestHash: starter.manifestHash,
-        manifestObjectKey: starter.manifestObjectKey,
-        files: starter.files,
-        createdByToolCallId: null,
-      });
-    } catch (error) {
-      // Concurrent first-bind race: unique index on (workspaceId, revisionId).
-      if ((error as { code?: number } | null)?.code !== 11000) {
-        throw error;
-      }
-    }
+    const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
+    const created = await this.store.createIfNotExists({
+      revisionId: revision.revisionId,
+      workspaceId,
+      parentRevisionId: revision.parentRevisionId,
+      manifestHash: revision.manifestHash,
+      manifestObjectKey: revision.manifestObjectKey,
+      files: revision.files,
+      createdByToolCallId: null,
+    });
 
-    return { ...starter, workspaceId };
+    return { ...revision, workspaceId: created.workspaceId };
+  }
+
+  async ensureStarterRevision(workspaceId: string): Promise<RevisionManifest> {
+    return this.ensureWorkspaceRevision(workspaceId, this.starterRevisionId);
   }
 
   async listFiles(
     workspaceId: string,
     revisionId: string,
-  ): Promise<{ revisionId: string; files: AppSourceRevisionFile[] }> {
+  ): Promise<{ revisionId: string; files: SourceRevisionFileRecord[] }> {
     const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
     return { revisionId: revision.revisionId, files: revision.files };
   }
@@ -173,14 +174,14 @@ export class RuntimeRevisionService {
   resolveObjectKeys(
     revision: RevisionManifest,
     paths: string[],
-  ): Array<{ path: string; objectKey: string; sha256: string; size: number }> {
+  ): { path: string; objectKey: string; sha256: string; size: number }[] {
     const byPath = new Map(revision.files.map((f) => [f.path, f]));
-    const items: Array<{
+    const items: {
       path: string;
       objectKey: string;
       sha256: string;
       size: number;
-    }> = [];
+    }[] = [];
 
     for (const relative of paths) {
       const normalized = this.normalizeRelativePath(relative);
@@ -219,23 +220,36 @@ export class RuntimeRevisionService {
     if (revisionId === this.starterRevisionId) {
       return true;
     }
-    const doc = await this.model
-      .findOne({ workspaceId, revisionId })
-      .select({ _id: 1 })
-      .lean()
-      .exec();
-    return !!doc;
+    if (revisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      if (await this.store.existsByWorkspaceAndRevision(workspaceId, revisionId)) {
+        return true;
+      }
+      const template = await this.systemRevisions?.findByRevisionId(revisionId);
+      if (template?.status === 'published' && template.manifestObjectKey) {
+        return true;
+      }
+      // Ephemeral staging publish (ZIP validation): manifest in Ceph, no catalog row.
+      return this.documents.exists(templateManifestKey(revisionId));
+    }
+    return this.store.existsByWorkspaceAndRevision(workspaceId, revisionId);
   }
 
   /**
    * Persist a workspace revision snapshot to Ceph (content-addressed blobs +
-   * manifest) and Mongo. Called by the browser runtime after each mutating tool.
+   * manifest) and Postgres. Called by the browser runtime after each mutating tool.
+   *
+   * Uploaded bodies overlay the parent. When `presentPaths` is set, the result is
+   * parent ∩ presentPaths ⊕ uploads (template binaries survive text-only commits;
+   * omitted paths are deletions). Without `presentPaths`, non-text parent files
+   * not overridden by an upload are still inherited so older clients do not drop
+   * assets.
    */
   async commitWorkspaceRevision(input: {
     workspaceId: string;
     revisionId: string;
     parentRevisionId?: string | null;
-    files: Array<{ path: string; content: string }>;
+    files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
+    presentPaths?: string[];
     toolCallId?: string | null;
   }): Promise<RevisionManifest> {
     const { workspaceId, revisionId } = input;
@@ -245,10 +259,7 @@ export class RuntimeRevisionService {
       throw new BadRequestException('Cannot overwrite the system starter revision');
     }
 
-    const existing = await this.model
-      .findOne({ workspaceId, revisionId })
-      .lean()
-      .exec();
+    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
     if (existing) {
       return {
         revisionId: existing.revisionId,
@@ -260,6 +271,7 @@ export class RuntimeRevisionService {
       };
     }
 
+    let parentFiles: SourceRevisionFileRecord[] = [];
     if (parentRevisionId) {
       const parentOk = await this.revisionExists(workspaceId, parentRevisionId);
       if (!parentOk) {
@@ -267,23 +279,38 @@ export class RuntimeRevisionService {
           `Parent revision ${parentRevisionId} is not authorized for workspace ${workspaceId}`,
         );
       }
+      try {
+        const parent = await this.getAuthorizedRevision(workspaceId, parentRevisionId);
+        parentFiles = parent.files;
+      } catch (err) {
+        throw new BadRequestException(
+          `Parent revision ${parentRevisionId} could not be loaded for workspace ${workspaceId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
-    const manifestFiles: AppSourceRevisionFile[] = [];
+    const uploadedByPath = new Map<string, SourceRevisionFileRecord>();
     for (const raw of input.files) {
       const path = this.normalizeRelativePath(raw.path);
-      const body = Buffer.from(raw.content, 'utf8');
+      const encoding = raw.encoding === 'base64' ? 'base64' : 'utf8';
+      const body = Buffer.from(raw.content, encoding);
       const sha256 = createHash('sha256').update(body).digest('hex');
       const objectKey = blobObjectKey(sha256);
+      const contentType = encoding === 'base64' ? 'application/octet-stream' : 'text/plain';
 
       if (!(await this.documents.exists(objectKey))) {
-        await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
+        await this.documents.upload(body, path.split('/').pop() || path, contentType, {
           generateUniqueName: false,
           customFileName: objectKey,
+          // Content-addressed appbuilder blobs may be fonts/wasm/png bytes; the
+          // document MIME whitelist is for user uploads, not revision commits.
+          skipMimeValidation: true,
         });
       }
 
-      manifestFiles.push({
+      uploadedByPath.set(path, {
         path,
         sha256,
         objectKey,
@@ -291,7 +318,34 @@ export class RuntimeRevisionService {
       });
     }
 
-    manifestFiles.sort((a, b) => a.path.localeCompare(b.path));
+    const parentByPath = new Map(parentFiles.map((f) => [f.path, f]));
+    const fileMap = new Map<string, SourceRevisionFileRecord>();
+
+    const presentPaths = input.presentPaths?.map((p) => this.normalizeRelativePath(p));
+    if (presentPaths?.length) {
+      for (const path of presentPaths) {
+        const uploaded = uploadedByPath.get(path);
+        if (uploaded) {
+          fileMap.set(path, uploaded);
+          continue;
+        }
+        const inherited = parentByPath.get(path);
+        if (inherited) {
+          fileMap.set(path, inherited);
+        }
+      }
+    } else {
+      for (const [path, file] of uploadedByPath) {
+        fileMap.set(path, file);
+      }
+      for (const [path, file] of parentByPath) {
+        if (uploadedByPath.has(path)) continue;
+        if (isTextSourcePath(path)) continue;
+        fileMap.set(path, file);
+      }
+    }
+
+    const manifestFiles = [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path));
 
     const manifestPayload = JSON.stringify({
       revisionId,
@@ -312,21 +366,15 @@ export class RuntimeRevisionService {
       },
     );
 
-    try {
-      await this.model.create({
-        revisionId,
-        workspaceId,
-        parentRevisionId,
-        manifestHash,
-        manifestObjectKey,
-        files: manifestFiles,
-        createdByToolCallId: input.toolCallId ?? null,
-      });
-    } catch (error) {
-      if ((error as { code?: number } | null)?.code !== 11000) {
-        throw error;
-      }
-    }
+    await this.store.createIfNotExists({
+      revisionId,
+      workspaceId,
+      parentRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+      createdByToolCallId: input.toolCallId ?? null,
+    });
 
     this.logger.log(
       `Committed workspace revision workspaceId=${workspaceId} revisionId=${revisionId} files=${manifestFiles.length}`,
@@ -350,11 +398,11 @@ export class RuntimeRevisionService {
     workspaceId: string;
     baseRevisionId: string;
     newRevisionId: string;
-    additionalFiles: Array<{ path: string; content: string }>;
+    additionalFiles: { path: string; content: string }[];
   }): Promise<RevisionManifest> {
     const base = await this.getAuthorizedRevision(input.workspaceId, input.baseRevisionId);
 
-    const newFiles: AppSourceRevisionFile[] = [];
+    const newFiles: SourceRevisionFileRecord[] = [];
     for (const raw of input.additionalFiles) {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
@@ -365,6 +413,7 @@ export class RuntimeRevisionService {
         await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
           generateUniqueName: false,
           customFileName: objectKey,
+          skipMimeValidation: true,
         });
       }
       newFiles.push({ path, sha256, objectKey, size: body.length });
@@ -392,19 +441,15 @@ export class RuntimeRevisionService {
       { generateUniqueName: false, customFileName: manifestObjectKey },
     );
 
-    try {
-      await this.model.create({
-        revisionId: input.newRevisionId,
-        workspaceId: input.workspaceId,
-        parentRevisionId: input.baseRevisionId,
-        manifestHash,
-        manifestObjectKey,
-        files: manifestFiles,
-        createdByToolCallId: null,
-      });
-    } catch (error) {
-      if ((error as { code?: number } | null)?.code !== 11000) throw error;
-    }
+    await this.store.createIfNotExists({
+      revisionId: input.newRevisionId,
+      workspaceId: input.workspaceId,
+      parentRevisionId: input.baseRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+      createdByToolCallId: null,
+    });
 
     this.logger.log(
       `Patched revision workspaceId=${input.workspaceId} base=${input.baseRevisionId} new=${input.newRevisionId} files=${manifestFiles.length}`,
@@ -421,11 +466,7 @@ export class RuntimeRevisionService {
   }
 
   /**
-   * Branch a fresh revision from an existing one without mutating it: the new
-   * revision carries the same file manifest but a brand-new id minted ABOVE
-   * every persisted revision of the workspace, so existing history (and its
-   * Ceph manifests / finalized rows) is never rewritten. Used when a user
-   * messages the agent while previewing a historical version.
+   * Branch a fresh revision from an existing one without mutating it.
    */
   async branchRevision(
     workspaceId: string,
@@ -433,15 +474,12 @@ export class RuntimeRevisionService {
   ): Promise<RevisionManifest> {
     const source = await this.getAuthorizedRevision(workspaceId, sourceRevisionId);
 
-    const rows = await this.model
-      .find({ workspaceId }, { revisionId: 1 })
-      .lean()
-      .exec();
+    const revisionIds = await this.store.listRevisionIds(workspaceId);
     let maxNumber = 0;
-    for (const row of rows) {
-      const match = /^rev_(\d+)$/.exec(row.revisionId);
+    for (const rid of revisionIds) {
+      const match = /^rev_(\d+)$/.exec(rid);
       if (match) {
-        maxNumber = Math.max(maxNumber, Number.parseInt(match[1]!, 10));
+        maxNumber = Math.max(maxNumber, Number.parseInt(match[1], 10));
       }
     }
     const newRevisionId = `rev_${maxNumber + 1}`;
@@ -507,6 +545,67 @@ export class RuntimeRevisionService {
       );
       return null;
     }
+  }
+
+  /**
+   * Resolve a published Conversation V2 template revision. The manifest lives
+   * at the template's DB-recorded key and is stored in the same system folder
+   * as the starter manifest, so the browser loads it through the identical
+   * `…/revisions/:id/files` + `presign` path. The `template_revisions` row is
+   * the DB-first source of truth; the Ceph manifest remains a fallback for
+   * templates published before that table existed.
+   */
+  private async loadTemplateRevision(revisionId: string): Promise<RevisionManifest> {
+    const revisionRow = await this.systemRevisions?.findRevision(revisionId);
+    if (revisionRow) {
+      return {
+        revisionId: revisionRow.revisionId,
+        workspaceId: '_system',
+        parentRevisionId: null,
+        manifestHash: revisionRow.manifestHash,
+        manifestObjectKey: revisionRow.manifestObjectKey,
+        files: revisionRow.files,
+      };
+    }
+
+    const template = await this.systemRevisions?.findByRevisionId(revisionId);
+    // Draft templates are loadable so a super-admin can run the NodePod
+    // validation; user-facing use is gated to published elsewhere.
+    if (template && !template.manifestObjectKey) {
+      throw new NotFoundException(`Template revision ${revisionId} not found`);
+    }
+
+    const manifestObjectKey =
+      template?.manifestObjectKey ?? templateManifestKey(revisionId);
+    if (!template) {
+      const exists = await this.documents.exists(manifestObjectKey);
+      if (!exists) {
+        throw new NotFoundException(`Template revision ${revisionId} not found`);
+      }
+    }
+
+    return this.readSystemManifestFromCeph(manifestObjectKey, revisionId);
+  }
+
+  private async readSystemManifestFromCeph(
+    manifestObjectKey: string,
+    revisionId: string,
+  ): Promise<RevisionManifest> {
+    const raw = await this.documents.download(manifestObjectKey);
+    const parsed = JSON.parse(raw.toString('utf8')) as CephStarterManifestJson;
+    const files = this.normalizeManifestFiles(parsed.files);
+    if (files.length === 0) {
+      throw new NotFoundException(`Template revision ${revisionId} has no usable files`);
+    }
+
+    return {
+      revisionId: parsed.revisionId || revisionId,
+      workspaceId: '_system',
+      parentRevisionId: parsed.parentRevisionId ?? null,
+      manifestHash: createHash('sha256').update(raw).digest('hex'),
+      manifestObjectKey,
+      files,
+    };
   }
 
   private embeddedStarterManifest(): RevisionManifest {

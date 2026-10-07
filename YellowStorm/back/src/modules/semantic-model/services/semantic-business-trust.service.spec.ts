@@ -56,7 +56,9 @@ describe('SemanticBusinessTrustService', () => {
     }] });
 
     await expect(service.readiness('user', 'model')).resolves.toMatchObject({
+      // The score matches the area count: 3 of 5 areas.
       score: 60,
+      completeAreas: 3,
       areas: [
         { key: 'structure', complete: true },
         { key: 'sources', complete: false, issues: [{ severity: 'blocking' }] },
@@ -69,6 +71,46 @@ describe('SemanticBusinessTrustService', () => {
     expect(sql).toContain('n.version_id=$2');
     expect(sql).toContain('relation.version_id=$2');
     expect(database.query.mock.calls[0][1]).toEqual(['model', 'version']);
+  });
+
+  it('points the identity and relationship steps at the item to fix', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{
+      nodeCount: '2', dataConceptCount: '2', sourcedConceptCount: '2', identityCount: '1', relationCount: '1', ruleCount: '0',
+      unhealthyMappingCount: '0', openReviewCount: '0', missingIdentityConceptId: 'customer', unmatchedRelationId: 'belongs-to',
+    }] });
+
+    const readiness = await service.readiness('user', 'model');
+    expect(readiness.areas.find((area) => area.key === 'identity')).toMatchObject({ complete: false, targetId: 'customer' });
+    expect(readiness.areas.find((area) => area.key === 'relationships')).toMatchObject({ complete: false, targetId: 'belongs-to' });
+    expect(readiness.areas.find((area) => area.key === 'sources')).not.toHaveProperty('targetId');
+  });
+
+  it('points the sources step at a concept with no source', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '2', dataConceptCount: '2', sourcedConceptCount: '1', identityCount: '2', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '0', openReviewCount: '0', unsourcedConceptId: 'invoice' }] });
+
+    const readiness = await service.readiness('user', 'model');
+    expect(readiness.areas.find((area) => area.key === 'sources')).toMatchObject({ complete: false, targetId: 'invoice' });
+    expect(String(database.query.mock.calls[0][0])).toContain("h.state IN ('changed','broken','unavailable')");
+  });
+
+  it('scores a lone concept with no source by its areas', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '1', dataConceptCount: '1', sourcedConceptCount: '0', identityCount: '0', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '0', openReviewCount: '0' }] });
+
+    // Structure, relationships and quality are ready; sources and identity are not.
+    await expect(service.readiness('user', 'model')).resolves.toMatchObject({ status: 'needs_review', score: 60 });
+  });
+
+  it('does not count source health against quality a second time', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '1', dataConceptCount: '1', sourcedConceptCount: '1', identityCount: '1', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '1', openReviewCount: '0' }] });
+
+    await expect(service.readiness('user', 'model')).resolves.toMatchObject({
+      score: 80,
+      areas: expect.arrayContaining([{ key: 'quality', complete: true, issues: [] }]),
+    });
   });
 
   it('does not advertise an empty model as ready', async () => {

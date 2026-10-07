@@ -1,16 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ConnectedAppOAuthService } from './connected-app-oauth.service';
-import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import {
-  CONNECTED_APP_OAUTH_STATE_STORE,
-  USER_APP_CONNECTION_STORE,
-} from '../persistence/connected-app.store';
+import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { InMemoryConnectionStore, InMemoryOauthStateStore } from '../persistence/connected-app.store.fake';
 import { ConnectionStatus } from '../connected-app.types';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgConnectedAppOauthStateStore } from '../persistence/pg-connected-app.store';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 const userId = '507f1f77bcf86cd799439011';
 
@@ -64,8 +62,8 @@ describe('ConnectedAppOAuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppOAuthService,
-        { provide: CONNECTED_APP_OAUTH_STATE_STORE, useValue: oauthStateStore },
-        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: PgConnectedAppOauthStateStore, useValue: oauthStateStore },
+        { provide: PgUserAppConnectionStore, useValue: connectionStore },
         { provide: ConnectedAppDefinitionService, useValue: definitionService },
         { provide: CryptoService, useValue: cryptoService },
         {

@@ -360,10 +360,11 @@ async function main(): Promise<void> {
     verify: async (units) => {
       const map = new Map<string, string>();
       for (const unit of units) {
-        const [userId, appKey] = String(unit.id).split(':');
-        const r = await pool.query('SELECT status FROM integrations.user_app_connections WHERE user_id = $1 AND app_key = $2', [userId, appKey]);
-        if (r.rowCount === 0) map.set(String(unit.id), 'missing in PG');
-        else if (r.rows[0].status !== unit.status) map.set(String(unit.id), 'status mismatch');
+        // Keyed by (user_id, app_key) like `unitId`; the unit's `id` is the Mongo _id, which Postgres rows may not share.
+        const key = `${unit.user_id}:${unit.app_key}`;
+        const r = await pool.query('SELECT status FROM integrations.user_app_connections WHERE user_id = $1 AND app_key = $2', [unit.user_id, unit.app_key]);
+        if (r.rowCount === 0) map.set(key, 'missing in PG');
+        else if (r.rows[0].status !== unit.status) map.set(key, 'status mismatch');
       }
       return map;
     },

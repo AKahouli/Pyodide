@@ -11,9 +11,21 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.signals import task_postrun, task_prerun
+from structlog.contextvars import bind_contextvars, unbind_contextvars
+
+from yellowmind_observability import setup_observability
+
+# Worker processes (and any importer) boot the unified-logging SDK here; setup is
+# idempotent per process, so the API process importing this module is unaffected.
+# Prefork caveat: a forked child inherits a dead writer thread — current pools are
+# solo (scripts/start-*.ps1); re-init via worker_process_init before ever switching.
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "semantic-model-runtime")
 
 DATASOURCE_QUEUES = ("semantic-model-datasource.preview", "semantic-model-datasource.batch")
 POPULATION_QUEUES = ("semantic-model-population.corrections", "semantic-model-population.batch")
+# Search indexing has its own worker so a long embedding run never holds up population.
+SEARCH_QUEUES = ("semantic-model-search.index",)
 
 
 def make_celery() -> Celery:
@@ -28,8 +40,25 @@ def make_celery() -> Celery:
         task_acks_on_failure_or_timeout=False,
         worker_prefetch_multiplier=1,
         task_reject_on_worker_lost=True,
+        # Keep the unified-logging root bridge alive: celery's default hijack
+        # clears root handlers at worker boot, silencing the SDK (plan P06).
+        worker_hijack_root_logger=False,
     )
     return app
 
 
 celery_app = make_celery()
+
+
+# Job context envelopes (plan P05): every task execution carries its celery task id
+# as `run_id` in the unified-logging envelope context. The SDK bridge merges these
+# contextvars at emit time for both structlog and stdlib loggers.
+@task_prerun.connect
+def _bind_task_context(task=None, **_):
+    if task is not None and task.request.id:
+        bind_contextvars(run_id=task.request.id)
+
+
+@task_postrun.connect
+def _unbind_task_context(task=None, **_):
+    unbind_contextvars("run_id")

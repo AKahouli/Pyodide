@@ -136,6 +136,34 @@ class UpdatePlaybookExecutionAdminSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(86400)
   graphCacheTtlSeconds?: number;
 
+  @ApiPropertyOptional({ description: 'Queue design operations instead of executing them inline.' })
+  @IsOptional() @IsBoolean()
+  asyncDesignEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Return delta patches for flow updates.' })
+  @IsOptional() @IsBoolean()
+  deltaPatchEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Buffer streamed tokens before emitting them.' })
+  @IsOptional() @IsBoolean()
+  tokenBufferEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enforce execution leases for concurrency control.' })
+  @IsOptional() @IsBoolean()
+  executionLeaseEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable the Dynamic Reasoning Workflow planner.' })
+  @IsOptional() @IsBoolean()
+  dynamicReasoningEnabled?: boolean;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentGlobalDesignOperations?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentUserDesignOperations?: number;
+
   @ApiPropertyOptional({ type: UpdateDynamicReasoningAdminSettingsDto })
   @IsOptional() @ValidateNested() @Type(() => UpdateDynamicReasoningAdminSettingsDto)
   dynamicReasoning?: UpdateDynamicReasoningAdminSettingsDto;

@@ -20,6 +20,10 @@ class InMemorySettingStore implements SystemSettingStore {
     return keys.flatMap((key) => (this.rows.has(key) ? [this.rows.get(key)!] : []));
   }
 
+  async listAll(): Promise<SystemSettingRow[]> {
+    return [];
+  }
+
   async upsert(key: string, value: unknown): Promise<SystemSettingRow> {
     const row: SystemSettingRow = { key, value, updatedAt: new Date() };
     this.rows.set(key, row);
@@ -84,7 +88,7 @@ describe('WorkspaceUploadSettingsService', () => {
   it('normalizes, dedupes, and persists updates; logs rejections', async () => {
     await service.ensureDefaultSettings();
     const result = await service.updateSettings(
-      ['PDF', '.pdf', '.docx', 'exe', '.docx', '.zip', ''],
+      ['PDF', '.pdf', '.docx', 'exe', '.docx', '.rar', ''],
     );
     expect(result.allowedExtensions).toEqual(['.pdf', '.docx']);
   });

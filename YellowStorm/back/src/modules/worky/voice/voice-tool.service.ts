@@ -41,7 +41,7 @@ export interface VoiceTaskDetails {
   completedAt: string | null;
   durationMs: number | null;
   budget: { estimateUsd: number; actualUsd: number } | null;
-  artifacts: Array<{ filename: string; kind: string | null }>;
+  artifacts: { filename: string; kind: string | null }[];
 }
 
 @Injectable()
@@ -65,11 +65,11 @@ export class VoiceToolService {
     await this.planning.appendOwnerMessage(userId, streamId, { content: message });
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
     const [agents, connectors, user] = await Promise.all([
-      this.turnContext.resolveWorkyAgents(userId),
-      this.turnContext.resolveConnectors(userId),
+      this.turnContext.resolveWorkyAgents(ctx.ownerUserId),
+      this.turnContext.resolveConnectors(ctx.ownerUserId),
       this.users.findById(userId),
     ]);
-    const res = await this.orchestrator.runTask(userId, ctx.aiSessionId, message, {
+    const res = await this.orchestrator.runTask(ctx.ownerUserId, ctx.aiSessionId, message, {
       agents,
       connectors,
       ...(user ? requesterOpts(asAuthUser(user)) : {}),
@@ -87,18 +87,16 @@ export class VoiceToolService {
    * `:id/stop` endpoint uses.
    */
   async stopSession(userId: string, streamId: string): Promise<{ stopped: boolean }> {
-    await this.streamService.findById(userId, streamId);
-    const stream = await this.streamService.findByIdInternal(streamId);
-    const aiSessionId = stream?.aiSessionId;
+    const { aiSessionId, ownerUserId } = await this.streamService.getRuntimeContext(streamId, userId);
     if (!aiSessionId) return { stopped: false };
-    const res = await this.orchestrator.stopSession(userId, aiSessionId);
+    const res = await this.orchestrator.stopSession(ownerUserId, aiSessionId);
     this.logger.log(`[voice] stopped session=${aiSessionId} stream=${streamId} stopped=${res.stopped}`);
     return res;
   }
 
   async queryStatus(userId: string, streamId: string): Promise<{ status: string; title: string; plan: unknown }> {
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
-    const s = await this.orchestrator.getSession(userId, ctx.aiSessionId);
+    const s = await this.orchestrator.getSession(ctx.ownerUserId, ctx.aiSessionId);
     return { status: s.status, title: s.title, plan: s.plan };
   }
 
@@ -138,9 +136,9 @@ export class VoiceToolService {
 
     const result = task.result ?? null;
     const resultTruncated = !!result && result.length > RESULT_MAX_CHARS;
-    const trimmed = resultTruncated ? result!.slice(0, RESULT_MAX_CHARS) : result;
+    const trimmed = resultTruncated ? result.slice(0, RESULT_MAX_CHARS) : result;
 
-    let artifacts: Array<{ filename: string; kind: string | null }> = [];
+    let artifacts: { filename: string; kind: string | null }[] = [];
     try {
       const content = await this.tasks.getResultContent(taskId);
       artifacts = content.artifacts

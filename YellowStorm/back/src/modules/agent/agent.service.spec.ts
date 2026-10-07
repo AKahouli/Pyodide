@@ -1,3 +1,4 @@
+import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
@@ -93,6 +94,7 @@ describe('AgentService connector skill inheritance', () => {
       findByIds: jest.fn().mockResolvedValue([]),
       findByIdsForUser: jest.fn().mockResolvedValue([]),
       findDefaultByType: jest.fn().mockResolvedValue(null),
+      findPersonalDefaultByType: jest.fn().mockResolvedValue(null),
       findDefaultByNameActive: jest.fn().mockResolvedValue(null),
       findActiveDefaults: jest.fn().mockResolvedValue([]),
       findActiveDefaultsByTypeSlug: jest.fn().mockResolvedValue([]),
@@ -136,6 +138,7 @@ describe('AgentService connector skill inheritance', () => {
     const connectorService = {
       findByIds: jest.fn(),
       findIdsByCategoryName: jest.fn().mockResolvedValue([]),
+      findBySlug: jest.fn().mockResolvedValue(null),
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -145,7 +148,9 @@ describe('AgentService connector skill inheritance', () => {
       getValidToken: jest.fn(),
     };
     const configService = {
-      get: jest.fn((key: string, fallback?: string) => fallback ?? ''),
+      get: jest.fn((key: string, fallback?: string) => (
+        key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp' : fallback ?? ''
+      )),
     };
     const teamService = {
       removeAgentFromAllTeams: jest.fn().mockResolvedValue(undefined),
@@ -192,6 +197,7 @@ describe('AgentService connector skill inheritance', () => {
       agentShareService as any,
       guardrailsSettingsService as any,
       agentRepository as any,
+      { isEligibleRootType: jest.fn(() => true), requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as any,
       agentRoleEmbedding as any,
       [],
       new AgentConnectorRuntimeService(
@@ -207,6 +213,9 @@ describe('AgentService connector skill inheritance', () => {
 
     return {
       service,
+      configService,
+      logger,
+      connectorAuthService,
       agentRepository,
       skillService,
       connectorService,
@@ -345,7 +354,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
-  it('excludes legacy Playbook orchestration actions from Platform Copilot', async () => {
+  it('uses the configured Playbook action selection without Copilot-specific overrides', async () => {
     const { service, connectorService, modelsService } = createService();
     const enabledActions = [
       'search_playbooks',
@@ -377,7 +386,7 @@ describe('AgentService connector skill inheritance', () => {
     const getAgentsForUser = jest.spyOn(service as any, 'getAgentsForUser');
     jest.spyOn(service as any, 'resolveManager').mockReturnValue(undefined);
     connectorService.findByIds.mockResolvedValue([{
-      id: 'playbook-connector', name: 'Playbook MCP', slug: 'playbook-mcp',
+      id: 'playbook-connector', name: 'Playbook MCP', slug: 'playbook-mcp', mcpServerUrl: 'http://localhost:8025/mcp',
       actions: [
         ...enabledActions.map((key) => ({ key, label: key, isEnabled: true })),
         { key: 'disabled_action', label: 'disabled_action', isEnabled: false },
@@ -402,11 +411,7 @@ describe('AgentService connector skill inheritance', () => {
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
-      const expectedActions = enabledActions.filter((action) => ![
-        'assess_playbook_request',
-        'continue_playbook_clarification',
-        'start_playbook_construction',
-      ].includes(action));
+      const expectedActions = connectorActionSelections.length ? ['search_playbooks'] : enabledActions;
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
         expectedActions.map((action) => `playbook-mcp_${action}`),
       );
@@ -416,7 +421,10 @@ describe('AgentService connector skill inheritance', () => {
         expect.arrayContaining(['playbook-mcp_disabled_action']),
       );
       expect(result[0].prompt).toContain('[Trusted conversation handoff]');
-      expect(result[0].prompt).toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).toContain('A trusted server-side projection of the source conversation is bound to this turn.');
+      expect(result[0].prompt).not.toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).not.toContain('Never ask the user');
+      expect(result[0].prompt).toContain(streamAgent.instruction);
       expect(result[0].prompt).not.toContain('conversation-1');
       expect(result[0].prompt).not.toContain('message-1');
     }
@@ -460,6 +468,187 @@ describe('AgentService connector skill inheritance', () => {
     }));
     expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
     expect(result[0].prompt).not.toContain('[Trusted conversation handoff]');
+  });
+
+  it('gives the acting user identity to an admin-created connector only when it points at a trusted internal MCP server', async () => {
+    const { service, skillService, connectorService, configService } = createService();
+    configService.get.mockImplementation((key: string, fallback?: string) => key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp' : fallback ?? '');
+    const agent: IAgentForStream = {
+      id: 'designer-agent', name: 'Designer', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds: ['semantic-connector', 'other-connector'], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([agent]);
+    connectorService.findByIds.mockResolvedValue([
+      { id: 'semantic-connector', name: 'Semantic models', slug: 'semantic-models', mcpServerUrl: 'http://LOCALHOST:8027/mcp/', actions: [{ key: 'get_semantic_model', label: 'Get', isEnabled: true }] },
+      { id: 'other-connector', name: 'Elsewhere', slug: 'elsewhere', mcpServerUrl: 'https://example.com/mcp', actions: [{ key: 'search', label: 'Search', isEnabled: true }] },
+    ]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildAgentsForStream(userId, undefined, ['designer-agent'], undefined, undefined, undefined, undefined,
+      { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+    const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as { connector_slug: string; auth_headers?: Record<string, string> }[];
+    expect(bindings.find((binding) => binding.connector_slug === 'semantic-models')?.auth_headers).toEqual(expect.objectContaining({
+      'X-YellowStorm-User-Id': userId, 'X-YellowStorm-Agent-Id': 'designer-agent', 'X-Correlation-Id': 'message-1',
+    }));
+    expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
+  });
+
+  describe('chat on a semantic model', () => {
+    const semanticModel = { id: 'model-1', name: 'Contracts' };
+    const searchConnector = {
+      id: 'semantic-search-connector', name: 'Semantic Search', slug: 'mcp-semantic-search',
+      authSourceType: 'credential', connectedAppKey: '',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer' },
+      mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8027/mcp', mcpServerConfig: {},
+      dynamicHeaders: [{ headerName: 'X-YellowStorm-User-Id', source: 'user_id', enabled: true }],
+      actions: [
+        ...['find_records', 'get_related_records', 'describe_model', 'query_records'].map((key) => ({ key, safety: 'read', isEnabled: true })),
+        { key: 'search_records', safety: 'read', isEnabled: false },
+        { key: 'apply_model_changes', safety: 'write', isEnabled: true },
+        { key: 'publish_semantic_model', safety: 'delete', isEnabled: true },
+      ].map(({ key, safety, isEnabled }) => ({
+        key, label: key, isEnabled, safety,
+        parameterSchema: {
+          type: 'object',
+          properties: { model_id: { type: 'string' }, data: { type: 'string' }, query: { type: 'string' } },
+          required: ['model_id', 'query'],
+        },
+      })),
+      referencedSkillIds: [],
+    };
+    const workerAgent = (connectorIds: string[] = []): IAgentForStream => ({
+      id: 'worker-agent', name: 'Worker', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: 'Be helpful.', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds,
+      connectorActionSelections: connectorIds.map((connectorId) => ({ connectorId, actionKeys: ['search'] })), skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    });
+
+    const withSearchConfig = (configService: { get: jest.Mock }, slug = 'mcp-semantic-search') =>
+      configService.get.mockImplementation((key: string, fallback?: string) => ({
+        'semanticModel.searchConnectorSlug': slug,
+        SEMANTIC_MODEL_MCP_SERVER_URL: 'http://localhost:8027/mcp',
+      } as Record<string, string>)[key] ?? fallback ?? '');
+
+    it('binds the enabled read tools of the configured connector, pinned to the published model, with identity headers and the model named', async () => {
+      const { service, skillService, connectorService, connectorAuthService, configService } = createService();
+      withSearchConfig(configService);
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent(['other-connector'])]);
+      connectorService.findByIds.mockResolvedValue([
+        { id: 'other-connector', name: 'Elsewhere', slug: 'elsewhere', mcpServerUrl: 'https://example.com/mcp',
+          actions: [{ key: 'search', label: 'Search', isEnabled: true }, { key: 'write', label: 'Write', isEnabled: true }] },
+      ]);
+      connectorService.findBySlug.mockResolvedValue(searchConnector);
+      connectorAuthService.resolveRuntimeAuth.mockResolvedValue({ headers: { Authorization: 'Bearer ingress' }, env: {} });
+      connectorAuthService.resolveDynamicHeaders.mockResolvedValue({ 'X-YellowStorm-User-Id': userId });
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      expect(connectorService.findBySlug).toHaveBeenCalledWith('mcp-semantic-search');
+      const params = result[0].agent_params?.params ?? {};
+      expect(params.semantic_model_id).toBe('model-1');
+      expect(params).not.toHaveProperty('semantic_model_schema_name');
+      const bindings = JSON.parse(params.connector_bindings_json as string) as Record<string, any>[];
+      const search = bindings.find((binding) => binding.connector_slug === 'mcp-semantic-search');
+      expect(search).toBeDefined();
+      // No selection for the connector: its enabled read tools; never a tool that changes or publishes the model.
+      expect(search!.actions.map((action: { action_key: string }) => action.action_key))
+        .toEqual(['find_records', 'get_related_records', 'describe_model', 'query_records']);
+      expect(search!.fixed_params).toEqual({ model_id: 'model-1', data: 'published' });
+      for (const action of search!.actions) {
+        const schema = JSON.parse(action.parameter_schema_json);
+        expect(Object.keys(schema.properties)).toEqual(['query']);
+        expect(schema.required).toEqual(['query']);
+      }
+      expect(search!.auth_headers).toEqual(expect.objectContaining({
+        Authorization: 'Bearer ingress',
+        'X-YellowStorm-User-Id': userId,
+        'X-YellowStorm-Agent-Id': 'worker-agent',
+        'X-YellowStorm-Conversation-Id': 'conversation-1',
+        'X-Correlation-Id': 'message-1',
+      }));
+      // The agent's own connector keeps its own action selection.
+      expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')!.actions.map((action: { action_key: string }) => action.action_key))
+        .toEqual(['search']);
+      expect(result[0].connectorIds).toEqual(['other-connector', 'semantic-search-connector']);
+      expect(result[0].prompt).toContain('Be helpful.');
+      // How to answer from records is in the agent's own instruction (Yellowmind's, in the database), not added here.
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts".');
+      expect(result[0].prompt).not.toContain('model-1');
+      expect(result[0].prompt).not.toContain('find_records');
+    });
+
+    it("keeps to the read tools the agent selected for the semantic connector", async () => {
+      const { service, skillService, connectorService, connectorAuthService, configService } = createService();
+      withSearchConfig(configService);
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([{
+        ...workerAgent(['semantic-search-connector']),
+        connectorActionSelections: [{ connectorId: 'semantic-search-connector', actionKeys: ['query_records', 'find_records', 'publish_semantic_model'] }],
+      }]);
+      connectorService.findByIds.mockResolvedValue([searchConnector]);
+      connectorService.findBySlug.mockResolvedValue(searchConnector);
+      connectorAuthService.resolveRuntimeAuth.mockResolvedValue({ headers: { Authorization: 'Bearer ingress' }, env: {} });
+      connectorAuthService.resolveDynamicHeaders.mockResolvedValue({ 'X-YellowStorm-User-Id': userId });
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as Array<Record<string, any>>;
+      const search = bindings.find((binding) => binding.connector_slug === 'mcp-semantic-search');
+      expect(search!.actions.map((action: { action_key: string }) => action.action_key)).toEqual(['find_records', 'query_records']);
+      expect(search!.fixed_params).toEqual({ model_id: 'model-1', data: 'published' });
+    });
+
+    it('still adds the prompt block, without tools, when the configured search connector is missing', async () => {
+      const { service, skillService, connectorService, logger, configService } = createService();
+      withSearchConfig(configService);
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent()]);
+      connectorService.findByIds.mockResolvedValue([]);
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Semantic model search connector is not available'), expect.anything());
+      const params = result[0].agent_params?.params ?? {};
+      expect(JSON.parse(params.connector_bindings_json as string)).toEqual([]);
+      expect(params.semantic_model_id).toBe('model-1');
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts".');
+      expect(result[0].prompt).toContain('not available');
+    });
+
+    it('binds no search tools when no search connector is configured', async () => {
+      const { service, skillService, connectorService, logger } = createService();
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent()]);
+      connectorService.findByIds.mockResolvedValue([]);
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      expect(connectorService.findBySlug).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG is not set'), expect.anything());
+      expect(JSON.parse(result[0].agent_params?.params?.connector_bindings_json as string)).toEqual([]);
+    });
+
+    it('does not look up or bind the search connector without a semantic model', async () => {
+      const { service, skillService, connectorService } = createService();
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent()]);
+      connectorService.findByIds.mockResolvedValue([]);
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent']);
+
+      expect(connectorService.findBySlug).not.toHaveBeenCalled();
+      expect(result[0].agent_params?.params).not.toHaveProperty('semantic_model_id');
+      expect(result[0].prompt).not.toContain('[Semantic model]');
+    });
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -886,6 +1075,7 @@ describe('AgentService connector skill inheritance', () => {
           id: PB_ID,
           name: 'Playbook MCP',
           slug: 'playbook-mcp',
+          mcpServerUrl: 'http://localhost:8025/mcp',
           actions: [{ key: 'start', label: 'Start', description: '', isEnabled: true }],
           referencedSkillIds: [],
         },
@@ -1200,5 +1390,81 @@ describe('AgentService connector skill inheritance', () => {
       reserved._id,
       expect.objectContaining({ instruction: 'Admin-managed instruction' }),
     );
+  });
+});
+
+describe('AgentService root binding resolution (WP01)', () => {
+  const userId = 'user-1';
+  const monoTypeId = '507f1f77bcf86cd799439011';
+
+  const createService = () => {
+    const agentRepository = {
+      findById: jest.fn().mockResolvedValue(null),
+      findPersonalDefaultByType: jest.fn().mockResolvedValue(null),
+      findDefaultByType: jest.fn().mockResolvedValue(null),
+    };
+    const agentTypeService = { findAllActive: jest.fn().mockResolvedValue([
+      { id: monoTypeId, name: 'Mono Agent', slug: 'mono-agent', isActive: true },
+    ]) };
+    const service = new AgentService(
+      { setContext: jest.fn(), log: jest.fn(), debug: jest.fn(), warn: jest.fn() } as never,
+      {} as never, agentTypeService as never, {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never,
+      agentRepository as never,
+      { isEligibleRootType: (slug: string) => slug.toLowerCase().replace(/[-_\s]+/g, '_') === 'mono_agent',
+        requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as never,
+      { reindexHumainRole: jest.fn() } as never,
+    );
+    return { service, agentRepository, agentTypeService };
+  };
+
+  const root = (over: Partial<AgentRecord> = {}): AgentRecord => ({
+    _id: 'root-1', name: 'Root', slug: 'root', agentType: monoTypeId, agentTypeSlug: 'mono-agent',
+    role: '', description: '', temperature: 0, instruction: '', ignorePrePrompt: false,
+    knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [],
+    connectorActionSelections: [], guardrails: {}, deploymentSettings: {},
+    enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+    isDefault: false, isActive: true, isDefaultForType: false, createdBy: userId,
+    a2aPublished: false, createdAt: new Date(), updatedAt: new Date(), ...over,
+  });
+
+  it('binds an explicit own root; rejects unknown or ineligible selections (A03/A08)', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findById.mockResolvedValue(root());
+    await expect(service.resolveRootForConversation(userId, 'root-1')).resolves.toEqual(
+      expect.objectContaining({ _id: 'root-1' }),
+    );
+    agentRepository.findById.mockResolvedValue(null);
+    await expect(service.resolveRootForConversation(userId, 'missing'))
+      .rejects.toBeInstanceOf(NotFoundException);
+    agentRepository.findById.mockResolvedValue(root({ agentTypeSlug: 'humain' }));
+    await expect(service.resolveRootForConversation(userId, 'root-1'))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('forbids an explicit non-owned, non-default selection', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findById.mockResolvedValue(root({ createdBy: 'someone-else' }));
+    await expect(service.resolveRootForConversation(userId, 'root-1'))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('prefers the personal default, then the administrator default (A01/A02)', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findPersonalDefaultByType.mockResolvedValue(root({ _id: 'personal-root' }));
+    await expect(service.resolveRootForConversation(userId)).resolves.toEqual(
+      expect.objectContaining({ _id: 'personal-root' }),
+    );
+    expect(agentRepository.findPersonalDefaultByType).toHaveBeenCalledWith(userId, monoTypeId);
+    expect(agentRepository.findDefaultByType).not.toHaveBeenCalled();
+
+    agentRepository.findPersonalDefaultByType.mockResolvedValue(null);
+    agentRepository.findDefaultByType.mockResolvedValue(root({ _id: 'admin-root', isDefault: true }));
+    await expect(service.resolveRootForConversation(userId)).resolves.toEqual(
+      expect.objectContaining({ _id: 'admin-root' }),
+    );
+
+    agentRepository.findDefaultByType.mockResolvedValue(null);
+    await expect(service.resolveRootForConversation(userId)).resolves.toBeNull();
   });
 });

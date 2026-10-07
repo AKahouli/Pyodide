@@ -1,6 +1,5 @@
 import type { GovernanceReconciliationRunRecord } from './governance-records';
 
-export const RECONCILIATION_RUN_STORE = Symbol('GOVERNANCE_RECONCILIATION_RUN_STORE');
 
 export interface ReconciliationRunLeaseClaim {
   run: GovernanceReconciliationRunRecord;

@@ -4,7 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { METRIC_STORE, type MetricStore } from '../metric-store';
+import { type MetricStore } from '../metric-store';
 import type { GovernanceMetricRecord } from '../governance-records';
 
 const METRICS = schema.governanceMetrics;

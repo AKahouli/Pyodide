@@ -16,7 +16,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SkipResponseWrap } from '../response/decorators/skip-response-wrap.decorator';
 import { CheckUsage, UsageLimitGuard } from '../usage';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AiProxyExceptionFilter } from './ai-proxy-exception.filter';
 import { AiProxyService } from './ai-proxy.service';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
@@ -48,7 +48,7 @@ export class AiProxyController {
   async chatCompletions(
     @Req() request: Request,
     @Body() body: ChatCompletionDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Res({ passthrough: true }) response: Response,
   ): Promise<Record<string, unknown> | void> {
     return this.proxyService.proxyChatCompletion(body, user, request, response);
@@ -57,7 +57,7 @@ export class AiProxyController {
   @Get('models')
   async listModels(): Promise<{
     object: 'list';
-    data: Array<{ id: string; object: 'model'; owned_by: string }>;
+    data: { id: string; object: 'model'; owned_by: string }[];
   }> {
     return this.proxyService.listModels();
   }

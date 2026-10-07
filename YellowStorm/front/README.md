@@ -13,13 +13,13 @@ _None_ - The frontend can run with default configuration.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VITE_API_URL` | Backend API base URL | `http://localhost:3000/api/v1` |
-| `VITE_SOCKET_BASE_URL` | Dev Socket.IO origin override | (derived from API URL) |
-| `MY_APP_SOCKET_BASE_URL` | Prod Socket.IO origin (env.sh) | (derived from API / page origin) |
+| `VITE_SOCKET_BASE_URL` | Socket.IO origin override (dev, build-arg, or container env via `/config.js`) | (derived from API URL) |
 
-For POC, set in `~/yellowstorm/poc/front` compose env so app-runtime hits the same back as `tool-invoke`:
+For POC Docker, set on the front container (written to `/config.js` at start):
 
 ```env
-MY_APP_SOCKET_BASE_URL=https://poc.back.yellowmind.ai
+VITE_API_URL=https://poc.back.yellowmind.ai/api/v1
+VITE_SOCKET_BASE_URL=https://poc.back.yellowmind.ai
 ```
 
 ## Configuration

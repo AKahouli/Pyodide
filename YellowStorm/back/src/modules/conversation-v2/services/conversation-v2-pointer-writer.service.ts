@@ -1,29 +1,28 @@
-// back/src/modules/conversation-v2/services/conversation-v2-pointer-writer.service.ts
-import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  ConversationV2Session,
-  ConversationV2SessionDocument,
-  ConversationV2SessionStatus,
-} from '../schemas/conversation-v2-session.schema';
+import { Injectable,  Logger } from '@nestjs/common';
+import type { ConversationV2SessionStatus } from '../types/conversation-v2-persistence.types';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 @Injectable()
 export class ConversationV2PointerWriterService {
   private readonly logger = new Logger(ConversationV2PointerWriterService.name);
 
   constructor(
-    @InjectModel(ConversationV2Session.name)
-    private readonly model: Model<ConversationV2SessionDocument>,
+    private readonly store: PgConversationV2SessionStore,
   ) {}
 
   async apply(sessionId: string, event: ConversationV2Event): Promise<void> {
     try {
-      const patch: Record<string, unknown> = { lastEventAt: new Date() };
+      const patch: {
+        lastEventAt: Date;
+        title?: string;
+        status?: ConversationV2SessionStatus;
+      } = { lastEventAt: new Date() };
 
       if (event.type === 'title') {
-        patch.title = (event.payload as { title: string }).title;
+        const next = (event.payload as { title?: string }).title?.trim();
+        // Ignore empty titles so a bad AI/name-gen frame cannot wipe a good one.
+        if (next) patch.title = next;
       }
       if (event.type === 'message') {
         const role = (event.payload as { role?: string }).role;
@@ -39,13 +38,7 @@ export class ConversationV2PointerWriterService {
       const next = statusForType[event.type];
       if (next) patch.status = next;
 
-      // `sessionId` is the Mongo _id hex of the V2 session pointer; the
-      // schema no longer has a `sessionId` field, so filter by _id.
-      if (!Types.ObjectId.isValid(sessionId)) return;
-      await this.model.updateOne(
-        { _id: new Types.ObjectId(sessionId) },
-        { $set: patch },
-      );
+      await this.store.applyPointerPatch(sessionId, patch);
     } catch (err) {
       this.logger.warn(
         `pointer write failed for ${sessionId}: ${(err as Error).message}`,

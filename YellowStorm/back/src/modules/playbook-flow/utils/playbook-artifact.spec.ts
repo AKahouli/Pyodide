@@ -20,8 +20,8 @@ describe('playbook artifact projection', () => {
   it('projects canonical storage artifacts to opaque public metadata', () => {
     const artifactId = trustedPlaybookArtifacts(taskResult, 'owner-1', 'execution-1')[0].artifactId;
     const projected = publicPlaybookTaskResult(taskResult, 'owner-1', 'execution-1', new Set([artifactId]));
-    const artifact = (projected.artifacts as Array<Record<string, unknown>>)[0];
-    const component = (projected.components as Array<Record<string, any>>)[0];
+    const artifact = (projected.artifacts as Record<string, unknown>[])[0];
+    const component = (projected.components as Record<string, any>[])[0];
 
     expect(artifact.artifactId).toMatch(/^[a-f0-9]{32}$/);
     expect(artifact).not.toHaveProperty('url');
@@ -72,7 +72,7 @@ describe('playbook artifact projection', () => {
     foreign.components[0].data.object_key = 'another-owner/system_execution-1/private.pdf';
 
     expect(trustedPlaybookArtifacts(foreign, 'owner-1', 'execution-1')).toEqual([]);
-    expect((publicPlaybookTaskResult(foreign, 'owner-1', 'execution-1').artifacts as Array<Record<string, unknown>>)[0]).not.toHaveProperty('artifactId');
+    expect((publicPlaybookTaskResult(foreign, 'owner-1', 'execution-1').artifacts as Record<string, unknown>[])[0]).not.toHaveProperty('artifactId');
   });
 
   it('associates duplicate filenames with their source components one-to-one', () => {
@@ -90,8 +90,8 @@ describe('playbook artifact projection', () => {
 
     const verifiedIds = new Set(trustedPlaybookArtifacts(duplicate, 'owner-1', 'execution-1').map((artifact) => artifact.artifactId));
     const projected = publicPlaybookTaskResult(duplicate, 'owner-1', 'execution-1', verifiedIds);
-    const componentIds = (projected.components as Array<Record<string, any>>).map((component) => component.data.artifactId);
-    const artifactIds = (projected.artifacts as Array<Record<string, unknown>>).map((artifact) => artifact.artifactId);
+    const componentIds = (projected.components as Record<string, any>[]).map((component) => component.data.artifactId);
+    const artifactIds = (projected.artifacts as Record<string, unknown>[]).map((artifact) => artifact.artifactId);
 
     expect(new Set(componentIds).size).toBe(2);
     expect(artifactIds).toEqual(componentIds);
@@ -111,8 +111,8 @@ describe('playbook artifact projection', () => {
     } as unknown as typeof unverified.components[0]['data'];
 
     const projected = publicPlaybookTaskResult(unverified, 'owner-1', 'execution-1');
-    const artifact = (projected.artifacts as Array<Record<string, unknown>>)[0];
-    const component = (projected.components as Array<Record<string, any>>)[0];
+    const artifact = (projected.artifacts as Record<string, unknown>[])[0];
+    const component = (projected.components as Record<string, any>[])[0];
 
     expect(artifact).not.toHaveProperty('artifactId');
     expect(artifact).not.toHaveProperty('artifact_id');
@@ -144,7 +144,7 @@ describe('playbook artifact projection', () => {
     expect(serialized).not.toContain('ceph://');
     expect(serialized).not.toContain('storage.example');
     expect(serialized).not.toContain('X-Amz-Signature');
-    expect((publicPlaybookTaskResult(nested, 'owner-1', 'execution-1').judgeHistory as Array<Record<string, unknown>>)[0].createdAt)
+    expect((publicPlaybookTaskResult(nested, 'owner-1', 'execution-1').judgeHistory as Record<string, unknown>[])[0].createdAt)
       .toEqual(new Date('2026-08-24T12:00:00.000Z'));
   });
 
@@ -204,7 +204,7 @@ describe('playbook artifact projection', () => {
         },
       }],
     }, 'owner-1', 'execution-1');
-    const sources = (projected.components as Array<Record<string, any>>)[0].data.sources;
+    const sources = (projected.components as Record<string, any>[])[0].data.sources;
 
     expect(sources[0].url).toBe('https://example.com/article');
     expect(sources[1].url).toBe('[REDACTED]');

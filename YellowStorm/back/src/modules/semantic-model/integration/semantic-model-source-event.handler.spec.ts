@@ -1,9 +1,5 @@
-import axios from 'axios';
 import { WorkspaceIntegrationEvents } from '@modules/integration-events/contracts';
 import { SemanticModelSourceEventHandler } from './semantic-model-source-event.handler';
-
-jest.mock('axios');
-const post = axios.post as jest.MockedFunction<typeof axios.post>;
 
 const event = {
   eventId: 'event-1',
@@ -15,7 +11,12 @@ const event = {
 };
 
 describe('SemanticModelSourceEventHandler', () => {
-  beforeEach(() => post.mockReset().mockResolvedValue({}));
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    fetchMock = jest.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
 
   it('registers and relays source events with service authentication', async () => {
     const registry = { register: jest.fn() };
@@ -31,12 +32,13 @@ describe('SemanticModelSourceEventHandler', () => {
     await handler.handle(event);
 
     expect(registry.register).toHaveBeenCalledWith(handler);
-    expect(post).toHaveBeenCalledWith(
-      'http://semantic-runtime:8090/v1/semantic-model-datasource/events',
-      { eventId: 'event-1', eventType: event.eventType,
-        occurredAt: '2026-09-20T12:00:00.000Z', payload: event.payload },
-      { headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': 'secret' }, timeout: 5000 },
-    );
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://semantic-runtime:8090/v1/semantic-model-datasource/events');
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Semantic-Service-Key': 'secret' });
+    expect(JSON.parse(init.body)).toEqual({
+      eventId: 'event-1', eventType: event.eventType,
+      occurredAt: '2026-09-20T12:00:00.000Z', payload: event.payload,
+    });
   });
 
   it('does nothing while runtime writes are disabled', async () => {
@@ -45,11 +47,11 @@ describe('SemanticModelSourceEventHandler', () => {
       { runtimeEnabled: true, runtimeWritesEnabled: false } as any,
     );
     await handler.handle(event);
-    expect(post).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('surfaces relay failures for outbox retry', async () => {
-    post.mockRejectedValue(new Error('runtime unavailable'));
+    fetchMock.mockRejectedValue(new Error('runtime unavailable'));
     const handler = new SemanticModelSourceEventHandler(
       { register: jest.fn() } as any,
       { runtimeEnabled: true, runtimeWritesEnabled: true, runtimeUrl: 'http://runtime',

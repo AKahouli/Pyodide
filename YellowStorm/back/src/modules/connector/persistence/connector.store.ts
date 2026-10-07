@@ -1,11 +1,6 @@
 import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
 
 /** Store ports for the integrations connector tables (plan step 3.4–3.6). */
-export const CONNECTOR_STORE = Symbol('CONNECTOR_STORE');
-export const CONNECTOR_CATEGORY_STORE = Symbol('CONNECTOR_CATEGORY_STORE');
-export const CONNECTOR_CREDENTIAL_STORE = Symbol('CONNECTOR_CREDENTIAL_STORE');
-export const CONNECTOR_ADMIN_AUTH_STORE = Symbol('CONNECTOR_ADMIN_AUTH_STORE');
-export const CONNECTOR_ADMIN_OAUTH_STATE_STORE = Symbol('CONNECTOR_ADMIN_OAUTH_STATE_STORE');
 
 export interface ConnectorRow {
   id: string;
@@ -24,6 +19,7 @@ export interface ConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   /** From connector_skills, ordered by position. */
@@ -52,6 +48,7 @@ export interface NewConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   skillIds: string[];
@@ -76,7 +73,7 @@ export interface ConnectorStore {
   list(query: ConnectorListQuery): Promise<{ rows: ConnectorRow[]; total: number }>;
   findAllActive(): Promise<ConnectorRow[]>;
   /** Active + (not hidden OR the exception slug) — public selector listing. */
-  findAllActiveVisible(exceptionSlug: string): Promise<ConnectorRow[]>;
+  findAllActiveVisible(): Promise<ConnectorRow[]>;
   /** Category-id → name map in one query (gRPC binding hydration). */
   findNamesByIds(ids: string[]): Promise<Map<string, string>>;
   /** Connector ids among `ids` sitting in any of `categoryIds` (case handled by caller). */
@@ -89,15 +86,6 @@ export interface ConnectorStore {
   update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null>;
   findBySlugExcludingOwner(slug: string, excludeId: string, createdBy: string): Promise<ConnectorRow | null>;
   delete(id: string): Promise<ConnectorRow | null>;
-  /**
-   * System MCP connector seed (plan 3.6): INSERT … ON CONFLICT (slug) WHERE
-   * is_system DO UPDATE SET actions/updated_at — insert-only otherwise.
-   */
-  upsertSystemActionsBySlug(
-    slug: string,
-    seed: NewConnectorRow,
-    actions: ConnectorAction[],
-  ): Promise<ConnectorRow>;
 }
 
 export interface ConnectorCategoryRow {

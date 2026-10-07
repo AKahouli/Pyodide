@@ -10,6 +10,14 @@ const graph: SemanticGraph = {
 describe('semantic model editor store', () => {
   beforeEach(() => useSemanticModelEditorStore.getState().reset());
 
+  it('counts a click on what is already selected, so panels can follow it', () => {
+    const { select } = useSemanticModelEditorStore.getState();
+    select('customer');
+    const before = useSemanticModelEditorStore.getState().selectionTick;
+    select('customer');
+    expect(useSemanticModelEditorStore.getState().selectionTick).toBe(before + 1);
+  });
+
   it('tracks an operation and restores it through undo and redo', () => {
     const node = { id: 'node', key: 'party', label: 'Party', description: '', category: 'business_object' as const, recordPolicy: 'none' as const, systemKey: null, aliases: [], attributes: [], position: { x: 0, y: 0 } };
     useSemanticModelEditorStore.getState().hydrate(graph);
@@ -19,6 +27,43 @@ describe('semantic model editor store', () => {
     expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(0);
     useSemanticModelEditorStore.getState().redo();
     expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
+  });
+
+  it('saves the way back when undoing a change that already reached the server, and the way forward on redo', () => {
+    const node = { id: 'node', key: 'party', label: 'Party', description: '', category: 'business_object' as const, recordPolicy: 'none' as const, systemKey: null, aliases: [], attributes: [], position: { x: 0, y: 0 } };
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [node] });
+    useSemanticModelEditorStore.getState().commit({ type: 'node_type.delete', id: 'node' }, (current) => ({ ...current, nodes: [] }));
+    useSemanticModelEditorStore.getState().markSaved(2, 1);
+    void useSemanticModelEditorStore.getState().undo();
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toEqual([node]);
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([[{ type: 'node_type.create', entity: node }]]);
+    expect(useSemanticModelEditorStore.getState().saveStatus).toBe('saving');
+    useSemanticModelEditorStore.getState().markSaved(3, 1);
+    void useSemanticModelEditorStore.getState().redo();
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([[{ type: 'node_type.delete', id: 'node' }]]);
+    // Undone again before that save, the redo is simply dropped.
+    void useSemanticModelEditorStore.getState().undo();
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([]);
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toEqual([node]);
+  });
+
+  it('undoes and redoes a change saved through another command, and keeps the step if that fails', async () => {
+    useSemanticModelEditorStore.getState().hydrate(graph);
+    const calls: string[] = [];
+    let fail = false;
+    useSemanticModelEditorStore.getState().pushAction({
+      undo: async () => { if (fail) throw new Error('offline'); calls.push('undo'); },
+      redo: async () => { calls.push('redo'); },
+    });
+    fail = true;
+    await useSemanticModelEditorStore.getState().undo();
+    expect(useSemanticModelEditorStore.getState().undoStack).toHaveLength(1);
+    fail = false;
+    await useSemanticModelEditorStore.getState().undo();
+    expect(useSemanticModelEditorStore.getState()).toMatchObject({ historyBusy: false, undoStack: [] });
+    await useSemanticModelEditorStore.getState().redo();
+    expect(calls).toEqual(['undo', 'redo']);
+    expect(useSemanticModelEditorStore.getState().undoStack).toHaveLength(1);
   });
 
   it('keeps operations added while an earlier autosave batch completes', () => {
@@ -74,5 +119,14 @@ describe('semantic model editor store', () => {
     expect(isSemanticGraphSaved({ graph, pending: [[{ type: 'layout.update', positions: [] }]], saveStatus: 'saving' })).toBe(false);
     expect(isSemanticGraphSaved({ graph, pending: [], saveStatus: 'error' })).toBe(false);
     expect(isSemanticGraphSaved({ graph, pending: [], saveStatus: 'saved' }, graph.revision + 1)).toBe(false);
+  });
+});
+
+describe('adoptRevision', () => {
+  it('never copies a model revision into the graph, whose saves are checked against the version revision', () => {
+    const store = useSemanticModelEditorStore;
+    store.getState().hydrate({ modelId: 'm', versionId: 'v', revision: 3, nodes: [], relations: [], records: [], recordRelations: [] });
+    store.getState().adoptRevision(9);
+    expect(store.getState().graph?.revision).toBe(3);
   });
 });

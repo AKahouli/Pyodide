@@ -84,7 +84,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
   const versionCount = app.finalizedVersionCount ?? 0;
 
   const openApp = () => window.open(app.deployedUrl, '_blank', 'noreferrer');
-  const goToConversation = () => navigate(`/conversation-v2/${app.sessionId}`);
+  const goToConversation = () => navigate(`/studio/${app.sessionId}`);
 
   const statusBadge = (
     <Badge variant='outline' className={appCardBadgeClass(tone)}>

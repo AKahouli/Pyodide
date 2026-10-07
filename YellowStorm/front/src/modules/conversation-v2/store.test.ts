@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { AxiosError } from 'axios';
 import { useConversationV2Store } from './store';
 import { conversationV2Api } from './api';
 import type { AgentEvent } from './types';
@@ -599,6 +600,60 @@ describe('useConversationV2Store', () => {
       title: 'Older finalized',
       revisionId: 'rev_7',
     });
+  });
+
+  it('deploy reconciles from session pointer after a network drop', async () => {
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(conversationV2Api, 'deploySession').mockRejectedValueOnce(networkErr);
+    vi.spyOn(conversationV2Api, 'getSession')
+      .mockResolvedValueOnce({
+        sessionId: 'session-1',
+        title: 'App',
+        status: 'active',
+        isShared: false,
+        workspaceIds: [],
+        selectedSkillIds: [],
+        selectedConnectorIds: [],
+        lastEventAt: '',
+        eventCount: 0,
+        systemWorkspaceId: null,
+        deployStatus: 'deploying',
+        deployedUrl: null,
+        lastDeployedAt: null,
+      })
+      .mockResolvedValueOnce({
+        sessionId: 'session-1',
+        title: 'App',
+        status: 'active',
+        isShared: false,
+        workspaceIds: [],
+        selectedSkillIds: [],
+        selectedConnectorIds: [],
+        lastEventAt: '',
+        eventCount: 0,
+        systemWorkspaceId: null,
+        deployStatus: 'deployed',
+        deployedUrl: 'https://apps.yellowsys.org/apps/abc/',
+        lastDeployedAt: '2026-08-14T10:00:00.000Z',
+      });
+
+    vi.useFakeTimers();
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      deployStatus: 'idle',
+    });
+
+    const deployPromise = useConversationV2Store.getState().deploy();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await deployPromise;
+    vi.useRealTimers();
+
+    expect(useConversationV2Store.getState().deployStatus).toBe('deployed');
+    expect(useConversationV2Store.getState().deployedUrl).toBe(
+      'https://apps.yellowsys.org/apps/abc/',
+    );
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
   it('deploy sends the latest finalized workspace revision id when preview is unset', async () => {

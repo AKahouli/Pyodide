@@ -1,16 +1,19 @@
 import { ConfigService } from '@nestjs/config';
 import type { Socket } from 'socket.io';
 import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
-import type { AppRuntimeToolCallDocument } from '../schemas/app-runtime-tool-call.schema';
+import { type RuntimeToolCallStore } from '../persistence/runtime-tool-call.store';
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeConnectionRegistry } from './runtime-connection.registry';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
+import { PgRuntimeToolCallStore } from '../persistence/pg-runtime-tool-call.store';
 
 const CONFIG = {
   'appRuntime.heartbeatTimeoutMs': 45_000,
   'appRuntime.mutationWaitMs': 30_000,
   'appRuntime.toolTimeoutMs': 5_000,
+  // Immediate fail in unit tests unless a case overrides the wait.
+  'appRuntime.browserWaitMs': 0,
 } as Record<string, number>;
 
 const BINDING = {
@@ -29,12 +32,23 @@ describe('RuntimeToolDispatcherService', () => {
   let registry: RuntimeConnectionRegistry;
   let socket: Socket & { emit: jest.Mock };
 
-  const findOne = jest.fn();
-  const updateOne = jest.fn();
+  const findByToolCallId = jest.fn();
+  const upsertRunning = jest.fn();
+  const markSucceeded = jest.fn();
+  const markFailed = jest.fn();
+  const getStartedAtMs = jest.fn();
   const findByWorkspaceId = jest.fn();
   const markWaitingForBrowser = jest.fn();
   const updateRevision = jest.fn();
   const revisionExists = jest.fn().mockResolvedValue(true);
+
+  const store: RuntimeToolCallStore = {
+    findByToolCallId,
+    upsertRunning,
+    markSucceeded,
+    markFailed,
+    getStartedAtMs,
+  };
 
   const config = {
     get: jest.fn((key: string, fallback?: number) => CONFIG[key] ?? fallback),
@@ -48,8 +62,7 @@ describe('RuntimeToolDispatcherService', () => {
   ): void => {
     socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
       if (event !== 'tool.invoke') return;
-      setImmediate(() =>
-        outcome.ok
+      setImmediate(() => { outcome.ok
           ? dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: outcome.result,
@@ -57,7 +70,7 @@ describe('RuntimeToolDispatcherService', () => {
           : dispatcher.handleFailed('sess_1', {
               toolCallId: payload.toolCallId,
               error: outcome.error,
-            }),
+            }); },
       );
     });
   };
@@ -80,14 +93,11 @@ describe('RuntimeToolDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    const leanExec = (value: unknown = null) => ({
-      lean: () => ({ exec: () => Promise.resolve(value) }),
-    });
-    findOne.mockReturnValue({
-      ...leanExec(null),
-      select: () => leanExec(null),
-    });
-    updateOne.mockReturnValue({ exec: () => Promise.resolve(undefined) });
+    findByToolCallId.mockResolvedValue(null);
+    upsertRunning.mockResolvedValue(undefined);
+    markSucceeded.mockResolvedValue(undefined);
+    markFailed.mockResolvedValue(undefined);
+    getStartedAtMs.mockResolvedValue(null);
     findByWorkspaceId.mockResolvedValue(BINDING);
 
     socket = { id: 's1', emit: jest.fn(), disconnect: jest.fn() } as unknown as Socket & {
@@ -96,7 +106,7 @@ describe('RuntimeToolDispatcherService', () => {
     registry = new RuntimeConnectionRegistry(config);
 
     dispatcher = new RuntimeToolDispatcherService(
-      { findOne, updateOne } as unknown as import('mongoose').Model<AppRuntimeToolCallDocument>,
+      store as unknown as PgRuntimeToolCallStore,
       {
         findByWorkspaceId,
         markWaitingForBrowser,
@@ -150,6 +160,33 @@ describe('RuntimeToolDispatcherService', () => {
       expect(socket.emit).not.toHaveBeenCalled();
     });
 
+    it('waits for runtime.register before dispatching when the browser is still booting', async () => {
+      (config.get as jest.Mock).mockImplementation(
+        (key: string, fallback?: number) =>
+          key === 'appRuntime.browserWaitMs' ? 2_000 : (CONFIG[key] ?? fallback),
+      );
+      browserAnswers({ ok: true, result: { content: 'ok' } });
+
+      const invokePromise = dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_wait',
+        tool: 'read',
+        arguments: { path: 'a.ts' },
+      });
+
+      await new Promise((r) => setTimeout(r, 30));
+      expect(markWaitingForBrowser).toHaveBeenCalledWith('sess_1');
+      expect(socket.emit).not.toHaveBeenCalled();
+
+      connect();
+      const envelope = await invokePromise;
+      expect(envelope.ok).toBe(true);
+      expect(socket.emit).toHaveBeenCalledWith(
+        'tool.invoke',
+        expect.objectContaining({ toolCallId: 'tc_wait' }),
+      );
+    });
+
     it('fails with RUNTIME_OFFLINE when the heartbeat has timed out', async () => {
       connect();
       registry.get('sess_1')!.lastHeartbeatAt = Date.now() - 60_000;
@@ -168,8 +205,7 @@ describe('RuntimeToolDispatcherService', () => {
       connect();
       socket.emit.mockImplementation((event: string) => {
         if (event !== 'tool.invoke') return;
-        setImmediate(() =>
-          dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'),
+        setImmediate(() => { dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'); },
         );
       });
 
@@ -325,11 +361,10 @@ describe('RuntimeToolDispatcherService', () => {
           if (event !== 'tool.invoke') return;
           inFlight.push(payload.toolCallId);
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: {},
-              }),
+              }); },
             10,
           );
         },
@@ -375,11 +410,10 @@ describe('RuntimeToolDispatcherService', () => {
         if (event !== 'tool.invoke') return;
         next += 1;
         const revisionId = `rev_${next}`;
-        setImmediate(() =>
-          dispatcher.handleCompleted('sess_1', {
+        setImmediate(() => { dispatcher.handleCompleted('sess_1', {
             toolCallId: payload.toolCallId,
             result: { revisionId },
-          }),
+          }); },
         );
       });
 
@@ -414,7 +448,6 @@ describe('RuntimeToolDispatcherService', () => {
       );
       connect();
 
-      // Hold the lock without answering so the waiter times out.
       let releaseHold!: () => void;
       const hold = new Promise<void>((resolve) => {
         releaseHold = resolve;
@@ -422,11 +455,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         if (payload.toolCallId === 'tc_hold') {
-          void hold.then(() =>
-            dispatcher.handleCompleted('sess_1', {
+          void hold.then(() => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: {},
-            }),
+            }); },
           );
           return;
         }
@@ -463,15 +495,10 @@ describe('RuntimeToolDispatcherService', () => {
   describe('idempotency', () => {
     it('replays a succeeded call instead of dispatching again', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              status: 'succeeded',
-              result: { path: 'a.ts' },
-              resultingRevisionId: 'rev_2',
-            }),
-        }),
+      findByToolCallId.mockResolvedValueOnce({
+        status: 'succeeded',
+        result: { path: 'a.ts' },
+        resultingRevisionId: 'rev_2',
       });
 
       const envelope = await dispatcher.invoke({
@@ -492,14 +519,9 @@ describe('RuntimeToolDispatcherService', () => {
 
     it('replays a failed call with its stored error', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              status: 'failed',
-              error: { code: AppRuntimeErrorCodes.PROCESS_FAILED, message: 'boom' },
-            }),
-        }),
+      findByToolCallId.mockResolvedValueOnce({
+        status: 'failed',
+        error: { code: AppRuntimeErrorCodes.PROCESS_FAILED, message: 'boom' },
       });
 
       const envelope = await dispatcher.invoke({
@@ -523,16 +545,15 @@ describe('RuntimeToolDispatcherService', () => {
         arguments: { path: 'a.ts' },
       });
 
-      const [filter, update, options] = updateOne.mock.calls[0];
-      expect(filter).toEqual({ toolCallId: 'tc_1' });
-      expect(update.$set).toMatchObject({
-        bindingId: 'arb_1',
-        workspaceId: 'sess_1',
-        tool: 'read',
-        status: 'running',
-      });
-      expect(update.$set.argumentsHash).toMatch(/^[0-9a-f]{64}$/);
-      expect(options).toEqual({ upsert: true });
+      expect(upsertRunning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCallId: 'tc_1',
+          bindingId: 'arb_1',
+          workspaceId: 'sess_1',
+          tool: 'read',
+        }),
+      );
+      expect(upsertRunning.mock.calls[0][0].argumentsHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
     it('attaches a retry of the same toolCallId to the in-flight call', async () => {
@@ -540,11 +561,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         setTimeout(
-          () =>
-            dispatcher.handleCompleted('sess_1', {
+          () => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: { path: 'a.ts' },
-            }),
+            }); },
           30,
         );
       });
@@ -571,11 +591,7 @@ describe('RuntimeToolDispatcherService', () => {
 
     it('does not re-dispatch a running record left by another owner', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () => Promise.resolve({ status: 'running' }),
-        }),
-      });
+      findByToolCallId.mockResolvedValueOnce({ status: 'running' });
 
       const envelope = await dispatcher.invoke({
         workspaceId: 'sess_1',
@@ -592,20 +608,15 @@ describe('RuntimeToolDispatcherService', () => {
     it('replays once a running record settles without dispatching', async () => {
       connect();
       let status: 'running' | 'succeeded' = 'running';
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve(
-              status === 'succeeded'
-                ? {
-                    status: 'succeeded',
-                    result: { path: 'a.ts' },
-                    resultingRevisionId: 'rev_2',
-                  }
-                : { status: 'running' },
-            ),
-        }),
-      });
+      findByToolCallId.mockImplementation(async () =>
+        status === 'succeeded'
+          ? {
+              status: 'succeeded',
+              result: { path: 'a.ts' },
+              resultingRevisionId: 'rev_2',
+            }
+          : { status: 'running' },
+      );
       setTimeout(() => {
         status = 'succeeded';
       }, 20);
@@ -653,17 +664,15 @@ describe('RuntimeToolDispatcherService', () => {
           const ticks = [15, 30, 45];
           ticks.forEach((delay) =>
             setTimeout(
-              () =>
-                dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }),
+              () => { dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }); },
               delay,
             ),
           );
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: { done: true },
-              }),
+              }); },
             55,
           );
         },

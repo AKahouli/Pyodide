@@ -45,6 +45,40 @@ export function useStream(streamId: string | null | undefined) {
   });
 }
 
+export function useStreamShares(streamId: string, enabled = true) {
+  return useQuery({
+    queryKey: workyKeys.shares(streamId),
+    queryFn: () => api.getStreamShares(streamId),
+    enabled,
+  });
+}
+
+export function useCreateStreamShare(streamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { email: string; permission: 'read' | 'write' }) =>
+      api.createStreamShare(streamId, input.email, input.permission),
+    onSuccess: () => qc.invalidateQueries({ queryKey: workyKeys.shares(streamId) }),
+  });
+}
+
+export function useUpdateStreamShare(streamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { shareId: string; permission: 'read' | 'write' }) =>
+      api.updateStreamShare(streamId, input.shareId, input.permission),
+    onSuccess: () => qc.invalidateQueries({ queryKey: workyKeys.shares(streamId) }),
+  });
+}
+
+export function useRevokeStreamShare(streamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shareId: string) => api.revokeStreamShare(streamId, shareId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: workyKeys.shares(streamId) }),
+  });
+}
+
 export function useCreateStream() {
   const qc = useQueryClient();
   return useMutation<WorkyStream, Error, CreateWorkyStreamData>({

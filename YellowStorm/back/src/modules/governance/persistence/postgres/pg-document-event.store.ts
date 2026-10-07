@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { GOVERNANCE_EVENT_STORE, type AppendGovernanceDocumentEventInput, type GovernanceEventStore } from '../document-event-store';
+import { type AppendGovernanceDocumentEventInput,  type GovernanceEventStore } from '../document-event-store';
 import type { GovernanceDocumentEventRecord } from '../governance-records';
 
 const EVENTS = schema.governanceDocumentEvents;
@@ -72,7 +72,7 @@ export class PgGovernanceEventStore implements GovernanceEventStore {
     if (rows[0]) return eventRowToRecord(rows[0]);
     // Partial unique index fires only for non-null keys; for keyed appends the
     // stored event wins (same idempotency as the Mongo 11000 fallback).
-    const existing = await this.findByDeduplicationKey(input.governanceDocumentId, input.deduplicationKey as string);
+    const existing = await this.findByDeduplicationKey(input.governanceDocumentId, input.deduplicationKey!);
     if (existing) return existing;
     throw new Error('Governance document event append failed');
   }

@@ -30,6 +30,8 @@ function sanitizeRequestUrl(requestUrl: string): string {
   return query ? `${path}?${query}` : path;
 }
 
+const EXPECTED_STATES = new Set(['active_binding_not_found']);
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly isProduction: boolean;
@@ -249,6 +251,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (errorResponse.error.statusCode >= 500) {
       const stack = exception instanceof Error ? exception.stack : undefined;
       this.logger.error(errorResponse.error.message, { ...logData, stack });
+    } else if (EXPECTED_STATES.has(errorResponse.error.message)) {
+      // A normal state the caller handles (e.g. a model with no data yet), not a problem.
+      this.logger.debug(errorResponse.error.message, logData);
     } else if (errorResponse.error.statusCode >= 400) {
       this.logger.warn(errorResponse.error.message, logData);
     }

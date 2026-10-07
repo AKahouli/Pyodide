@@ -5,6 +5,8 @@ import type {
   TelegramIntegrationStore,
   TelegramLinkCodeRow,
   TelegramLinkCodeStore,
+  TelegramValidationRow,
+  TelegramValidationStore,
 } from './telegram.store';
 
 /** Shared in-memory fakes for the telegram store ports (spec use). */
@@ -39,6 +41,10 @@ export class InMemoryTelegramIntegrationStore implements TelegramIntegrationStor
 
   async findById(id: string): Promise<TelegramIntegrationRow | null> {
     return this.rows.find((r) => r.id === id) ?? null;
+  }
+
+  async listEnabled(): Promise<TelegramIntegrationRow[]> {
+    return this.rows.filter((r) => r.enabled && !!r.encryptedBotToken);
   }
 
   async insert(row: Parameters<TelegramIntegrationStore['insert']>[0]): Promise<TelegramIntegrationRow> {
@@ -86,6 +92,7 @@ export class InMemoryTelegramBindingStore implements TelegramBindingStore {
       telegramChatId: '42',
       telegramUserId: null,
       conversationId: null,
+      bindingType: 'member',
       lastMessageAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -99,6 +106,17 @@ export class InMemoryTelegramBindingStore implements TelegramBindingStore {
     return this.rows.find((r) => r.integrationId === integrationId && r.telegramChatId === telegramChatId) ?? null;
   }
 
+  async findByConversation(integrationId: string, conversationId: string): Promise<TelegramBindingRow | null> {
+    return this.rows.find((r) => r.integrationId === integrationId && r.conversationId === conversationId) ?? null;
+  }
+
+  async findOwnerBinding(integrationId: string, userId: string): Promise<TelegramBindingRow | null> {
+    const matches = this.rows.filter(
+      (r) => r.integrationId === integrationId && r.userId === userId && r.bindingType === 'member',
+    );
+    return matches.length ? matches[matches.length - 1] : null;
+  }
+
   async upsert(row: Parameters<TelegramBindingStore['upsert']>[0]): Promise<TelegramBindingRow> {
     const existing = await this.findByChat(row.integrationId, row.telegramChatId);
     if (existing) {
@@ -106,6 +124,7 @@ export class InMemoryTelegramBindingStore implements TelegramBindingStore {
         userId: row.userId,
         agentId: row.agentId,
         telegramUserId: row.telegramUserId,
+        bindingType: row.bindingType,
         lastMessageAt: row.lastMessageAt,
         updatedAt: new Date(),
       });
@@ -161,5 +180,61 @@ export class InMemoryTelegramLinkCodeStore implements TelegramLinkCodeStore {
     for (let i = this.rows.length - 1; i >= 0; i--) {
       if (this.rows[i].integrationId === integrationId) this.rows.splice(i, 1);
     }
+  }
+}
+
+export class InMemoryTelegramValidationStore implements TelegramValidationStore {
+  readonly rows: TelegramValidationRow[] = [];
+
+  async insert(row: Parameters<TelegramValidationStore['insert']>[0]): Promise<TelegramValidationRow> {
+    const created: TelegramValidationRow = {
+      id: Math.random().toString(16).slice(2, 14).padEnd(24, '0'),
+      ...row,
+      answer: null,
+      answeredAt: null,
+      ownerMessageId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.rows.push(created);
+    return created;
+  }
+
+  async findById(id: string): Promise<TelegramValidationRow | null> {
+    return this.rows.find((r) => r.id === id) ?? null;
+  }
+
+  async findPendingByIntegration(integrationId: string): Promise<TelegramValidationRow[]> {
+    const now = Date.now();
+    return this.rows
+      .filter((r) => r.integrationId === integrationId && r.status === 'pending' && r.expiresAt.getTime() > now)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async hasPendingForConversation(integrationId: string, conversationId: string, since?: Date): Promise<boolean> {
+    const now = Date.now();
+    return this.rows.some(
+      (r) =>
+        r.integrationId === integrationId &&
+        r.conversationId === conversationId &&
+        r.status === 'pending' &&
+        r.expiresAt.getTime() > now &&
+        (!since || r.createdAt.getTime() >= since.getTime()),
+    );
+  }
+
+  async setOwnerMessageId(id: string, ownerMessageId: number): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) Object.assign(row, { ownerMessageId, updatedAt: new Date() });
+  }
+
+  async markAnswered(id: string, answer: string): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) Object.assign(row, { status: 'answered', answer, answeredAt: new Date(), updatedAt: new Date() });
+  }
+
+  async markExpired(id: string): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) Object.assign(row, { status: 'expired', updatedAt: new Date() });
   }
 }

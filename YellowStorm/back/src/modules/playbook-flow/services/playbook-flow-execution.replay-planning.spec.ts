@@ -27,13 +27,11 @@ describe('callGrpcRun replay planning', () => {
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: {} }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict' }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'replay_strict', stepExecutionModes: {} })
+          .mockResolvedValueOnce({ executionMode: 'replay_strict' })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -80,13 +78,11 @@ describe('callGrpcRun replay planning', () => {
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_adaptive', stepExecutionModes: { 'step-1': 'replay_adaptive' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_adaptive' }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'replay_adaptive', stepExecutionModes: { 'step-1': 'replay_adaptive' } })
+          .mockResolvedValueOnce({ executionMode: 'replay_adaptive' })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -141,13 +137,11 @@ describe('callGrpcRun replay planning', () => {
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {} }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'live' }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'live', stepExecutionModes: {} })
+          .mockResolvedValueOnce({ executionMode: 'live' })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -200,13 +194,11 @@ describe('callGrpcRun replay planning', () => {
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'live' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'live' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'live' } })
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'live' } })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -274,13 +266,11 @@ describe('callGrpcRun replay planning', () => {
           isStale: false,
           staleReasons: [],
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } })
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -341,13 +331,11 @@ describe('callGrpcRun replay planning', () => {
         resolveReplayArtifacts: jest.fn().mockResolvedValue(new Map()),
         resolveActiveReplayArtifact,
       },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } })
+          .mockResolvedValueOnce({ executionMode: 'inherit', stepExecutionModes: { 'step-1': 'replay_flex' } })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,
@@ -412,13 +400,11 @@ describe('callGrpcRun replay planning', () => {
           isStale: false,
           staleReasons: [],
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_flex', stepExecutionModes: { 'step-1': 'replay_flex' } }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_flex' }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'replay_flex', stepExecutionModes: { 'step-1': 'replay_flex' } })
+          .mockResolvedValueOnce({ executionMode: 'replay_flex' })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
       replayPromptService,
       replayReportService,

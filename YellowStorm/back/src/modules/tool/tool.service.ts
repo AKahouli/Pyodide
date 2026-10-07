@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
-import { TOOL_STORE, type ToolRow, type ToolStore } from './persistence/tool.store';
+import { type ToolRow } from './persistence/tool.store';
+import { PgToolStore } from './persistence/pg-tool.store';
 import { ToolAttributeType } from './tool.types';
 import { IToolResponse } from './interfaces/tool.interface';
 import { CreateToolDto } from './dto/create-tool.dto';
@@ -14,8 +15,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 @Injectable()
 export class ToolService {
   constructor(
-    @Inject(TOOL_STORE)
-    private readonly toolStore: ToolStore,
+    private readonly toolStore: PgToolStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ToolService.name);
@@ -122,10 +122,10 @@ export class ToolService {
     // Normalize requiredAppKey: empty string → null (clear the field)
     const updateData: Record<string, unknown> = { ...dto };
     if ('requiredAppKey' in updateData) {
-      updateData.requiredAppKey = (updateData.requiredAppKey as string) || null;
+      updateData.requiredAppKey = (updateData.requiredAppKey) || null;
     }
     if (Object.prototype.hasOwnProperty.call(updateData, 'categoryId')) {
-      updateData.categoryId = (updateData.categoryId as string) || null;
+      updateData.categoryId = (updateData.categoryId) || null;
     }
 
     const tool = await this.toolStore.update(id, updateData);

@@ -1,29 +1,35 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Tag, AlertTriangle, Asterisk, ChevronRight, FileText, FolderOpen, GitMerge, KeyRound, Loader2, LockKeyhole, Pencil, Plus, Sheet, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useModuleTranslation } from '@/modules/localization';
-import { useSemanticModelEditorStore } from '../../store';
+import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
-import { type SourceMappingTarget, sourceMappingTargetFromResource } from '../mapping/SourceMappingDrawer';
-import type { AttributeDefinition, SemanticCorpusDocument, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
-import { businessKey } from '../../utils/model-utils';
+import { type SourceMappingTarget, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace } from '../mapping/SourceMappingDrawer';
+import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
+import { businessKey, guessAttributeType } from '../../utils/model-utils';
+import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
+import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
-import { useSourceMappings } from '../../query/hooks';
+import { useLabelFields, useDerivedSources, useIdentityRules, useSourceMappings } from '../../query/hooks';
+import type { DerivedSourceTarget } from '../mapping/DerivedSourceDrawer';
 import { parseApiError } from '@/lib/api-error';
-import { showError, showSuccess } from '@/lib/notifications';
+import { showError } from '@/lib/notifications';
+import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
+import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
+import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
+import { withSearchIndex } from '../../searchSettings';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false,switching }: Readonly<{ switching?:{label:string;count:number}; modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -31,100 +37,243 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
-  if (knowledgeOpen||!selectedId||(!node&&!relation&&!record)) return <aside className={knowledgeOpen?'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none':'hidden w-80 shrink-0 border-l bg-background/92 xl:block'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={knowledgeOpen?onKnowledgeClose:undefined} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))}/></aside>;
-  return <aside className='absolute inset-y-0 right-0 z-20 w-[min(22rem,calc(100%-1rem))] overflow-y-auto border-l bg-background/95 p-5 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none'>
-    <div className='mb-5 flex items-center justify-between'><div><p className='text-xs font-medium uppercase tracking-wider text-muted-foreground'>{t('inspector.title')}</p><h2 className='font-semibold'>{node?.label ?? relation?.label ?? record?.label}</h2></div><Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button></div>
-    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} />}
+  useFocusSection();
+  const knowledgePanel = <KnowledgePanel switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
+  if (knowledgeOpen) return workspace
+    ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
+    : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
+  if (!selectedId||(!node&&!relation&&!record)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
+  const content = <>
+    <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
+    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
+    {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
+    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
+    </div>
+  </>;
+  return workspace
+    ? <aside className='min-w-0 flex-1 overflow-y-auto bg-background px-5 pt-6 pb-28 sm:px-8'>{content}</aside>
+    : <ResizableSidePanel className='z-20 bg-background shadow-xl lg:shadow-none' bodyClassName='p-5 pb-28'>{content}</ResizableSidePanel>;
+}
+
+/** Brings the part of the details a review item points at into view, and marks it for a moment. */
+function useFocusSection() {
+  const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
+  useEffect(() => {
+    const section = focusRequest?.section;
+    if (!section) return;
+    let timer: number | undefined;
+    // The panel renders the selection first; the section exists on the next frame.
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.querySelector<HTMLElement>(`[data-focus-section="${section}"]`);
+      if (!element) return;
+      element.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      element.classList.add('rounded-xl', 'ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background');
+      timer = window.setTimeout(() => element.classList.remove('rounded-xl', 'ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background'), 2500);
+    });
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [focusRequest]);
+}
+
+/** How many records the concept holds in the data in use, and the way to look through them. */
+function RecordsSummary({ count, label, onBrowse }: Readonly<{ count?: number; label: string; onBrowse: () => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  return <div className='mb-6 flex items-center gap-2 rounded-lg border bg-muted/30 py-1.5 pl-3 pr-1.5'>
+    <Table2 className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden />
+    <p className='min-w-0 truncate text-sm font-medium'>{count === undefined ? t('records.table.noDataShort') : t('records.table.count', { count })}</p>
+    <HelpTip text={t('records.table.summaryHint', { name: label })} />
+    <Button size='sm' variant='ghost' className='ml-auto h-7 shrink-0 px-2 text-xs' onClick={onBrowse}>{t('records.table.browse')}</Button>
+  </div>;
+}
+
+const PANEL_WIDTH_KEY = 'semantic-model.side-panel-width';
+const PANEL_MIN = 320;
+const PANEL_DEFAULT = 416;
+const panelMax = () => Math.max(PANEL_MIN, Math.round(window.innerWidth * 0.7));
+const clampPanel = (width: number) => Math.min(panelMax(), Math.max(PANEL_MIN, Math.round(width)));
+function storedPanelWidth(): number {
+  try { const saved = Number(window.localStorage.getItem(PANEL_WIDTH_KEY)); return saved ? clampPanel(saved) : PANEL_DEFAULT; } catch { return PANEL_DEFAULT; }
+}
+function savePanelWidth(width: number) {
+  try { window.localStorage.setItem(PANEL_WIDTH_KEY, String(width)); } catch { /* the width is a convenience; it is fine not to keep it */ }
+}
+
+/** The side panel on the right of the canvas. Its left edge drags to make it wider or narrower; the width is remembered. */
+export function ResizableSidePanel({ children, className, bodyClassName }: Readonly<{ children: ReactNode; className?: string; bodyClassName?: string }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [width, setWidth] = useState(storedPanelWidth);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
+  const apply = (next: number) => { widthRef.current = next; setWidth(next); };
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = widthRef.current;
+    setResizing(true);
+    const move = (moveEvent: PointerEvent) => apply(clampPanel(startWidth + startX - moveEvent.clientX));
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      setResizing(false);
+      savePanelWidth(widthRef.current);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  };
+  const resizeWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 64 : 16;
+    const next = event.key === 'ArrowLeft' ? widthRef.current + step : event.key === 'ArrowRight' ? widthRef.current - step : null;
+    if (next === null) return;
+    event.preventDefault();
+    apply(clampPanel(next));
+    savePanelWidth(widthRef.current);
+  };
+  const reset = () => { apply(clampPanel(PANEL_DEFAULT)); savePanelWidth(widthRef.current); };
+  return <aside style={{ width: `min(${width}px, calc(100% - 1rem))` }}
+    className={cn('absolute inset-y-0 right-0 flex shrink-0 border-l lg:relative', resizing && 'select-none', className)}>
+    <div role='separator' aria-orientation='vertical' aria-label={t('inspector.resize')} title={t('inspector.resizeHint')}
+      aria-valuenow={width} aria-valuemin={PANEL_MIN} aria-valuemax={panelMax()} tabIndex={0}
+      onPointerDown={startResize} onKeyDown={resizeWithKeys} onDoubleClick={reset}
+      className={cn('group absolute inset-y-0 -left-1.5 z-10 flex w-3 cursor-col-resize justify-center focus-visible:outline-none')}>
+      <span className={cn('h-full w-0.5 transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary', resizing && 'bg-primary')} />
+    </div>
+    <div className={cn('min-h-0 min-w-0 flex-1 overflow-y-auto', bodyClassName)}>{children}</div>
   </aside>;
 }
 
-function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void }>) {
+function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,onAddSource }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void; onDeriveData?:(target:DerivedSourceTarget)=>void; onAddSource?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
   const commitBatch = useSemanticModelEditorStore((state) => state.commitBatch);
   const select = useSemanticModelEditorStore((state) => state.select);
   const update = (changes: Partial<Omit<SemanticNodeType,'id'|'systemKey'>>) => commit({ type:'node_type.update',id:item.id,changes }, (current) => ({ ...current,nodes:current.nodes.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
-  const [sourceLoading, setSourceLoading] = useState(false);
-  const [applyToAllSources, setApplyToAllSources] = useState(false);
-  useEffect(() => { setApplyToAllSources(false); }, [item.id]);
-  const existingSourceKeys = new Set(graph?.records
-    .filter((record) => record.nodeTypeId === item.id)
-    .flatMap((record) => {
-      const ids = Array.isArray(record.values._source_document_ids) ? record.values._source_document_ids : [record.values._source_document_id];
-      const workspaceIds = Array.isArray(record.values._source_workspace_ids) ? record.values._source_workspace_ids : [record.values._source_workspace_id];
-      return ids.flatMap((id, index) => typeof id === 'string' && id.length > 0 && typeof workspaceIds[index] === 'string' ? [`${workspaceIds[index]}:${id}`] : []);
-    }));
-  const legacySourceIds = new Set(graph?.records
-    .filter((record) => record.nodeTypeId === item.id && !record.values._source_workspace_id && !Array.isArray(record.values._source_workspace_ids))
-    .flatMap((record) => Array.isArray(record.values._source_document_ids) ? record.values._source_document_ids : [record.values._source_document_id])
-    .filter((id): id is string => typeof id === 'string' && id.length > 0));
-  const toggleApplyToAllSources = async (checked: boolean) => {
-    setApplyToAllSources(checked);
-    if (!checked || sourceLoading || !modelId || !graph) return;
-    setSourceLoading(true);
-    try {
-      const corpus = await semanticModelApi.corpus(modelId);
-      const documents = Array.from(new Map<string, SemanticCorpusDocument>(corpus.bindings
-        .filter((binding) => binding.target.kind === 'node_type' && binding.target.id === item.id)
-        .flatMap((binding) => binding.documents)
-        .map((document) => [`${document.workspaceId}:${document.sourceDocumentId}`, document] as const)).values());
-      const records = documents.filter((document) => !existingSourceKeys.has(`${document.workspaceId}:${document.sourceDocumentId}`) && !legacySourceIds.has(document.sourceDocumentId)).map((document, index): SemanticRecord => ({
-        id: crypto.randomUUID(), nodeTypeId: item.id, label: document.originalName,
-        values: { _source_document_id: document.sourceDocumentId, _source_document_ids: [document.sourceDocumentId], _source_file_name: document.originalName, _source_workspace_id: document.workspaceId, _source_workspace_ids: [document.workspaceId], _source_materialized: true },
-        status: 'active', position: { x: 120 + ((graph.records.length + index) % 3) * 304, y: 120 + Math.floor((graph.records.length + index) / 3) * 164 },
-      }));
-      if (records.length) {
-        commitBatch(records.map((entity) => ({ type:'record.create' as const, entity })), (current) => ({ ...current, records: [...current.records, ...records] }));
-        showSuccess(t('records.added'));
-      } else {
-        const ageResult = await semanticModelApi.rebuildAgeGraph(modelId);
-        if (ageResult.graphViewerWarning) throw new Error(ageResult.graphViewerWarning);
-      }
-    } catch (error) {
-      setApplyToAllSources(false);
-      showError(t('sourceMaterialization.title'), { description: parseApiError(error).message });
-    } finally {
-      setSourceLoading(false);
-    }
-  };
   const deleteNode = () => {
     if (!graph) return;
-    const relationIds = new Set(graph.relations.filter((candidate)=>candidate.sourceNodeTypeId===item.id||candidate.targetNodeTypeId===item.id).map((candidate)=>candidate.id));
-    const recordIds = new Set(graph.records.filter((candidate)=>candidate.nodeTypeId===item.id).map((candidate)=>candidate.id));
-    const recordRelationIds = new Set(graph.recordRelations.filter((candidate)=>relationIds.has(candidate.relationTypeId)||recordIds.has(candidate.sourceRecordId)||recordIds.has(candidate.targetRecordId)).map((candidate)=>candidate.id));
-    const operations = [
-      ...[...recordRelationIds].map((id)=>({type:'record_relation.delete' as const,id})),
-      ...[...recordIds].map((id)=>({type:'record.delete' as const,id})),
-      ...[...relationIds].map((id)=>({type:'relation_type.delete' as const,id})),
-      {type:'node_type.delete' as const,id:item.id},
-    ];
-    commitBatch(operations,(current)=>({...current,nodes:current.nodes.filter((candidate)=>candidate.id!==item.id),relations:current.relations.filter((candidate)=>!relationIds.has(candidate.id)),records:current.records.filter((candidate)=>!recordIds.has(candidate.id)),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.has(candidate.id))}));
+    const deletion = conceptDeletion(graph, item.id);
+    commitBatch(deletion.operations, deletion.update);
     select(null);
   };
+  const relations = graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? [];
   if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
-  return <div className='space-y-5'>{locked && <div className='flex gap-2 rounded-xl bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
-    {!locked&&canEdit && <div className='rounded-xl border-2 border-primary/40 bg-primary/5 p-3'><label className='flex cursor-pointer items-start gap-3 text-sm'><input type='checkbox' className='mt-0.5 h-4 w-4' checked={applyToAllSources} disabled={sourceLoading||!modelId} onChange={(event) => void toggleApplyToAllSources(event.target.checked)} />{sourceLoading&&<Loader2 className='h-4 w-4 animate-spin' />}<span><span className='font-semibold text-primary'>{t('sourceMaterialization.title')}</span><span className='mt-1 block text-xs text-muted-foreground'>{t('sourceMaterialization.help')}</span></span></label></div>}
-    <Field label={t('field.label')}><Input value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
-    <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} onChange={(event) => update({ description:event.target.value })} /></Field>
-    <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
-    <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
-    {!locked&&canEdit && <AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} />}
-    {!locked&&canEdit && <SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} />}
-    {!locked&&canEdit && <><Separator /><Button variant='destructive' className='w-full' onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
+  return <div className='space-y-6'>{locked && <div className='flex gap-2 rounded-lg bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
+    <section className='space-y-4'>
+      <SectionHeader title={t('workspaceUi.meaning')} />
+      <Field label={t('field.label')}><Input className='h-9' value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
+      <Field label={t('field.description')}><Textarea className='min-h-[4.5rem] resize-y text-sm' rows={3} value={item.description} disabled={locked||!canEdit} placeholder={t('concept.descriptionPlaceholder')} onChange={(event) => update({ description:event.target.value })} /></Field>
+      {!locked && <Field label={t('aliases.title')} help={t('aliases.help', { name: item.label })}><AliasChips values={item.aliases ?? []} onChange={(aliases) => update({ aliases })} placeholder={t('aliases.placeholder')} /></Field>}
+    </section>
+    {!locked&&canEdit && <section className={SECTION}><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
+    {!locked&&modelId && <section data-focus-section='identity' className={SECTION}><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
+    <section className={SECTION}>
+      <SectionHeader title={t('workspaceUi.relationships')} count={relations.length || undefined} />
+      {relations.length ? <div className='space-y-1.5'>{relations.map((relation) => {
+        const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId));
+        const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label };
+        return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='flex w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
+          <span className='min-w-0 flex-1'>{relationSentence(relation, labels, item.id, t as (key: string, options?: Record<string, unknown>) => string)}</span>
+          <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden />
+        </button>;
+      })}</div> : <p className='text-xs text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}
+    </section>
+    {!locked&&canEdit && <section data-focus-section='sources' className={SECTION}><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} /></section>}
+    <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+    <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
+    <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
+    {!locked&&canEdit && <><Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
+    </div></details>
   </div>;
 }
 
-function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void }>) {
+/** "What makes each <concept> unique?": the identity rule, chosen on the concept itself. */
+export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: string; node: SemanticNodeType; canEdit: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const client = useQueryClient();
+  const rules = useIdentityRules(modelId);
+  const mappings = useSourceMappings(modelId);
+  const fields = rules.data?.find((rule) => rule.conceptId === node.id)?.fields ?? [];
+  const mapped = (mappings.data ?? []).some((mapping) => mapping.conceptId === node.id);
+  const save = useMutation({
+    mutationFn: async (next: string[]) => {
+      // A field just added reaches the server with the next autosave; the key may only name saved fields.
+      if (useSemanticModelEditorStore.getState().pending.length) await waitForGraphSave();
+      return semanticModelApi.saveIdentityRule(modelId, node.id, next);
+    },
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
+      ]);
+    },
+    onError: (error) => showError(t('identity.saveError'), { description: parseApiError(error).message }),
+  });
+  const toggle = (key: string) => save.mutate(fields.includes(key) ? fields.filter((field) => field !== key) : [...fields, key]);
+  const labels = useLabelFields(modelId);
+  const labelField = labels.data?.find((rule) => rule.conceptId === node.id)?.field;
+  const labelValid = Boolean(labelField && node.attributes.some((attribute) => attribute.key === labelField));
+  const saveLabel = useMutation({
+    mutationFn: async (field: string) => {
+      if (useSemanticModelEditorStore.getState().pending.length) await waitForGraphSave();
+      return semanticModelApi.saveLabelField(modelId, node.id, field);
+    },
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.labelFields(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
+      ]);
+    },
+    onError: (error) => showError(t('labelField.saveError'), { description: parseApiError(error).message }),
+  });
+  return <div className='space-y-2'>
+    <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />
+    {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
+    {node.attributes.length === 0 ? <p className='text-xs text-muted-foreground'>{t('identity.noFields')}</p>
+      : <div className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
+        const active = fields.includes(attribute.key);
+        return <button key={attribute.key} type='button' aria-pressed={active} disabled={!canEdit || save.isPending || rules.isLoading}
+          onClick={() => toggle(attribute.key)}
+          className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default ${active ? 'border-amber-500/60 bg-amber-500/10 font-medium text-amber-800 dark:text-amber-300' : 'hover:bg-muted'}`}>
+          {active && <KeyRound className='h-3 w-3' />}{attribute.label || attribute.key}
+        </button>;
+      })}{save.isPending && <Loader2 className='h-4 w-4 animate-spin self-center' />}</div>}
+    {node.attributes.length > 0 && <div className='space-y-2 pt-3'>
+      <SectionHeader title={t('labelField.title', { name: node.label })} help={t('labelField.help', { name: node.label })} />
+      {!labelValid && !labels.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('labelField.missing', { name: node.label })}</p>}
+      <div role='radiogroup' aria-label={t('labelField.title', { name: node.label })} className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
+        const active = labelValid && labelField === attribute.key;
+        return <button key={attribute.key} type='button' role='radio' aria-checked={active} disabled={!canEdit || saveLabel.isPending || labels.isLoading}
+          onClick={() => { if (!active) saveLabel.mutate(attribute.key); }}
+          className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default ${active ? 'border-sky-500/60 bg-sky-500/10 font-medium text-sky-800 dark:text-sky-300' : 'hover:bg-muted'}`}>
+          {active && <Tag className='h-3 w-3' />}{attribute.label || attribute.key}
+        </button>;
+      })}{saveLabel.isPending && <Loader2 className='h-4 w-4 animate-spin self-center' />}</div>
+    </div>}
+  </div>;
+}
+
+function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddSource }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const mappingsQuery = useSourceMappings(modelId || undefined);
   const mappings = (mappingsQuery.data ?? []).filter((mapping) => mapping.conceptId === conceptId);
+  const graph = useSemanticModelEditorStore((state) => state.graph);
+  const derived = (useDerivedSources(modelId || undefined).data ?? []).filter((source) => source.conceptId === conceptId);
+  const conceptLabel = (id: string) => graph?.nodes.find((node) => node.id === id)?.label ?? '';
+  const fieldLabel = (id: string, key: string) => graph?.nodes.find((node) => node.id === id)?.attributes.find((field) => field.key === key)?.label ?? key;
+  const identity = useIdentityRules(modelId || undefined).data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [];
   const remove = async (mappingId: string) => {
     try {
-      await semanticModelApi.deleteSourceMapping(modelId, mappingId);
+      const result = await semanticModelApi.deleteSourceMapping(modelId, mappingId);
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
@@ -133,9 +282,8 @@ function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ model
       showError(t('mapping.deleteError'), { description: parseApiError(error).message });
     }
   };
-  return <div className='space-y-2'>
-    <Label>{t('mapping.sourcesTitle', { count: mappings.length })}</Label>
-    <p className='text-xs text-muted-foreground'>{t('mapping.sourcesHelp')}</p>
+  return <div className='space-y-3'>
+    <SectionHeader title={t('mapping.sourcesTitle', { count: mappings.length + derived.length })} help={t('mapping.sourcesHelp')} />
     {mappingsQuery.isLoading ? <Loader2 className='h-4 w-4 animate-spin' />
       : mappingsQuery.isError ? (
         <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
@@ -144,19 +292,37 @@ function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ model
           <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' onClick={() => void mappingsQuery.refetch()}>{t('action.retry')}</Button>
         </div>
       ) : mappings.length ? (
-      <div className='space-y-2'>
-        {mappings.map((mapping) => (
-          <div key={mapping.id} className='rounded-xl border p-2.5'>
-            <p className='truncate text-xs font-medium'>{mapping.documentName ?? mapping.documentId}</p>
-            <p className='truncate text-[10px] text-muted-foreground'>{mapping.sheetName}{mapping.identityFields.length ? ` · ${t('mapping.identityShort', { fields: mapping.identityFields.join(', ') })}` : ''}</p>
-            <div className='mt-1.5 flex gap-1'>
-              <Button size='sm' variant='ghost' className='h-7 px-2 text-[11px]' onClick={() => onMapData?.({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, mapping })}>{t('mapping.edit')}</Button>
-              <Button size='sm' variant='ghost' className='h-7 px-2 text-[11px] text-destructive' disabled={!modelId} onClick={() => void remove(mapping.id)}>{t('mapping.remove')}</Button>
+      <ul className='divide-y rounded-lg border'>
+        {mappings.map((mapping) => {
+          const Icon = mapping.scope === 'workspace' ? FolderOpen : mapping.assetKind === 'document' ? FileText : Sheet;
+          const name = mapping.documentName ?? mapping.documentId;
+          const detail = [mapping.sheetName, mapping.identityFields.length ? t('mapping.identityShort', { fields: mapping.identityFields.join(', ') }) : ''].filter(Boolean).join(' · ');
+          return <li key={mapping.id} className='flex items-center gap-2 py-1.5 pl-3 pr-1'>
+            <Icon className='h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400' aria-hidden />
+            <div className='min-w-0 flex-1' title={[name, detail].filter(Boolean).join('\n')}>
+              <p className='truncate text-sm'>{name}</p>
+              {detail && <p className='truncate text-[11px] text-muted-foreground'>{detail}</p>}
             </div>
-          </div>
-        ))}
+            <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' aria-label={t('mapping.edit')} title={t('mapping.edit')} onClick={() => onMapData?.({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, mapping })}><Pencil className='h-3.5 w-3.5' /></Button>
+            <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive' aria-label={t('mapping.remove')} title={t('mapping.remove')} disabled={!modelId} onClick={() => void remove(mapping.id)}><Trash2 className='h-3.5 w-3.5' /></Button>
+          </li>;
+        })}
+      </ul>
+    ) : !derived.length && <p className='text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
+    {derived.map((source) => <div key={source.id} className='flex items-center gap-2 rounded-lg border border-teal-500/40 py-1.5 pl-3 pr-1'>
+      <GitMerge className='h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400' aria-hidden />
+      <div className='min-w-0 flex-1'>
+        <p className='truncate text-sm'>{t('derived.fromConcept', { source: conceptLabel(source.sourceConceptId) })}</p>
+        <p className='truncate text-[11px] text-muted-foreground'>{t('derived.summary', { fields: identity.map((key) => fieldLabel(conceptId, key)).join(', '), rule: t(`derived.rule.${source.conflictRule}`) })}</p>
       </div>
-    ) : <p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
+      {onDeriveData && <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' aria-label={t('mapping.edit')} title={t('mapping.edit')} onClick={() => onDeriveData({ conceptId, derived: source })}><Pencil className='h-3.5 w-3.5' /></Button>}
+    </div>)}
+    {onAddSource && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onAddSource(conceptId)}>
+      <Plus className='mr-1.5 h-3.5 w-3.5' />{t('workspaceUi.addSourceShort')}
+    </Button>}
+    {onDeriveData && !derived.length && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onDeriveData({ conceptId })}>
+      <GitMerge className='mr-1.5 h-3.5 w-3.5' />{t('derived.add')}
+    </Button>}
   </div>;
 }
 
@@ -169,17 +335,48 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
   const update = (changes: Partial<Omit<SemanticRelationType,'id'>>) => commit({ type:'relation_type.update',id:item.id,changes }, (current) => ({ ...current,relations:current.relations.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
   const deleteRelation = () => {
     if (!graph) return;
-    const recordRelationIds = graph.recordRelations.filter((candidate)=>candidate.relationTypeId===item.id).map((candidate)=>candidate.id);
-    const operations = [...recordRelationIds.map((id)=>({type:'record_relation.delete' as const,id})),{type:'relation_type.delete' as const,id:item.id}];
-    commitBatch(operations,(current)=>({...current,relations:current.relations.filter((candidate)=>candidate.id!==item.id),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.includes(candidate.id))}));
+    const deletion = relationDeletion(graph, item.id);
+    commitBatch(deletion.operations, deletion.update);
     select(null);
   };
-  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} />{item.inverseLabel&&<ReadOnlyField label={t('field.inverseLabel')} value={item.inverseLabel} />}{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}<ReadOnlyField label={t('field.cardinality')} value={t(`cardinality.${item.cardinality}`)} /></div>;
-  return <Tabs defaultValue='overview' className='space-y-4'>
-    <TabsList className='grid w-full grid-cols-2'><TabsTrigger value='overview'>{t('relationMatching.overview')}</TabsTrigger><TabsTrigger value='matching'>{t('relationMatching.matching')}</TabsTrigger></TabsList>
-    <TabsContent value='overview' className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</TabsContent>
-    <TabsContent value='matching'><RelationMatchingPanel modelId={modelId} relation={item} /></TabsContent>
-  </Tabs>;
+  const source = graph?.nodes.find((candidate) => candidate.id === item.sourceNodeTypeId);
+  const target = graph?.nodes.find((candidate) => candidate.id === item.targetNodeTypeId);
+  const labels = { source: source?.label ?? '', target: target?.label ?? '' };
+  const translate = t as (key: string, options?: Record<string, unknown>) => string;
+  if (!canEdit) return <div className='space-y-4'><div className='space-y-1 rounded-xl bg-muted/50 p-3 text-sm'><p>{relationSentence(item, labels, item.sourceNodeTypeId, translate)}</p>{item.sourceNodeTypeId !== item.targetNodeTypeId && <p>{relationSentence(item, labels, item.targetNodeTypeId, translate)}</p>}</div>{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}</div>;
+  return <div className='space-y-6'>
+    <RelationSentenceEditor relation={item} labels={labels} onChange={update} />
+    <section data-focus-section='matching' className={SECTION}><SectionHeader title={t('relationSentence.linkTitle')} help={t('relationSentence.linkHelp')} /><RelationMatchingPanel modelId={modelId} relation={item} /></section>
+    <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+      <Field label={t('field.description')}><Textarea className='min-h-[4.5rem] resize-y text-sm' rows={3} value={item.description} onChange={(event) => update({description:event.target.value})} /></Field>
+      <div className='flex items-center justify-between gap-3'><Label className='text-sm font-normal'>{t('field.traversable')}</Label><Switch checked={item.traversable} onCheckedChange={(traversable) => update({traversable})} /></div>
+      <Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button>
+    </div></details>
+  </div>;
+}
+
+/** "Each Contract [belongs to] [one] Customer" and its reverse, editing the label, inverse label and cardinality together. */
+function RelationSentenceEditor({ relation, labels, onChange }: Readonly<{ relation: SemanticRelationType; labels: { source: string; target: string }; onChange: (changes: Partial<Omit<SemanticRelationType,'id'>>) => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const { forward, reverse } = relationSides(relation.cardinality);
+  const multiplicity = (value: Multiplicity, onValue: (next: Multiplicity) => void, label: string) => <Select value={value} onValueChange={(next: Multiplicity) => onValue(next)}>
+    <SelectTrigger className='h-9 w-28' aria-label={label}><SelectValue /></SelectTrigger>
+    <SelectContent><SelectItem value='one'>{t('relationSentence.one')}</SelectItem><SelectItem value='many'>{t('relationSentence.many')}</SelectItem></SelectContent>
+  </Select>;
+  const row = (subject: string, object: string, verb: React.ReactNode, count: React.ReactNode) => <div className='flex flex-wrap items-center gap-2 text-sm'>
+    <span>{t('relationSentence.each')}</span><span className='font-medium'>{subject}</span>{verb}{count}<span className='font-medium'>{object}</span>
+  </div>;
+  return <section className='space-y-3'>
+    <SectionHeader title={t('relationSentence.title')} help={t('relationSentence.help')} />
+    <div className='space-y-3 rounded-lg border bg-muted/30 p-3'>
+      {row(labels.source, labels.target,
+        <Input className='h-9 w-40' value={relation.label} placeholder={t('relationSentence.verbPlaceholder')} aria-label={t('relationSentence.verbFor', { subject: labels.source, object: labels.target })} onChange={(event) => onChange({ label: event.target.value, key: businessKey(event.target.value) })} />,
+        multiplicity(forward, (next) => onChange({ cardinality: cardinalityOf(reverse, next) }), t('relationSentence.howManyFor', { subject: labels.source, object: labels.target })))}
+      {row(labels.target, labels.source,
+        <Input className='h-9 w-40' value={relation.inverseLabel} placeholder={t('relationSentence.inversePlaceholder')} aria-label={t('relationSentence.verbFor', { subject: labels.target, object: labels.source })} onChange={(event) => onChange({ inverseLabel: event.target.value })} />,
+        multiplicity(reverse, (next) => onChange({ cardinality: cardinalityOf(next, forward) }), t('relationSentence.howManyFor', { subject: labels.target, object: labels.source })))}
+    </div>
+  </section>;
 }
 
 function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {
@@ -193,13 +390,69 @@ function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord;
   return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => { commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)})); select(null); }}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
 }
 
-function Field({ label,children }: Readonly<{ label: string; children: React.ReactNode }>) { return <div className='space-y-2'><Label>{label}</Label>{children}</div>; }
 
 function ReadOnlyField({ label,value }: Readonly<{ label: string; value: string }>) { return <div><p className='text-xs font-medium text-muted-foreground'>{label}</p><p className='mt-1 text-sm'>{value}</p></div>; }
 
+/** A concept's fields, one compact row each; a row opens for its description, other names and choices. */
 function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: AttributeDefinition[]; onChange: (attributes: AttributeDefinition[]) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [label,setLabel] = useState('');
-  const add = () => { if (!label.trim()) return; onChange([...attributes,{key:businessKey(label),label:label.trim(),type:'text',required:false}]); setLabel(''); };
-  return <div className='space-y-3'><div><Label>{t('attributes.title')}</Label><p className='text-xs text-muted-foreground'>{t('attributes.help')}</p></div>{attributes.map((attribute,index) => <div key={`${attribute.key}-${index}`} className='flex items-center gap-2 rounded-lg border p-2'><Input className='h-8' value={attribute.label} onChange={(event) => onChange(attributes.map((item,itemIndex) => itemIndex === index ? {...item,label:event.target.value,key:businessKey(event.target.value)} : item))} /><Button size='icon' variant='ghost' onClick={() => onChange(attributes.filter((_,itemIndex) => itemIndex !== index))} aria-label={t('attributes.remove')}><Trash2 className='h-4 w-4' /></Button></div>)}<div className='flex gap-2'><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder={t('attributes.placeholder')} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} /><Button size='icon' variant='outline' onClick={add} aria-label={t('attributes.add')}><Plus className='h-4 w-4' /></Button></div></div>;
+  const [openIndex,setOpenIndex] = useState<number | null>(null);
+  const add = () => { if (!label.trim()) return; onChange([...attributes,{key:businessKey(label),label:label.trim(),type:guessAttributeType(label),required:false}]); setLabel(''); };
+  const edit = (index: number, changes: Partial<AttributeDefinition>) => onChange(attributes.map((attribute, itemIndex) => itemIndex === index ? { ...attribute, ...changes } : attribute));
+  const remove = (index: number) => { setOpenIndex(null); onChange(attributes.filter((_,itemIndex) => itemIndex !== index)); };
+  return <div className='space-y-3'>
+    <SectionHeader title={t('attributes.title')} count={attributes.length || undefined} help={t('attributes.help')} />
+    {attributes.length > 0 && <ul className='divide-y rounded-lg border'>{attributes.map((attribute,index) => {
+      const open = openIndex === index;
+      return <li key={index} className='p-1'>
+        <div className='flex items-center gap-1'>
+          <button type='button' aria-expanded={open} aria-label={t('attributes.moreFor', { name: attribute.label })} title={t('attributes.moreFor', { name: attribute.label })} onClick={() => setOpenIndex(open ? null : index)}
+            className='flex h-8 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+            <ChevronRight className={cn('h-4 w-4 transition-transform', open && 'rotate-90')} />
+          </button>
+          <Input className='h-8 min-w-0 flex-1 text-sm' value={attribute.label} aria-label={t('attributes.nameFor', { name: attribute.label })} onChange={(event) => edit(index, { label:event.target.value })} />
+          <Select value={attribute.type} onValueChange={(type: AttributeDefinition['type']) => edit(index, { type })}>
+            <SelectTrigger className='h-8 w-[5.75rem] shrink-0 px-2 text-xs' aria-label={t('attributes.typeFor', { name: attribute.label })}><SelectValue /></SelectTrigger>
+            <SelectContent>{(['text','number','boolean','date','enum'] as const).map((type) => <SelectItem key={type} value={type}>{t(`attribute.type.${type}`)}</SelectItem>)}</SelectContent>
+          </Select>
+          <button type='button' role='checkbox' aria-checked={attribute.required} aria-label={t('attributes.required')} title={t('attributes.required')} onClick={() => edit(index, { required: !attribute.required })}
+            className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', attribute.required ? 'bg-primary/10 text-primary' : 'text-muted-foreground/50 hover:bg-muted hover:text-foreground')}>
+            <Asterisk className='h-4 w-4' />
+          </button>
+        </div>
+        {!open && attribute.description && <p className='truncate pb-0.5 pl-8 pr-2 pt-0.5 text-[11px] text-muted-foreground' title={attribute.description}>{attribute.description}</p>}
+        {open && <div className='space-y-3 pb-2 pl-8 pr-1 pt-2'>
+          <Field label={t('field.description')} help={t('attributes.descriptionHelp')}><Textarea className='min-h-[3.5rem] resize-y text-sm' rows={2} value={attribute.description ?? ''} placeholder={t('attributes.descriptionPlaceholder')} aria-label={t('attributes.descriptionFor', { name: attribute.label })} onChange={(event) => edit(index, { description: event.target.value })} /></Field>
+          <Field label={t('aliases.title')}><AliasChips values={attribute.aliases ?? []} onChange={(aliases) => edit(index, { aliases })} placeholder={t('aliases.fieldPlaceholder', { name: attribute.label })} compact /></Field>
+          {attribute.type === 'text' && <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={attribute.label} onChange={(searchIndex) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? withSearchIndex(item, searchIndex) : item))} />}
+          {attribute.type === 'enum' && <Field label={t('attributes.options')}><Input className='h-8 text-sm' defaultValue={attribute.options?.join(', ') ?? ''} onBlur={(event) => edit(index, { options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) })} placeholder={t('attributes.optionsPlaceholder')} aria-label={t('attributes.optionsFor', { name: attribute.label })} /></Field>}
+          <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='mr-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>
+        </div>}
+      </li>;
+    })}</ul>}
+    <div className='flex gap-2'>
+      <Input className='h-9' value={label} onChange={(event) => setLabel(event.target.value)} placeholder={t('attributes.placeholder')} aria-label={t('attributes.add')} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} />
+      <Button size='icon' variant='outline' className='h-9 w-9 shrink-0' onClick={add} disabled={!label.trim()} aria-label={t('attributes.add')}><Plus className='h-4 w-4' /></Button>
+    </div>
+  </div>;
 }
+
+/** Business synonyms as removable chips; Enter or comma adds the typed one. */
+export function AliasChips({ values, onChange, placeholder, compact = false }: Readonly<{ values: string[]; onChange: (values: string[]) => void; placeholder: string; compact?: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [draft, setDraft] = useState('');
+  const add = () => {
+    const value = draft.trim();
+    setDraft('');
+    if (!value || values.some((existing) => existing.toLocaleLowerCase() === value.toLocaleLowerCase())) return;
+    onChange([...values, value]);
+  };
+  return <div className='flex flex-wrap items-center gap-1.5'>
+    {values.map((value) => <span key={value} className='flex h-7 items-center gap-1 rounded-full bg-muted pl-2.5 pr-1 text-xs'>{value}<button type='button' className='rounded-full p-0.5 hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary' onClick={() => onChange(values.filter((existing) => existing !== value))} aria-label={t('aliases.remove', { name: value })}><X className='h-3 w-3' /></button></span>)}
+    <Input className={compact ? 'h-8 min-w-[9rem] flex-1 text-xs' : 'h-9 min-w-[10rem] flex-1 text-sm'} value={draft} placeholder={placeholder} aria-label={placeholder}
+      onChange={(event) => setDraft(event.target.value)} onBlur={add}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(); } }} />
+  </div>;
+}
+

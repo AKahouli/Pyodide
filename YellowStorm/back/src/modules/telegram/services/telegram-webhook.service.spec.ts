@@ -11,6 +11,7 @@ import { TelegramWebhookService } from './telegram-webhook.service';
 import { TelegramIntegrationService } from './telegram-integration.service';
 import { TelegramApiService } from './telegram-api.service';
 import { TelegramLinkCodeService } from './telegram-link-code.service';
+import { TelegramValidationService } from './telegram-validation.service';
 import { TELEGRAM_BINDING_STORE } from '../persistence/telegram.store';
 import { InMemoryTelegramBindingStore } from '../persistence/telegram.store.fake';
 import type { TelegramIntegrationRow } from '../persistence/telegram.store';
@@ -93,6 +94,13 @@ describe('TelegramWebhookService', () => {
     findUserAgentById: jest.fn().mockResolvedValue({ id: 'agent-1', name: 'My Agent' }),
   };
 
+  const validationService = {
+    resolveTextReply: jest.fn().mockResolvedValue({ status: 'none' }),
+    resolveCallback: jest.fn().mockResolvedValue(null),
+    hasPending: jest.fn().mockResolvedValue(false),
+    create: jest.fn().mockResolvedValue({ validationId: 'v1' }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     // clearAllMocks keeps implementations — re-arm the ones tests override.
@@ -114,6 +122,7 @@ describe('TelegramWebhookService', () => {
         { provide: TelegramIntegrationService, useValue: integrationService },
         { provide: TelegramApiService, useValue: telegramApiService },
         { provide: TelegramLinkCodeService, useValue: linkCodeService },
+        { provide: TelegramValidationService, useValue: validationService },
         { provide: ConversationSettingsService, useValue: { shouldRedactSensitiveText: () => true } },
       ],
     }).compile();
@@ -163,6 +172,7 @@ describe('TelegramWebhookService', () => {
       agentId: 'agent-1',
       telegramChatId: '42',
       telegramUserId: '7',
+      bindingType: 'member',
       lastMessageAt: new Date(),
     });
     integrationService.getByIntegrationId.mockResolvedValue({ ...INTEGRATION, enabled: false });
@@ -178,14 +188,15 @@ describe('TelegramWebhookService', () => {
     expect(messageService.createUserMessage).not.toHaveBeenCalled();
   });
 
-  it('tells unlinked chats how to link', async () => {
+  it('creates a guest binding for an unlinked private chat and routes the message', async () => {
     await service.validateAndDispatch('integration-1', 'webhook-secret', textUpdate(7, 'hello'));
     await flushAsync();
 
-    expect(telegramApiService.sendMessage).toHaveBeenCalledWith(
-      'bot-token',
-      '42',
-      expect.stringContaining('not linked yet'),
+    const binding = await bindingStore.findByChat('integration-1', '42');
+    expect(binding).toEqual(
+      expect.objectContaining({ bindingType: 'guest', userId: 'user-1', telegramUserId: '7' }),
     );
+    expect(messageService.createUserMessage).toHaveBeenCalled();
+    expect(telegramApiService.sendMessage).toHaveBeenCalledWith('bot-token', '42', 'agent reply');
   });
 });

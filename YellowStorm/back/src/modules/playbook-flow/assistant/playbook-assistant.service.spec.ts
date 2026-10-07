@@ -1,5 +1,5 @@
+import { newObjectId } from '@common/postgres';
 import { PlaybookAssistantService } from './playbook-assistant.service';
-import { Types } from 'mongoose';
 
 describe('PlaybookAssistantService.runTurn', () => {
   const createService = (overrides: {
@@ -123,6 +123,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       create: jest.fn().mockResolvedValue({ id: 'generated-playbook-1', definitionRevision: 0 }),
       findByAssistantOperationId: jest.fn(),
       removeAssistantDraftIfUnchanged: jest.fn().mockResolvedValue(true),
+      findOneBase: jest.fn().mockResolvedValue({ id: 'playbook-1', name: 'Lead qualification' }),
     };
     const executionService = { start: jest.fn().mockResolvedValue({ id: 'execution-1' }) };
     const defaultAssessment = overrides.assessment ?? {
@@ -184,9 +185,10 @@ describe('PlaybookAssistantService.runTurn', () => {
       inputContext: { source: 'Yellowmind' },
     })).resolves.toEqual({
       executionId: 'execution-1',
+      playbookName: 'Lead qualification',
       uiTarget: {
         surface: 'playbook.execution.details',
-        params: { playbookId: 'playbook-1', executionId: 'execution-1' },
+        params: { playbookId: 'playbook-1', executionId: 'execution-1', playbookName: 'Lead qualification' },
         effects: [{ type: 'focusExecutionStatus' }],
       },
     });
@@ -207,16 +209,18 @@ describe('PlaybookAssistantService.runTurn', () => {
     );
   });
 
-  it('normalizes the runtime Mongoose ObjectId into the execution handoff', async () => {
-    const { service, executionService } = createService();
-    const executionId = new Types.ObjectId();
-    executionService.start.mockResolvedValueOnce({ id: executionId });
+  it('hands the execution record id over to the execution handoff', async () => {
+    const { service, executionService, flowService } = createService();
+    const executionId = newObjectId();
+    executionService.start.mockResolvedValueOnce({ id: ` ${executionId} ` });
+    // The run started: a playbook whose name cannot be read only leaves the button unnamed.
+    flowService.findOneBase.mockRejectedValueOnce(new Error('gone'));
 
     await expect(service.startExecution('playbook-1', 'user-1', {})).resolves.toEqual({
-      executionId: executionId.toHexString(),
+      executionId,
       uiTarget: {
         surface: 'playbook.execution.details',
-        params: { playbookId: 'playbook-1', executionId: executionId.toHexString() },
+        params: { playbookId: 'playbook-1', executionId },
         effects: [{ type: 'focusExecutionStatus' }],
       },
     });
@@ -494,6 +498,145 @@ describe('PlaybookAssistantService.runTurn', () => {
       name: 'Lead generation',
     }), expect.any(Object));
     expect(constructionService.start.mock.calls[0][2].intent).toContain(workspaceId);
+  });
+
+  it('creates the new playbook when its answers come through the generic clarification tool or a construction call', async () => {
+    const { service, requestService, flowService } = createService();
+    const actor = { ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-2' };
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Create a leadgen pipeline', requestedName: 'Lead generation',
+      expectedDefinitionRevision: null, playbookId: null,
+      assessment: { status: 'needs_clarification', questions: [{ id: 'trigger', required: true }] },
+      answers: [], attachmentIds: [],
+    });
+    requestService.getBound.mockResolvedValue({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'ready', originalText: 'Create a leadgen pipeline', requestedName: 'Lead generation',
+      assessment: { status: 'ready_to_construct' }, answers: [{ questionId: 'trigger', choice: 'Manual' }],
+      mutationOperationId: null,
+    });
+
+    await expect(service.continueClarificationAndStart('continuation-1', actor, { answers: [{ questionId: 'trigger', choice: 'Manual' }] }))
+      .resolves.toEqual(expect.objectContaining({ status: 'planning', playbookId: 'playbook-1', requestId: 'generation-request-1' }));
+    expect(flowService.create).toHaveBeenCalledTimes(1);
+
+    flowService.create.mockClear();
+    await expect(service.startBoundConstruction('generation-request-1', actor))
+      .resolves.toEqual(expect.objectContaining({ status: 'planning', playbookId: 'playbook-1' }));
+    expect(flowService.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the sources card for a question that asks for a source, with the choices by name only', async () => {
+    const { service, requestService } = createService();
+    const waiting = {
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation' as const,
+      status: 'awaiting_clarification' as const, originalText: 'Screen CVs', requestedName: 'CV screening',
+      continuationId: 'continuation-1', answers: [], mutationOperationId: null,
+      assessment: {
+        status: 'needs_clarification',
+        questions: [{ id: 'source', question: 'Which CVs?', required: true, resourceSelector: 'workspace_or_document' }],
+        resourcePicks: { source: { resources: [{ kind: 'workspace', id: '507f1f77bcf86cd799439011', workspaceId: '507f1f77bcf86cd799439011', workspaceName: 'Recruiting', label: 'Recruiting' }] } },
+      },
+    };
+    requestService.claimGenerationForTurn.mockResolvedValueOnce(waiting);
+
+    const result = await service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, {});
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'needs_clarification',
+      uiTarget: { surface: 'playbook.sources', params: { continuationId: 'continuation-1', playbookName: 'CV screening' } },
+      chosenSources: [{ questionId: 'source', chosen: ['Recruiting (workspace)'] }],
+    }));
+    expect(JSON.stringify(result)).not.toContain('507f1f77bcf86cd799439011');
+  });
+
+  it('joins the sources the user chose, binds them in the construction and gives the new playbook their workspaces', async () => {
+    const { service, requestService, flowService, constructionService } = createService();
+    const workspaceId = '507f1f77bcf86cd799439011';
+    const documentWorkspaceId = '507f1f77bcf86cd799439012';
+    const picked = [
+      { kind: 'workspace', id: workspaceId, workspaceId, workspaceName: 'Recruiting', label: 'Recruiting' },
+      { kind: 'document', id: '507f1f77bcf86cd799439013', workspaceId: documentWorkspaceId, workspaceName: 'HR', label: 'Grid [2024].xlsx' },
+    ];
+    const questions = [
+      { id: 'source', question: 'Which CVs: all?', required: true, resourceSelector: 'workspace_or_document' },
+      { id: 'output', question: 'What output?', required: true },
+    ];
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Screen CVs', requestedName: 'CV screening',
+      expectedDefinitionRevision: null, playbookId: null,
+      assessment: { status: 'needs_clarification', questions, resourcePicks: { source: { resources: picked } } },
+      answers: [], attachmentIds: [],
+    });
+    requestService.getBound.mockImplementation(async () => ({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'ready', originalText: 'Screen CVs', requestedName: 'CV screening',
+      assessment: { status: 'ready_to_construct', questions },
+      answers: requestService.claimContinuation.mock.calls[0]?.[0].answers ?? [],
+      mutationOperationId: null,
+    }));
+
+    await service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, {
+      continuationId: 'continuation-1',
+      // The assistant's own words for the source are replaced by what the user chose.
+      answers: [{ questionId: 'source', text: 'the recruiting workspace' }, { questionId: 'output', choice: 'Shortlist' }],
+    });
+
+    const claimed = requestService.claimContinuation.mock.calls[0][0];
+    expect(claimed.answers).toEqual([
+      { questionId: 'output', choice: 'Shortlist' },
+      { questionId: 'source', resources: picked },
+    ]);
+    expect(claimed.assessment).not.toHaveProperty('resourcePicks');
+    expect(flowService.create).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      workspaces: [workspaceId, documentWorkspaceId],
+    }), expect.any(Object));
+    const intent: string = constructionService.start.mock.calls[0][2].intent;
+    expect(intent).toContain(`\n\nClarifications:\nWhich CVs - all?: Recruiting [kind=workspace, id=${workspaceId}, workspaceId=${workspaceId}, workspaceName=Recruiting]`);
+    expect(intent).toContain('Which CVs - all?: Grid (2024).xlsx [kind=document');
+  });
+
+  it('asks for the sources card when a required source was neither chosen nor skipped', async () => {
+    const { service, requestService } = createService();
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Screen CVs', expectedDefinitionRevision: null, playbookId: null,
+      assessment: { status: 'needs_clarification', questions: [{ id: 'source', question: 'Which CVs?', required: true, resourceSelector: 'workspace_or_document' }] },
+      answers: [], attachmentIds: [],
+    });
+
+    await expect(service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, { continuationId: 'continuation-1', answers: [] })).rejects.toThrow(/"Which CVs\?".*sources card/);
+    expect(requestService.claimContinuation).not.toHaveBeenCalled();
+  });
+
+  it('builds with a run-time input when the user skipped a source', async () => {
+    const { service, requestService } = createService();
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Screen CVs', expectedDefinitionRevision: null, playbookId: null,
+      assessment: {
+        status: 'needs_clarification',
+        questions: [{ id: 'source', question: 'Which CVs?', required: true, resourceSelector: 'workspace_or_document' }],
+        resourcePicks: { source: { skipped: true } },
+      },
+      answers: [], attachmentIds: [],
+    });
+
+    await service.continueClarification('continuation-1', {
+      ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, { answers: [] });
+
+    expect(requestService.claimContinuation.mock.calls[0][0].answers).toEqual([
+      { questionId: 'source', text: expect.stringContaining('run-time input') },
+    ]);
   });
 
   it('rejects a generation clarification resource outside the acting user access', async () => {

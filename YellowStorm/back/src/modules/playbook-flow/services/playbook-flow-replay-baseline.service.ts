@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { stripLeadingTrailingChar } from '@common/utils';
 import type {
   FlowTaskJudgeResult,
   FlowTaskPublicReasoningTraceItem,
   FlowTaskToolTraceItem,
-} from '../schemas/playbook-flow-task-result.schema';
+} from '../models/playbook-flow-task-result.model';
 import type {
   ReplayAcceptedExample,
   ReplayContextVariable,
@@ -20,7 +19,7 @@ import {
   type FlowReplayHitlMemorySnapshot,
   normalizeReplayMode,
   type ValidatedReplayBaselineFields,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../models/playbook-flow-validated-replay.model';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 
@@ -111,10 +110,10 @@ export class PlaybookFlowReplayBaselineService {
     const nodeMetadata = this.asRecord(params.nodeSnapshot?.metadata);
     const parts = [
       this.cleanText(params.taskTitle),
-      this.cleanText(nodeMetadata?.['taskType']),
-      this.cleanText(nodeMetadata?.['nodeTemplateKey']) || this.cleanText(nodeMetadata?.['templateType']),
-      this.cleanText(nodeMetadata?.['selectedAction']),
-      this.cleanText(nodeMetadata?.['executionMode']),
+      this.cleanText(nodeMetadata?.taskType),
+      this.cleanText(nodeMetadata?.nodeTemplateKey) || this.cleanText(nodeMetadata?.templateType),
+      this.cleanText(nodeMetadata?.selectedAction),
+      this.cleanText(nodeMetadata?.executionMode),
     ].filter((value): value is string => Boolean(value));
     const intentLabel = parts[0] ?? params.taskId;
     return { intentKey: this.toSlug(parts.length > 0 ? parts.join(' ') : params.taskId), intentLabel };
@@ -454,7 +453,7 @@ export class PlaybookFlowReplayBaselineService {
 
   private extractToolConfig(nodeSnapshot?: Record<string, unknown> | null): Record<string, unknown> | null {
     const metadata = this.asRecord(nodeSnapshot?.metadata);
-    const configuredTools = Array.isArray(metadata?.['agent_tools']) ? metadata?.['agent_tools'] : [];
+    const configuredTools = Array.isArray(metadata?.agent_tools) ? metadata?.agent_tools : [];
     const tools = configuredTools.filter((value, index, items) => items.indexOf(value) === index);
 
     return tools.length > 0 ? { tools } : null;
@@ -527,10 +526,11 @@ export class PlaybookFlowReplayBaselineService {
   }
 
   private toSlug(value: string): string {
-    return stripLeadingTrailingChar(
-      value.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      '-',
-    ).slice(0, 120);
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 120);
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {

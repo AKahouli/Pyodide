@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   FlowReplayFingerprints,
   type ReplayFingerprintInput,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../models/playbook-flow-validated-replay.model';
 
 const VOLATILE_KEYS = new Set([
   '_id',
@@ -56,7 +56,7 @@ export class PlaybookFlowReplayHashService {
       return null;
     }
 
-    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) {
+    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
       return null;
     }
 

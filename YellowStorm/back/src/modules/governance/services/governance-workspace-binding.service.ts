@@ -1,25 +1,29 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
-import { WORKSPACE_READ_PORT, WORKSPACE_SHARE_READ_PORT, type WorkspaceReadPort, type WorkspaceShareReadPort } from '@modules/workspace/ports';
+import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { BINDING_STORE, SCOPE_STORE, type BindingStore, type GovernanceBindingRecord, type ScopeStore, GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner } from '../persistence';
+import {     type GovernanceBindingRecord,       PASSTHROUGH_TRANSACTION} from '../persistence';
 import { DuplicateKeyError } from '../persistence/governance-records';
 import type { CreateGovernanceWorkspaceBindingDto, UpdateGovernanceWorkspaceBindingDto } from '../dto/create-governance-workspace-binding.dto';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import { PgWorkspaceReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceShareReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-share-read.adapter';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 @Injectable()
 export class GovernanceWorkspaceBindingService {
   constructor(
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
-    @Inject(WORKSPACE_SHARE_READ_PORT) private readonly shareReadPort: WorkspaceShareReadPort,
+    private readonly bindingStore: PgBindingStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly workspaceReadPort: PgWorkspaceReadAdapter,
+    private readonly shareReadPort: PgWorkspaceShareReadAdapter,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
+    private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
   ) {}
   async create(actorId: string, programId: string, dto: CreateGovernanceWorkspaceBindingDto, actorEmail = ''): Promise<GovernanceBindingRecord> {
     await this.programs.assertOwnedProgram(actorId, programId);

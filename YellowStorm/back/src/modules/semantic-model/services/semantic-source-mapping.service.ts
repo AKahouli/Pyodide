@@ -1,38 +1,78 @@
 import { createHash } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import {
   type ResolvedMappingEntity,
+  type SourcePreviewIssue,
 } from '../domain/semantic-cross-source.types';
-import {
+import { aiFieldHints,
+  AI_EXTRACTION_CONTRACT_VERSION,
+  computedInputRefs,
   computeFieldProfiles,
+  joinInputProblem,
+  MAX_JOIN_PARTS,
   resolveSheetEntities,
+  SHEET_ROW_KEY,
+  usesAiExtraction,
+  type ExtractionRules,
+  type ResolvedEntity,
   type SourceAssetKind,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
+import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
+import { documentReadOptions, effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';
 import type {
   CreateSourceMappingDto,
   BulkDocumentSourceMappingDto,
   SourceAssetProfileQueryDto,
+  WorkspaceSourceMappingDto,
   SourceMappingPreviewDto,
+  ComputedFieldPreviewDto,
+  DocumentLabelsDto,
+  SheetFieldPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { isItemField, storedExpand, type DerivedExpand } from '../domain/semantic-derived-source.types';
+import {
+  MAX_WORKSPACE_MAPPING_DOCUMENTS,
+  MAX_WORKSPACE_SELECTION_ITEMS,
+  mappingSelection,
+  normalizeWorkspaceSelection,
+  type SourceMappingScope,
+  type WorkspaceSelection,
+  workspaceMappingFiles,
+  workspaceMappingKey,
+} from '../domain/workspace-source-scope';
+
+/** A mapping's own AI reading limits, or null when it uses the defaults for all of them. */
+function storedAiSettings(settings: unknown): string | null {
+  const picked = pickAiSettings(settings);
+  return Object.keys(picked).length ? JSON.stringify(picked) : null;
+}
 
 export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'text/csv',
+  // E-mail archives (.zip of .eml, or one .eml): read as three tables, messages, participants, attachments.
+  'application/zip',
+  'application/x-zip-compressed',
+  'message/rfc822',
 ];
 export const DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  // Plain text: the message texts derived from an e-mail archive are read like any document.
+  'text/plain',
 ]);
 const MAX_DOCUMENT_EXTRACTION_FIELDS = 25;
 const MAX_PREVIEW_MAPPINGS = 50;
@@ -53,7 +93,16 @@ interface SourceMappingRow {
   sourceEnabled: boolean;
   validatedSourceVersion: string | null;
   validatedAt: Date | null;
+  scope?: SourceMappingScope;
+  folderId?: string | null;
+  selection?: WorkspaceSelection | null;
+  sourceLabel?: string | null;
+  /** Several records per row: the column split into items, each read as a row. */
+  expand?: DerivedExpand | null;
 }
+
+/** Sample rows read by the runtime for the data preview (its own cap). */
+const SHAPED_ROW_LIMIT = 500;
 
 @Injectable()
 export class SemanticSourceMappingService {
@@ -65,7 +114,16 @@ export class SemanticSourceMappingService {
     private readonly documents: WorkspaceDocumentService,
     private readonly runtime: SemanticRuntimeClientService,
     private readonly documentExtraction: DocumentExtractionConceptResolver,
+    private readonly workspaces?: WorkspaceService,
+    private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
+    private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) {}
+
+  /** The readable files a workspace mapping covers right now, and those still being indexed. */
+  async workspaceFiles(workspaceId: string, selection?: WorkspaceSelection | null) {
+    const all = await this.documents.listAllInWorkspace(workspaceId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+  }
 
   async listAssets(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -89,12 +147,36 @@ export class SemanticSourceMappingService {
     return { assets: assets.flat() };
   }
 
+  async listCanvasPositions(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const result = await this.database.query<{ id: string; x: number; y: number }>(
+      'SELECT element_id AS id, x, y FROM semantic_model.canvas_positions WHERE model_id=$1',
+      [model.id],
+    );
+    return { positions: result.rows };
+  }
+
+  /** Layout only: moving a box changes no meaning, so it neither advances the model revision nor needs one. */
+  async saveCanvasPositions(userId: string, modelId: string, positions: { id: string; x: number; y: number }[]) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (positions.length) {
+      await this.database.query(
+        `INSERT INTO semantic_model.canvas_positions (model_id, element_id, x, y)
+         SELECT $1, item.id, item.x, item.y
+         FROM jsonb_to_recordset($2::jsonb) AS item(id text, x double precision, y double precision)
+         ON CONFLICT (model_id, element_id) DO UPDATE SET x=EXCLUDED.x, y=EXCLUDED.y, updated_at=now()`,
+        [model.id, JSON.stringify(positions)],
+      );
+    }
+    return { saved: positions.length };
+  }
+
   async profileAsset(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel, CSV and e-mail archive assets can be profiled');
     }
     const result = await this.database.query<{ profile: Record<string, unknown> }>(
       `SELECT profile FROM semantic_datasource.discovery_profiles
@@ -116,7 +198,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel, CSV and e-mail archive assets can be profiled');
     }
     return this.requestDiscovery(userId, model.id, document, query.sheetName);
   }
@@ -135,7 +217,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
-    this.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const input = {
       userId,
@@ -148,38 +230,372 @@ export class SemanticSourceMappingService {
       identityFields: dto.identityFields ?? [],
       limit: dto.limit,
     };
-    if (kind === 'document') return this.documentExtraction.preview(input);
+    if (kind === 'document') return this.previewDocument(input, document, dto.aiSettings);
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
+    const labels = new Map(concept.attributes.map((attribute) => [attribute.key, attribute.label || attribute.key]));
+    const expand = storedExpand(dto.expand);
     return this.requestDiscovery(userId, model.id, document, dto.sheetName, {
-      fieldMappings: dto.fieldMappings,
+      // A field read out of a cell looks for its own label by default, as a document field does.
+      fieldMappings: dto.fieldMappings.map((field) => field.mode === 'extract' ? { ...field, label: labels.get(field.targetAttribute) } : field),
       identityFields: dto.identityFields ?? [],
       limit: dto.limit,
+      ...(expand ? { expand } : {}),
     });
+  }
+
+  /**
+   * Read a few picked sheet rows as a run would: each field read from its column as is, out of its cell's
+   * text by the document rules and/or AI (with where it was found), or by its recipe. AI is only asked for
+   * these rows, so a person sees what a run would read before saving.
+   */
+  async previewSheetFields(userId: string, modelId: string, dto: SheetFieldPreviewDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const document = await this.documents.findById(dto.workspaceId, dto.documentId);
+    const kind = this.requireAssetKind(document.mimeType);
+    if (kind === 'document') throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only spreadsheet and e-mail archive rows can be previewed here');
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
+    const expand = storedExpand(dto.expand);
+    const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings);
+    const attributes = new Map(concept.attributes.map((attribute) => [attribute.key, attribute]));
+    const fieldMappings = dto.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => {
+      if (field.mode !== 'extract') return field;
+      const attribute = attributes.get(field.targetAttribute);
+      return {
+        ...field,
+        label: attribute?.label || field.targetAttribute,
+        ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+      };
+    });
+    const usesAi = usesAiExtraction(fieldMappings);
+    const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
+    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    return this.runtime.previewSheetFields({
+      modelId: model.id,
+      entry: {
+        conceptId: concept.id ?? dto.conceptId,
+        conceptLabel: concept.label,
+        source: { workspaceId: dto.workspaceId, assetId: dto.documentId, originalName: document.originalName },
+        fieldMappings,
+        ...(usesAi ? { options: { aiSettings: effectiveAiSettings(defaults, dto.aiSettings) } } : {}),
+      },
+      rows: dto.rows.map((row) => ({ rowNumber: row.rowNumber, values: row.values })),
+      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      // Several records per row: each row is read once per item of the expanded column.
+      ...(expand ? { expand: { ...expand } } : {}),
+    });
+  }
+
+  /**
+   * Headings and `Label:` texts that recur across a few of a source's documents, so a person picks
+   * the labels the documents really use. Each document is reauthorized by the runtime, as a run does.
+   */
+  async documentLabels(userId: string, modelId: string, dto: DocumentLabelsDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
+    return this.runtime.suggestDocumentLabels({
+      actorUserId: userId,
+      sources: documents.map((document) => ({
+        workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
+        uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
+        indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
+      })),
+    });
+  }
+
+  /** Try a computation on sample inputs (file names or field values) without a document. */
+  async previewComputed(userId: string, modelId: string, dto: ComputedFieldPreviewDto) {
+    await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    const joinProblem = joinInputProblem(dto.computed.input);
+    if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, joinProblem);
+    // A joined input is tried on the value of each part per sample, by "<kind>:<name>".
+    if (dto.computed.input.kind === 'join') {
+      const samples = dto.partSamples ?? [];
+      const badSample = !samples.length || samples.some((sample) => typeof sample !== 'object' || sample === null || Array.isArray(sample)
+        || Object.entries(sample).length > MAX_JOIN_PARTS * 2
+        || Object.entries(sample).some(([key, value]) => key.length > 220 || typeof value !== 'string' || value.length > 1000));
+      const recipes = Object.keys(dto.partRecipes ?? {});
+      if (badSample || recipes.length > MAX_JOIN_PARTS) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Each sample gives a text of at most 1000 characters per part');
+      }
+      return this.runtime.previewComputedField({
+        computed: dto.computed, samples: [], partSamples: samples, ...(recipes.length ? { partRecipes: dto.partRecipes } : {}),
+      });
+    }
+    if (!dto.samples?.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Pick a few samples to try the recipe on');
+    return this.runtime.previewComputedField({
+      computed: dto.computed, samples: dto.samples, ...(dto.inputRecipe ? { inputRecipe: dto.inputRecipe } : {}),
+    });
+  }
+
+  /**
+   * Preview one document as a run reads it: the runtime applies the rules and the AI with the
+   * limits this mapping would use, and says for each field how it was read or why it was not.
+   */
+  private async previewDocument(
+    input: { userId: string; modelId: string; workspaceId: string; documentId: string; documentName: string;
+      concept: { id?: string; label: string; attributes: AttributeDefinition[] }; fieldMappings: SourceFieldMapping[]; identityFields: string[] },
+    document: Awaited<ReturnType<WorkspaceDocumentService['findById']>>,
+    aiSettings: unknown,
+  ) {
+    const active = input.fieldMappings.filter((mapping) => mapping.mode !== 'ignore');
+    const attributes = new Map(input.concept.attributes.map((attribute) => [attribute.key, attribute]));
+    const fieldMappings = active.map((field) => {
+      if (field.mode !== 'extract') return field;
+      const attribute = attributes.get(field.targetAttribute);
+      return {
+        ...field,
+        ...(!field.sourceField ? { sourceField: attribute?.label || field.targetAttribute } : {}),
+        // The preview tells the AI what the run will: the field's definition, kind of value and allowed values.
+        ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute
+          ? aiFieldHints(attribute, field) : {}),
+      };
+    });
+    const usesAi = usesAiExtraction(fieldMappings);
+    const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
+    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const preview = await this.runtime.previewDocumentFields({
+      actorUserId: input.userId,
+      modelId: input.modelId,
+      entry: {
+        conceptId: input.concept.id ?? 'preview',
+        conceptLabel: input.concept.label,
+        source: {
+          workspaceId: input.workspaceId, assetId: input.documentId, originalName: document.originalName,
+          uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
+          indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
+        },
+        fieldMappings,
+        ...documentReadOptions(usesAi, defaults, aiSettings),
+      },
+      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+    });
+    const values: Record<string, unknown> = {};
+    const provenance: NonNullable<ResolvedEntity['provenance']['fields']> = {};
+    for (const mapping of fieldMappings) {
+      if (mapping.mode === 'constant') {
+        values[mapping.targetAttribute] = mapping.constantValue;
+        provenance[mapping.targetAttribute] = { method: 'fixed_value' };
+      } else if (mapping.mode === 'metadata') {
+        values[mapping.targetAttribute] = mapping.sourceField === 'document_id' ? input.documentId
+          : mapping.sourceField === 'workspace_id' ? input.workspaceId : input.documentName;
+        provenance[mapping.targetAttribute] = { method: 'document_metadata' };
+      } else if (mapping.mode === 'extract') {
+        const field = preview.fields[mapping.targetAttribute];
+        if (!field || field.reason !== 'found') continue;
+        values[mapping.targetAttribute] = field.value;
+        provenance[mapping.targetAttribute] = {
+          method: 'semantic_extraction',
+          ...(field.page != null ? { page: String(field.page) } : {}),
+          ...(field.quote ? { quote: field.quote } : {}),
+        };
+      } else if (mapping.mode === 'computed') {
+        const field = preview.fields[mapping.targetAttribute];
+        if (!field || field.reason !== 'found') continue;
+        values[mapping.targetAttribute] = field.value;
+        provenance[mapping.targetAttribute] = { method: 'computed_field' };
+      }
+    }
+    const identityValues = input.identityFields.map((field) => values[field]);
+    const identityKey = identityValues.every((value) => value !== undefined && value !== null && String(value).trim())
+      ? identityValues.map((value) => String(value).trim().toLowerCase()).join('|') : '';
+    const warnings: string[] = [];
+    if (preview.status !== 'read') warnings.push(`This document could not be read (${preview.detail ?? preview.status}).`);
+    else if (!input.identityFields.length) warnings.push('No identity field selected: this document cannot be reconciled with other sources.');
+    else if (!identityKey) warnings.push('The selected identity field was not populated by this document.');
+    const entity: ResolvedEntity = {
+      entityKey: identityKey || `document:${input.documentId}`,
+      label: String(identityValues.find(Boolean) ?? Object.values(values).find(Boolean) ?? input.documentName),
+      values,
+      provenance: { fields: provenance },
+    };
+    // Several records per document: one entity per record (the AI's items, a rule's matches).
+    const recordEntities = (preview.records ?? []).map((record, index): ResolvedEntity => {
+      const own = { ...values, ...record.values };
+      const key = input.identityFields.map((field) => own[field]);
+      return {
+        entityKey: key.every((value) => value !== undefined && value !== null && String(value).trim())
+          ? key.map((value) => String(value).trim().toLowerCase()).join('|') : `document:${input.documentId}#${index + 1}`,
+        label: String(key.find(Boolean) ?? Object.values(record.values).find(Boolean) ?? input.documentName),
+        values: own,
+        provenance: { rowNumber: index + 1, fields: provenance },
+      };
+    });
+    if ((preview.recordCount ?? 0) > recordEntities.length) {
+      warnings.push(`This document makes ${preview.recordCount} records; the first ${recordEntities.length} are shown.`);
+    }
+    if (preview.unevenFields?.length) {
+      warnings.push(`Some fields were found fewer times than there are records, so the last records have no value for them: ${preview.unevenFields.join(', ')}.`);
+    }
+    const entities = recordEntities.length ? recordEntities : [entity];
+    return {
+      entities,
+      stats: recordEntities.length
+        ? { scannedRows: preview.recordCount ?? recordEntities.length, resolvedEntities: recordEntities.length, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 }
+        : { scannedRows: 1, resolvedEntities: 1, duplicateKeysSkipped: 0, nullIdentitySkipped: identityKey || !input.identityFields.length ? 0 : 1 },
+      identityEvidence: [],
+      warnings,
+      complete: preview.status === 'read',
+      // How each field was read, or why it was not, and what the AI was sent.
+      fields: preview.fields,
+      documentStatus: preview.status,
+      aiSent: preview.aiSent ?? null,
+    };
   }
 
   async list(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const result = await this.database.query<SourceMappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId", m.document_id AS "documentId",
-              m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
-              m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
+              m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+              m.expand, m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
               i.fields AS "identityFields", m.validated_source_version AS "validatedSourceVersion",
-              m.validated_at AS "validatedAt"
+              m.validated_at AS "validatedAt", m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
        INNER JOIN semantic_model.workspace_links w
          ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id AND w.enabled
        LEFT JOIN semantic_model.identity_rules i ON i.model_id = m.model_id AND i.concept_id = m.concept_id
        WHERE m.model_id=$1
        ORDER BY m.created_at`, [model.id]);
-    const documentIds = [...new Set(result.rows.map((row) => row.documentId))];
+    const documentIds = [...new Set(result.rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
     const documents = documentIds.length ? await this.documents.findByIds(documentIds) : [];
     const names = new Map(documents.map((document) => [document.id, document.originalName]));
-    return result.rows.map((row) => ({
-      ...row,
-      identityFields: row.identityFields ?? [],
-      documentName: names.get(row.documentId) ?? row.documentId,
-      documentPath: documents.find((document) => document.id === row.documentId)?.path ?? '',
-      mimeType: documents.find((document) => document.id === row.documentId)?.mimeType ?? '',
+    // A workspace mapping shows how many files it covers today; each workspace is listed once.
+    const fileCounts = new Map<string, Promise<{ fileCount: number; waitingCount: number }>>();
+    const countFiles = (row: SourceMappingRow) => {
+      const selection = mappingSelection(row);
+      const key = `${row.workspaceId}:${JSON.stringify(selection)}`;
+      if (!fileCounts.has(key)) {
+        fileCounts.set(key, this.workspaceFiles(row.workspaceId, selection)
+          .then((files) => ({ fileCount: files.readable.length, waitingCount: files.waiting.length }))
+          .catch(() => ({ fileCount: 0, waitingCount: 0 })));
+      }
+      return fileCounts.get(key)!;
+    };
+    return Promise.all(result.rows.map(async (row) => {
+      const { scope, folderId, selection, sourceLabel, ...rest } = row;
+      if (scope === 'workspace') {
+        return {
+          ...rest,
+          scope,
+          folderId: folderId ?? null,
+          selection: mappingSelection({ folderId, selection }),
+          identityFields: row.identityFields ?? [],
+          documentName: sourceLabel || row.workspaceId,
+          documentPath: '',
+          mimeType: '',
+          ...(await countFiles(row)),
+        };
+      }
+      return {
+        ...rest,
+        scope: 'document' as const,
+        identityFields: row.identityFields ?? [],
+        documentName: names.get(row.documentId) ?? row.documentId,
+        documentPath: documents.find((document) => document.id === row.documentId)?.path ?? '',
+        mimeType: documents.find((document) => document.id === row.documentId)?.mimeType ?? '',
+      };
     }));
+  }
+
+  /**
+   * Map many files of a workspace with one document mapping: all of them, or the folders and files that
+   * were picked. Files added later (to the workspace, or inside a picked folder) are included; each run
+   * reads the files that are there at that moment. With `mappingId`, changes what that mapping covers.
+   */
+  async createWorkspace(userId: string, modelId: string, dto: WorkspaceSourceMappingDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    SemanticSourceMappingService.assertMappingModes('document', dto.fieldMappings);
+    await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
+    let workspaceName = dto.workspaceId;
+    try {
+      workspaceName = (await this.workspaces?.findById(dto.workspaceId))?.name || workspaceName;
+    } catch (error) {
+      this.logger.warn(`Could not read the name of workspace ${dto.workspaceId}: ${(error as Error).name}`);
+    }
+    const selection = normalizeWorkspaceSelection([...(dto.folderIds ?? []), ...(dto.folderId ? [dto.folderId] : [])], dto.documentIds ?? []);
+    if (selection && selection.folderIds.length + selection.documentIds.length > MAX_WORKSPACE_SELECTION_ITEMS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Pick at most ${MAX_WORKSPACE_SELECTION_ITEMS} folders and files; pick their folder instead`);
+    }
+    const all = await this.documents.listAllInWorkspace(dto.workspaceId);
+    const byId = new Map(all.map((item) => [item.id, item]));
+    const pickedNames: string[] = [];
+    for (const folderId of selection?.folderIds ?? []) {
+      const folder = byId.get(folderId);
+      if (!folder?.isFolder) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A picked folder is not a folder of this workspace');
+      pickedNames.push(folder.folderName || folder.originalName);
+    }
+    for (const documentId of selection?.documentIds ?? []) {
+      const document = byId.get(documentId);
+      if (!document || document.isFolder || !DOCUMENT_MIME_TYPES.has(document.mimeType)) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${document?.originalName ?? 'A picked file'} cannot be read as a document`);
+      }
+      pickedNames.push(document.originalName);
+    }
+    const label = workspaceSourceLabel(workspaceName, pickedNames);
+    const files = workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+    const maxFiles = this.extractionSettings
+      ? (await this.extractionSettings.getRunLimits()).runLimits.maxRunSources
+      : MAX_WORKSPACE_MAPPING_DOCUMENTS;
+    if (files.readable.length + files.waiting.length > maxFiles) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `A workspace source can cover at most ${maxFiles} files; pick folders instead`);
+    }
+    const key = workspaceMappingKey(dto.workspaceId, selection);
+    const storedSelection = selection ? JSON.stringify(selection) : null;
+    const revision = await this.database.transaction(async (client) => {
+      const nextRevision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
+      if (dto.mappingId) {
+        const clash = await client.query(
+          `SELECT 1 FROM semantic_model.source_mappings
+           WHERE model_id=$1 AND concept_id=$2 AND document_id=$3 AND sheet_name='' AND id<>$4`,
+          [model.id, dto.conceptId, key, dto.mappingId],
+        );
+        if (clash.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This concept already has a source covering exactly these files');
+        const updated = await client.query(
+          // The mapping may have read another workspace, or a single file or sheet: it now reads these files.
+          `UPDATE semantic_model.source_mappings
+           SET workspace_id=$4, document_id=$5, sheet_name='', asset_kind='document', scope='workspace', folder_id=NULL,
+               selection=$6::jsonb, source_label=$7, field_mappings=$8::jsonb, validated_source_version=NULL,
+               ai_settings=$9::jsonb, status='ready', validated_at=now(), updated_at=now()
+           WHERE id=$1 AND model_id=$2 AND concept_id=$3`,
+          [dto.mappingId, model.id, dto.conceptId, dto.workspaceId, key, storedSelection, label, JSON.stringify(dto.fieldMappings),
+            storedAiSettings(dto.aiSettings)],
+        );
+        if (!updated.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source mapping not found');
+      } else {
+        await client.query(
+          `INSERT INTO semantic_model.source_mappings
+            (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,
+             validated_source_version,validated_at,scope,folder_id,selection,source_label,ai_settings)
+            VALUES ($1,$2,$3,$4,'','document',$5::jsonb,'ready',$6,NULL,now(),'workspace',NULL,$7::jsonb,$8,$9::jsonb)
+            ON CONFLICT (model_id,concept_id,document_id,sheet_name)
+            DO UPDATE SET field_mappings=EXCLUDED.field_mappings,status='ready',source_label=EXCLUDED.source_label,
+              selection=EXCLUDED.selection,folder_id=NULL,ai_settings=EXCLUDED.ai_settings,validated_at=now(),updated_at=now()`,
+          [model.id, dto.conceptId, dto.workspaceId, key, JSON.stringify(dto.fieldMappings), userId, storedSelection, label,
+            storedAiSettings(dto.aiSettings)],
+        );
+      }
+      if (dto.identityFields?.length) {
+        await client.query(
+          `INSERT INTO semantic_model.identity_rules (model_id,concept_id,fields,updated_by)
+           VALUES ($1,$2,$3::jsonb,$4)
+           ON CONFLICT (model_id,concept_id)
+           DO UPDATE SET fields=EXCLUDED.fields,updated_by=EXCLUDED.updated_by,updated_at=now()`,
+          [model.id, dto.conceptId, JSON.stringify(dto.identityFields), userId],
+        );
+      } else if (dto.identityFields) {
+        await client.query('DELETE FROM semantic_model.identity_rules WHERE model_id=$1 AND concept_id=$2', [model.id, dto.conceptId]);
+      }
+      await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'source_mapping.workspace_saved', {
+        conceptId: dto.conceptId, workspaceId: dto.workspaceId, selection, mappingId: dto.mappingId ?? null,
+      });
+      return nextRevision;
+    });
+    return { revision, fileCount: files.readable.length, waitingCount: files.waiting.length };
   }
 
   async resolveConfigured(userId: string, modelId: string, conceptIds: string[] = [], limit = 25) {
@@ -189,9 +605,10 @@ export class SemanticSourceMappingService {
     const conceptFilter = conceptIds.length ? ` AND m.concept_id=ANY($${params.push(conceptIds)}::uuid[])` : '';
     const result = await this.database.query<SourceMappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId", m.document_id AS "documentId",
-              m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
-              m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
-              i.fields AS "identityFields", COALESCE(w.enabled, false) AS "sourceEnabled"
+              m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+              m.expand, m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
+              i.fields AS "identityFields", COALESCE(w.enabled, false) AS "sourceEnabled",
+              m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w
          ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
@@ -199,18 +616,40 @@ export class SemanticSourceMappingService {
        WHERE m.model_id=$1${conceptFilter}
        ORDER BY m.created_at`, params);
     const entities: ResolvedMappingEntity[] = [];
-    const issues: Array<{ mappingId: string; code: 'source_unavailable'; message: string }> = [];
+    const issues: SourcePreviewIssue[] = [];
     const incompleteConceptIds = new Set<string>();
-    for (const mapping of result.rows.slice(0, MAX_PREVIEW_MAPPINGS)) {
-      if (!mapping.sourceEnabled || mapping.status !== 'ready') {
-        issues.push({ mappingId: mapping.id, code: 'source_unavailable', message: 'The mapped source is not available.' });
+    const previewRows = result.rows.slice(0, MAX_PREVIEW_MAPPINGS);
+    const documentNames = await this.documentNames(previewRows);
+    for (const mapping of previewRows) {
+      const documentName = documentNames.get(mapping.documentId) ?? '';
+      const source = documentName || 'This source';
+      if (!mapping.sourceEnabled) {
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_disabled',
+          reason: 'its workspace is no longer linked to this model',
+          message: `${source} is not available: its workspace is no longer linked to this model.`,
+        });
+        incompleteConceptIds.add(mapping.conceptId);
+        continue;
+      }
+      if (mapping.status !== 'ready') {
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_not_ready',
+          reason: `its mapping is marked "${mapping.status}"`,
+          message: `${source} is not used yet: its mapping is marked "${mapping.status}".`,
+        });
         incompleteConceptIds.add(mapping.conceptId);
         continue;
       }
       try {
-        const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
+        // A workspace source is previewed on its first readable file.
+        const sampleId = mapping.scope === 'workspace'
+          ? (await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping))).readable[0]?.id
+          : mapping.documentId;
+        if (!sampleId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This workspace has no readable file yet');
+        const document = await this.documents.findById(mapping.workspaceId, sampleId);
         const kind = this.requireAssetKind(document.mimeType, mapping.assetKind);
-        this.assertMappingModes(kind, mapping.fieldMappings);
+        SemanticSourceMappingService.assertMappingModes(kind, mapping.fieldMappings);
         const concept = await this.assertConceptInDraft(
           model.id,
           model.currentDraftVersionId,
@@ -222,7 +661,7 @@ export class SemanticSourceMappingService {
           userId,
           modelId: model.id,
           workspaceId: mapping.workspaceId,
-          documentId: mapping.documentId,
+          documentId: document.id,
           documentName: document.originalName,
           concept,
           fieldMappings: mapping.fieldMappings,
@@ -240,7 +679,7 @@ export class SemanticSourceMappingService {
           source: {
             kind,
             workspaceId: mapping.workspaceId,
-            documentId: mapping.documentId,
+            documentId: document.id,
             documentName: document.originalName,
             documentPath: document.path ?? '',
             mimeType: document.mimeType,
@@ -249,16 +688,43 @@ export class SemanticSourceMappingService {
           entity,
         })));
       } catch (error) {
-        this.logger.warn(`Could not resolve semantic source mapping ${mapping.id}: ${(error as Error).name}`);
-        issues.push({ mappingId: mapping.id, code: 'source_unavailable', message: 'The mapped source could not be resolved.' });
+        const reason = this.previewFailureReason(error);
+        this.logger.warn(`Could not resolve semantic source mapping ${mapping.id} (${documentName || mapping.documentId}): ${(error as Error).name}: ${reason}`);
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_failed',
+          reason,
+          message: `${source} could not be read: ${reason}`,
+          detail: `${(error as Error).name}: ${reason}`,
+        });
         incompleteConceptIds.add(mapping.conceptId);
       }
     }
     if (result.rows.length > MAX_PREVIEW_MAPPINGS) {
-      issues.push({ mappingId: '', code: 'source_unavailable', message: `Preview is limited to ${MAX_PREVIEW_MAPPINGS} mappings.` });
+      issues.push({ mappingId: '', code: 'preview_limited', message: `Preview is limited to ${MAX_PREVIEW_MAPPINGS} sources.` });
       result.rows.slice(MAX_PREVIEW_MAPPINGS).forEach((mapping) => incompleteConceptIds.add(mapping.conceptId));
     }
     return { entities, issues, incompleteConceptIds: [...incompleteConceptIds] };
+  }
+
+  private async documentNames(rows: SourceMappingRow[]) {
+    const workspaceNames = rows.filter((row) => row.scope === 'workspace')
+      .map((row) => [row.documentId, row.sourceLabel || row.workspaceId] as [string, string]);
+    const documentIds = [...new Set(rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
+    if (!documentIds.length) return new Map<string, string>(workspaceNames);
+    try {
+      const documents = await this.documents.findByIds(documentIds);
+      return new Map([...documents.map((document) => [document.id, document.originalName] as [string, string]), ...workspaceNames]);
+    } catch (error) {
+      this.logger.warn(`Could not read source document names: ${(error as Error).message}`);
+      return new Map<string, string>(workspaceNames);
+    }
+  }
+
+  /** Human-readable cause of a failed source preview, so the UI never has to say "could not be resolved". */
+  private previewFailureReason(error: unknown) {
+    const message = (error as Error)?.message?.trim();
+    if (!message) return 'unexpected error';
+    return message.endsWith('.') ? message.slice(0, -1) : message;
   }
 
   async create(userId: string, modelId: string, dto: CreateSourceMappingDto) {
@@ -266,20 +732,28 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
-    this.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     if (kind !== 'document' && !dto.sheetName) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A sheet is required for spreadsheet mappings');
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
+    const aiSettings = kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null;
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
+    const expand = storedExpand(dto.expand);
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
-      await client.query(
+      if (dto.mappingId) {
+        await this.switchSource(client, model.id, dto, kind, this.sourceVersion(document), aiSettings, expand);
+      } else await client.query(
         `INSERT INTO semantic_model.source_mappings
-         (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'ready',$8,$9,now())
+         (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at,ai_settings,expand)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'ready',$8,$9,now(),$10::jsonb,$11::jsonb)
          ON CONFLICT (model_id,concept_id,document_id,sheet_name)
          DO UPDATE SET field_mappings=EXCLUDED.field_mappings,asset_kind=EXCLUDED.asset_kind,status='ready',
-           validated_source_version=EXCLUDED.validated_source_version,validated_at=now(),updated_at=now()`,
+           validated_source_version=EXCLUDED.validated_source_version,ai_settings=EXCLUDED.ai_settings,expand=EXCLUDED.expand,
+           validated_at=now(),updated_at=now()`,
           [model.id, dto.conceptId, dto.workspaceId, dto.documentId, dto.sheetName ?? '', kind,
-           JSON.stringify(dto.fieldMappings), userId, this.sourceVersion(document)],
+           JSON.stringify(dto.fieldMappings), userId, this.sourceVersion(document),
+           // A sheet keeps AI limits only when one of its cells is read by AI.
+           aiSettings, expand ? JSON.stringify(expand) : null],
       );
       if (dto.identityFields?.length) {
         await client.query(
@@ -297,7 +771,7 @@ export class SemanticSourceMappingService {
         );
       }
       await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'source_mapping.saved', {
-        conceptId: dto.conceptId, documentId: dto.documentId, sheetName: dto.sheetName ?? '',
+        conceptId: dto.conceptId, documentId: dto.documentId, sheetName: dto.sheetName ?? '', mappingId: dto.mappingId ?? null,
       });
       return revision;
     });
@@ -315,7 +789,7 @@ export class SemanticSourceMappingService {
 
   async createBulkDocuments(userId: string, modelId: string, dto: BulkDocumentSourceMappingDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
-    this.assertMappingModes('document', dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes('document', dto.fieldMappings);
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const uniqueDocuments = [...new Map(dto.documents.map((document) => [`${document.workspaceId}:${document.documentId}`, document])).values()];
     const documents = new Map<string, Awaited<ReturnType<WorkspaceDocumentService['findById']>>>();
@@ -332,13 +806,13 @@ export class SemanticSourceMappingService {
       for (const source of uniqueDocuments) {
         await client.query(
           `INSERT INTO semantic_model.source_mappings
-            (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at)
-            VALUES ($1,$2,$3,$4,'','document',$5::jsonb,'ready',$6,$7,now())
+            (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at,ai_settings)
+            VALUES ($1,$2,$3,$4,'','document',$5::jsonb,'ready',$6,$7,now(),$8::jsonb)
             ON CONFLICT (model_id,concept_id,document_id,sheet_name)
             DO UPDATE SET field_mappings=EXCLUDED.field_mappings,asset_kind='document',status='ready',
-              validated_source_version=EXCLUDED.validated_source_version,validated_at=now(),updated_at=now()`,
+              validated_source_version=EXCLUDED.validated_source_version,ai_settings=EXCLUDED.ai_settings,validated_at=now(),updated_at=now()`,
            [model.id, dto.conceptId, source.workspaceId, source.documentId, JSON.stringify(dto.fieldMappings), userId,
-            this.sourceVersion(documents.get(`${source.workspaceId}:${source.documentId}`)!)],
+            this.sourceVersion(documents.get(`${source.workspaceId}:${source.documentId}`)!), storedAiSettings(dto.aiSettings)],
         );
       }
       if (dto.identityFields?.length) {
@@ -386,6 +860,33 @@ export class SemanticSourceMappingService {
     return { revision };
   }
 
+  /**
+   * Points an existing mapping at another file (or sheet), keeping its id, so its health and history follow it.
+   * It may have read a whole workspace, a document or a sheet before.
+   */
+  private async switchSource(
+    client: PoolClient, modelId: string, dto: CreateSourceMappingDto, kind: SourceAssetKind, sourceVersion: string, aiSettings: string | null,
+    expand: DerivedExpand | null = null,
+  ): Promise<void> {
+    const sheetName = dto.sheetName ?? '';
+    const clash = await client.query(
+      `SELECT 1 FROM semantic_model.source_mappings
+       WHERE model_id=$1 AND concept_id=$2 AND document_id=$3 AND sheet_name=$4 AND id<>$5`,
+      [modelId, dto.conceptId, dto.documentId, sheetName, dto.mappingId],
+    );
+    if (clash.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This concept already has a source reading this file');
+    const updated = await client.query(
+      `UPDATE semantic_model.source_mappings
+       SET workspace_id=$4, document_id=$5, sheet_name=$6, asset_kind=$7, scope='document', folder_id=NULL, selection=NULL,
+           source_label=NULL, field_mappings=$8::jsonb, validated_source_version=$9, ai_settings=$10::jsonb,
+           expand=$11::jsonb, status='ready', validated_at=now(), updated_at=now()
+       WHERE id=$1 AND model_id=$2 AND concept_id=$3`,
+      [dto.mappingId, modelId, dto.conceptId, dto.workspaceId, dto.documentId, sheetName, kind,
+        JSON.stringify(dto.fieldMappings), sourceVersion, aiSettings, expand ? JSON.stringify(expand) : null],
+    );
+    if (!updated.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source mapping not found');
+  }
+
   private async requireLinkedWorkspace(modelId: string, workspaceId: string): Promise<void> {
     const link = await this.database.query(
       'SELECT 1 FROM semantic_model.workspace_links WHERE model_id=$1 AND workspace_id=$2 AND enabled',
@@ -429,7 +930,9 @@ export class SemanticSourceMappingService {
       },
     };
     const key = createHash('sha256').update(JSON.stringify(command)).digest('hex');
-    return this.runtime.requestDatasourceDiscovery(command, `datasource:${key}`);
+    // Bump the version when discovery rules change, so a finished job made under the old rules is not
+    // handed back as-is (v2: spreadsheets no longer wait for indexing).
+    return this.runtime.requestDatasourceDiscovery(command, `datasource:v2:${key}`);
   }
 
   private sheetProfile(profile: Record<string, unknown>) {
@@ -437,16 +940,20 @@ export class SemanticSourceMappingService {
     const rawSheets = Array.isArray(structure.sheets) ? structure.sheets
       : structure.kind === 'csv' ? [{ name: 'CSV', reportedRows: structure.dataRows, reportedColumns: Array.isArray(structure.columns) ? structure.columns.length : 0 }]
       : [];
-    const sheets = rawSheets.map((sheet) => {
-      const value = sheet as Record<string, unknown>;
-      return {
-        name: String(value.name ?? ''),
-        rowCount: Number(value.reportedRows ?? value.rowCount ?? 0),
-        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? 0),
-      };
-    });
     const selected = typeof structure.selectedSheet === 'string' ? structure.selectedSheet
       : structure.kind === 'csv' ? 'CSV' : undefined;
+    // Workbooks that do not declare their size report no counts; the sheet that was read has measured ones.
+    const measuredRows = typeof structure.dataRows === 'number' ? structure.dataRows : undefined;
+    const measuredFields = Array.isArray(structure.columns) ? structure.columns.length : undefined;
+    const sheets = rawSheets.map((sheet) => {
+      const value = sheet as Record<string, unknown>;
+      const read = value.name === selected;
+      return {
+        name: String(value.name ?? ''),
+        rowCount: Number(value.reportedRows ?? value.rowCount ?? (read ? measuredRows : undefined) ?? 0),
+        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? (read ? measuredFields : undefined) ?? 0),
+      };
+    });
     return {
       sheets,
       ...(selected ? { sheet: sheets.find((sheet) => sheet.name === selected) } : {}),
@@ -470,7 +977,17 @@ export class SemanticSourceMappingService {
     const profile = result.rows[0]?.profile;
     if (!profile) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source analysis is not ready');
     const rows = Array.isArray(profile.samples) ? profile.samples as Record<string, unknown>[] : [];
-    const { entities, stats } = resolveSheetEntities(rows, mapping.fieldMappings, mapping.identityFields ?? [], limit);
+    // Recipes, joins and fields read out of a cell are read by the runtime, as a run reads them.
+    const expand = storedExpand(mapping.expand);
+    const shapes = Boolean(expand) || mapping.fieldMappings.some((item) => item.mode !== 'ignore'
+      && (item.mode === 'extract' || item.mode === 'computed' || item.computed != null));
+    const shaped = shapes
+      ? await this.runtime.shapeSheetRows({ rows: rows.slice(0, SHAPED_ROW_LIMIT), fieldMappings: mapping.fieldMappings,
+        ...(expand ? { expand: { ...expand } } : {}) })
+      : undefined;
+    // A row expanded into items is read once per item: the rows are the runtime's item rows.
+    const read = expand && shaped ? shaped.rows.map((row) => ({ [SHEET_ROW_KEY]: row.rowNumber })) : shaped ? rows.slice(0, SHAPED_ROW_LIMIT) : rows;
+    const { entities, stats } = resolveSheetEntities(read, mapping.fieldMappings, mapping.identityFields ?? [], limit, shaped?.rows);
     const profiles = computeFieldProfiles(rows);
     return {
       entities,
@@ -480,7 +997,7 @@ export class SemanticSourceMappingService {
         const evidence = profiles.find((item) => item.name === sourceField);
         return evidence ? [{ ...evidence, name: targetAttribute }] : [];
       }),
-      warnings: ['Preview uses the persisted bounded source sample.'],
+      warnings: ['Preview uses the persisted bounded source sample.', ...(shaped?.warnings ?? [])],
       complete: false,
     };
   }
@@ -526,21 +1043,177 @@ export class SemanticSourceMappingService {
     return actualKind;
   }
 
-  private assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
+  /**
+   * A spreadsheet field's recipe reads a column of the row, or another mapped field: read from a column,
+   * out of a cell, fixed, or itself taken from other fields, as long as no field ends up reading itself.
+   */
+  private static assertSheetRecipes(mappings: SourceFieldMapping[]): void {
+    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct' && mapping.mode !== 'computed');
+    if (misplaced) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A transformation is only supported for fields read from a column or taken from another field');
+    }
+    const missing = mappings.find((mapping) => mapping.mode === 'computed' && !mapping.computed);
+    if (missing) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${missing.targetAttribute}: a field taken from another field needs a recipe`);
+    }
+    // The fields a recipe may read: every mapped field but itself.
+    const read = new Map(mappings.filter((mapping) => mapping.mode === 'direct' || mapping.mode === 'extract'
+      || mapping.mode === 'computed' || mapping.mode === 'constant').map((mapping) => [mapping.targetAttribute, mapping]));
+    for (const mapping of read.values()) {
+      const input = mapping.computed?.input;
+      if (!input) continue;
+      const joinProblem = joinInputProblem(input);
+      if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: ${joinProblem}`);
+      // Every part of a joined input is checked as a single input is.
+      const valid = computedInputRefs(input).every((ref) => ref.kind === 'column'
+        || (ref.kind === 'field' && ref.name !== mapping.targetAttribute && read.has(ref.name)));
+      if (!valid) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `${mapping.targetAttribute}: a transformed field reads a column or another mapped field`);
+      }
+    }
+    const loop = recipeLoop(mappings);
+    if (loop) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `These fields read each other in a loop: ${loop.join(' → ')}`);
+    }
+  }
+
+  /** A sheet field read out of a cell reads a column, and a cell has no pages, headings or tables. */
+  private static assertCellExtractions(mappings: SourceFieldMapping[]): void {
+    const noColumn = mappings.find((mapping) => mapping.mode === 'extract' && !mapping.sourceField?.trim());
+    if (noColumn) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${noColumn.targetAttribute}: choose the column whose text the value is read from`);
+    }
+    const documentOnly = mappings.find((mapping) => mapping.rules && (['pages', 'heading', 'table'].includes(mapping.rules.location ?? '') || mapping.rules.firstPageOnly));
+    if (documentOnly) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${documentOnly.targetAttribute}: a cell has no pages, headings or tables`);
+    }
+  }
+
+  private static assertComputedInputs(mappings: SourceFieldMapping[]): void {
+    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'computed');
+    if (misplaced) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A computation is only supported for computed fields');
+    }
+    const inputs = new Set(mappings.filter((mapping) => mapping.mode !== 'computed' && mapping.mode !== 'ignore')
+      .map((mapping) => mapping.targetAttribute));
+    for (const mapping of mappings) {
+      if (mapping.mode !== 'computed') continue;
+      const input = mapping.computed?.input;
+      if (!input) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: a computed field needs a computation`);
+      }
+      const joinProblem = joinInputProblem(input);
+      if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: ${joinProblem}`);
+      const valid = computedInputRefs(input).every((ref) => ref.kind === 'file' ? ref.name === 'document_name'
+        : ref.kind === 'field' && ref.name !== mapping.targetAttribute && inputs.has(ref.name));
+      if (!valid) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `${mapping.targetAttribute}: a computed field reads the file name or another mapped, non-computed field`);
+      }
+    }
+  }
+
+  /** Whether field mappings use only the modes, recipes and rules their kind of source allows; throws when not. */
+  /**
+   * Several records per row: only a sheet (or e-mail archive) expands a column, and a field reads an item
+   * (`@item`, `@item.email`) only when its source expands one. Links back belong to a derived source.
+   */
+  static assertExpand(kind: SourceAssetKind, mappings: SourceFieldMapping[], expand?: DerivedExpand | null): void {
+    if (expand && (kind === 'document' || expand.relationId)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only a spreadsheet source can make several records per row, without links');
+    }
+    const readsItem = mappings.some((mapping) => mapping.mode !== 'ignore' && (isItemField(mapping.sourceField ?? undefined)
+      || computedInputRefs(mapping.computed?.input).some((ref) => ref.kind === 'column' && isItemField(ref.name))));
+    if (readsItem && !expand?.field) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A field reads an item, but the source does not make several records per row');
+    }
+  }
+
+  static assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
+    // A sheet field is read from a column as is, or out of its cell's text as a document field is read
+    // (rules and/or AI), or taken from a column or another field (a recipe), or fixed.
     const allowed = kind === 'document'
-      ? new Set(['extract', 'metadata', 'constant', 'ignore'])
-      : new Set(['direct', 'constant', 'ignore']);
+      ? new Set(['extract', 'metadata', 'constant', 'computed', 'ignore'])
+      : new Set(['direct', 'extract', 'constant', 'computed', 'ignore']);
     const invalidMode = mappings.find((mapping) => !allowed.has(mapping.mode));
     if (invalidMode) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${invalidMode.mode} mappings are not supported for ${kind} assets`);
+    }
+    if (kind === 'document') SemanticSourceMappingService.assertComputedInputs(mappings);
+    else {
+      SemanticSourceMappingService.assertSheetRecipes(mappings);
+      SemanticSourceMappingService.assertCellExtractions(mappings);
     }
     const invalidMetadata = mappings.find((mapping) => mapping.mode === 'metadata'
       && !['document_name', 'document_id', 'workspace_id'].includes(mapping.sourceField ?? ''));
     if (invalidMetadata) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Document metadata mappings require document_name, document_id, or workspace_id');
     }
-    if (kind === 'document' && mappings.filter((mapping) => mapping.mode === 'extract').length > MAX_DOCUMENT_EXTRACTION_FIELDS) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Document mappings support at most ${MAX_DOCUMENT_EXTRACTION_FIELDS} extracted fields`);
+    if (mappings.filter((mapping) => mapping.mode === 'extract').length > MAX_DOCUMENT_EXTRACTION_FIELDS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Mappings support at most ${MAX_DOCUMENT_EXTRACTION_FIELDS} extracted fields`);
+    }
+    const invalidStrategy = mappings.find((mapping) => mapping.extractionStrategy !== undefined && mapping.mode !== 'extract');
+    if (invalidStrategy) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted fields');
+    }
+    const invalidAi = mappings.find((mapping) => (mapping.semanticDefinition !== undefined || mapping.agentId !== undefined)
+      && mapping.mode !== 'extract');
+    if (invalidAi) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A semantic definition or an extraction agent is only supported for extracted fields');
+    }
+    const invalidRules = mappings.find((mapping) => mapping.rules !== undefined && mapping.mode !== 'extract');
+    if (invalidRules) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Reading rules are only supported for extracted fields');
+    }
+    const anywhereWithoutPattern = mappings.find((mapping) => mapping.rules?.location === 'anywhere' && !mapping.rules.pattern?.trim());
+    if (anywhereWithoutPattern) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `${anywhereWithoutPattern.targetAttribute}: reading a value anywhere in the document needs a pattern`);
+    }
+    const badPages = mappings.find((mapping) => mapping.rules?.location === 'pages' && !validPageSpan(mapping.rules.pages));
+    if (badPages) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `${badPages.targetAttribute}: whole pages need a first page, and a last page no more than ${MAX_PAGE_SPAN - 1} pages after it`);
     }
   }
+}
+
+const MAX_PAGE_SPAN = 50;
+
+function validPageSpan(pages: ExtractionRules['pages']): boolean {
+  if (!pages || !Number.isInteger(pages.from) || pages.from < 1) return false;
+  const to = pages.to ?? pages.from;
+  return Number.isInteger(to) && to >= pages.from && to - pages.from < MAX_PAGE_SPAN;
+}
+
+/** "Legal", "Legal / Contracts", "Legal / Contracts, NDA.pdf" or "Legal / Contracts, NDA.pdf +3". */
+export function workspaceSourceLabel(workspaceName: string, picked: string[]): string {
+  if (!picked.length) return workspaceName;
+  const shown = picked.slice(0, 2).join(', ');
+  return `${workspaceName} / ${shown}${picked.length > 2 ? ` +${picked.length - 2}` : ''}`;
+}
+
+/** The first loop of recipe fields reading each other (`a → b → a`), or null. */
+export function recipeLoop(mappings: SourceFieldMapping[]): string[] | null {
+  const recipes = new Map(mappings.filter((mapping) => mapping.computed && mapping.mode !== 'ignore')
+    .map((mapping) => [mapping.targetAttribute, mapping.computed!]));
+  const done = new Set<string>();
+  const visit = (field: string, path: string[]): string[] | null => {
+    if (done.has(field)) return null;
+    const at = path.indexOf(field);
+    if (at >= 0) return [...path.slice(at), field];
+    for (const ref of computedInputRefs(recipes.get(field)?.input)) {
+      if (ref.kind !== 'field' || !recipes.has(ref.name)) continue;
+      const loop = visit(ref.name, [...path, field]);
+      if (loop) return loop;
+    }
+    done.add(field);
+    return null;
+  };
+  for (const field of recipes.keys()) {
+    const loop = visit(field, []);
+    if (loop) return loop;
+  }
+  return null;
 }

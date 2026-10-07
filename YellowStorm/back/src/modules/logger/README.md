@@ -1,6 +1,6 @@
 # Logger Module
 
-A production-grade, global logging module with MongoDB persistence, buffered writes, and request tracking.
+A production-grade, global logging module with PostgreSQL persistence, buffered writes, and request tracking.
 
 ## Features
 
@@ -9,13 +9,10 @@ A production-grade, global logging module with MongoDB persistence, buffered wri
 - **Log Levels** - ERROR, WARN, INFO, DEBUG, VERBOSE
 - **Sensitive Data Redaction** - Automatically redacts passwords, tokens, secrets
 - **Context Support** - Track which service/class is logging
-- **MongoDB Persistence** - Logs are saved to a separate MongoDB connection
-- **Buffered Writes** - Non-blocking, fire-and-forget log persistence
+- **Historic ops.logs Reads** - the admin logs screen queries the historic table (P11 retired the SQL write path; live logs stream to Grafana via the unified-logging SDK)
 - **Request Tracking** - Track all logs for a specific HTTP request via `requestId`
-- **Display/Save Control** - Skip console output or database persistence per log
-- **Display-Only Contexts** - Startup/runtime logs are display-only by default (not saved to DB)
-- **Query API** - Search and filter logs from both buffer and database
-- **Graceful Shutdown** - Flushes pending logs before application exit
+- **Query API** - Search and filter the historic `ops.logs` table
+- **Graceful Shutdown** - the SDK's bounded drain flushes stderr events on shutdown
 - **TTL Auto-Cleanup** - Old logs automatically deleted after configured days
 
 ## Configuration
@@ -25,16 +22,19 @@ A production-grade, global logging module with MongoDB persistence, buffered wri
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `info` | Minimum log level (error, warn, info, debug, verbose) |
-| `LOGGING_MONGODB_URI` | `MONGODB_URI` | Separate MongoDB URI for logging (falls back to main DB) |
-| `LOGGING_BUFFER_SIZE` | `100` | Max logs in buffer before auto-flush |
-| `LOGGING_FLUSH_INTERVAL_MS` | `5000` | Flush interval in milliseconds |
-| `LOGGING_PERSISTENCE_ENABLED` | `true` | Enable/disable database persistence |
-| `LOGGING_DEFAULT_SAVE` | `true` | Default value for `save` option |
-| `LOGGING_DEFAULT_DISPLAY` | `true` | Default value for `display` option |
-| `LOGGING_MAX_POOL_SIZE` | `3` | Max MongoDB connections for logging |
-| `LOGGING_DISPLAY_ONLY_CONTEXTS` | *(see below)* | Comma-separated contexts that are display-only |
+| `LOGGING_PERSISTENCE_ENABLED` | retired (P11) | no longer read; kept in the validation schema for old .env files |
+| `LOGGING_DEFAULT_SAVE` | retired (P11) | no longer read |
+| `LOGGING_DEFAULT_DISPLAY` | retired (P11) | no longer read |
+| `LOGGING_RETENTION_DAYS` | `30` | Days the persisted logs are kept (swept hourly from `ops.logs`) |
+| `LOGGING_DISPLAY_ONLY_CONTEXTS` | retired (P11) | no longer read |
 
-### Display-Only Contexts
+### Retired knobs (P11)
+
+The SQL write path, in-memory buffer, and display-only context filtering were removed at the
+unified-logging cutover. The `LOGGING_*` env vars for them still validate (so old `.env`
+files boot) but are not read. Live logs stream to Grafana; see `docs/observability/`.
+
+## Display-Only Contexts
 
 By default, the following contexts are **display-only** (shown in console but not saved to database). These are typically startup/bootstrap logs that don't need persistence:
 
@@ -58,7 +58,6 @@ LOGGING_DISPLAY_ONLY_CONTEXTS=NestFactory,Bootstrap,MyCustomStartupService
 
 ```env
 LOG_LEVEL=info
-LOGGING_MONGODB_URI=mongodb://localhost:27017/yellostorm_logs
 LOGGING_BUFFER_SIZE=100
 LOGGING_FLUSH_INTERVAL_MS=5000
 ```
@@ -136,7 +135,7 @@ interface LogOptions {
 
 ## Querying Logs
 
-The `LogBufferService` provides methods to query logs from both the in-memory buffer and database.
+The `OpsLogsService` provides methods to query the historic ops.logs table (P11 retired the SQL write path; live logs stream to Grafana via the unified-logging SDK).
 
 ### Basic Query
 
@@ -251,7 +250,7 @@ const unflushedCount = this.logBuffer.getBufferSize();
 
 ```typescript
 interface LogEntry {
-  _id?: string;           // MongoDB ID (only for persisted logs)
+  _id?: string;           // Log id (only for persisted logs)
   timestamp: string;      // ISO 8601 timestamp
   level: string;          // ERROR, WARN, INFO, DEBUG, VERBOSE
   context?: string;       // Service/class name
@@ -261,7 +260,7 @@ interface LogEntry {
   requestId?: string;     // HTTP request tracking ID
   hostname?: string;      // Server hostname
   nodeEnv?: string;       // Environment (development, production, test)
-  createdAt?: Date;       // MongoDB timestamp (only for persisted logs)
+  createdAt?: Date;       // When the entry was logged (only for persisted logs)
   _fromBuffer?: boolean;  // true if from memory buffer, false if from DB
 }
 ```
@@ -297,7 +296,7 @@ this.logger.log('User login', { email: 'user@example.com', password: 'secret123'
 
 ```
 ┌─────────────────┐     ┌────────────────┐     ┌─────────────────┐
-│  LoggerService  │────>│ LogBufferService│────>│ MongoDB (logs)  │
+│  LoggerService  │────>│ LogBufferService│────>│ PostgreSQL logs │
 │                 │     │                │     │ Separate conn   │
 │  - log()        │     │ - buffer[]     │     │                 │
 │  - error()      │     │ - add()        │     │ - logs collection│

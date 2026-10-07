@@ -2,7 +2,6 @@ import type { CompleteAIMessageData, CreateAIPlaceholderData, CreateUserMessageD
 import type { FrontendLatencyPatch } from '../interfaces/latency.interface';
 import type { ConversationUsageEventInput, ConversationUsageMetrics } from '../utils/usage-metrics';
 
-export const MESSAGE_STORE = Symbol('MESSAGE_STORE');
 
 export interface AiMessageComponentsRecord {
   id: string;
@@ -131,12 +130,12 @@ export interface MessageStore {
     cutoff: Date,
     limit: number,
   ): Promise<
-    Array<{
+    {
       id: string;
       conversationId: string;
       executionAttemptId: string | null;
       leaseExpiresAt: Date | null;
-    }>
+    }[]
   >;
   /**
    * Merge the browser-reported sixth latency metric into an AI message's

@@ -32,12 +32,32 @@ describe('PlaybookRouterConfigSection', () => {
 
     render(<Harness />);
 
-    const input = screen.getAllByRole('textbox')[0];
+    const input = screen.getAllByDisplayValue('retry').find((el) => el.tagName === 'INPUT') as HTMLInputElement;
     await userEvent.click(input);
     await userEvent.type(input, 'x');
 
     expect(document.activeElement).toBe(input);
     expect(input).toHaveValue('retryx');
+  });
+
+  it('switches routing mode and edits the AI prompt', async () => {
+    const onChange = vi.fn();
+    currentPlaybookState.value = makePlaybook();
+
+    render(
+      <PlaybookRouterConfigSection
+        value={{ outputLabels: ['a', 'b'], maxIterations: 3, defaultLabel: 'a', conditions: [], mode: 'ai' }}
+        onChange={onChange}
+      />,
+    );
+
+    const modeSelect = screen.getAllByRole('combobox')[0];
+    await userEvent.selectOptions(modeSelect, 'deterministic');
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ mode: 'deterministic' }));
+
+    const prompt = screen.getByPlaceholderText('routerEditor.promptPlaceholder');
+    fireEvent.change(prompt, { target: { value: 'hello' } });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'hello' }));
   });
 
   it('adds a deterministic condition with source selectors', async () => {

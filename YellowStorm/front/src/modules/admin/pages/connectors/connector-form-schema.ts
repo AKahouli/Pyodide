@@ -28,12 +28,14 @@ export interface ConnectorFormValues {
   mcpServerUrl: string;
   githubPatToken: string;
   mcpServerConfig: string;
+  workerPolicy: import('../../types').ConnectorWorkerPolicy;
   dynamicHeaders: DynamicHeaderRow[];
   actions?: ConnectorActionResponse[];
   actionsJson: string;
   referencedSkillIds: string[];
   isActive: boolean;
   isHidden: boolean;
+  isSystem: boolean;
 }
 
 export const defaultConnectorFormValues: ConnectorFormValues = {
@@ -57,10 +59,12 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   mcpServerUrl: '',
   githubPatToken: '',
   mcpServerConfig: '',
+  workerPolicy: { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
   dynamicHeaders: [],
   actions: [],
   actionsJson: '',
   referencedSkillIds: [],
   isActive: true,
   isHidden: false,
+  isSystem: false,
 };

@@ -1,4 +1,4 @@
-import { ConnectorService } from './connector.service';
+import { ConnectorService, mcpToolSafety } from './connector.service';
 import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
 import type {
   ConnectorCategoryStore,
@@ -6,6 +6,8 @@ import type {
   ConnectorStore,
 } from './persistence/connector.store';
 import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
+import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-connector.store';
+import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
 
 const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
@@ -13,8 +15,8 @@ const createPlaybookBindingSyncServiceMock = () => ({
 
 /** Deep-partial row override: lets fixture literals use minimal action/header objects. */
 type RowOver = {
-  [K in keyof ConnectorRow]?: ConnectorRow[K] extends Array<infer T>
-    ? Array<Partial<T>>
+  [K in keyof ConnectorRow]?: ConnectorRow[K] extends (infer T)[]
+    ? Partial<T>[]
     : ConnectorRow[K];
 };
 
@@ -48,7 +50,7 @@ const baseRow = (over: RowOver = {}): ConnectorRow =>
     ...over,
   }) as ConnectorRow;
 
-const connectorStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorStore =>
+const connectorStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorStore =>
   ({
     findBySlugAndOwner: jest.fn().mockResolvedValue(null),
     findById: jest.fn().mockResolvedValue(null),
@@ -67,9 +69,9 @@ const connectorStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorStor
     delete: jest.fn().mockResolvedValue(null),
     upsertSystemActionsBySlug: jest.fn(),
     ...over,
-  }) as unknown as ConnectorStore;
+  }) as unknown as PgConnectorStore;
 
-const categoryStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorCategoryStore =>
+const categoryStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorCategoryStore =>
   ({
     ensureSystem: jest.fn().mockResolvedValue(undefined),
     findByNameInsensitive: jest.fn().mockResolvedValue(null),
@@ -82,10 +84,10 @@ const categoryStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorCateg
     findNamesByIds: jest.fn().mockResolvedValue(new Map()),
     findIdsByNameInsensitive: jest.fn().mockResolvedValue([]),
     ...over,
-  }) as unknown as ConnectorCategoryStore;
+  }) as unknown as PgConnectorCategoryStore;
 
 describe('ConnectorService findAllActive', () => {
-  it('includes hidden Playbook MCP while excluding other hidden connectors', async () => {
+  it('lists active visible connectors only, with no slug exception', async () => {
     const store = connectorStoreMock();
     const service = new ConnectorService(
       store,
@@ -98,9 +100,18 @@ describe('ConnectorService findAllActive', () => {
 
     await service.findAllActive();
 
-    // The active + visible filter (hidden excluded, playbook-mcp exception)
-    // lives in the store port; the service pins the exception slug.
-    expect(store.findAllActiveVisible).toHaveBeenCalledWith('playbook-mcp');
+    expect(store.findAllActiveVisible).toHaveBeenCalledWith();
+  });
+});
+
+describe('mcpToolSafety', () => {
+  it("reads a tool's MCP annotations: read-only, destructive, another change, or read when none are declared", () => {
+    expect(mcpToolSafety({ readOnlyHint: true })).toBe('read');
+    expect(mcpToolSafety({ readOnlyHint: false, destructiveHint: true })).toBe('delete');
+    expect(mcpToolSafety({ readOnlyHint: false, destructiveHint: false })).toBe('write');
+    expect(mcpToolSafety({ readOnlyHint: false })).toBe('write');
+    expect(mcpToolSafety(undefined)).toBe('read');
+    expect(mcpToolSafety({ title: 'x' })).toBe('read');
   });
 });
 

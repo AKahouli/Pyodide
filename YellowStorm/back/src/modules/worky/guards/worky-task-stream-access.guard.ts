@@ -5,17 +5,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
-import {
-  WorkyTask,
-  WorkyTaskDocument,
-} from '../schemas/worky-task.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
 
 interface RequestShape {
   user?: { id: string };
@@ -23,6 +17,7 @@ interface RequestShape {
     id?: string;
     taskId?: string;
   };
+  method: string;
 }
 
 /**
@@ -39,10 +34,8 @@ interface RequestShape {
 @Injectable()
 export class WorkyTaskStreamAccessGuard implements CanActivate {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -50,16 +43,15 @@ export class WorkyTaskStreamAccessGuard implements CanActivate {
     const userId = req.user?.id;
     const taskId = req.params.id ?? req.params.taskId;
     if (!userId || !taskId) throw new NotFoundException('Task not found');
-    if (!Types.ObjectId.isValid(taskId)) throw new NotFoundException('Task not found');
-    const task = await this.tasks.findById(taskId).select({ streamId: 1 }).lean().exec();
+    if (!isObjectId(taskId)) throw new NotFoundException('Task not found');
+    const task = await this.tasks.findById(taskId);
     if (!task) throw new NotFoundException('Task not found');
-    const stream = await this.streams
-      .findById(task.streamId)
-      .select({ ownerUserId: 1 })
-      .lean()
-      .exec();
+    const stream = await this.streams.findById(task.streamId);
     if (!stream) throw new NotFoundException('Stream not found');
-    if (stream.ownerUserId.toString() !== userId) {
+    const allowed = req.method === 'GET'
+      ? Boolean(getWorkyStreamAccess(stream, userId))
+      : canWriteWorkyStream(stream, userId);
+    if (!allowed) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky task.',

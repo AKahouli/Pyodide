@@ -1,16 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../../schemas/playbook-flow-execution.schema';
-import {
-  FlowTaskResult,
-  FlowTaskResultDocument,
-} from '../../schemas/playbook-flow-task-result.schema';
+import { ExecutionRepository } from '../../persistence/execution.repository';
+import { TaskResultRepository } from '../../persistence/task-result.repository';
 import { FlowSnapshot } from '../../mappers/flow-to-snapshot.mapper';
-import { ControlEdge, DataBinding, FlowNode } from '../../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../../models/playbook-flow.model';
 import { ErrorCode } from '../../../exceptions/constants/error-codes';
 import { BadRequestException } from '../../../exceptions/exceptions/http.exceptions';
 import {
@@ -35,6 +27,13 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
+function comparableNode(node: Record<string, unknown>): Record<string, unknown> {
+  const metadata = node.metadata as Record<string, unknown> | undefined;
+  if (!metadata) return node;
+  const { positionX, positionY, ...executionMetadata } = metadata;
+  return { ...node, metadata: executionMetadata };
+}
+
 /**
  * Single-step validation, executable snapshot filtering, and upstream seed prep.
  *
@@ -46,10 +45,8 @@ export class PlaybookExecutionSingleStepPrepService {
   private readonly logger = new Logger(PlaybookExecutionSingleStepPrepService.name);
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
   ) {}
 
   assertSingleStepSupported(nodes: FlowNode[], singleStepTaskId: string): void {
@@ -122,21 +119,23 @@ export class PlaybookExecutionSingleStepPrepService {
     }
 
     const enabledNodeIds = new Set(enabledNodes.map((node) => node.id));
+    const reachableNodeIds = this.reachableFromOriginalEntrypoints(nodes, controlEdges, enabledNodeIds);
+    const executableNodes = enabledNodes.filter((node) => reachableNodeIds.has(node.id));
     const executableControlEdges = controlEdges.filter((edge) => {
-      const keep = enabledNodeIds.has(edge.source) && enabledNodeIds.has(edge.target);
+      const keep = reachableNodeIds.has(edge.source) && reachableNodeIds.has(edge.target);
       if (!keep) {
         this.logger.warn(
-          `Dropping control edge ${edge.id} from execution snapshot because it references a disabled node`,
+          `Dropping control edge ${edge.id} from execution snapshot because its branch is disabled`,
         );
       }
       return keep;
     });
     const executableDataBindings = dataBindings.filter((binding) => {
-      const keep = enabledNodeIds.has(binding.targetNode)
-        && (binding.sourceNode ? enabledNodeIds.has(binding.sourceNode) : true);
+      const keep = reachableNodeIds.has(binding.targetNode)
+        && (binding.sourceNode ? reachableNodeIds.has(binding.sourceNode) : true);
       if (!keep) {
         this.logger.warn(
-          `Dropping data binding ${binding.id} from execution snapshot because it references a disabled node`,
+          `Dropping data binding ${binding.id} from execution snapshot because its branch is disabled`,
         );
       }
       return keep;
@@ -144,10 +143,43 @@ export class PlaybookExecutionSingleStepPrepService {
 
     return {
       ...snapshot,
-      nodes: enabledNodes,
+      nodes: executableNodes,
       controlEdges: executableControlEdges,
       dataBindings: executableDataBindings,
     };
+  }
+
+  private reachableFromOriginalEntrypoints(
+    nodes: FlowNode[], controlEdges: ControlEdge[], enabledNodeIds: Set<string>,
+  ): Set<string> {
+    // Filtering disabled nodes must not turn their successors into new START nodes.
+    const originalTargets = new Set(controlEdges.map((edge) => edge.target));
+    const successors = new Map<string, string[]>();
+    for (const edge of controlEdges) {
+      if (!enabledNodeIds.has(edge.source) || !enabledNodeIds.has(edge.target)) continue;
+      successors.set(edge.source, [...(successors.get(edge.source) ?? []), edge.target]);
+    }
+    for (const node of nodes) {
+      const container = (node.metadata?.containerConfig ?? node.metadata?.container_config) as
+        | { parentIteratorId?: string; parent_iterator_id?: string } | undefined;
+      const parentId = container?.parentIteratorId ?? container?.parent_iterator_id;
+      if (!parentId) continue;
+      originalTargets.add(node.id);
+      if (enabledNodeIds.has(parentId) && enabledNodeIds.has(node.id)) {
+        successors.set(parentId, [...(successors.get(parentId) ?? []), node.id]);
+      }
+    }
+    const queue = nodes.filter((node) => enabledNodeIds.has(node.id) && !originalTargets.has(node.id))
+      .map((node) => node.id);
+    const reachable = new Set(queue);
+    for (let index = 0; index < queue.length; index++) {
+      for (const target of successors.get(queue[index]) ?? []) {
+        if (reachable.has(target)) continue;
+        reachable.add(target);
+        queue.push(target);
+      }
+    }
+    return reachable;
   }
 
   async buildSeededTaskOutputsForSingleStep(
@@ -175,28 +207,25 @@ export class PlaybookExecutionSingleStepPrepService {
     }
 
     const currentSnapshotNodes = Array.isArray(currentSnapshot.nodes)
-      ? currentSnapshot.nodes as unknown as Array<Record<string, unknown>>
+      ? currentSnapshot.nodes as unknown as Record<string, unknown>[]
       : [];
 
-    const completedExecutions = await this.executionModel.find({
-      flowId,
-      ownerId,
-      status: 'completed',
-    }).select('+snapshot').sort({ createdAt: -1 }).limit(20).lean().exec();
+    const completedExecutions = await this.executionRepository.listRecentCompletedWithSnapshot(flowId, ownerId, 20);
 
-    let matchingExecution: Record<string, unknown> | null = null;
+    let matchingExecution: (typeof completedExecutions)[number] | null = null;
     for (const exec of completedExecutions) {
-      const execSnapshot = (exec as Record<string, unknown>).snapshot;
+      const execSnapshot = exec.snapshot;
       const execSnapshotNodes = Array.isArray(execSnapshot && (execSnapshot as Record<string, unknown>).nodes)
-        ? ((execSnapshot as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
+        ? ((execSnapshot as Record<string, unknown>).nodes as Record<string, unknown>[])
         : [];
       const allUpstreamMatch = requiredSourceNodeIds.every((sourceNodeId) => {
         const priorNode = execSnapshotNodes.find((node) => node.id === sourceNodeId);
         const currentNode = currentSnapshotNodes.find((node) => node.id === sourceNodeId);
-        return priorNode && currentNode && JSON.stringify(priorNode) === JSON.stringify(currentNode);
+        return priorNode && currentNode
+          && JSON.stringify(comparableNode(priorNode)) === JSON.stringify(comparableNode(currentNode));
       });
       if (allUpstreamMatch) {
-        matchingExecution = exec as unknown as Record<string, unknown>;
+        matchingExecution = exec;
         break;
       }
     }
@@ -204,20 +233,20 @@ export class PlaybookExecutionSingleStepPrepService {
     if (!matchingExecution) {
       throw new BadRequestException(
         ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step execution for node ${singleStepTaskId} requires a previous completed execution with matching upstream node snapshots.`,
+        `Single-step execution for node ${singleStepTaskId} requires a previous completed or failed execution with matching upstream node snapshots.`,
       );
     }
 
-    const taskResults = await this.taskResultModel.find({
-      executionId: matchingExecution._id?.toString() ?? matchingExecution.id,
-      taskId: { $in: requiredSourceNodeIds },
-      status: 'completed',
-    }).sort({ iteration: -1, endedAt: -1 }).lean().exec();
+    const taskResults = await this.taskResultRepository.listForExecution(matchingExecution.id, {
+      taskIds: requiredSourceNodeIds,
+      statuses: ['completed'],
+      order: 'latest',
+    });
 
-    const resultsByTaskId = new Map<string, Array<Record<string, unknown>>>();
+    const resultsByTaskId = new Map<string, Record<string, unknown>[]>();
     for (const result of taskResults) {
       const existing = resultsByTaskId.get(result.taskId) ?? [];
-      existing.push(result as unknown as Record<string, unknown>);
+      existing.push(result);
       resultsByTaskId.set(result.taskId, existing);
     }
 
@@ -274,13 +303,13 @@ export class PlaybookExecutionSingleStepPrepService {
       output,
       ...(displayText ? { displayText } : {}),
       ...(outputs ? { outputs } : {}),
-      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.components) ? { components: result.components as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace as unknown as FlowToolTraceItem[] } : {}),
+      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Record<string, unknown>[] } : {}),
+      ...(Array.isArray(result.components) ? { components: result.components as Record<string, unknown>[] } : {}),
+      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace } : {}),
       ...(Array.isArray(result.reasoningChain) ? { reasoningChain: result.reasoningChain as PublicReasoningTraceItem[] } : {}),
-      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] } : {}),
-      ...(result.usage ? { usage: result.usage as FlowUsageSummary } : {}),
-      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch as FlowSemanticMatchSummary } : {}),
+      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch } : {}),
       ...(result.traceMetadata ? { traceMetadata: result.traceMetadata as Record<string, unknown> } : {}),
     };
   }

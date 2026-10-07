@@ -143,8 +143,8 @@ describe('Governance REST response contract fixtures', () => {
   it('strips reconciliation lease internals like the former toJSON transform', () => {
     const record = runRecord();
     const { leaseToken, leaseExpiresAt, ...response } = record as unknown as GovernanceReconciliationRunRecord & Record<string, unknown>;
-    void leaseToken;
-    void leaseExpiresAt;
+    leaseToken;
+    leaseExpiresAt;
     expect(Object.keys(response).sort()).toEqual(['bindingId', 'completedAt', 'createdAt', 'dryRun', 'errors', 'id', 'startedAt', 'stats', 'status', 'updatedAt']);
     expect((response as Record<string, unknown>).leaseToken).toBeUndefined();
   });

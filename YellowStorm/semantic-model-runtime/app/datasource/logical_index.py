@@ -15,6 +15,7 @@ created by :func:`create_index_pool`.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 MANIFEST_VERSION = "r1-index-v1"
@@ -157,8 +158,16 @@ async def resolve_document_candidates(connection: Any, *, workspace_id: Any, fil
         sql += " AND user_id = $3"
     sql += f" ORDER BY id LIMIT {limit}"
     rows = await connection.fetch(sql, *params)
+    if not rows and " " in file_name:
+        # The indexer stores names with spaces replaced by underscores, and a run of
+        # spaces and underscores ("UP_ REVERSE") as a single one ("UP_REVERSE").
+        for stored in dict.fromkeys((file_name.replace(" ", "_"), re.sub(r"[\s_]+", "_", file_name))):
+            params[1] = stored
+            rows = await connection.fetch(sql, *params)
+            if rows:
+                break
     candidates = [
-        {"documentPk": row["id"], "workspaceId": row["workspace_id"],
+        {"documentPk": str(row["id"]), "workspaceId": row["workspace_id"],
          "fileName": row["file_name"], "uploaderUserId": row["user_id"]}
         for row in rows
     ]
@@ -185,16 +194,17 @@ def build_index_observation(*, asset_ref: dict[str, Any], document_pk: Any,
     verification = asset_ref.get("sourceVersionVerification")
     if verification not in ("verified", "partial", "unknown"):
         raise ReadOnlyIndexError("invalid_source_version_verification")
-    # documentPk feeds the COALESCE(document_pk, -1) conflict bucket; only a
-    # positive database id or an explicit unresolved None may enter it.
-    if document_pk is not None and (
-            isinstance(document_pk, bool) or not isinstance(document_pk, int) or document_pk <= 0):
+    # Deployed logical indexes use opaque varchar keys; older fixtures used
+    # positive integers. Observations persist either representation as text.
+    if document_pk is not None and not (
+            isinstance(document_pk, str) and document_pk.strip()
+            or isinstance(document_pk, int) and not isinstance(document_pk, bool) and document_pk > 0):
         raise ReadOnlyIndexError("invalid_document_pk")
     return {
         "workspaceId": asset_ref["workspaceId"],
         "assetId": asset_ref["assetId"],
         "assetVersionId": asset_ref["assetVersionId"],
-        "documentPk": document_pk,
+        "documentPk": str(document_pk) if document_pk is not None else None,
         "verification": verification,
         "fingerprint": fingerprint,
         "readiness": {name: bool(capabilities.get(name)) for name in

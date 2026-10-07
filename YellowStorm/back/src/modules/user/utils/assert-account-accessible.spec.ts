@@ -11,12 +11,12 @@ import {
 describe('assertAccountAccessible', () => {
   it('allows active accounts', () => {
     expect(getAccountAccessDenial(UserStatus.ACTIVE)).toBeNull();
-    expect(() => assertAccountAccessible({ status: UserStatus.ACTIVE })).not.toThrow();
+    expect(() => { assertAccountAccessible({ status: UserStatus.ACTIVE }); }).not.toThrow();
   });
 
   it('allows inactive accounts to obtain a session', () => {
     expect(getAccountAccessDenial(UserStatus.INACTIVE)).toBeNull();
-    expect(() => assertAccountAccessible({ status: UserStatus.INACTIVE })).not.toThrow();
+    expect(() => { assertAccountAccessible({ status: UserStatus.INACTIVE }); }).not.toThrow();
   });
 
   it('denies suspended accounts with AUTH_ACCOUNT_SUSPENDED', () => {
@@ -24,7 +24,7 @@ describe('assertAccountAccessible', () => {
       code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
       message: 'Account is suspended',
     });
-    expect(() => assertAccountAccessible({ status: UserStatus.SUSPENDED })).toThrow(
+    expect(() => { assertAccountAccessible({ status: UserStatus.SUSPENDED }); }).toThrow(
       ForbiddenException,
     );
   });
@@ -33,7 +33,7 @@ describe('assertAccountAccessible', () => {
 describe('assertAccountApproved', () => {
   it('allows active accounts to use features', () => {
     expect(getFeatureAccessDenial(UserStatus.ACTIVE)).toBeNull();
-    expect(() => assertAccountApproved({ status: UserStatus.ACTIVE })).not.toThrow();
+    expect(() => { assertAccountApproved({ status: UserStatus.ACTIVE }); }).not.toThrow();
   });
 
   it('denies inactive accounts with USER_INACTIVE', () => {

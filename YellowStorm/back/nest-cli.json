@@ -5,16 +5,32 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "assets": [
-      "**/*.proto",
+      {
+        "include": "**/*.proto",
+        "outDir": "dist/src"
+      },
       "**/*.pem",
       "**/*.crt",
       "**/*.cert",
-      { "include": "modules/app-data/templates/assets/**/*", "outDir": "dist/src" },
-      { "include": "modules/conversation-v2/templates/assets/**/*", "outDir": "dist/src" },
+      {
+        "include": "modules/app-data/templates/assets/**/*",
+        "outDir": "dist"
+      },
+      {
+        "include": "modules/app-data/templates/sources/**/*",
+        "outDir": "dist"
+      },
+      {
+        "include": "modules/conversation-v2/templates/assets/**/*",
+        "outDir": "dist"
+      },
       "**/*.html",
       "**/*.png",
       "**/*.svg",
-      { "include": "../scripts/**/*.sql", "outDir": "dist" }
+      {
+        "include": "../scripts/**/*.sql",
+        "outDir": "dist"
+      }
     ],
     "watchAssets": true,
     "plugins": [

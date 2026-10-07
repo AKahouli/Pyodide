@@ -1,0 +1,181 @@
+import { useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Loader2, MinusCircle, RotateCcw } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useModuleTranslation } from '@/modules/localization';
+import type { PopulationChanges, PopulationProgress } from '../../types';
+
+const ISSUE_STATUSES = new Set(['processed_with_gaps', 'budget_exhausted', 'unresolved_identity', 'index_unavailable',
+  'index_ambiguous', 'source_unavailable']);
+
+/** "about 3 min left": whole seconds under a minute, whole minutes under an hour, then hours. */
+export function durationParts(seconds: number): { unit: 'seconds' | 'minutes' | 'hours'; count: number } {
+  if (seconds < 60) return { unit: 'seconds', count: Math.max(1, Math.round(seconds)) };
+  if (seconds < 3600) return { unit: 'minutes', count: Math.round(seconds / 60) };
+  return { unit: 'hours', count: Math.round((seconds / 3600) * 10) / 10 };
+}
+
+/**
+ * What a run is doing right now: how far it got, what it found, what it is reading, and what it just read.
+ * Reported by the reader about once a second; the time left is estimated from the pace so far.
+ */
+export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<{
+  progress: Partial<PopulationProgress>;
+  running: boolean;
+  conceptLabels?: Record<string, string>;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  const total = progress.total ?? 0;
+  const done = Math.min(progress.done ?? 0, total || Number.MAX_SAFE_INTEGER);
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  const started = progress.startedAt ? Date.parse(progress.startedAt) : Number.NaN;
+  const elapsed = Number.isFinite(started) ? Math.max(0, (now - started) / 1000) : null;
+  // Reused files take no time, so they are left out of the pace.
+  const readFresh = done - (progress.reused ?? 0);
+  const left = running && elapsed !== null && readFresh > 0 && done < total
+    ? (elapsed / readFresh) * (total - done) : null;
+  const phase = progress.phase ?? 'starting';
+  const concept = (id?: string) => (id ? conceptLabels[id] : undefined);
+  const duration = (seconds: number) => {
+    const { unit, count } = durationParts(seconds);
+    return t(`population.progress.${unit}`, { count });
+  };
+
+  return <section aria-label={t('population.progress.title')} className='space-y-3'>
+    <div>
+      <div className='flex items-baseline justify-between gap-2 text-sm'>
+        <span className='font-medium'>{running ? t(`population.progress.phase.${phase}`) : t('population.progress.finished')}</span>
+        {total > 0 && <span className='tabular-nums text-muted-foreground'>{percent}%</span>}
+      </div>
+      <div className='mt-1.5 h-2 overflow-hidden rounded-full bg-muted' role='progressbar' aria-valuemin={0} aria-valuemax={total || 1} aria-valuenow={done}
+        aria-label={t('population.progress.filesRead', { done, total })}>
+        <div className={cn('h-full rounded-full bg-primary transition-[width] duration-500', running && phase !== 'reading' && 'animate-pulse')}
+          style={{ width: `${phase === 'reading' || phase === 'starting' ? percent : 100}%` }} />
+      </div>
+      <p className='mt-1.5 text-xs text-muted-foreground'>
+        {t('population.progress.filesRead', { done: done.toLocaleString(), total: total.toLocaleString() })}
+        {left !== null && <> · {t('population.progress.left', { time: duration(left) })}</>}
+        {!running && elapsed !== null && <> · {t('population.progress.took', { time: duration(elapsed) })}</>}
+      </p>
+    </div>
+
+    <dl className='grid grid-cols-3 gap-2 text-center'>
+      <div className='rounded-lg border p-2'>
+        <dt className='text-[10px] uppercase tracking-wide text-muted-foreground'>{t('population.progress.records')}</dt>
+        <dd className='text-base font-semibold tabular-nums'>{(progress.records ?? 0).toLocaleString()}</dd>
+      </div>
+      <div className='rounded-lg border p-2' title={t('population.progress.reusedHint')}>
+        <dt className='text-[10px] uppercase tracking-wide text-muted-foreground'>{t('population.progress.reused')}</dt>
+        <dd className='text-base font-semibold tabular-nums'>{(progress.reused ?? 0).toLocaleString()}</dd>
+      </div>
+      <div className='rounded-lg border p-2'>
+        <dt className='text-[10px] uppercase tracking-wide text-muted-foreground'>{t('population.progress.gaps')}</dt>
+        <dd className={cn('text-base font-semibold tabular-nums', (progress.gaps ?? 0) > 0 && 'text-amber-700 dark:text-amber-400')}>{(progress.gaps ?? 0).toLocaleString()}</dd>
+      </div>
+    </dl>
+
+    {running && progress.step && <StepProgress step={progress.step} />}
+    {progress.ai && progress.ai.planned + progress.ai.skipped > 0 && <AiCalls ai={progress.ai} running={running} />}
+
+    {!running && progress.changes && <RunChanges changes={progress.changes} />}
+
+    {running && progress.current && <div className='flex items-center gap-2 rounded-lg bg-primary/5 p-2.5 text-xs'>
+      <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin text-primary' />
+      <div className='min-w-0'>
+        <p className='text-muted-foreground'>{t('population.progress.reading')}</p>
+        <p className='truncate font-medium' title={progress.current.name}>{progress.current.name}</p>
+        {concept(progress.current.conceptId) && <p className='text-muted-foreground'>{t('population.progress.for', { name: concept(progress.current.conceptId) })}</p>}
+      </div>
+    </div>}
+
+    {(progress.recent?.length ?? 0) > 0 && <div>
+      <h3 className='mb-1.5 text-xs font-semibold text-muted-foreground'>{t('population.progress.latest')}</h3>
+      <ul className='space-y-1'>
+        {progress.recent!.map((item, index) => {
+          const issue = ISSUE_STATUSES.has(item.status);
+          return <li key={`${item.name}-${index}`} className='flex items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-muted/50'>
+            {item.reused ? <RotateCcw className='h-3.5 w-3.5 shrink-0 text-muted-foreground' aria-label={t('population.progress.reusedOne')} />
+              : issue ? <AlertTriangle className='h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400' aria-label={t('population.progress.issueOne')} />
+              : <CheckCircle2 className='h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' aria-label={t('population.progress.readOne')} />}
+            <span className='min-w-0 flex-1 truncate' title={item.name}>{item.name}</span>
+            <span className='shrink-0 tabular-nums text-muted-foreground'>{t('population.progress.recordCount', { count: item.records })}</span>
+          </li>;
+        })}
+      </ul>
+    </div>}
+  </section>;
+}
+
+/** How far the step under way is: rows of a sheet, files sent for indexing, or an archive being opened. */
+function StepProgress({ step }: Readonly<{ step: NonNullable<PopulationProgress['step']> }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const known = step.total !== null && step.total > 0;
+  const percent = known ? Math.min(100, Math.round((step.done / step.total!) * 100)) : 0;
+  const unit = (['rows', 'files', 'opening'].includes(step.unit) ? step.unit : 'items') as 'rows' | 'files' | 'opening' | 'items';
+  return <div className='space-y-1'>
+    <p className='flex justify-between gap-2 text-xs text-muted-foreground'>
+      <span>{known
+        ? t(`population.progress.step.${unit}`, { done: step.done.toLocaleString(), total: step.total!.toLocaleString() })
+        : t(`population.progress.step.${unit}Unknown`, { done: step.done.toLocaleString() })}</span>
+      {known && <span className='tabular-nums'>{percent}%</span>}
+    </p>
+    <div className='h-1 overflow-hidden rounded-full bg-muted' role='progressbar' aria-label={t('population.progress.step.label')}
+      aria-valuemin={0} aria-valuemax={known ? step.total! : 1} aria-valuenow={known ? step.done : undefined}>
+      <div className={cn('h-full rounded-full bg-primary/70 transition-[width] duration-500', !known && 'w-1/3 animate-pulse')}
+        style={known ? { width: `${percent}%` } : undefined} />
+    </div>
+  </div>;
+}
+
+/** The AI calls of the run: answered, reused from an earlier run, failed, and records left over the cap. */
+function AiCalls({ ai, running }: Readonly<{ ai: NonNullable<PopulationProgress['ai']>; running: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const finished = ai.answered + ai.reused + ai.failed;
+  const percent = ai.planned ? Math.min(100, Math.round((finished / ai.planned) * 100)) : 100;
+  return <div className='space-y-1.5 rounded-lg border p-2.5' aria-label={t('population.progress.ai.title')}>
+    <p className='flex justify-between gap-2 text-xs'>
+      <span className='font-medium'>{t('population.progress.ai.title')}</span>
+      <span className='tabular-nums text-muted-foreground'>{t('population.progress.ai.done', { done: finished.toLocaleString(), total: ai.planned.toLocaleString() })}</span>
+    </p>
+    {running && <div className='h-1 overflow-hidden rounded-full bg-muted'>
+      <div className='h-full rounded-full bg-primary/70 transition-[width] duration-500' style={{ width: `${percent}%` }} />
+    </div>}
+    <p className='flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground'>
+      <span>{t('population.progress.ai.answered', { count: ai.answered })}</span>
+      {ai.reused > 0 && <span title={t('population.progress.ai.reusedHint')}>{t('population.progress.ai.reused', { count: ai.reused })}</span>}
+      {ai.failed > 0 && <span className='text-destructive'>{t('population.progress.ai.failed', { count: ai.failed })}</span>}
+      {ai.skipped > 0 && <span className='text-amber-700 dark:text-amber-400' title={t('population.progress.ai.skippedHint')}>{t('population.progress.ai.skipped', { count: ai.skipped })}</span>}
+    </p>
+  </div>;
+}
+
+/** After a run: what it changed in the data in use, and the files it no longer read. */
+function RunChanges({ changes }: Readonly<{ changes: PopulationChanges }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const counts = [
+    { key: 'added', count: changes.added, tone: 'text-emerald-700 dark:text-emerald-400', sign: '+' },
+    { key: 'removed', count: changes.removed, tone: 'text-destructive', sign: '−' },
+    { key: 'changed', count: changes.changed, tone: 'text-amber-700 dark:text-amber-400', sign: '' },
+  ] as const;
+  const nothing = counts.every(({ count }) => count === 0) && changes.removedSources.length === 0;
+  return <div aria-label={t('population.progress.changesTitle')}>
+    <h3 className='mb-1.5 text-xs font-semibold text-muted-foreground'>{t('population.progress.changesTitle')}</h3>
+    {nothing ? <p className='text-xs text-muted-foreground'>{t('population.progress.noChanges')}</p>
+      : <p className='flex flex-wrap gap-x-3 gap-y-1 text-xs'>
+        {counts.filter(({ count }) => count > 0).map(({ key, count, tone, sign }) =>
+          <span key={key} className={cn('font-medium tabular-nums', tone)} title={t(`population.progress.${key}Hint`)}>{sign}{t(`population.progress.${key}`, { count })}</span>)}
+      </p>}
+    {changes.removedSources.length > 0 && <ul className='mt-1.5 space-y-1'>
+      {changes.removedSources.map((source) => <li key={source.assetId} className='flex items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-muted/50'>
+        <MinusCircle className='h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('population.progress.noLongerRead')} />
+        <span className='min-w-0 flex-1 truncate' title={source.name}>{source.name || t('population.progress.unknownFile')}</span>
+        <span className='shrink-0 tabular-nums text-muted-foreground'>{t('population.progress.recordsRemoved', { count: source.records })}</span>
+      </li>)}
+    </ul>}
+  </div>;
+}

@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { AGENT_SHARE_STORE } from './persistence/agent-share.store';
 import { PgAgentShareStore } from './persistence/pg-agent-share.store';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
@@ -9,6 +8,9 @@ import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
 import { AgentCrudInternalController } from './controllers/agent-crud-internal.controller';
 import { AgentService } from './agent.service';
+import { RootPolicyService } from './services/root-policy.service';
+import { AgentExecutionSnapshotService } from './services/agent-execution-snapshot.service';
+import { RootDelegateResolverService } from './services/root-delegate-resolver.service';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
@@ -38,7 +40,6 @@ import { CryptoService } from '@common/services/crypto.service';
 import { TelegramApiService } from '../telegram/services/telegram-api.service';
 import { TELEGRAM_INTEGRATION_STORE } from '../telegram/persistence/telegram.store';
 import { PgTelegramIntegrationStore } from '../telegram/persistence/pg-telegram.store';
-import { WIDGET_TOKEN_STORE } from '../widget-chat/persistence/widget.store';
 import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
 
 @Module({
@@ -63,13 +64,13 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController, AgentCrudInternalController],
   providers: [
     // Shares cutover (plan 4.1); exported for the telegram/widget guards.
-    { provide: AGENT_SHARE_STORE, useClass: PgAgentShareStore },
+    PgAgentShareStore,
     // Channel teardown (plan 4.6). The adapters live here, not in the channel
     // modules, because those import AgentModule (a reverse import would cycle).
     CryptoService,
     TelegramApiService,
     { provide: TELEGRAM_INTEGRATION_STORE, useClass: PgTelegramIntegrationStore },
-    { provide: WIDGET_TOKEN_STORE, useClass: PgWidgetTokenStore },
+    PgWidgetTokenStore,
     TelegramChannelTeardown,
     WidgetChannelTeardown,
     {
@@ -78,6 +79,9 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
       inject: [TelegramChannelTeardown, WidgetChannelTeardown],
     },
     AgentService,
+    RootPolicyService,
+    AgentExecutionSnapshotService,
+    RootDelegateResolverService,
     AgentShareService,
     AgentConnectorRuntimeService,
     AgentPermissionGuard,
@@ -86,16 +90,6 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
     AgentTaskExecutionService,
     { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
   ],
-  exports: [
-    AGENT_SHARE_STORE,
-    AgentService,
-    AgentShareService,
-    AgentConnectorRuntimeService,
-    AgentPermissionGuard,
-    A2AAdminGrpcClientService,
-    A2APublishService,
-    AgentTaskExecutionService,
-    AGENT_TASK_EXECUTION,
-  ],
+  exports: [AgentService, RootPolicyService, AgentExecutionSnapshotService, RootDelegateResolverService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, PgAgentShareStore, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, AGENT_TASK_EXECUTION],
 })
 export class AgentModule {}

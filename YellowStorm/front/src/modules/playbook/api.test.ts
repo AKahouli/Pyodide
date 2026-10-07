@@ -111,6 +111,7 @@ describe('sanitizePlaybookUpdate', () => {
             outputLabels: ['retry', 'done', '__error__'],
             maxIterations: 3,
             defaultLabel: 'done',
+            mode: 'deterministic',
             conditions: [{
               label: 'done',
               sourceNode: 'task-1',
@@ -136,6 +137,8 @@ describe('sanitizePlaybookUpdate', () => {
           outputLabels: ['retry', 'done', '__error__'],
           maxIterations: 3,
           defaultLabel: 'done',
+          mode: 'deterministic',
+          prompt: undefined,
           conditions: [{
             label: 'done',
             sourceNode: 'task-1',
@@ -1010,6 +1013,7 @@ describe('updatePlaybook', () => {
             outputLabels: ['retry', 'done', '__error__'],
             maxIterations: 3,
             defaultLabel: 'done',
+            mode: 'deterministic',
             conditions: [{
               label: 'done',
               sourceNode: 'task-1',
@@ -1041,6 +1045,8 @@ describe('updatePlaybook', () => {
               outputLabels: ['retry', 'done', '__error__'],
               maxIterations: 3,
               defaultLabel: 'done',
+              mode: 'deterministic',
+              prompt: undefined,
               conditions: [{
                 label: 'done',
                 sourceNode: 'task-1',

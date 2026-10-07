@@ -64,11 +64,11 @@ function createService(overrides: Partial<{
 
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
-  existingTaskTitles: Array<[string, string]>;
-  existingTaskDescriptions: Array<[string, string]>;
-  existingTaskAgents: Array<[string, string | null]>;
-  inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
-  outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
+  existingTaskTitles: [string, string][];
+  existingTaskDescriptions: [string, string][];
+  existingTaskAgents: [string, string | null][];
+  inputPortsByTaskId: [string, [string, string][]][];
+  outputPortsByTaskId: [string, [string, string][]][];
 }> = {}) {
   const existingTaskIds = new Set(overrides.existingTaskIds || []);
   const existingTaskTitles = new Map(overrides.existingTaskTitles || []);
@@ -410,9 +410,9 @@ describe('PlaybookFlowIntentService normalization', () => {
     expect(content).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } }),
     ]));
-    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Use this diagram');
-    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('Inspect the attached image content as primary user context');
-    expect((content as Array<{ type: string; text?: string }>)[0].text).toContain('diagram.png');
+    expect((content as { type: string; text?: string }[])[0].text).toContain('Use this diagram');
+    expect((content as { type: string; text?: string }[])[0].text).toContain('Inspect the attached image content as primary user context');
+    expect((content as { type: string; text?: string }[])[0].text).toContain('diagram.png');
   });
 
   it('sends prompt images as multimodal content during design assessment', async () => {

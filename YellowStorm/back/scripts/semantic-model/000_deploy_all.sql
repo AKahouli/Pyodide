@@ -531,3 +531,241 @@ ALTER TABLE semantic_model.models ADD CONSTRAINT semantic_models_execution_owner
 ALTER TABLE semantic_model.graph_index_jobs DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
 ALTER TABLE semantic_model.graph_index_jobs ADD CONSTRAINT graph_index_jobs_status_check CHECK (status IN ('pending','in_progress','indexed','failed','superseded'));
 CREATE INDEX IF NOT EXISTS semantic_models_execution_owner_idx ON semantic_model.models (execution_owner, updated_at DESC);
+
+-- 016 - Every model runs on the semantic runtime (UX phase 1).
+-- Records made by the legacy pipeline stay on the draft and are sent to the
+-- runtime as a manual source on the next build; chat reads a model only
+-- once a version built by the runtime is published.
+UPDATE semantic_model.models
+  SET execution_owner = 'runtime', runtime_claimed_at = COALESCE(runtime_claimed_at, now()),
+      runtime_claimed_by = COALESCE(runtime_claimed_by, 'migration:016'), updated_at = now()
+  WHERE execution_owner = 'legacy';
+ALTER TABLE semantic_model.models ALTER COLUMN execution_owner SET DEFAULT 'runtime';
+
+-- One line: the migration runner splits statements on a semicolon at end of line.
+DO $$ BEGIN IF to_regclass('semantic_model.graph_index_jobs') IS NOT NULL THEN UPDATE semantic_model.graph_index_jobs SET status = 'superseded', completed_at = now(), last_error = 'Moved to the semantic runtime', updated_at = now() WHERE status IN ('pending', 'in_progress', 'failed'); END IF; END $$;
+
+-- 017 - Drop the legacy pipeline tables.
+-- Every model runs on the semantic runtime (016): the legacy LLM build
+-- (mapping_runs, build_runs) and the sem_<modelId> AGE graph indexing queue
+-- (graph_index_jobs) have no readers or writers left. Records and record
+-- relations stay: they are the manual source sent to the runtime.
+-- models.execution_owner is kept (always 'runtime', no longer read).
+DROP TABLE IF EXISTS semantic_model.graph_index_jobs;
+DROP TABLE IF EXISTS semantic_model.build_runs;
+DROP TABLE IF EXISTS semantic_model.mapping_runs;
+
+-- 018 - Drop the ontology artifacts table.
+-- Ontology generation (POST :id/ontology/generate) was the only writer and
+-- model cloning the only other reader; both are gone. The semantic runtime
+-- works from the population specification instead.
+DROP TABLE IF EXISTS semantic_model.ontology_artifacts;
+
+-- 019 - Where designer-only boxes sit on the model canvas.
+-- Concepts and records keep their position in the versioned graph. Source and
+-- typed-record boxes are derived from mappings and records, so their position
+-- is plain layout: one row per box, shared by everyone editing the model.
+CREATE TABLE IF NOT EXISTS semantic_model.canvas_positions (
+  model_id   UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  element_id TEXT        NOT NULL CHECK (char_length(element_id) BETWEEN 1 AND 300),
+  x          DOUBLE PRECISION NOT NULL,
+  y          DOUBLE PRECISION NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, element_id)
+);
+
+-- 020 - A mapping can cover a whole workspace, or one of its folders.
+-- The row's document_id holds a workspace key (workspace:<id>:<folder|all>);
+-- the files it covers are resolved each time data is generated, so files
+-- added later are included. source_label is the name shown for the source.
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'document',
+  ADD COLUMN IF NOT EXISTS folder_id TEXT,
+  ADD COLUMN IF NOT EXISTS source_label TEXT;
+ALTER TABLE semantic_model.source_mappings
+  DROP CONSTRAINT IF EXISTS source_mappings_scope_check;
+ALTER TABLE semantic_model.source_mappings
+  ADD CONSTRAINT source_mappings_scope_check
+  CHECK (scope IN ('document', 'workspace') AND (scope = 'workspace' OR folder_id IS NULL));
+
+-- 021 - A workspace mapping can cover picked folders and files instead of the whole workspace.
+-- selection holds {"folderIds": [...], "documentIds": [...]}; NULL keeps the older meaning
+-- (the whole workspace, or the single folder in folder_id).
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS selection JSONB;
+ALTER TABLE semantic_model.source_mappings
+  DROP CONSTRAINT IF EXISTS source_mappings_selection_check;
+ALTER TABLE semantic_model.source_mappings
+  ADD CONSTRAINT source_mappings_selection_check
+  CHECK (selection IS NULL OR (scope = 'workspace' AND jsonb_typeof(selection) = 'object'));
+
+-- 022 - Changes an assistant made to a model, so people can see and undo them.
+-- One row per assistant request: the graph operations that made it and those that
+-- undo it, the key fields before and after, and the sources it added or removed.
+CREATE TABLE IF NOT EXISTS semantic_model.assistant_change_sets (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  version_id       UUID        NOT NULL,
+  actor_user_id    TEXT        NOT NULL,
+  agent_id         TEXT,
+  conversation_id  TEXT,
+  summary          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  graph_forward    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  graph_undo       JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  identity_before  JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  identity_after   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  sources_added    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  sources_removed  JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  undone_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS assistant_change_sets_model_idx
+  ON semantic_model.assistant_change_sets (model_id, created_at DESC);
+
+-- 023 - Sources an assistant suggests for a model's concepts. Nothing is connected until a
+-- person picks a suggestion (or other files) in the designer; a person can also skip one.
+-- One row per concept; the options hold the workspaces, folders and files as the assistant
+-- proposed them, with names and file counts read when the suggestion was made.
+CREATE TABLE IF NOT EXISTS semantic_model.assistant_source_suggestions (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id       UUID        NOT NULL,
+  concept_key      TEXT        NOT NULL,
+  options          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  note             TEXT        NOT NULL DEFAULT '',
+  status           TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'skipped')),
+  created_by       TEXT        NOT NULL,
+  agent_id         TEXT,
+  conversation_id  TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (model_id, concept_key)
+);
+
+-- 024 - How much of a document the AI reads. An admin sets the defaults once; a document
+-- mapping can override any of them. Both hold only the limits that were set: anything left
+-- out falls back to the admin default, then to the built-in one.
+CREATE TABLE IF NOT EXISTS semantic_model.extraction_settings (
+  singleton    BOOLEAN     PRIMARY KEY DEFAULT true CHECK (singleton),
+  ai_settings  JSONB       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(ai_settings) = 'object'),
+  updated_by   TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS ai_settings JSONB CHECK (ai_settings IS NULL OR jsonb_typeof(ai_settings) = 'object');
+
+-- 025 - A concept filled from another concept's records: one record per distinct key value the
+-- source records carry (a contract's customer id and name become an organization). When records
+-- sharing a key disagree on a field, the conflict rule picks the value kept; the most recent rule
+-- orders them by a field of the source concept.
+CREATE TABLE IF NOT EXISTS semantic_model.derived_sources (
+  id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id           UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id         UUID        NOT NULL,
+  source_concept_id  UUID        NOT NULL,
+  field_mappings     JSONB       NOT NULL CHECK (jsonb_typeof(field_mappings) = 'array'),
+  conflict_rule      TEXT        NOT NULL DEFAULT 'most_frequent'
+                     CHECK (conflict_rule IN ('most_frequent', 'latest', 'longest', 'leave_empty')),
+  order_by           TEXT,
+  created_by         TEXT        NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (concept_id <> source_concept_id),
+  CHECK ((conflict_rule = 'latest') = (order_by IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS semantic_derived_sources_model_idx
+  ON semantic_model.derived_sources (model_id);
+
+-- 026 - Named, reusable settings for reading a concept from documents: each field's rules and
+-- reading mode, the AI limits and the identity fields. Applying a preset copies it into a mapping;
+-- changing the preset later does not change mappings already saved.
+CREATE TABLE IF NOT EXISTS semantic_model.mapping_presets (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id        UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id      UUID        NOT NULL,
+  name            TEXT        NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
+  description     TEXT        CHECK (description IS NULL OR char_length(description) <= 500),
+  field_mappings  JSONB       NOT NULL CHECK (jsonb_typeof(field_mappings) = 'array'),
+  ai_settings     JSONB       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(ai_settings) = 'object'),
+  identity_fields JSONB       NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(identity_fields) = 'array'),
+  created_by      TEXT        NOT NULL,
+  updated_by      TEXT        NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS semantic_mapping_presets_name_idx
+  ON semantic_model.mapping_presets (model_id, concept_id, lower(btrim(name)));
+
+-- 027 - How much one population run may read and keep, as an admin set it. Holds only the limits
+-- that were set: anything left out falls back to the built-in value.
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS run_limits JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(run_limits) = 'object');
+
+-- 028 - The e-mail archive reader's "apercu" column (first 500 characters of the new text) became
+-- "corps" (the whole new text). Mappings of an e-mail archive's messages sheet read "corps" from now
+-- on. Only the source column is renamed: the concept attribute it fills keeps its key, and populated
+-- data is left as is until the next run. The runtime also reads "corps" for a mapping left on
+-- "apercu", so a mapping this misses still works.
+-- (migrate.mjs splits on a semicolon ending a line: the inner ones are kept mid-line.)
+DO $$
+BEGIN
+  IF to_regclass('semantic_datasource.discovery_profiles') IS NULL THEN RETURN; END IF; UPDATE semantic_model.source_mappings m
+     SET field_mappings = (
+           SELECT jsonb_agg(CASE WHEN f->>'mode' = 'direct' AND f->>'sourceField' = 'apercu'
+                                 THEN jsonb_set(f, '{sourceField}', '"corps"') ELSE f END
+                            ORDER BY position)
+             FROM jsonb_array_elements(m.field_mappings) WITH ORDINALITY AS item(f, position)),
+         updated_at = now()
+   WHERE m.sheet_name = 'messages'
+     AND m.field_mappings @> '[{"mode": "direct", "sourceField": "apercu"}]'::jsonb
+     AND NOT m.field_mappings @> '[{"sourceField": "corps"}]'::jsonb
+     AND EXISTS (SELECT 1 FROM semantic_datasource.discovery_profiles p
+                  WHERE p.asset_id = m.document_id
+                    AND p.profile->'structure'->>'kind' = 'email_archive'); END
+$$;
+
+-- 029 - Graph search settings, as an admin set them for every model: how records are cut into
+-- searchable text (index_settings: card and passage sizes; changing them builds new search indexes
+-- on the next search) and how a search request is matched (search_settings). Both hold only the
+-- values that were set: anything left out falls back to the built-in value.
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS index_settings JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(index_settings) = 'object');
+
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS search_settings JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(search_settings) = 'object');
+
+-- 030 - How much the AI reads for one derived source (a concept filled from another concept's
+-- records), as a document mapping can override it. Holds only the limits that were set: anything
+-- left out falls back to the admin default, then to the built-in one.
+ALTER TABLE semantic_model.derived_sources
+  ADD COLUMN IF NOT EXISTS ai_settings JSONB CHECK (ai_settings IS NULL OR jsonb_typeof(ai_settings) = 'object');
+
+-- 031 - A derived source can expand one field of the source concept into several items (the
+-- recipients a message lists, as text or a JSON array): each item is read as a record of its own.
+-- Holds the field, how it is split, and optionally the relationship linking each source record to
+-- the records its items made; null when the derived source does not expand a field.
+ALTER TABLE semantic_model.derived_sources
+  ADD COLUMN IF NOT EXISTS expand JSONB CHECK (expand IS NULL OR jsonb_typeof(expand) = 'object');
+
+-- 032 - A spreadsheet (or e-mail archive) source can expand one column into several items (the
+-- recipients a row lists, as text or a JSON array): each item is read as a row of its own, so one row
+-- makes several records. Holds the column and how it is split; null when the source does not expand.
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS expand JSONB CHECK (expand IS NULL OR jsonb_typeof(expand) = 'object');
+
+-- 033 - The field that names each record of a concept (its label on the canvas, in lists and in
+-- answers), chosen by a person once per concept and used by every source of that concept.
+CREATE TABLE IF NOT EXISTS semantic_model.label_fields (
+  model_id    UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id  UUID        NOT NULL,
+  field       TEXT        NOT NULL CHECK (length(field) BETWEEN 1 AND 200),
+  updated_by  TEXT        NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, concept_id)
+);

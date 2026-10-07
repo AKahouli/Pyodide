@@ -1120,6 +1120,13 @@ export interface PlaybookExecutionAdminSettings {
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;
+  asyncDesignEnabled: boolean;
+  deltaPatchEnabled: boolean;
+  tokenBufferEnabled: boolean;
+  executionLeaseEnabled: boolean;
+  dynamicReasoningEnabled: boolean;
+  maxConcurrentGlobalDesignOperations: number;
+  maxConcurrentUserDesignOperations: number;
   dynamicReasoning: {
     plannerAgentId: string | null;
     maxWorkNodes: number;
@@ -1351,6 +1358,9 @@ export interface AgentResponse {
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
   isDefault: boolean;
@@ -1393,6 +1403,9 @@ export interface CreateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -1417,6 +1430,9 @@ export interface UpdateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface AgentQueryParams {
@@ -1633,7 +1649,15 @@ export interface SkillQueryParams {
 
 // === Connector ===
 
+export interface ConnectorWorkerPolicy {
+  enabled: boolean;
+  defaultExecutionKind: 'leaf' | 'unknown';
+  agentLaunchEnabled: boolean;
+}
+
 export interface ConnectorActionResponse {
+  workerAccess?: 'inherit' | 'allow' | 'block';
+  executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
   key: string;
   label: string;
   description: string;
@@ -1687,6 +1711,7 @@ export interface ConnectorResponse {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorActionResponse[];
   referencedSkillIds: string[];
@@ -1724,10 +1749,13 @@ export interface CreateConnectorRequest {
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;
+  workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders?: ConnectorDynamicHeader[];
   actions?: Array<{
     key: string;
     label: string;
+    workerAccess?: 'inherit' | 'allow' | 'block';
+    executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
     description?: string;
     parameterSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
@@ -1742,6 +1770,7 @@ export interface CreateConnectorRequest {
   referencedSkillIds?: string[];
   isActive?: boolean;
   isHidden?: boolean;
+  isSystem?: boolean;
 }
 
 export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> { }
@@ -1757,6 +1786,8 @@ export interface McpToolDefinition {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** From the tool's MCP annotations; 'read' when the server declares none. */
+  safety?: 'read' | 'write' | 'delete';
 }
 
 export interface McpInspectResult {

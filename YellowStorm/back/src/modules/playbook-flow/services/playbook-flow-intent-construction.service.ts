@@ -337,7 +337,7 @@ export class PlaybookFlowIntentConstructionService {
       const latestChange = changes[changes.length - 1];
       const hasNode = suggestion.kind === 'single_change' || latestChange?.type === 'create_node' || latestChange?.type === 'update_node' || latestChange?.type === 'delete_node';
       const type = hasNode ? 'node_delta' : latestChange?.type.includes('data_binding') ? 'data_binding_delta' : 'edge_delta';
-      await this.emit(job, { type, constructionId: job.id, playbookId: job.flowId, suggestion, nodeIndex: type === 'node_delta' ? index + 1 : undefined, totalNodes: type === 'node_delta' ? deltas.length : undefined } as PlaybookIntentConstructionEvent);
+      await this.emit(job, { type, constructionId: job.id, playbookId: job.flowId, suggestion, nodeIndex: type === 'node_delta' ? index + 1 : undefined, totalNodes: type === 'node_delta' ? deltas.length : undefined });
       await this.waitForNextDelta(job.abortController.signal);
     }
     return Math.max(emittedDeltaCount, deltas.length);
@@ -381,7 +381,7 @@ export class PlaybookFlowIntentConstructionService {
 
   private extractStreamContent(data: string): string {
     try {
-      const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }> };
+      const parsed = JSON.parse(data) as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] };
       const content = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content;
       return typeof content === 'string' ? content : '';
     } catch {

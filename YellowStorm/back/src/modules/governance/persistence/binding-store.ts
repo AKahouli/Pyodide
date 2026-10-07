@@ -1,6 +1,5 @@
 import type { GovernanceBindingRecord } from './governance-records';
 
-export const BINDING_STORE = Symbol('GOVERNANCE_BINDING_STORE');
 
 export interface GovernanceBindingCreateInput {
   programId: string;

@@ -6,11 +6,11 @@ import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { escapeLike } from '@common/postgres/like';
 import { resolveQueryable } from '@common/postgres/transaction';
-import type { ProjectPatch, ProjectStore, ProjectOneFilter } from '../project-store';
+import type { ProjectPatch, ProjectOneFilter } from '../project-store';
 import { projectRowToRecord, type ProjectRecord } from '../project-record.mapper';
 
 @Injectable()
-export class PostgresProjectStore implements ProjectStore {
+export class PostgresProjectStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

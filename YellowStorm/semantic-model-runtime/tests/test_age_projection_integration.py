@@ -54,6 +54,23 @@ class ScriptedPool:
     async def fetch(self, _sql: str, *_params):  # type: ignore[no-untyped-def]
         return self.script.pop(0)
 
+    def acquire(self):  # type: ignore[no-untyped-def]
+        return AsyncContext(self)
+
+    def transaction(self):  # type: ignore[no-untyped-def]
+        return AsyncContext(self)
+
+
+class AsyncContext:
+    def __init__(self, value) -> None:  # type: ignore[no-untyped-def]
+        self.value = value
+
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return self.value
+
+    async def __aexit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+        return None
+
 
 class FailingProjectionPool(ScriptedPool):
     async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
@@ -90,6 +107,7 @@ def test_live_project_and_activate_routes(monkeypatch: pytest.MonkeyPatch) -> No
     revision_id = f"dr_smoke_{uuid.uuid4().hex[:20]}"
     graph = f"pop_{revision_id}"
     revision = {"id": revision_id, "model_id": "smoke-model", "model_version_id": "v1",
+                "spec_hash": "sha256:" + "a" * 64,
                 "validation_state": "valid", "projection_ref": None,
                 "correction_sequence": 0}
     entities = [
@@ -122,7 +140,7 @@ def test_live_project_and_activate_routes(monkeypatch: pytest.MonkeyPatch) -> No
             assert projected.json()["vertices"] == 2
             assert projected.json()["edges"] == 1
 
-            projection_ref = f"age:v1:{graph}"
+            projection_ref = f"age:v2:{graph}"
             projected_revision = {**revision, "projection_ref": projection_ref}
             active = {"model_id": "smoke-model", "environment": "test",
                       "model_version_id": "v1", "data_revision_id": revision_id,
@@ -161,7 +179,7 @@ def test_live_route_rolls_back_and_compensates_failures(
 
     from fastapi.testclient import TestClient
 
-    from app.api import population_routes
+    from app.population import age_projection
     from app.main import create_app
 
     monkeypatch.setenv("SEMANTIC_AGEGRAPH_DATABASE_URL", DSN or "")
@@ -177,7 +195,7 @@ def test_live_route_rolls_back_and_compensates_failures(
     mismatch_graph = f"pop_{mismatch_id}"
     mismatch_revision = {"id": mismatch_id, "model_id": "m", "validation_state": "valid",
                          "projection_ref": None, "correction_sequence": 0}
-    original_counts = population_routes.projection_counts
+    original_counts = age_projection.projection_counts
 
     async def mismatched_counts(_connection, _graph):  # type: ignore[no-untyped-def]
         return {"vertices": 0, "edges": 0}
@@ -187,7 +205,7 @@ def test_live_route_rolls_back_and_compensates_failures(
     persistence_revision = {**mismatch_revision, "id": persistence_id}
     committed_id = f"dr_committed_{uuid.uuid4().hex[:16]}"
     committed_graph = f"pop_{committed_id}"
-    committed_ref = f"age:v1:{committed_graph}"
+    committed_ref = f"age:v2:{committed_graph}"
     committed_revision = {**mismatch_revision, "id": committed_id}
     try:
         app = create_app()
@@ -196,7 +214,7 @@ def test_live_route_rolls_back_and_compensates_failures(
                 mismatch_revision, mismatch_revision,
                 {"entities": 1, "assertions": 0, "relationships": 0}, entities, [],
             ])
-            monkeypatch.setattr(population_routes, "projection_counts", mismatched_counts)
+            monkeypatch.setattr(age_projection, "projection_counts", mismatched_counts)
             mismatch = client.post(
                 f"/v1/semantic-model-population/revisions/{mismatch_id}/project",
                 headers=headers,
@@ -205,7 +223,7 @@ def test_live_route_rolls_back_and_compensates_failures(
             assert mismatch.json()["detail"] == "projection_validation_failed"
             assert asyncio.run(_graph_absent(mismatch_graph))
 
-            monkeypatch.setattr(population_routes, "projection_counts", original_counts)
+            monkeypatch.setattr(age_projection, "projection_counts", original_counts)
             app.state.population_pool = FailingProjectionPool([
                 persistence_revision, persistence_revision,
                 {"entities": 1, "assertions": 0, "relationships": 0}, entities, [],

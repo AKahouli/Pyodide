@@ -14,7 +14,7 @@ import {
   HITL_MODES,
   HITL_RISK_LEVELS,
   HITL_SENSITIVITIES,
-} from '../schemas/playbook-flow-hitl.schema';
+} from '../models/playbook-flow-hitl.model';
 
 export class UpdateHitlPolicyDto {
   @ApiPropertyOptional({ enum: HITL_MODES })

@@ -1,16 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   ConflictException,
 } from '../../exceptions/exceptions/http.exceptions';
-import {
-  FlowIdempotencyRecord,
-  FlowIdempotencyRecordDocument,
-} from '../schemas/playbook-flow-idempotency-record.schema';
+import { IdempotencyRepository } from '../persistence/idempotency.repository';
 
 @Injectable()
 export class PlaybookFlowIdempotencyService {
@@ -18,8 +13,7 @@ export class PlaybookFlowIdempotencyService {
   private readonly ttlHours: number;
 
   constructor(
-    @InjectModel(FlowIdempotencyRecord.name)
-    private readonly idempotencyModel: Model<FlowIdempotencyRecordDocument>,
+    private readonly idempotencyRepository: IdempotencyRepository,
     private readonly configService: ConfigService,
   ) {
     this.ttlHours = this.configService.get<number>('playbook-flow.idempotencyTtlHours', 24);
@@ -42,8 +36,8 @@ export class PlaybookFlowIdempotencyService {
   }
 
   /**
-   * Atomically reserve an idempotency key. The unique index on (ownerId, idempotencyKey)
-   * guarantees only one caller wins.
+   * Atomically reserve an idempotency key. The unique index on (owner_id, idempotency_key)
+   * guarantees only one caller wins; an expired record counts as absent.
    *
    * Returns:
    *   - { type: 'reserved' } — caller should create the execution, then call confirmLink()
@@ -58,46 +52,33 @@ export class PlaybookFlowIdempotencyService {
     const payloadHash = this.createPayloadHash(body);
     const expiresAt = new Date(Date.now() + this.ttlHours * 60 * 60 * 1000);
 
-    try {
-      await this.idempotencyModel.create({
-        ownerId,
-        idempotencyKey,
-        payloadHash,
-        expiresAt,
-      });
+    if (await this.idempotencyRepository.reserve({ ownerId, idempotencyKey, payloadHash, expiresAt })) {
       return { type: 'reserved' };
-    } catch (err: any) {
-      if (err.code === 11000) {
-        const existing = await this.idempotencyModel.findOne({
-          ownerId,
-          idempotencyKey,
-        }).lean();
-
-        if (!existing) {
-          this.logger.warn(`Idempotency record disappeared for key ${idempotencyKey}, retrying as reserved`);
-          return this.reserve(ownerId, idempotencyKey, body);
-        }
-
-        if (existing.payloadHash === payloadHash) {
-          if (existing.executionId) {
-            return { type: 'duplicate', executionId: existing.executionId };
-          }
-          this.logger.warn(
-            `Idempotency key ${idempotencyKey} exists without executionId, previous creation may have failed`,
-          );
-          throw new ConflictException(
-            ErrorCode.CONFLICT,
-            'Idempotency key reservation exists but execution was not created. Retry with the same key and payload.',
-          );
-        }
-
-        throw new ConflictException(
-          ErrorCode.CONFLICT,
-          'Idempotency key already used with different input. Use a new key or retry with matching input.',
-        );
-      }
-      throw err;
     }
+
+    const existing = await this.idempotencyRepository.findLive(ownerId, idempotencyKey);
+    if (!existing) {
+      this.logger.warn(`Idempotency record disappeared for key ${idempotencyKey}, retrying as reserved`);
+      return this.reserve(ownerId, idempotencyKey, body);
+    }
+
+    if (existing.payloadHash === payloadHash) {
+      if (existing.executionId) {
+        return { type: 'duplicate', executionId: existing.executionId };
+      }
+      this.logger.warn(
+        `Idempotency key ${idempotencyKey} exists without executionId, previous creation may have failed`,
+      );
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Idempotency key reservation exists but execution was not created. Retry with the same key and payload.',
+      );
+    }
+
+    throw new ConflictException(
+      ErrorCode.CONFLICT,
+      'Idempotency key already used with different input. Use a new key or retry with matching input.',
+    );
   }
 
   async reserveSave<T>(
@@ -112,59 +93,43 @@ export class PlaybookFlowIdempotencyService {
     const payloadHash = this.createPayloadHash(body);
     const expiresAt = new Date(Date.now() + this.ttlHours * 60 * 60 * 1000);
 
-    try {
-      await this.idempotencyModel.create({
-        ownerId,
-        idempotencyKey,
-        payloadHash,
-        expiresAt,
-      });
+    if (await this.idempotencyRepository.reserve({ ownerId, idempotencyKey, payloadHash, expiresAt })) {
       return { type: 'reserved' };
-    } catch (err: any) {
-      if (err.code !== 11000) {
-        throw err;
-      }
-
-      const existing = await this.idempotencyModel.findOne({ ownerId, idempotencyKey }).lean();
-      if (!existing) {
-        this.logger.warn(`Idempotency record disappeared for key ${idempotencyKey}, retrying as reserved`);
-        return this.reserveSave(ownerId, idempotencyKey, body);
-      }
-
-      if (existing.payloadHash !== payloadHash) {
-        throw new ConflictException(
-          ErrorCode.CONFLICT,
-          'Idempotency key already used with different input. Use a new key or retry with matching input.',
-        );
-      }
-
-      if (existing.responseBody) {
-        return { type: 'duplicate', responseBody: existing.responseBody as T };
-      }
-
-      return {
-        type: 'duplicate-pending',
-        expectedStateHash: existing.expectedStateHash,
-        expectedDefinitionRevision: existing.expectedDefinitionRevision,
-      };
     }
+
+    const existing = await this.idempotencyRepository.findLive(ownerId, idempotencyKey);
+    if (!existing) {
+      this.logger.warn(`Idempotency record disappeared for key ${idempotencyKey}, retrying as reserved`);
+      return this.reserveSave(ownerId, idempotencyKey, body);
+    }
+
+    if (existing.payloadHash !== payloadHash) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Idempotency key already used with different input. Use a new key or retry with matching input.',
+      );
+    }
+
+    if (existing.responseBody) {
+      return { type: 'duplicate', responseBody: existing.responseBody as T };
+    }
+
+    return {
+      type: 'duplicate-pending',
+      expectedStateHash: existing.expectedStateHash ?? undefined,
+      expectedDefinitionRevision: existing.expectedDefinitionRevision ?? undefined,
+    };
   }
 
   /**
    * Link the reserved idempotency record to the real execution id after execution creation.
    */
   async confirmLink(ownerId: string, idempotencyKey: string, executionId: string): Promise<void> {
-    await this.idempotencyModel.updateOne(
-      { ownerId, idempotencyKey },
-      { $set: { executionId } },
-    ).exec();
+    await this.idempotencyRepository.update(ownerId, idempotencyKey, { executionId });
   }
 
   async confirmSaveResult(ownerId: string, idempotencyKey: string, responseBody: unknown): Promise<void> {
-    await this.idempotencyModel.updateOne(
-      { ownerId, idempotencyKey },
-      { $set: { responseBody } },
-    ).exec();
+    await this.idempotencyRepository.update(ownerId, idempotencyKey, { responseBody: responseBody as Record<string, unknown> });
   }
 
   async recordExpectedSaveState(
@@ -173,16 +138,13 @@ export class PlaybookFlowIdempotencyService {
     expectedStateHash: string,
     expectedDefinitionRevision: number,
   ): Promise<void> {
-    await this.idempotencyModel.updateOne(
-      { ownerId, idempotencyKey },
-      { $set: { expectedStateHash, expectedDefinitionRevision } },
-    ).exec();
+    await this.idempotencyRepository.update(ownerId, idempotencyKey, { expectedStateHash, expectedDefinitionRevision });
   }
 
   /**
    * Clean up the idempotency record if execution creation fails after reserve().
    */
   async release(ownerId: string, idempotencyKey: string): Promise<void> {
-    await this.idempotencyModel.deleteOne({ ownerId, idempotencyKey }).exec();
+    await this.idempotencyRepository.delete(ownerId, idempotencyKey);
   }
 }

@@ -6,9 +6,8 @@ dist/
 build/
 
 # Environment
-.env
 .env.local
-.env.*.local
+
 
 # IDE
 .idea/
@@ -32,8 +31,6 @@ coverage/
 # Misc
 *.tgz
 .eslintcache
-
-*.env
 *.env.*.local
 .env.local
 .env.development.local

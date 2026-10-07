@@ -25,7 +25,6 @@ import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
 import semanticModelConfig from './config/semantic-model.config';
-import agentMcpConfig from './config/agent-mcp.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -33,7 +32,6 @@ import { ExceptionsModule } from './modules/exceptions';
 import { RateLimiterModule } from './modules/rate-limiter';
 import { RequestContextModule } from './modules/request-context';
 import { ResponseModule } from './modules/response';
-import { DatabaseModule } from './modules/database';
 import { PostgresModule } from './modules/postgres';
 import { AgentRepositoryModule } from './modules/agent/repositories/agent-repository.module';
 import { AgentEmbeddingModule } from './modules/agent/agent-embedding.module';
@@ -89,7 +87,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -101,7 +99,6 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
 
     // Global Modules
     LoggerModule,
-    DatabaseModule,
     PostgresModule,
     AgentRepositoryModule,
     AgentEmbeddingModule,

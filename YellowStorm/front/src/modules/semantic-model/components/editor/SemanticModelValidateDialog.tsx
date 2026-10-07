@@ -1,141 +1,137 @@
 import { useEffect, useState } from "react";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2, Play, RotateCcw, Share2, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { parseApiError } from "@/lib/api-error";
 import { showError, showSuccess } from "@/lib/notifications";
 import { useModuleTranslation } from "@/modules/localization";
-import { useStartSemanticBuild } from "../../hooks/use-semantic-build-job";
-import { useSemanticModelEditorStore } from "../../store";
-import type { SemanticModelManualInstances } from "../../types";
+import { usePopulationRun, useRebuildFromScratch, useReprojectGraph } from "../../hooks/use-population-run";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   modelId: string;
-  onStarted?: () => void;
+  /** Called when a population run was accepted by the runtime, with the sources it skipped. */
+  onPopulationStarted?: (result: { jobId: string; status: string; skipped: Array<{ mappingId: string; reason: string }>; reused: boolean; sourceCount?: number; cleared?: boolean }) => void;
+  /** A run that could not start: what stops it is listed in Review, with where to fix it. */
+  onRefused?: (message: string) => void;
 }
 
+type RunMode = "update" | "graph" | "scratch";
+const MODES: RunMode[] = ["update", "graph", "scratch"];
+const MODE_ICON = { update: Sparkles, graph: Share2, scratch: RotateCcw } as const;
+
 /**
- * Fire-and-forget launcher for the async build orchestrator.
- *
- * The dialog only collects the (optional) business requirements and posts
- * `POST /builds`. As soon as the backend returns a buildId, the dialog closes
- * and control is handed back to the user. Progress is tracked by the
- * `SemanticModelBuildProgressBanner` mounted at the top of the editor.
+ * One screen to start a run: pick what to do (read the sources, rebuild only the graph, or start
+ * over from nothing), with the options of that choice, then one button. Starting over deletes
+ * the generated data, so its warning stays in view and its button is red.
  */
-export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onStarted }: Props) {
+export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPopulationStarted, onRefused }: Props) {
   const { t } = useModuleTranslation("semantic-model");
-  const [requirements, setRequirements] = useState("");
-  const [manualConceptId, setManualConceptId] = useState("");
-  const [manualLabels, setManualLabels] = useState("");
-  const [manualInstances, setManualInstances] = useState<SemanticModelManualInstances[]>([]);
-  const graph = useSemanticModelEditorStore((state) => state.graph);
-  const startBuild = useStartSemanticBuild(modelId);
+  const populate = usePopulationRun(modelId);
+  const rebuild = useRebuildFromScratch(modelId);
+  const reproject = useReprojectGraph(modelId);
+  const [mode, setMode] = useState<RunMode>("update");
+  const [forgetDocumentReading, setForgetDocumentReading] = useState(false);
+  const busy = populate.isPending || rebuild.isPending || reproject.isPending;
+  useEffect(() => { if (!open) { setMode("update"); setForgetDocumentReading(false); } }, [open]);
+  // The AI option is a choice per run: changing what to do starts it unticked again.
+  useEffect(() => { setForgetDocumentReading(false); }, [mode]);
 
-  // Reset the textarea whenever the dialog opens fresh.
-  useEffect(() => {
-    if (open) {
-      setRequirements("");
-      setManualConceptId("");
-      setManualLabels("");
-      setManualInstances([]);
-    }
-  }, [open]);
-
-  const handleLaunch = async () => {
-    const businessRequirements = requirements
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+  const read = async () => {
     try {
-      await startBuild.mutateAsync({ businessRequirements, applyMode: "replace", manualInstances });
-      showSuccess(t("build.started"));
-      onStarted?.();
+      const result = await populate.mutateAsync({ rereadDocuments: forgetDocumentReading });
+      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount });
+      onOpenChange(false);
+    } catch (error) {
+      const message = parseApiError(error).message;
+      showError(t("population.startError"), { description: message, duration: 10000 });
+      onRefused?.(message);
+    }
+  };
+
+  const graphOnly = async () => {
+    try {
+      const result = await reproject.mutateAsync();
+      if (!result.revisions.length) {
+        showError(t("population.graphError"), { description: t("population.graphNothing") });
+        return;
+      }
+      const largest = result.revisions.reduce((best, item) => (item.vertices ?? 0) >= (best.vertices ?? 0) ? item : best);
+      showSuccess(t("population.graphRebuilt"), { description: t("population.graphRebuiltHint", { records: largest.vertices ?? 0, links: largest.edges ?? 0 }) });
+      onOpenChange(false);
+    } catch (error) {
+      showError(t("population.graphError"), { description: parseApiError(error).message, duration: 10000 });
+    }
+  };
+
+  const startOver = async () => {
+    try {
+      const result = await rebuild.mutateAsync({ forgetDocumentReading });
+      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount, cleared: true });
       onOpenChange(false);
     } catch (error) {
       const apiError = parseApiError(error);
-      const description = apiError.message;
-      const message = description.toLowerCase().includes("already running")
-        ? t("build.alreadyRunning")
-        : t("build.startError");
-      showError(message, { description });
+      const running = apiError.message.includes("population_running");
+      showError(t("rebuild.error"), { description: running ? t("rebuild.running") : apiError.message, duration: 10000 });
+      if (!running) onRefused?.(apiError.message);
     }
   };
 
-  const addManualInstances = () => {
-    const labels = manualLabels.split(",").map((label) => label.trim()).filter(Boolean);
-    if (!manualConceptId || !labels.length) return;
-    setManualInstances((current) => {
-      const existing = current.find((item) => item.nodeTypeId === manualConceptId);
-      if (!existing) return [...current, { nodeTypeId: manualConceptId, labels: [...new Set(labels)] }];
-      return current.map((item) => item.nodeTypeId === manualConceptId
-        ? { ...item, labels: [...new Set([...item.labels, ...labels])] }
-        : item);
-    });
-    setManualLabels("");
-  };
+  const start = () => void (mode === "graph" ? graphOnly() : mode === "scratch" ? startOver() : read());
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!startBuild.isPending) onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Zap className="h-5 w-5 text-primary" />
             {t("validate.title")}
           </DialogTitle>
-          <DialogDescription>{t("validate.description")}</DialogDescription>
+          <DialogDescription>{t("run.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2 py-2">
-          <label className="text-sm font-medium">{t("validate.requirements")}</label>
-          <Textarea
-            placeholder={t("validate.requirementsPlaceholder")}
-            value={requirements}
-            onChange={(e) => setRequirements(e.target.value)}
-            rows={4}
-            className="resize-none text-sm"
-            disabled={startBuild.isPending}
-          />
-        </div>
-
-        <div className="space-y-2 border-t pt-3">
-          <label className="text-sm font-medium">{t("records.type")}</label>
-          <Select value={manualConceptId} onValueChange={setManualConceptId} disabled={startBuild.isPending}>
-            <SelectTrigger><SelectValue placeholder={t("records.chooseType")} /></SelectTrigger>
-            <SelectContent>
-              {graph?.nodes.filter((node) => node.recordPolicy !== "none").map((node) => (
-                <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="flex gap-2">
-            <Input
-              value={manualLabels}
-              onChange={(event) => setManualLabels(event.target.value)}
-              placeholder={t("records.placeholder")}
-              disabled={startBuild.isPending}
-            />
-            <Button type="button" variant="outline" onClick={addManualInstances} disabled={!manualConceptId || !manualLabels.trim() || startBuild.isPending}>
-              {t("records.add")}
-            </Button>
-          </div>
-          {manualInstances.map((item) => {
-            const label = graph?.nodes.find((node) => node.id === item.nodeTypeId)?.label ?? item.nodeTypeId;
-            return <p key={item.nodeTypeId} className="text-xs text-muted-foreground">{label}: {item.labels.join(", ")}</p>;
+        <RadioGroup value={mode} onValueChange={(value) => setMode(value as RunMode)} disabled={busy} className="gap-2" aria-label={t("run.choose")}>
+          {MODES.map((value) => {
+            const Icon = MODE_ICON[value];
+            const selected = mode === value;
+            const danger = value === "scratch";
+            return (
+              <div key={value} className={`rounded-lg border p-3 text-sm transition-colors ${selected ? (danger ? "border-destructive/60 bg-destructive/5" : "border-primary/60 bg-primary/5") : "hover:bg-muted/50"}`}>
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <RadioGroupItem value={value} className="mt-0.5" aria-describedby={`run-${value}-hint`} />
+                  <span className="min-w-0">
+                    <span className={`flex items-center gap-1.5 font-medium ${danger && selected ? "text-destructive" : ""}`}>
+                      <Icon className="h-3.5 w-3.5" />{t(`run.mode.${value}.title`)}
+                    </span>
+                    <span id={`run-${value}-hint`} className="mt-0.5 block text-xs text-muted-foreground">{t(`run.mode.${value}.hint`)}</span>
+                  </span>
+                </label>
+                {selected && value !== "graph" && <div className="mt-3 space-y-2 pl-6">
+                  {value === "scratch" && <div role="alert" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
+                    <p className="text-destructive">{t("rebuild.removed")}</p>
+                    <p className="text-muted-foreground">{t("rebuild.kept")}</p>
+                  </div>}
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <Checkbox className="mt-0.5" checked={forgetDocumentReading} onCheckedChange={(checked) => setForgetDocumentReading(checked === true)} disabled={busy} />
+                    <span>
+                      <span className="text-xs font-medium">{t("rebuild.forget")}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{t("rebuild.forgetHint")}</span>
+                    </span>
+                  </label>
+                </div>}
+              </div>
+            );
           })}
-        </div>
+        </RadioGroup>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={startBuild.isPending}>
-            {t("action.cancel")}
-          </Button>
-          <Button onClick={() => void handleLaunch()} disabled={startBuild.isPending}>
-            {startBuild.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {t("validate.launch")}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("action.cancel")}</Button>
+          <Button variant={mode === "scratch" ? "destructive" : "default"} onClick={start} disabled={busy}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+            {t(`run.mode.${mode}.action`)}
           </Button>
         </DialogFooter>
       </DialogContent>

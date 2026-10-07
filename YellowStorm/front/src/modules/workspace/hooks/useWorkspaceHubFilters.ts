@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { useAllWorkspaces, useAllSharedWorkspaces, useAllPublicWorkspaces } from '../store';
 import type { Workspace, SharedWorkspaceResponse, PublicWorkspaceResponse } from '../types';
 
@@ -164,7 +165,7 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
   const view: ViewMode = isViewMode(viewParam) ? viewParam : 'grid';
 
   const [searchInput, setSearchInputState] = useState(rawSearch);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedule, cancel } = useDebouncedCallback();
   const skipNextSyncRef = useRef(false);
 
   useEffect(() => {
@@ -174,12 +175,6 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
     }
     setSearchInputState(rawSearch);
   }, [rawSearch]);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
 
   const applyParam = useCallback(
     (key: string, value: string) => {
@@ -199,13 +194,12 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
   const setSearchInput = useCallback(
     (value: string) => {
       setSearchInputState(value);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
+      schedule(() => {
         skipNextSyncRef.current = true;
         applyParam('q', value.trim());
       }, SEARCH_DEBOUNCE_MS);
     },
-    [applyParam],
+    [applyParam, schedule],
   );
 
   const setOwner = useCallback(
@@ -224,7 +218,7 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
   );
 
   const clearAll = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    cancel();
     setSearchInputState('');
     setSearchParams(
       (prev) => {
@@ -236,7 +230,7 @@ export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
       },
       { replace: true },
     );
-  }, [setSearchParams]);
+  }, [cancel, setSearchParams]);
 
   const personalItems = useMemo(
     () => ownedWorkspaces.filter((w) => w.isPersonal).map(toItemFromOwned),

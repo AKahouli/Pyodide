@@ -1,7 +1,7 @@
 export * from './logger.module';
 export * from './logger.service';
-export { LogBufferService } from './log-buffer.service';
-export type { LogEntry } from './log-buffer.service';
+export { OpsLogsService } from './ops-logs.service';
+export type { LogEntry } from './ops-logs.service';
 export type { LogOptions } from './interfaces/log-options.interface';
 export type {
   LogQueryFilters,
@@ -9,4 +9,4 @@ export type {
   LogQueryPagination,
   LogQueryResult,
 } from './interfaces/log-query.interface';
-export { LogLevelEnum } from './schemas/log.schema';
+export { LogLevelEnum } from './interfaces/log-level.enum';

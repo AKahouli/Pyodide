@@ -1,12 +1,12 @@
-import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import type { AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord } from '../ports/workspace-records';
-import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
-import { SHARE_STORE, type ShareStore } from '../stores/share-store';
+import { PgWorkspaceStore } from '../stores/postgres/pg-workspace-store';
+import { PgShareStore } from '../stores/postgres/pg-share-store';
 
 interface RequestWithWorkspace extends Request {
   user?: AuthUser;
@@ -27,8 +27,8 @@ interface RequestWithWorkspace extends Request {
 @Injectable()
 export class WorkspaceAccessGuard implements CanActivate {
   constructor(
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
-    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
+    private readonly workspaceStore: PgWorkspaceStore,
+    private readonly shareStore: PgShareStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation, useBlocker } from 'react-router-dom';
+import { PlaybookPendingSources } from './assistant/PlaybookPendingSources';
 import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
@@ -9,6 +10,7 @@ import { PlaybookStarterPanel } from './PlaybookStarterPanel';
 import '@xyflow/react/dist/style.css';
 
 import { Button } from '@/components/ui/button';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useSidebar } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -369,7 +371,7 @@ export function shouldRenderPlaybookAssistant(
 }
 
 export function getInitialPlaybookPageMode(latestExecutionStatus?: string): PlaybookPageMode {
-  return latestExecutionStatus === 'completed' ? 'run' : 'design';
+  return latestExecutionStatus && latestExecutionStatus !== 'idle' ? 'run' : 'design';
 }
 
 export function canAppendIntentEdge(
@@ -486,16 +488,23 @@ export function buildOverviewResultNodeIds(
     .map((result) => result.taskId));
 }
 
-export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
-  if (task.enabled === false) return true;
+export function getMissingTaskConfiguration(task: PlaybookTask): Array<'agent' | 'action' | 'iteratorSource' | 'evaluationExpectation'> {
+  if (task.enabled === false) return [];
   const nodeType = getEffectiveNodeType(task);
-  if (nodeType === 'router' || nodeType === 'human_approval') return true;
-  if (nodeType === 'iterator') return Boolean(task.iteratorConfig?.source?.trim());
+  if (nodeType === 'router' || nodeType === 'human_approval') return [];
+  if (nodeType === 'iterator') return task.iteratorConfig?.source?.trim() ? [] : ['iteratorSource'];
   if (nodeType === 'evaluation') {
-    return Boolean(task.assignedAgentId && (task.evaluationConfig?.expectation || task.evaluationConfig?.referenceBaselineId));
+    return [
+      ...(!task.assignedAgentId ? ['agent' as const] : []),
+      ...(!task.evaluationConfig?.expectation && !task.evaluationConfig?.referenceBaselineId ? ['evaluationExpectation' as const] : []),
+    ];
   }
-  if (nodeType === 'action') return Boolean(task.selectedAction);
-  return Boolean(task.assignedAgentId);
+  if (nodeType === 'action') return task.selectedAction ? [] : ['action'];
+  return task.assignedAgentId ? [] : ['agent'];
+}
+
+export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
+  return getMissingTaskConfiguration(task).length === 0;
 }
 
 export function didCanonicalAssistantCommitSucceed(
@@ -673,6 +682,7 @@ function PlaybookCanvasInner() {
   }, [searchParams, selectStep, setSearchParams]);
 
   const reactFlow = useReactFlow();
+  const isMobile = useIsMobile();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const canvasViewModeRef = useRef<HTMLDivElement | null>(null);
@@ -680,6 +690,7 @@ function PlaybookCanvasInner() {
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
   const autoLayoutAppliedPlaybookRef = useRef<string | null>(null);
+  const previousIsMobileRef = useRef(isMobile);
   const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
 
   // ---- Shared next-step picker (creation entry points) ----
@@ -695,9 +706,9 @@ function PlaybookCanvasInner() {
 
   const [compactCards, setCompactCards] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('ys_playbook_compact_cards') !== '0';
+      return localStorage.getItem('ys_playbook_compact_cards') === '1';
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -792,10 +803,11 @@ function PlaybookCanvasInner() {
     insertTaskOnEdge,
   } = usePlaybookCanvas(triggerNodeActions, { onConnectDropOnEmpty: openPickerFromEmptyDrop });
 
-  const fitCanvasToNodes = useCallback(() => {
+  const fitCanvasToNodes = useCallback((targetNodes?: Array<{ id: string }>) => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         void reactFlow.fitView({
+          nodes: targetNodes,
           padding: 0.24,
           duration: 300,
           maxZoom: 1.1,
@@ -1035,6 +1047,20 @@ function PlaybookCanvasInner() {
 
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
+
+  useEffect(() => {
+    if (previousIsMobileRef.current === isMobile) return;
+    previousIsMobileRef.current = isMobile;
+    if (nodes.length === 0) return;
+    const mobileFocusNode = nodes.find((node) => node.selected)
+      ?? nodes.find((node) => node.type !== 'playbookTrigger' && node.type !== 'playbookIteratorContainer');
+    if (isMobile) {
+      setExecutionPanelCollapsed(true);
+      setExecutionPanelOpen(false);
+      setDesignerOpen(false);
+    }
+    fitCanvasToNodes(isMobile && mobileFocusNode ? [mobileFocusNode] : undefined);
+  }, [fitCanvasToNodes, isMobile, nodes, setDesignerOpen, setExecutionPanelOpen]);
   const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
   const [importWarningOpen, setImportWarningOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PlaybookDefinitionExport | null>(null);
@@ -1247,7 +1273,7 @@ function PlaybookCanvasInner() {
         const initialMode = getInitialPlaybookPageMode(latestExecution?.status);
         setPageMode(initialMode);
         setExecutionPanelOpen(initialMode === 'run');
-        setExecutionPanelCollapsed(initialMode !== 'run');
+        setExecutionPanelCollapsed(initialMode !== 'run' || window.matchMedia('(max-width: 767px)').matches);
         if (initialMode === 'run' && latestExecution) {
           viewExecutionInPanel(latestExecution.id);
         }
@@ -1370,10 +1396,10 @@ function PlaybookCanvasInner() {
   }, [id, isGeneratingRoute, loadedPlaybookId, nodes.length, playbookLoading, playbook?.id, reactFlow]);
 
   useEffect(() => {
-    if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
+    if (!isMobile && executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
       setExecutionPanelCollapsed(false);
     }
-  }, [executionPanelOpen, pageMode, executionPanelCollapsed]);
+  }, [executionPanelOpen, pageMode, executionPanelCollapsed, isMobile]);
 
   // Fallback polling while an execution is active or while the run view is
   // recovering from a missed realtime handoff. This keeps both the canvas and
@@ -1594,6 +1620,7 @@ function PlaybookCanvasInner() {
   }), []);
   const edgeTypes = useMemo(() => ({
     animated: makeInsertableEdge(AiEdge.Animated),
+    triggerBinding: AiEdge.Animated,
     'animated-warning': makeInsertableEdge(AiEdge.AnimatedWarning, 16),
     conditional: makeInsertableEdge(ConditionalEdge, 18),
     dataBinding: DataBindingEdge,
@@ -1758,12 +1785,13 @@ function PlaybookCanvasInner() {
   }, [edges, pageMode, recentlyChangedEdgeIds, stepStatusMap]);
 
   const liveEdges = useMemo(() => {
-    if (!playbook || !dataBindingsVisible) {
+    if (!playbook) {
       return styledControlEdges;
     }
 
     const visibleDataBindings = filterMirroredDataLayerEdges(
-      dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []),
+      dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []).filter((edge) =>
+        dataBindingsVisible || (playbook.automatedTriggerType === 'mail' && edge.kind === 'trigger' && edge.source === TRIGGER_NODE_ID)),
       styledControlEdges,
     );
     const dataLayerEdges: Edge[] = visibleDataBindings.map((edge) => ({
@@ -1772,11 +1800,11 @@ function PlaybookCanvasInner() {
         target: edge.target,
         sourceHandle: edge.sourceHandle,
         targetHandle: edge.targetHandle,
-        type: 'dataBinding',
+        type: edge.kind === 'trigger' && edge.status === 'ok' ? 'triggerBinding' : 'dataBinding',
         selectable: false,
         focusable: false,
         deletable: false,
-        animated: false,
+        animated: edge.kind === 'trigger' && edge.status === 'ok',
         zIndex: 0,
         data: {
           layer: 'binding',
@@ -2392,16 +2420,20 @@ function PlaybookCanvasInner() {
     scheduleChangeFeedbackCleanup();
   }, [designerSidebarWidth, reactFlow, scheduleChangeFeedbackCleanup]);
 
-  const handleValidationIssueSelect = useCallback((issue: PlaybookValidationIssue) => {
-    if (!playbook?.tasks.some((task) => task.id === issue.taskId)) return;
+  const handleReadinessTaskSelect = useCallback((taskId: string) => {
+    if (!playbook?.tasks.some((task) => task.id === taskId)) return;
     setNodes((currentNodes) => currentNodes.map((node) => ({
       ...node,
-      selected: node.id === issue.taskId,
+      selected: node.id === taskId,
     })));
-    selectStep(issue.taskId);
+    if (canvasViewMode === 'overview') {
+      handleOpenOverviewNode(taskId);
+      return;
+    }
+    selectStep(taskId);
     const fitIssueNode = () => {
       void reactFlow.fitView({
-        nodes: [{ id: issue.taskId }],
+        nodes: [{ id: taskId }],
         padding: 0.35,
         duration: 650,
         maxZoom: 1.08,
@@ -2415,11 +2447,11 @@ function PlaybookCanvasInner() {
       return;
     }
     if (designerSidebarWidth > 0 && window.matchMedia('(min-width: 640px)').matches) {
-      focusConstructionNode(playbook.tasks, issue.taskId);
+      focusConstructionNode(playbook.tasks, taskId);
       return;
     }
     fitIssueNode();
-  }, [designerSidebarWidth, focusConstructionNode, playbook, reactFlow, selectStep, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setNodes]);
+  }, [canvasViewMode, designerSidebarWidth, focusConstructionNode, handleOpenOverviewNode, playbook, reactFlow, selectStep, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setNodes]);
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
@@ -4506,8 +4538,11 @@ function PlaybookCanvasInner() {
   );
   const hasRunnableContent = playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0;
   const hasWorkspace = (playbook.workspaces?.length || 0) > 0;
-  const unconfiguredTaskCount = playbook.tasks.filter((task) => !isTaskConfiguredForExecution(task)).length;
-  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTaskCount === 0 && !hasActiveExecution && !isSaving && !isDirty;
+  const unconfiguredTasks = playbook.tasks.flatMap((task) => {
+    const reasons = getMissingTaskConfiguration(task);
+    return reasons.length ? [{ id: task.id, title: task.title, reasons }] : [];
+  });
+  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTasks.length === 0 && !hasActiveExecution && !isSaving && !isDirty;
   const canRunWithInputs = canRun && canRunPlaybookInputContract(
     isDirty,
     isSaving,
@@ -4625,9 +4660,10 @@ function PlaybookCanvasInner() {
           canRun={canRunWithInputs}
           hasRunnableContent={hasRunnableContent}
           hasWorkspace={hasWorkspace}
-          unconfiguredTaskCount={unconfiguredTaskCount}
+          unconfiguredTasks={unconfiguredTasks}
           validationIssues={validationIssues}
-          onValidationIssueSelect={handleValidationIssueSelect}
+          onValidationIssueSelect={(issue) => handleReadinessTaskSelect(issue.taskId)}
+          onUnconfiguredTaskSelect={handleReadinessTaskSelect}
         />
       </div>
 
@@ -4652,7 +4688,7 @@ function PlaybookCanvasInner() {
           onDownloadAllResults={handleDownloadAllResults}
           canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
           onTriggers={() => setTriggersSheetOpen(true)}
-          triggersOpen={triggersSheetOpen}
+          triggersEnabled={playbook.executionSchedule?.enabled === true || playbook.triggers.some((trigger) => trigger.type === 'mail' && trigger.enabled)}
           designSettings={playbook.designSettings}
           onDesignSettingsChange={(settings) => {
             void updatePlaybook(playbook.id, {
@@ -4782,6 +4818,11 @@ function PlaybookCanvasInner() {
                 {t('executionFocus.label')}
               </Button>
             </div>
+            {id && (
+              <div className="absolute left-3 top-14 z-30 sm:left-4 sm:top-16">
+                <PlaybookPendingSources playbookId={id} />
+              </div>
+            )}
             {canvasViewMode === 'overview' ? (
               <PlaybookOverviewCanvas
                 nodes={canvasNodes}

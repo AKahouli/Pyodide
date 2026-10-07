@@ -1,15 +1,17 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  forwardRef,
 } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { Subscription } from 'rxjs';
+import { isObjectId } from '@common/postgres';
 import { ConversationV2GrpcClientService } from './conversation-v2.grpc-client.service';
 import { ConversationV2EventStoreService } from './conversation-v2-event-store.service';
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
@@ -90,8 +92,13 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
     private readonly modelsService: ModelsService,
+    // forwardRef: App Runtime services inject Conversation V2 ports that depend
+    // on this stream service — breaks Nest's silent bootstrap deadlock (exit 0).
+    @Inject(forwardRef(() => RuntimeFinalizedRevisionService))
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    @Inject(forwardRef(() => RuntimeRevisionService))
     private readonly runtimeRevisions: RuntimeRevisionService,
+    @Inject(forwardRef(() => RuntimeBindingService))
     private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 
@@ -128,9 +135,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     if (!pointer.aiSessionId) throw new BadRequestException('Session not ready');
 
     const aiSessionId = pointer.aiSessionId;
-    const systemWorkspaceId =
-      (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
-        .systemWorkspaceId?.toString() ?? null;
+    const systemWorkspaceId = pointer.systemWorkspaceId ?? null;
 
     // Concurrency guards, mirroring v1 StreamService.
     const maxStreams = this.config.get<number>('conversationV2.maxConcurrentStreams') ?? 5;
@@ -156,6 +161,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // model wins; otherwise the conversation-v2 default (admin-configured on an
     // existing model, reusing its config) and then the global default.
     const model = req.model ?? (await this.resolveConversationV2DefaultModel());
+    const appAiModel = await this.resolveAppAiCatalogModelId(model);
 
     // Historical-version send: validate the selected revision, branch a fresh
     // revision from it and pin the runtime binding, so the agent builds from
@@ -236,7 +242,19 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors, branchRevisionId);
+    this.runGrpc(
+      userId,
+      grpcUserId,
+      sessionId,
+      aiSessionId,
+      systemWorkspaceId,
+      req,
+      model,
+      skills,
+      connectors,
+      branchRevisionId,
+      appAiModel,
+    );
   }
 
   /**
@@ -285,6 +303,31 @@ export class ConversationV2StreamService implements OnModuleDestroy {
   }
 
 
+  /**
+   * Catalog model id for generated-app AI Proxy (same Studio selection as the
+   * stream). `streamModel` is typically a LiteLLM identifier from the composer.
+   */
+  private async resolveAppAiCatalogModelId(
+    streamModel: string | undefined,
+  ): Promise<string | undefined> {
+    try {
+      if (streamModel?.trim()) {
+        const hit = await this.modelsService.findByIdOrLitellmModel(streamModel.trim());
+        if (hit?.id) return hit.id;
+      }
+      const conversationV2Default =
+        await this.modelsService.getConversationV2DefaultModel();
+      if (conversationV2Default?.id) return conversationV2Default.id;
+      const platformDefault = await this.modelsService.getDefaultModel();
+      return platformDefault?.id || undefined;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to resolve app AI catalog model: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
   private runGrpc(
     actorUserId: string,
     grpcUserId: string,
@@ -296,6 +339,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
     branchRevisionId: string | null = null,
+    appAiModel?: string,
   ): void {
     const key = `${actorUserId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
@@ -384,7 +428,16 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     }
 
     const subscription = this.grpcClient
-      .chat(grpcUserId, aiSessionId, gRpcMessage, model, req.connectorRepo, skills, connectors)
+      .chat(
+        grpcUserId,
+        aiSessionId,
+        gRpcMessage,
+        model,
+        req.connectorRepo,
+        skills,
+        connectors,
+        appAiModel,
+      )
       .subscribe({
         next: (event) => {
           resetIdle();
@@ -458,14 +511,14 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
   /**
    * Runtime bindings are keyed by APImanus `aiSessionId` (`workspaceId`).
-   * Conversation events are keyed by the YellowStorm pointer `_id`.
+   * Conversation events are keyed by the YellowStorm pointer id.
    */
   private async resolveConversationSessionId(sessionOrWorkspaceId: string): Promise<string> {
     const byAi = await this.sessions.findByAiSessionId(sessionOrWorkspaceId);
-    if (byAi?._id) return byAi._id.toString();
-    if (Types.ObjectId.isValid(sessionOrWorkspaceId)) {
+    if (byAi?.id) return byAi.id;
+    if (isObjectId(sessionOrWorkspaceId)) {
       const byId = await this.sessions.getById(sessionOrWorkspaceId);
-      if (byId?._id) return byId._id.toString();
+      if (byId?.id) return byId.id;
     }
     throw new NotFoundException(`Invalid session id ${sessionOrWorkspaceId}`);
   }
@@ -509,12 +562,12 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     if (systemWorkspaceId && isAssistantMessage) {
       const attachments = (event.payload as { attachments?: unknown[] }).attachments;
       if (Array.isArray(attachments)) {
-        for (const fileInfo of attachments as Array<{
+        for (const fileInfo of attachments as {
           id: string;
           name: string;
           content_type: string;
           path: string;
-        }>) {
+        }[]) {
           this.workspaceDocuments
             .createFromAiArtifact(systemWorkspaceId, fileInfo)
             .catch(() => undefined);

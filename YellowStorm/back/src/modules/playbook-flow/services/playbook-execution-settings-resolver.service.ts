@@ -1,6 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ConfigType } from '@nestjs/config';
-import playbookFlowConfig from '@config/playbook-flow.config';
+import { Injectable, Optional } from '@nestjs/common';
 import { SystemService } from '@modules/system/system.service';
 import type { PlaybookExecutionAdminSettings } from '@modules/system/interfaces/playbook-settings.interface';
 import type { FlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
@@ -10,7 +8,6 @@ import {
 } from './playbook-flow-settings.service';
 
 export interface EffectivePlaybookExecutionSettings extends PlaybookExecutionAdminSettings {
-  dynamicReasoningEnabled: boolean;
   effectiveExecutionParallelism: number;
 }
 
@@ -18,8 +15,6 @@ export interface EffectivePlaybookExecutionSettings extends PlaybookExecutionAdm
 export class PlaybookExecutionSettingsResolverService {
   constructor(
     private readonly systemService: SystemService,
-    @Inject(playbookFlowConfig.KEY)
-    private readonly config: ConfigType<typeof playbookFlowConfig>,
     @Optional() private readonly settingsService?: PlaybookFlowSettingsService,
   ) {}
 
@@ -34,8 +29,9 @@ export class PlaybookExecutionSettingsResolverService {
   }
 
   async resolve(flowSettings?: { recursionLimit?: number; maxParallelism?: number }): Promise<EffectivePlaybookExecutionSettings> {
+    // Admin-managed settings (catalog.system_settings `playbook_settings`) are
+    // authoritative; normalization already bounds every value.
     const stored = (await this.systemService.getPlaybookSettings()).playbookExecution;
-    const availableCapacity = Math.min(stored.availableCapacity, this.config.maxConcurrentGlobalExecutions);
     const maxParallelismPerExecution = stored.maxParallelismPerExecution;
     const effectiveExecutionParallelism = Math.min(
       Math.max(1, flowSettings?.maxParallelism ?? maxParallelismPerExecution),
@@ -45,17 +41,10 @@ export class PlaybookExecutionSettingsResolverService {
 
     return {
       ...stored,
-      availableCapacity,
-      maxConcurrentPerUser: Math.min(stored.maxConcurrentPerUser, availableCapacity),
-      maxConcurrentPerFlow: Math.min(stored.maxConcurrentPerFlow, this.config.maxConcurrentPerFlow, availableCapacity),
-      maxConcurrentPerProvider: Math.min(stored.maxConcurrentPerProvider, this.config.maxConcurrentPerProvider, availableCapacity),
-      maxConcurrentPerModel: Math.min(stored.maxConcurrentPerModel, this.config.maxConcurrentPerModel, availableCapacity),
-      executionQueueMaxDepth: stored.executionQueueMaxDepth,
       maxParallelismPerExecution,
       effectiveExecutionParallelism,
       recursionLimitDefault: Math.min(stored.recursionLimitDefault, recursionLimitMax),
       recursionLimitMax,
-      dynamicReasoningEnabled: this.config.dynamicReasoningEnabled,
       dynamicReasoning: {
         ...stored.dynamicReasoning,
         maxParallelism: Math.min(stored.dynamicReasoning.maxParallelism, effectiveExecutionParallelism),

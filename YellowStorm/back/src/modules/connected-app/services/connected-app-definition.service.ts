@@ -1,16 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common';
-import {
-  CONNECTED_APP_DEFINITION_STORE,
-  USER_APP_CONNECTION_STORE,
-  type ConnectedAppDefinitionRow,
-  type ConnectedAppDefinitionStore,
-  type UserAppConnectionStore,
+import { Injectable } from '@nestjs/common';
+import {  
+  type ConnectedAppDefinitionRow,    
 } from '../persistence/connected-app.store';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { collapseRepeatedChar, collapseWhitespace } from '@common/utils';
 import { CreateConnectedAppDefinitionDto, DEFAULT_COMMON_APP_KEYS } from '../dto/create-connected-app-definition.dto';
 import { UpdateConnectedAppDefinitionDto } from '../dto/update-connected-app-definition.dto';
 import {
@@ -18,14 +13,14 @@ import {
   ConnectedAppPublicResponse,
   DecryptedAppConfig,
 } from '../interfaces/connected-app.interface';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
+import { PgConnectedAppDefinitionStore } from '../persistence/pg-connected-app.store';
 
 @Injectable()
 export class ConnectedAppDefinitionService {
   constructor(
-    @Inject(CONNECTED_APP_DEFINITION_STORE)
-    private readonly definitionStore: ConnectedAppDefinitionStore,
-    @Inject(USER_APP_CONNECTION_STORE)
-    private readonly connectionStore: UserAppConnectionStore,
+    private readonly definitionStore: PgConnectedAppDefinitionStore,
+    private readonly connectionStore: PgUserAppConnectionStore,
     private readonly cryptoService: CryptoService,
     private readonly logger: LoggerService,
   ) {
@@ -191,7 +186,7 @@ export class ConnectedAppDefinitionService {
     return { deletedConnections: result.deletedConnections };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   private toAdminResponse(d: ConnectedAppDefinitionRow, connectedUserCount = 0): ConnectedAppAdminResponse {
     return {
       id: d.id,
@@ -220,7 +215,7 @@ export class ConnectedAppDefinitionService {
       const envValue = process.env.COMMON_APP_KEYS;
       if (!envValue) {
         this.logger.debug('COMMON_APP_KEYS not in env, using defaults');
-        return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+        return DEFAULT_COMMON_APP_KEYS;
       }
 
       const parsed = JSON.parse(envValue);
@@ -241,7 +236,7 @@ export class ConnectedAppDefinitionService {
       return parsed;
     } catch (error) {
       this.logger.error('Failed to parse COMMON_APP_KEYS from env, using defaults', String(error));
-      return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+      return DEFAULT_COMMON_APP_KEYS;
     }
   }
 
@@ -272,16 +267,11 @@ export class ConnectedAppDefinitionService {
   }
 
   async suggestAppKey(displayName: string): Promise<string> {
-    const slug = collapseRepeatedChar(
-      collapseWhitespace(
-        displayName
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9-]/g, ''),
-        '-',
-      ),
-      '-',
-    );
+    const slug = displayName
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-{2,}/g, '-');
 
     let baseKey = slug;
     let counter = 1;

@@ -36,7 +36,7 @@ export class PlaybookFlowRuntimeClientService {
       const grpcUrl = this.configService.get<string>('playbook-flow.grpcUrl', 'localhost:50051');
       const { credentials, options } = buildGrpcChannelCredentials(
         this.configService,
-        (msg) => this.logger.warn(msg),
+        (msg) => { this.logger.warn(msg); },
       );
       this.client = new pfPackage.PlaybookFlowRuntime(grpcUrl, credentials, options);
       this.available = true;

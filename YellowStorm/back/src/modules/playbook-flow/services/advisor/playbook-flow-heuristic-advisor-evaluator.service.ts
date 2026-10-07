@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PlaybookFlowDesignGrpcService } from '../playbook-flow-design-grpc.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
-import type { FlowNode } from '../../schemas/playbook-flow.schema';
-import type { FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
+import type { FlowNode } from '../../models/playbook-flow.model';
+import type { TaskResultRecord } from '../../persistence/task-result.repository';
 import type { FlowExecutionAdvisorEvaluationResult } from '../../interfaces/playbook-flow-execution-advisor.interface';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class PlaybookFlowHeuristicAdvisorEvaluatorService {
     ownerId: string;
     flowId: string;
     node: FlowNode;
-    taskResult: FlowTaskResultDocument | Record<string, unknown>;
+    taskResult: TaskResultRecord | Record<string, unknown>;
     expectedResult: string | null;
     outputFormatGuide: string | null;
     baselineOutput: string | null;

@@ -16,9 +16,6 @@ export interface SemanticModelRow {
   currentPublishedVersionId: string | null;
   createdAt: string;
   updatedAt: string;
-  indexStatus: 'pending' | 'in_progress' | 'indexed' | 'failed' | 'not_indexed';
-  indexError: string | null;
-  executionOwner: 'legacy' | 'runtime';
 }
 
 const MODEL_COLUMNS = `
@@ -27,10 +24,7 @@ const MODEL_COLUMNS = `
   m.name_managed_by_system AS "nameManagedBySystem",
   m.current_draft_version_id AS "currentDraftVersionId",
   m.current_published_version_id AS "currentPublishedVersionId",
-  m.execution_owner AS "executionOwner",
-  m.created_at AS "createdAt", m.updated_at AS "updatedAt",
-  COALESCE((SELECT j.status FROM semantic_model.graph_index_jobs j WHERE j.model_id=m.id),'not_indexed') AS "indexStatus",
-  (SELECT j.last_error FROM semantic_model.graph_index_jobs j WHERE j.model_id=m.id) AS "indexError"`;
+  m.created_at AS "createdAt", m.updated_at AS "updatedAt"`;
 
 @Injectable()
 export class SemanticModelRepository {
@@ -43,10 +37,11 @@ export class SemanticModelRepository {
       kind?: string;
       status?: string;
       workspace?: string;
+      scope?: 'mine' | 'shared';
       page: number;
       limit: number;
     },
-  ): Promise<{ items: Array<SemanticModelRow & Record<string, unknown>>; pagination: Record<string, number> }> {
+  ): Promise<{ items: (SemanticModelRow & Record<string, unknown>)[]; pagination: Record<string, number> }> {
     const params: unknown[] = [userId];
     const conditions = [
       `(m.owner_user_id = $1 OR EXISTS (
@@ -65,6 +60,8 @@ export class SemanticModelRepository {
       params.push(filters.status);
       conditions.push(`m.status = $${params.length}`);
     }
+    if (filters.scope === 'mine') conditions.push('m.owner_user_id = $1');
+    if (filters.scope === 'shared') conditions.push('m.owner_user_id <> $1');
     if (filters.workspace) {
       params.push(filters.workspace);
       conditions.push(`EXISTS (SELECT 1 FROM semantic_model.workspace_links wl
@@ -79,6 +76,9 @@ export class SemanticModelRepository {
     params.push(filters.limit, offset);
     const rows = await this.database.query<SemanticModelRow & Record<string, unknown>>(
       `SELECT ${MODEL_COLUMNS},
+        CASE WHEN m.owner_user_id = $1 THEN 'owner' ELSE (
+          SELECT membership.role FROM semantic_model.memberships membership
+          WHERE membership.model_id = m.id AND membership.user_id = $1) END AS role,
         (SELECT COUNT(*)::int FROM semantic_model.workspace_links wl WHERE wl.model_id = m.id AND wl.enabled) AS "workspaceCount",
         (SELECT COUNT(*)::int FROM semantic_model.node_types nt WHERE nt.version_id = m.current_draft_version_id) AS "nodeCount",
         (SELECT COUNT(*)::int FROM semantic_model.relation_types rt WHERE rt.version_id = m.current_draft_version_id) AS "relationCount",
@@ -149,7 +149,7 @@ export class SemanticModelRepository {
        RETURNING id, owner_user_id AS "ownerUserId", name, description, kind, status,
          revision::int, origin_workspace_id AS "originWorkspaceId", name_managed_by_system AS "nameManagedBySystem",
          current_draft_version_id AS "currentDraftVersionId",
-          current_published_version_id AS "currentPublishedVersionId", execution_owner AS "executionOwner",
+          current_published_version_id AS "currentPublishedVersionId",
          created_at AS "createdAt", updated_at AS "updatedAt"`,
       [input.ownerUserId, input.name, input.description, input.kind, input.originWorkspaceId ?? null, input.nameManagedBySystem],
     );
@@ -187,7 +187,7 @@ export class SemanticModelRepository {
        RETURNING id, owner_user_id AS "ownerUserId", name, description, kind, status,
          revision::int, origin_workspace_id AS "originWorkspaceId", name_managed_by_system AS "nameManagedBySystem",
          current_draft_version_id AS "currentDraftVersionId",
-         current_published_version_id AS "currentPublishedVersionId", execution_owner AS "executionOwner",
+         current_published_version_id AS "currentPublishedVersionId",
          created_at AS "createdAt", updated_at AS "updatedAt"`,
       [modelId, input.name ?? null, input.description ?? null, expectedRevision],
     );

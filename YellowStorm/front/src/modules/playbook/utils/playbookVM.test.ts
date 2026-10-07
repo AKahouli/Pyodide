@@ -99,6 +99,16 @@ describe('buildPlaybookVM', () => {
     expect(vm.approval?.taskId).toBe('n2');
   });
 
+  it('uses the playbook step label instead of an internal ID for approval', () => {
+    const pending = execution('pending_approval', {
+      interruptPayload: { type: 'human_approval', taskId: 'n2', taskTitle: 'n2', message: 'Approve?', threadId: 't1' },
+    });
+    const labeled = buildPlaybookVM(raw({ executionStatus: 'pending_approval', nodes: [{ id: 'n2', label: 'Review report' }] }), { liveExecution: pending });
+    expect(labeled.approval?.nodeName).toBe('Review report');
+    const unnamed = buildPlaybookVM(raw({ executionStatus: 'pending_approval' }), { liveExecution: pending });
+    expect(unnamed.approval?.nodeName).toBe('');
+  });
+
   it('maps history (oldest→newest) and derives lastRun with duration', () => {
     const vm = buildPlaybookVM(raw(), {
       history: [

@@ -728,6 +728,24 @@ describe('PlaybookNodeEditor', () => {
     vi.useRealTimers();
   });
 
+  it('saves a burst of node title edits once after typing stops', () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    render(<PlaybookNodeEditor playbookId="playbook-1" task={genericTask} open onOpenChange={vi.fn()} onSave={onSave} />);
+    const title = screen.getByLabelText('nodeEditor.stepTitle');
+
+    fireEvent.change(title, { target: { value: 'First' } });
+    act(() => { vi.advanceTimersByTime(500); });
+    fireEvent.change(title, { target: { value: 'First second' } });
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(onSave).not.toHaveBeenCalled();
+
+    act(() => { vi.advanceTimersByTime(1500); });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith('task-1', { title: 'First second' });
+    vi.useRealTimers();
+  });
+
   it('keeps Data Flow available for evaluation nodes', () => {
     render(
       <PlaybookNodeEditor
@@ -758,6 +776,22 @@ describe('PlaybookNodeEditor', () => {
     expect(screen.getByTestId('data-flow-can-edit-output-kinds')).toHaveTextContent('true');
     expect(screen.getByTestId('data-flow-can-modify-outputs')).toHaveTextContent('false');
     expect(screen.queryAllByTestId('data-flow-output-port')).toHaveLength(2);
+  });
+
+  it('shows model, routing mode, and AI prompt controls for router nodes', () => {
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...routerTask, modelId: 'model-1', routerConfig: { ...routerTask.routerConfig!, mode: 'ai', prompt: 'Pick a route.' } }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('nodeEditor.model')).toBeInTheDocument();
+    expect(screen.getByText('routerEditor.mode')).toBeInTheDocument();
+    expect(screen.getByLabelText('routerEditor.prompt')).toHaveValue('Pick a route.');
   });
 
   it('organizes the editor into business-focused tabs while keeping global save status visible', () => {

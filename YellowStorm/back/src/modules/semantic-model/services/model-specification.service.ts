@@ -14,7 +14,11 @@ import type {
 export class ModelSpecificationService {
   buildSnapshot(input: Omit<ModelSpecification, 'specHash'>): ModelSpecification {
     const canonical = this.canonicalize({ ...input });
-    return { ...canonical, specHash: this.hash(canonical) };
+    return { ...canonical, specHash: this.hashCanonical(canonical) };
+  }
+
+  hashCanonical(value: unknown): string {
+    return `sha256:${createHash('sha256').update(this.stableStringify(value)).digest('hex')}`;
   }
 
   validate(input: Omit<ModelSpecification, 'specHash'>): SpecIssue[] {
@@ -90,10 +94,6 @@ export class ModelSpecificationService {
       return left < right ? -1 : left > right ? 1 : 0;
     });
     return { ...spec, concepts: sortConcepts, relations: sortRelations, sourceScope: sortScope };
-  }
-
-  private hash(canonical: Omit<ModelSpecification, 'specHash'>): string {
-    return `sha256:${createHash('sha256').update(this.stableStringify(canonical)).digest('hex')}`;
   }
 
   // ponytail: recursive key sort; arrays keep order (top-level sets are

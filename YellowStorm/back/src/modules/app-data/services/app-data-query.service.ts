@@ -13,9 +13,7 @@ import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMigrationService } from './app-data-migration.service';
 import { AppDataPolicyService } from './app-data-policy.service';
 
-export interface RowQueryFilter {
-  [column: string]: string | number | boolean | null;
-}
+export type RowQueryFilter = Record<string, string | number | boolean | null>;
 
 @Injectable()
 export class AppDataQueryService {

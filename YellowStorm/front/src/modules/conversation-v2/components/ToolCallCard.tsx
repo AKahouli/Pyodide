@@ -1,11 +1,27 @@
+import { CheckIcon, Loader2Icon, TriangleIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFileViewerStore } from '@/modules/file-viewer';
 import { useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
 import { resolveToolInfo } from '../utils/tool-info';
+import { ACTIVITY_TONE_CLASS, classifyStatus, type ActivityStatus } from '../utils/activity-status';
 import type { AgentEvent } from '../types';
 
 type ToolEvent = Extract<AgentEvent, { type: 'tool' }>;
+
+/** Small status glyph so a running tool is visibly different from a finished one. */
+function StatusGlyph({ status }: { status: ActivityStatus }) {
+  if (status === 'running') {
+    return <Loader2Icon className='size-3 shrink-0 animate-spin motion-reduce:animate-none' aria-hidden />;
+  }
+  if (status === 'success') {
+    return <CheckIcon className='size-3 shrink-0' aria-hidden />;
+  }
+  if (status === 'error') {
+    return <TriangleIcon className='size-3 shrink-0' aria-hidden />;
+  }
+  return null;
+}
 
 export function ToolCallCard({ event }: { event: ToolEvent }) {
   const openToolPanel = useConversationV2Store((s) => s.openToolPanel);
@@ -26,6 +42,15 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
   }
 
   const isActive = selectedToolCallId === event.tool_call_id;
+  const activity = classifyStatus(event.status);
+  const statusLabel = activity === 'running'
+    ? t('tool.running')
+    : activity === 'error'
+      ? t('tool.error')
+      : activity === 'success'
+        ? t('tool.success')
+        : t('tool.pending');
+
   return (
     <button
       type='button'
@@ -35,7 +60,7 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
         closeFileViewer();
         openToolPanel(event.tool_call_id);
       }}
-      aria-label={t('tool.openDetails')}
+      aria-label={`${info.functionLabel} — ${statusLabel}`}
       className={cn(
         'group/tool not-prose my-1 inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-left transition-colors hover:bg-accent/40',
         isActive && 'border-primary/60 bg-accent/30',
@@ -48,6 +73,15 @@ export function ToolCallCard({ event }: { event: ToolEvent }) {
           {info.functionArg}
         </code>
       )}
+      <span
+        className={cn(
+          'ml-0.5 inline-flex items-center gap-1 border-l pl-1.5 text-[11px] font-medium',
+          ACTIVITY_TONE_CLASS[activity],
+        )}
+      >
+        <StatusGlyph status={activity} />
+        <span className='sr-only'>{statusLabel}</span>
+      </span>
     </button>
   );
 }

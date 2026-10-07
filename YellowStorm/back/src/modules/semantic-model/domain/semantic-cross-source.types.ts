@@ -18,7 +18,7 @@ export interface RelationResolutionRule {
 
 export interface SourceResolutionPolicy {
   conceptId: string;
-  priorities: Array<{ mappingId: string; rank: number }>;
+  priorities: { mappingId: string; rank: number }[];
   defaultStrategy: 'primary_then_fallback';
 }
 
@@ -38,6 +38,22 @@ export interface ResolvedMappingEntity {
   entity: ResolvedEntity;
 }
 
+export type SourcePreviewIssueCode = 'source_disabled' | 'source_not_ready' | 'source_failed' | 'preview_limited';
+
+/** One unusable source in a preview: which file, which concept, and why it failed. */
+export interface SourcePreviewIssue {
+  mappingId: string;
+  conceptId?: string;
+  documentName?: string;
+  code: SourcePreviewIssueCode;
+  /** Cause without the source name, so identical causes can be grouped. */
+  reason?: string;
+  /** Sentence shown to the user, naming the source. */
+  message: string;
+  /** Technical cause, shown on demand. */
+  detail?: string;
+}
+
 export interface ReconciledEntity {
   id: string;
   conceptId: string;
@@ -50,8 +66,8 @@ export interface ReconciledEntity {
     rowNumber?: number;
     field?: NonNullable<ResolvedEntity['provenance']['fields']>[string];
   }>;
-  sources: Array<{ mappingId: string; source: ResolvedMappingEntity['source'] }>;
-  conflicts: Array<{
+  sources: { mappingId: string; source: ResolvedMappingEntity['source'] }[];
+  conflicts: {
     attribute: string;
     preferred: unknown;
     conflicting: unknown;
@@ -59,7 +75,7 @@ export interface ReconciledEntity {
     conflictingMappingId: string;
     preferredProvenance: ReconciledEntity['provenance'][string];
     conflictingProvenance: ReconciledEntity['provenance'][string];
-  }>;
+  }[];
 }
 
 export interface RelationMatch {

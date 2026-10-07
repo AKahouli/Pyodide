@@ -14,14 +14,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    TEMP_FOLDER: str = "./tmp"
     HOST: str = "localhost"
     PORT: int = Field(
         default=8001,
         validation_alias=AliasChoices("PORT", "ADK_PORT"),
     )
-    SSL_KEYFILE: Optional[str] = None
-    SSL_CERTFILE: Optional[str] = None
     LOG_CONFIG_PATH: str = "./src/logger/uvicorn_disable_logging.json"
     TIMEOUT_KEEP_ALIVE: int = 5
     UVICORN_WORKERS: int = 1
@@ -33,8 +30,6 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 2560
 
     # Azure Storage
-    AZURE_STORAGE_ACCOUNT: str
-    AZURE_STORAGE_ACCOUNT_KEY: str
     AZURE_DATALAKE_CONNECTION_STRING: str
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str
     CEPH_ENDPOINT: Optional[str] = Field(
@@ -58,10 +53,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CEPH_SECRET_ACCESS_KEY", "CEPH_S3_SECRET_ACCESS_KEY"),
     )
     DATABASE_URL: str
+    ROOT_WORK_DATABASE_URL: Optional[str] = None
+    ROOT_WORK_BACKGROUND_ENABLED: bool = False
+    ROOT_WORK_LLM_CAPACITY_ENABLED: bool = False
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str
     API_URL: str
-    API_ADK_URL: str
     INTERNAL_SERVICE_SECRET: Optional[str] = None
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
@@ -82,21 +79,15 @@ class Settings(BaseSettings):
     # Cap the LLM response length. Prevents runaway 10k+ token generations that
     # eat wall-clock time without adding value. Set to 0 to disable the cap.
     SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
-    EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None
-    MAX_CONCURRENCY: int = 50
-    MAX_QUEUE_LENGTH: int = 500
     APPLICATION_INSIGHTS_LOG: bool = False
     DD_TRACE_ENABLED: bool = False
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
     GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
-    # Authentication to get token
-    AUTH_USERNAME: str
-    AUTH_PASSWORD: str
     # Redis
     ENABLE_REDIS_SSL: bool = False
     REDIS_HOST: str
@@ -104,11 +95,6 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_USER: Optional[str] = None
     REDIS_PASSWORD: Optional[str] = None
-    # Celery Configuration
-    CELERY_BROKER_URL: Optional[str] = None
-    CELERY_RESULT_BACKEND: Optional[str] = None
-    CELERY_WORKER_CONCURRENCY: int = 4
-    SECRET_KEY: str
     ADK_API_KEY: str
     VECTORSTORE_API_KEY: str
     # Ollama
@@ -129,11 +115,6 @@ class Settings(BaseSettings):
 
     # Embedding Configuration
     FAKE_EMBEDDINGS: bool = False
-    ENABLE_POSTGRESQL_LOGGING: bool = True
-    POSTGRESQL_LOG_BATCH_SIZE: int = 50
-    POSTGRESQL_LOG_FLUSH_INTERVAL: float = 10.0
-    POSTGRESQL_LOG_POOL_SIZE: int = 5
-    POSTGRESQL_LOG_MAX_OVERFLOW: int = 10
 
     # Database Connection Pool Settings
     DB_MAX_CONNECTIONS: int = 3000  # PostgreSQL max_connections setting
@@ -220,23 +201,6 @@ class Settings(BaseSettings):
     BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = [
         "67c99ad236081d40c152c23d"
     ]  # Brain IDs that enable base64 list processing
-    ADK_ENABLE_PROGRESSIVE_SSE_STREAMING: bool = False
-
-    @field_validator("AZURE_STORAGE_ACCOUNT", mode="before")
-    @classmethod
-    def validate_azure_storage_account(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AZURE_STORAGE_ACCOUNT is required and cannot be empty")
-        return v
-
-    @field_validator("AZURE_STORAGE_ACCOUNT_KEY", mode="before")
-    @classmethod
-    def validate_azure_storage_account_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError(
-                "AZURE_STORAGE_ACCOUNT_KEY is required and cannot be empty"
-            )
-        return v
 
     @field_validator("AZURE_DATALAKE_CONNECTION_STRING", mode="before")
     @classmethod
@@ -433,20 +397,6 @@ class Settings(BaseSettings):
             )
         return self
 
-    @field_validator("AUTH_USERNAME", mode="before")
-    @classmethod
-    def validate_auth_username(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AUTH_USERNAME is required and cannot be empty")
-        return v
-
-    @field_validator("AUTH_PASSWORD", mode="before")
-    @classmethod
-    def validate_auth_password(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AUTH_PASSWORD is required and cannot be empty")
-        return v
-
     @field_validator("REDIS_HOST", mode="before")
     @classmethod
     def validate_redis_host(cls, v):
@@ -467,13 +417,6 @@ class Settings(BaseSettings):
         except (ValueError, TypeError):
             raise ValueError("REDIS_PORT must be a valid 4-digit integer")
 
-    @field_validator("SECRET_KEY", mode="before")
-    @classmethod
-    def validate_secret_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("SECRET_KEY is required and cannot be empty")
-        return v
-
     def get_effective_pool_size(self) -> int:
         """Get the effective pool size, auto-scaled if needed.
 
@@ -484,70 +427,30 @@ class Settings(BaseSettings):
         if not self.DB_POOL_AUTO_SCALE:
             return self.DB_POOL_SIZE
 
-        # Only reserve logging connections if logging is actually enabled
-        # Each log handler can use up to pool_size + max_overflow connections
-        total_log_connections = 0
-        if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = (
-                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
-            )
-            total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (
-            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
-        ) + total_log_connections
+        total_connections = self.UVICORN_WORKERS * (
+            self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW
+        )
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
-            # Auto-calculate safe pool sizes
-            # Subtract total logging connections (all workers) if logging is enabled
-            available_for_workers = safe_limit - total_log_connections
+            available_for_workers = safe_limit
 
-            # Validate configuration is feasible
             if available_for_workers < self.UVICORN_WORKERS:
-                error_msg = (
+                raise ValueError(
                     f"Invalid database pool configuration: Cannot allocate connections.\n"
                     f"  DB_MAX_CONNECTIONS: {self.DB_MAX_CONNECTIONS}\n"
                     f"  Safe limit (80%): {safe_limit}\n"
-                    f"  Workers: {self.UVICORN_WORKERS}\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += (
-                        f"  Logging pool per worker: {self.POSTGRESQL_LOG_POOL_SIZE}\n"
-                        f"  Total logging connections: {total_log_connections}\n"
-                    )
-                else:
-                    error_msg += f"  PostgreSQL logging: Disabled\n"
-
-                error_msg += (
                     f"  Available for workers: {available_for_workers}\n"
                     f"  Minimum required: {self.UVICORN_WORKERS} (1 per worker)\n"
                     f"\n"
                     f"Solutions:\n"
                     f"  1. Increase DB_MAX_CONNECTIONS (current: {self.DB_MAX_CONNECTIONS})\n"
                     f"  2. Reduce UVICORN_WORKERS (current: {self.UVICORN_WORKERS})\n"
+                    f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
                 )
 
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += f"  3. Reduce POSTGRESQL_LOG_POOL_SIZE (current: {self.POSTGRESQL_LOG_POOL_SIZE})\n"
-                    error_msg += f"  4. Disable PostgreSQL logging (ENABLE_POSTGRESQL_LOGGING=False)\n"
-                    error_msg += f"  5. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-                else:
-                    error_msg += f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-
-                raise ValueError(error_msg)
-
-            connections_per_worker_safe = available_for_workers // self.UVICORN_WORKERS
-
-            # Clamp to minimum of 1 connection per worker
-            if connections_per_worker_safe < 1:
-                connections_per_worker_safe = 1
-
-            # Split into pool_size (70%) and max_overflow (30%)
-            pool_size = int(connections_per_worker_safe * 0.7)
-
-            # Ensure at least 1 for pool_size
-            return max(1, pool_size)
+            connections_per_worker_safe = max(1, available_for_workers // self.UVICORN_WORKERS)
+            return max(1, int(connections_per_worker_safe * 0.7))
 
         return self.DB_POOL_SIZE
 
@@ -555,81 +458,22 @@ class Settings(BaseSettings):
         """Get the effective max overflow, auto-scaled if needed.
 
         Returns at least 0 for overflow.
-
-
         Raises:
             ValueError: If DB_MAX_CONNECTIONS is too low for the current configuration
         """
         if not self.DB_POOL_AUTO_SCALE:
             return self.DB_POOL_MAX_OVERFLOW
 
-        # Only reserve logging connections if logging is actually enabled
-        # Each log handler can use up to pool_size + max_overflow connections
-        total_log_connections = 0
-        if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = (
-                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
-            )
-            total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (
-            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
-        ) + total_log_connections
+        total_connections = self.UVICORN_WORKERS * (
+            self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW
+        )
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
-            # Auto-calculate safe pool sizes
-            # Subtract total logging connections (all workers) if logging is enabled
-            available_for_workers = safe_limit - total_log_connections
-
-            # Validate configuration is feasible (same check as pool_size)
-            if available_for_workers < self.UVICORN_WORKERS:
-                error_msg = (
-                    f"Invalid database pool configuration: Cannot allocate connections.\n"
-                    f"  DB_MAX_CONNECTIONS: {self.DB_MAX_CONNECTIONS}\n"
-                    f"  Safe limit (80%): {safe_limit}\n"
-                    f"  Workers: {self.UVICORN_WORKERS}\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += (
-                        f"  Logging pool per worker: {self.POSTGRESQL_LOG_POOL_SIZE}\n"
-                        f"  Total logging connections: {total_log_connections}\n"
-                    )
-                else:
-                    error_msg += f"  PostgreSQL logging: Disabled\n"
-
-                error_msg += (
-                    f"  Available for workers: {available_for_workers}\n"
-                    f"  Minimum required: {self.UVICORN_WORKERS} (1 per worker)\n"
-                    f"\n"
-                    f"Solutions:\n"
-                    f"  1. Increase DB_MAX_CONNECTIONS (current: {self.DB_MAX_CONNECTIONS})\n"
-                    f"  2. Reduce UVICORN_WORKERS (current: {self.UVICORN_WORKERS})\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += f"  3. Reduce POSTGRESQL_LOG_POOL_SIZE (current: {self.POSTGRESQL_LOG_POOL_SIZE})\n"
-                    error_msg += f"  4. Disable PostgreSQL logging (ENABLE_POSTGRESQL_LOGGING=False)\n"
-                    error_msg += f"  5. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-                else:
-                    error_msg += f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-
-                raise ValueError(error_msg)
-
-            connections_per_worker_safe = available_for_workers // self.UVICORN_WORKERS
-
-            # Clamp to minimum of 1 connection per worker
-            if connections_per_worker_safe < 1:
-                connections_per_worker_safe = 1
-
-            # Split into pool_size (70%) and max_overflow (30%)
-            pool_size = int(connections_per_worker_safe * 0.7)
-            pool_size = max(1, pool_size)  # Ensure at least 1
-
-            overflow = connections_per_worker_safe - pool_size
-
-            # Ensure at least 0 for overflow (never negative)
-            return max(0, overflow)
+            available_for_workers = safe_limit
+            connections_per_worker_safe = max(1, available_for_workers // self.UVICORN_WORKERS)
+            pool_size = max(1, int(connections_per_worker_safe * 0.7))
+            return max(0, connections_per_worker_safe - pool_size)
 
         return self.DB_POOL_MAX_OVERFLOW
 
@@ -650,8 +494,17 @@ def get_settings() -> Settings:
     env_file = ENV_FILES.get(environment)
     if env_file:
         project_root = Path(__file__).parent.parent.parent
-        env_file_path = str(project_root / env_file)
-        settings = Settings(_env_file=env_file_path)  # type: ignore
+        env_file_path = project_root / env_file
+        settings = Settings(_env_file=str(env_file_path))  # type: ignore
+        # pydantic-settings loads .env into the Settings object only, NOT
+        # os.environ. Flags read via os.environ.get() (WORKY_SEND_APPROVAL_GATE,
+        # ORCHESTRATOR_REPLAY_BARRIER_*) would never see the file otherwise.
+        # Mirror it in; a real exported env var still wins (setdefault).
+        if env_file_path.exists():
+            from pydantic_settings.sources import read_env_file
+            for _k, _v in read_env_file(env_file_path, case_sensitive=True).items():
+                if _v is not None:
+                    os.environ.setdefault(_k, _v)
     elif environment == "prod":
         settings = Settings()  # type: ignore
     else:

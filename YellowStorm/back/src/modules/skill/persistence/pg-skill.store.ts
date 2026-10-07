@@ -7,15 +7,14 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  SKILL_CATEGORY_STORE,
-  SKILL_STORE,
-  type NewSkillRow,
-  type SkillCategoryRow,
-  type SkillCategoryStore,
-  type SkillFileRow,
-  type SkillListQuery,
-  type SkillRow,
-  type SkillStore,
+  SKILL_STORE, 
+  type NewSkillRow, 
+  type SkillCategoryRow, 
+  type SkillCategoryStore, 
+  type SkillFileRow, 
+  type SkillListQuery, 
+  type SkillRow, 
+  type SkillStore, 
 } from './skill.store';
 
 type CategoryT = typeof schema.catalogSkillCategories.$inferSelect;
@@ -217,7 +216,7 @@ export class PgSkillStore implements SkillStore {
     const [row] = await this.q
       .select()
       .from(schema.catalogSkills)
-      .where(and(eq(schema.catalogSkills.createdBy, createdBy), or(eq(schema.catalogSkills.name, name), eq(schema.catalogSkills.slug, slug))!))
+      .where(and(eq(schema.catalogSkills.createdBy, createdBy), or(eq(schema.catalogSkills.name, name), eq(schema.catalogSkills.slug, slug))))
       .limit(1);
     return row ? skillToRow(row, []) : null;
   }

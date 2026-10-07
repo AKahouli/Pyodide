@@ -8,7 +8,6 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import { CONVERSATION_EXECUTION_STORE, ConversationExecutionStore } from '../persistence/conversation-execution-store';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import { getComponentType as sharedGetComponentType, extractComponentData as sharedExtractComponentData, mapTaskStatus as sharedMapTaskStatus } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
@@ -24,6 +23,7 @@ import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
 import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
 import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
+import { toGrpcWorkspaceDocument } from './grpc-workspace-document';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { TeamService } from '../../team/team.service';
@@ -31,8 +31,9 @@ import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
 import { buildGrpcChannelCredentials, createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { ResponseReliabilityService } from './response-reliability.service';
-import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
+import { ConversationAgentRequestBuilder, resolvedDefinitionsDigest, type BuiltAgentExecutionRequest, type RootDelegationContext } from './conversation-agent-request.builder';
 import { ConversationAttachmentResolverService } from './conversation-attachment-resolver.service';
 import { ConversationAttachmentService } from './conversation-attachment.service';
 import { ConversationAttachmentContextService } from './conversation-attachment-context.service';
@@ -40,12 +41,22 @@ import type { PreparedConversationAttachment } from '../interfaces/conversation-
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { ConversationNameService } from './conversation-name.service';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
+import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
+import type { ConversationRecord } from '../persistence/conversation-store';
+import { ConversationRootResolverService } from '../root-work/conversation-root-resolver.service';
+import { RootWorkService } from '../root-work/root-work.service';
+import { RootBackgroundJobStore } from '../persistence/postgres/root-background-job.store';
+import { freezeRootCapabilityCeiling } from '../root-work/root-capability-ceiling';
+import { ExecutionScopeV1, RootNativeState, newStopRequestId } from '../root-work/root-work.types';
+import { isCanonicalObjectId, newObjectId } from '@common/postgres/object-id';
 
 export interface StreamRequest {
+  rootContinuation?: MessageReplayContext['rootContinuation'];
   content: string;
   taskSummary?: string;
   attachedFileIds?: string[];
@@ -70,6 +81,7 @@ export interface StreamRequest {
 }
 
 export interface StreamGovernanceOverride {
+  rootBound?: boolean;
   runtimeMode: 'governed';
   primaryAgentId: string;
   allowedAgentIds: string[];
@@ -155,9 +167,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly attachmentContextService: ConversationAttachmentContextService,
     private readonly conversationSettings: ConversationSettingsService,
     private readonly semanticModelService: SemanticModelService,
-    @Inject(CONVERSATION_EXECUTION_STORE)
-    private readonly executionStore: ConversationExecutionStore,
+    private readonly executionStore: PostgresConversationExecutionStore,
+    private readonly conversationNameService: ConversationNameService,
     private readonly teamService?: TeamService,
+    @Inject(forwardRef(() => ConversationRootResolverService))
+    private readonly rootDelegateResolver?: ConversationRootResolverService,
+    private readonly rootWorkService?: RootWorkService,
+    private readonly rootBackgroundJobs?: RootBackgroundJobStore,
   ) {
     this.logger.setContext('StreamService');
     this.fleetAdmissionEnabled = this.configService.get<boolean>('conversation.fleetAdmissionEnabled', true);
@@ -258,7 +274,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
 
-      const { credentials, options } = buildGrpcChannelCredentials(this.configService, (msg) => this.logger.warn(msg));
+      const { credentials, options } = buildGrpcChannelCredentials(this.configService, (msg) => { this.logger.warn(msg); });
 
       this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, credentials, options);
 
@@ -334,6 +350,25 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.chatbotClient;
   }
 
+  async rootBackgroundReady(fanout = false, followup = false): Promise<boolean> {
+    if (!this.configService?.get<boolean>('conversation.rootBackgroundEnabled', false)
+      || !this.rootBackgroundJobs || !await this.waitForGrpcReady(3000)) return false;
+    const client = this.getChatbotClient();
+    if (!client?.GetRootWorkCapabilities || !client?.RunBackgroundInvocation) return false;
+    try {
+      const metadata = createGrpcMetadata(this.configService);
+      if (!metadata.get('x-api-key').length) return false;
+      const capability = await new Promise<any>((resolve, reject) => {
+        client.GetRootWorkCapabilities({}, metadata, { deadline: new Date(Date.now() + 3000) },
+          (error: unknown, response: unknown) => error ? reject(error) : resolve(response));
+      });
+      return capability?.background_protocol_version === 1 && capability.background_ready === true
+        && (!fanout || capability.background_fanout_protocol_version === 1 && capability.background_fanout_ready === true)
+        && (!followup || capability.background_followup_protocol_version === 1 && capability.background_followup_ready === true)
+        && capability.control_database_fingerprint === await this.rootBackgroundJobs.controlInstance();
+    } catch { return false; }
+  }
+
   /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
   async resolveAgentsBrainContext(agents: IGrpcAgent[]): Promise<void> {
     await this.resolveAgentBrainContexts(agents);
@@ -348,10 +383,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     logOpts?: LogOptions,
     conversationDoc?: { workspaces?: any[] },
   ): Promise<
-    Array<{
+    {
       workspace_id: string;
       workspace_name: string;
-      workspace_documents: Array<{
+      workspace_documents: {
         _id: string;
         filename: string;
         filepath: string;
@@ -362,8 +397,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         workspace_name: string;
         file_name: string;
         createdAt: string;
-      }>;
-    }>
+      }[];
+    }[]
   > {
     try {
       const conversation = conversationDoc ?? (await this.conversationService.getConversationDocument(conversationId));
@@ -373,10 +408,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         return [];
       }
 
-      const contexts: Array<{
+      const contexts: {
         workspace_id: string;
         workspace_name: string;
-        workspace_documents: Array<{
+        workspace_documents: {
           _id: string;
           filename: string;
           filepath: string;
@@ -387,8 +422,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_name: string;
           file_name: string;
           createdAt: string;
-        }>;
-      }> = [];
+        }[];
+      }[] = [];
 
       for (const workspaceId of workspaceIds) {
         const workspaceName = await this.resolveWorkspaceName(workspaceId);
@@ -450,18 +485,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         contextMap.set(wsId, {
           workspace_id: wsId,
           workspace_name: workspaceName,
-          workspace_documents: result.documents.map((doc) => ({
-            _id: doc.id,
-            filename: doc.filename || '',
-            filepath: doc.path || '',
-            in_memory: false,
-            language: doc.detected_language || 'fr',
-            indexing_token: doc.chunk_size || 1200,
-            workspace_id: wsId,
-            workspace_name: workspaceName,
-            file_name: doc.filename || '',
-            createdAt: doc.createdAt,
-          })),
+          workspace_documents: result.documents.map((doc) => toGrpcWorkspaceDocument(doc, wsId, workspaceName)),
         });
       }),
     );
@@ -493,7 +517,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     systemWorkspaceId: string | undefined,
     attachedFileIds: string[],
   ): Promise<{
-    attachedFiles: Array<{
+    attachedFiles: {
       type: string;
       image?: { filepath: string };
       document?: {
@@ -515,7 +539,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         processing_policy: string;
         search_index_allowed: boolean;
       };
-    }>;
+    }[];
     preparedDocuments: PreparedConversationAttachment[];
   }> {
     if (!attachedFileIds.length) return { attachedFiles: [], preparedDocuments: [] };
@@ -582,7 +606,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     systemWorkspaceId: string | undefined,
     currentFileIds: string[],
   ): Promise<
-    Array<{
+    {
       _id: string;
       filename: string;
       filepath: string;
@@ -593,7 +617,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       workspace_name: string;
       file_name: string;
       createdAt: string;
-    }>
+    }[]
   > {
     if (!systemWorkspaceId) return [];
 
@@ -634,7 +658,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string, userEmail: string = '', username?: string, governanceOverride?: StreamGovernanceOverride, latencyStart?: ConversationLatencyStartContext): Promise<void> {
+  async startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string, userEmail = '', username?: string, governanceOverride?: StreamGovernanceOverride, latencyStart?: ConversationLatencyStartContext): Promise<void> {
     const logOpts: LogOptions = { requestId };
     // Stream bootstrap: entry (latency setting sample included) until the
     // agent execution request build starts.
@@ -861,6 +885,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         conversationId,
         {
           content: request.content,
+          rootContinuation: request.rootContinuation,
           taskSummary: request.taskSummary,
           attachedFileIds: request.attachedFileIds ?? [],
           webSearchEnabled: request.webSearchEnabled ?? false,
@@ -1015,6 +1040,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const continuation = request.rootContinuation && this.rootWorkService
+      ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
+          conversation.rootWorkEpoch ?? 0) : undefined;
+    if (request.rootContinuation && (!continuation || (!request.governanceOverride?.rootBound && request.agentIds.length) || request.teamId
+      || (request.governanceOverride && !request.governanceOverride.rootBound) || conversation.isGroup || conversation.runtimePurpose !== 'chat')) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Native continuation requires its bound root route');
+    }
+    if (continuation) request = { ...continuation.requestProfile!, content: request.content,
+      rootContinuation: request.rootContinuation };
     const systemWorkspaceId = conversation.systemWorkspaceId;
     const groupMembers = conversation.isGroup ? await this.conversationService.getGroupMembers(conversationId) : [];
     endBackendPreAdkStage('conversationContextLoadMs');
@@ -1037,9 +1071,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
     const teamDefinition = request.teamId ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId) : undefined;
-    const semanticSchemaName = request.semanticModelId ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId) : undefined;
+    const semanticModel = request.semanticModelId ? await this.semanticModelService.resolveChatModel(userId, request.semanticModelId) : undefined;
+    // Plan §4.3 routing precedence: an explicit agent target wins; otherwise a
+    // conversation with a bound root runs THE ROOT (not the hidden system
+    // mono-agent). Groups/shared-agent chats keep their own resolution.
+    const boundRootId =
+      !teamDefinition && !conversation.isGroup && !sharedAgentIds.length &&
+      conversation.runtimePurpose === 'chat' && (request.agentIds.length === 0 || (governanceOverride?.rootBound
+        && request.agentIds.length === 1 && request.agentIds[0] === conversation.rootAgentId)) &&
+      conversation.rootAgentId && isCanonicalObjectId(conversation.rootAgentId)
+        ? conversation.rootAgentId
+        : undefined;
     const [workspaceContexts, agents] = await Promise.all([
-      request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
+      continuation?.preparedContext ? Promise.resolve(continuation.preparedContext.workspaceContexts as IGrpcWorkspaceContext[])
+        : request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       teamDefinition
         ? this.agentService.buildGrpcAgentsForPlaybook(
             userId,
@@ -1054,11 +1099,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           : this.agentService.buildAgentsForStream(
               userId,
               request.modelId,
-              request.agentIds,
+              boundRootId ? [boundRootId] : request.agentIds,
               sharedAgentIds,
               groupMembers,
               request.connectorRepo?.connectorId,
-              semanticSchemaName,
+              semanticModel,
               // runtimeContext must exist for every conversation, not just the
               // copilot: trusted system MCP servers (playbook-mcp, agent-mcp)
               // authorize each tool call as the acting user via these headers.
@@ -1078,6 +1123,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, 'Team agents no longer match its hierarchy.');
       }
     }
+    if (boundRootId && governanceOverride) {
+      if (!this.rootDelegateResolver) throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE);
+      const approved = await this.rootDelegateResolver.authorizedWorkspaces(conversationId, userId, governanceOverride.workspaceIds);
+      if (continuation?.capabilityCeiling?.workspaceIds.some((id) => !approved.includes(id))) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Frozen governed source access changed');
+      }
+      workspaceContexts.splice(0, workspaceContexts.length, ...workspaceContexts.filter((context) => approved.includes(context.workspace_id)));
+      for (let index = 0; index < agents.length; index++) {
+        agents[index] = await this.rootDelegateResolver.restrictDefinition(conversationId, userId, agents[index]);
+      }
+    }
     endBackendPreAdkStage('workspaceAgentResolutionMs');
     if (conversation.runtimePurpose === PLATFORM_COPILOT) {
       const pinnedAgentId = conversation.pinnedAgentId?.toString();
@@ -1085,6 +1141,87 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Yellowmind must resolve exactly one pinned platform copilot agent');
       }
     }
+    // WP04 root delegation: when the resolved agent IS the conversation's
+    // bound root, attach the compact catalog + scoped candidate definitions so
+    // ADK can expose the one bounded delegate_to_agent operation.
+    const rootDelegation =
+      boundRootId
+        ? await this.buildRootDelegationContext(conversation, agents, userId, conversationId, request, compaction, runtimeCorrelationId, logOpts)
+        : undefined;
+    let admittedNativeState: RootNativeState | undefined;
+    if (continuation && !rootDelegation) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Root enrollment is no longer available');
+    }
+    if (rootDelegation?.scope) {
+      const definitionDigest = resolvedDefinitionsDigest(agents[0], rootDelegation.candidates);
+      rootDelegation.scope.nativeSessionId = sessionId;
+      if (!this.rootWorkService) {
+        throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Root execution store is unavailable');
+      }
+      // Enrolled execution cannot proceed without its durable control identity.
+      if (continuation) {
+        if (continuation.scope.immutableSnapshotRef !== rootDelegation.scope.immutableSnapshotRef
+          || continuation.rootContext.root_agent_id !== conversation.rootAgentId
+          || continuation.resolvedDefinitionsDigest !== definitionDigest
+          || continuation.rootContext.native_input_control_version !== rootDelegation.rootContext.native_input_control_version
+          || !isDeepStrictEqual(continuation.rootContext.catalog, rootDelegation.rootContext.catalog)) {
+          throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root definition changed during native invocation');
+        }
+        rootDelegation.scope = { ...continuation.scope, resumeIntent: 'resume',
+          nativeInvocationId: continuation.invocationId, nativeSessionId: continuation.sessionId };
+        rootDelegation.rootContext = continuation.rootContext;
+      } else await this.rootWorkService.registerExecution({
+          executionId: rootDelegation.scope.executionId,
+          conversationId,
+          rootAgentId: conversation.rootAgentId ?? null,
+          workGroupId: null,
+          parentExecutionId: null,
+          role: 'root',
+          depth: 0,
+          attempt: 1,
+          conversationEpoch: rootDelegation.scope.conversationEpoch,
+          nativeState: admittedNativeState = {
+            actorId: userId,
+            scope: rootDelegation.scope,
+            rootContext: rootDelegation.rootContext,
+            invocationId: null,
+            sessionId,
+            pendingInputs: [],
+            requestProfile: { ...request, rootContinuation: undefined },
+            resolvedDefinitionsDigest: definitionDigest,
+            capabilityCeiling: freezeRootCapabilityCeiling(agents[0]),
+          },
+        });
+    }
+
+    const nativeInputResponses = continuation ? request.rootContinuation!.inputResponses.map((input) => ({
+      inputId: input.inputId, response: input.response,
+      functionName: continuation.pendingInputs.find((pending) => pending.inputId === input.inputId)!.functionName,
+    })) : undefined;
+    if (continuation) {
+      if (!continuation.preparedContext) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Frozen invocation inputs are unavailable');
+      }
+      const prepared = continuation.preparedContext;
+      agents[0].brain_context = prepared.rootBrainContexts as IGrpcWorkspaceContext[];
+      await this.attachRunCodeContexts(agents, userId, runtimeCorrelationId,
+        workspaceContexts.map((context) => context.workspace_id), prepared.runCodeSources,
+        boundRootId && governanceOverride ? conversationId : undefined);
+      if (boundRootId && governanceOverride) {
+        await this.rootDelegateResolver!.resolveForActor(boundRootId, userId, conversationId, rootDelegation!.rootContext.governance_revision);
+        await this.rootDelegateResolver!.assertWorkspaces(conversationId, userId, [...new Set([
+          ...workspaceContexts.map((context) => context.workspace_id),
+          ...(prepared.workspaceContexts as IGrpcWorkspaceContext[]).map((context) => context.workspace_id),
+          ...agents.flatMap((agent) => agent.brain_context.flatMap((context) => [context.workspace_id,
+            ...(context.workspace_documents ?? []).map((document) => document.workspace_id)])),
+          ...prepared.runCodeSources.map((source) => source.workspaceId),
+        ].filter(Boolean))]);
+      }
+      return this.agentRequestBuilder.build({ userId, username, conversationId: continuation.sessionId,
+        request, agents, ...prepared, rootDelegation, executionScope: rootDelegation!.scope,
+        nativeInputResponses });
+    }
+
     beginBackendPreAdkStage('supplementalContextAssemblyMs');
     const [, builtAttachments, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
@@ -1131,15 +1268,35 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    const runCodeSources = [...currentAttachmentSources, ...previousAttachedFiles.flatMap((file) =>
+      (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : []))];
     await this.attachRunCodeContexts(
       agents,
       userId,
       runtimeCorrelationId,
       workspaceContexts.map((context) => context.workspace_id),
-      [...currentAttachmentSources, ...previousAttachedFiles.flatMap((file) => (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : []))],
+      runCodeSources,
+      boundRootId && governanceOverride ? conversationId : undefined,
     );
     endBackendPreAdkStage('supplementalContextAssemblyMs');
+    if (admittedNativeState) {
+      const recorded = await this.rootWorkService!.recordNativeState(admittedNativeState.scope.executionId, {
+        ...admittedNativeState,
+        preparedContext: { workspaceContexts, attachedFiles, previousAttachedFiles, skills, attachmentContext,
+          runCodeSources, rootBrainContexts: agents[0].brain_context },
+      }, 'running');
+      if (!recorded) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root execution was stopped during preparation');
+    }
     beginBackendPreAdkStage('grpcPayloadPreparationMs');
+    if (boundRootId && governanceOverride) {
+      await this.rootDelegateResolver!.resolveForActor(boundRootId, userId, conversationId, rootDelegation!.rootContext.governance_revision);
+      await this.rootDelegateResolver!.assertWorkspaces(conversationId, userId, [...new Set([
+        ...workspaceContexts.map((context) => context.workspace_id),
+        ...agents.flatMap((agent) => agent.brain_context.flatMap((context) => [context.workspace_id,
+          ...(context.workspace_documents ?? []).map((document) => document.workspace_id)])),
+        ...runCodeSources.map((source) => source.workspaceId),
+      ].filter(Boolean))]);
+    }
     return this.agentRequestBuilder.build({
       userId,
       username,
@@ -1153,15 +1310,111 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       correctionReplayContext,
       teamDefinition,
       attachmentContext,
+      rootDelegation,
+      executionScope: rootDelegation?.scope,
+      nativeInputResponses,
     });
   }
 
-  private async attachRunCodeContexts(agents: IGrpcAgent[], userId: string, runId: string, selectedWorkspaceIds: string[], attachments: RunCodeAttachmentSource[] = []): Promise<void> {
+  /**
+   * Resolve the delegation context for a turn against the conversation's bound
+   * root (WP04, plan §6.3-§6.5). Returns undefined unless the turn targets the
+    * enrolled bound root on the default route. Enrollment is independent of
+    * delegation availability; disabled/empty pools still execute as ROOT.
+   * Catalog entries carry metadata + digests only; candidate definitions are
+   * scoped to the root's capability ceiling for root_constrained mode.
+   */
+  private async buildRootDelegationContext(
+    conversation: ConversationRecord,
+    agents: IGrpcAgent[],
+    userId: string,
+    conversationId: string,
+    request: MessageReplayContext,
+    compaction: IGrpcCompaction | undefined,
+    runtimeCorrelationId: string,
+    logOpts: LogOptions,
+  ): Promise<RootDelegationContext | undefined> {
+    const rootAgentId = conversation.rootAgentId;
+    if (!rootAgentId || !isCanonicalObjectId(rootAgentId)) return undefined;
+    if (agents.length !== 1 || agents[0].id !== rootAgentId) return undefined;
+    if (conversation.runtimeMode !== 'governed') {
+      const root = await this.agentService.findUserAgentById(userId, rootAgentId);
+      if (!root.rootExecutionPolicy) return undefined;
+    }
+    if (!this.rootDelegateResolver) {
+      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Root execution resolver is unavailable');
+    }
+    const pool = await this.rootDelegateResolver.resolveForActor(rootAgentId, userId, conversationId);
+    const entries = pool.delegationEnabled ? pool.entries : [];
+
+    const limits = pool.policy.limits;
+    const scope: ExecutionScopeV1 = {
+      role: 'root',
+      executionId: newObjectId(),
+      parentExecutionId: null,
+      workGroupId: null,
+      depth: 0,
+      attempt: 1,
+      conversationEpoch: conversation.rootWorkEpoch ?? 0,
+      expectedFence: null,
+      resumeIntent: 'start',
+      immutableSnapshotRef: pool.rootSnapshotDigest,
+      nativeInvocationId: null,
+      nativeSessionId: conversationId,
+      deadlineEpochMs: Date.now() + limits.maxWorkGroupDurationSeconds * 1000,
+    };
+    this.logger.debug(
+      `Root delegation attached: candidates=${entries.length} executionId=${scope.executionId}`,
+      { requestId: logOpts.requestId },
+    );
+    return {
+      scope,
+      stopRequestId: newStopRequestId(),
+      rootContext: {
+        root_agent_id: rootAgentId,
+        policy_version: String(pool.policy.version ?? 1),
+        max_depth: limits.maxDepth,
+        max_parallel_workers: limits.maxParallelWorkers,
+        max_child_executions_per_work_group: limits.maxChildExecutionsPerWorkGroup,
+        max_work_group_duration_seconds: limits.maxWorkGroupDurationSeconds,
+        governance_revision: conversation.runtimeMode === 'governed' ? conversation.governanceContext?.revisionId
+          : pool.policy.delegation.defaultConfigurationMode,
+        delegate_definition_mode: 'lazy',
+        native_input_control_version: 1,
+        temporary_workers_enabled: pool.policy.temporaryWorkers.enabled,
+        max_temporary_workers: pool.policy.temporaryWorkers.maxPerWorkGroup,
+        fanout_enabled: pool.policy.fanout.enabled,
+        max_fanout_items: pool.policy.fanout.maxItems,
+        worker_permit_version: 1,
+        background_enabled: pool.policy.background.enabled && await this.rootBackgroundReady(false, true),
+        background_fanout_enabled: pool.policy.background.enabled && pool.policy.fanout.enabled
+          && pool.policy.fanout.allowBackground && await this.rootBackgroundReady(true, true),
+        max_outstanding_background_jobs: pool.policy.background.maxOutstandingPerConversation,
+        background_task_timeout_seconds: pool.policy.background.taskTimeoutSeconds,
+        background_max_attempts: pool.policy.background.maxAttempts,
+        catalog: entries.map((entry) => ({
+          agent_id: entry.agentId,
+          name: entry.name,
+          description: entry.description,
+          configuration_mode: entry.configurationMode,
+          snapshot_digest: entry.snapshotDigest,
+        })),
+      },
+      candidates: [],
+    };
+  }
+
+  private async attachRunCodeContexts(agents: IGrpcAgent[], userId: string, runId: string, selectedWorkspaceIds: string[], attachments: RunCodeAttachmentSource[] = [], governedConversationId?: string): Promise<void> {
     const eligibleAgents = agents.filter((agent) => agent.tools.some((tool) => tool.name === 'run_code'));
     if (eligibleAgents.length === 0) return;
 
     const uniqueAttachmentWorkspaceIds = [...new Set(attachments.map((attachment) => attachment.workspaceId).filter(Boolean))];
-    await this.workspaceShareService.assertUserHasAccess(userId, [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds])]);
+    const sources = [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds,
+      ...(governedConversationId ? eligibleAgents.flatMap((agent) => agent.brain_context.map((context) => context.workspace_id)) : [])])];
+    if (governedConversationId) {
+      const approved = await this.rootDelegateResolver!.authorizedWorkspaces(governedConversationId, userId, sources);
+      if (sources.some((id) => !approved.includes(id))) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Governed source access changed');
+    } else await this.workspaceShareService.assertUserHasAccess(userId, sources);
     await Promise.all(
       eligibleAgents.map(async (agent) => {
         const sources = await this.runCodeSourceScopeService.buildSources([...new Set([...selectedWorkspaceIds.filter(Boolean), ...agent.brain_context.map((context) => context.workspace_id).filter(Boolean)])], attachments);
@@ -1266,7 +1519,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const component = chunk.component;
         if (component?.id && ['add', 'update', 'delete'].includes(chunk.action)) {
           if (chunk.action === 'delete') buffer.delete(component.id);
-          else this.applyChunkToBuffer(buffer, chunk.action, component);
+          else this.applyChunkToBuffer(buffer, chunk.action, component, undefined, chunk.metadata?.agent_id);
         }
         if (chunk.usage) {
           inputTokens += chunk.usage.input_tokens || 0;
@@ -1294,8 +1547,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           });
         }
       });
-      call.on('error', (error: Error) => finish(error));
-      call.on('end', () => finish(acknowledged ? undefined : new Error('corrective_replay_not_started')));
+      call.on('error', (error: Error) => { finish(error); });
+      call.on('end', () => { finish(acknowledged ? undefined : new Error('corrective_replay_not_started')); });
     });
     return { started, result, usage };
   }
@@ -1464,6 +1717,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
     const logOpts: LogOptions = { requestId };
+    let nativeWrites = Promise.resolve();
+    let nativeWriteError: unknown;
 
     return new Promise<void>((resolve, reject) => {
       this.logger.debug(
@@ -1581,6 +1836,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       call.on('data', (chunk: any) => {
         if (terminal.started) return;
         if (chunk.action === 'heartbeat') return;
+        if (chunk.execution_trace?.native_session_id && grpcRequest.execution_scope?.execution_id) {
+          nativeWrites = nativeWrites.then(async () => {
+            if (nativeWriteError) return;
+            if (!this.rootWorkService) throw new Error('Root execution store is unavailable');
+            await this.rootWorkService.applyNativeTrace(
+              grpcRequest.execution_scope.execution_id, conversationId, userId, chunk.execution_trace,
+            );
+          }).catch((error) => { nativeWriteError = error; call.cancel(); });
+        }
         // Transport keepalives must not hide a stalled model call.
         resetIdleTimeout();
         chunkCount++;
@@ -1600,7 +1864,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           const comp = chunk.component;
           const guardrailDecision = this.parseGuardrailDecision(chunk.metadata?.guardrail_decision_json);
 
-          if (comp && comp.id && (action === 'add' || action === 'update' || action === 'delete')) {
+          if (comp?.id && (action === 'add' || action === 'update' || action === 'delete')) {
             if (action === 'delete') {
               const buffer = this.componentBuffers.get(streamKey);
               if (buffer) {
@@ -1741,6 +2005,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
 
       call.on('end', async () => {
+        await nativeWrites;
+        if (nativeWriteError) {
+          this.beginStreamTerminal(streamKey, () => this.handleStreamError(
+            userId, conversationId, messageId, streamKey, ErrorCode.CHAT_STREAM_FAILED, requestId,
+          ), nativeWriteError);
+          return;
+        }
         if (terminal.started) return;
 
         const durationMs = Date.now() - startTime;
@@ -1906,7 +2177,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         });
       });
 
-      call.on('error', (error: any) => {
+      call.on('error', async (error: any) => {
+        await nativeWrites;
         if (terminal.started) return;
 
         this.logger.error(
@@ -2163,8 +2435,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     terminal.started = true;
     terminal.cancelIdleTimeout?.();
     void operation().then(
-      () => (terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError)),
-      (error) => terminal.reject(error),
+      () => { terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError); },
+      (error) => { terminal.reject(error); },
     );
     return true;
   }
@@ -2250,8 +2522,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           ...existing,
           content: existingContent + newContent,
           // Only update language/filename if incoming has non-empty values
-          language: (incoming.language as string) || existing.language,
-          filename: (incoming.filename as string) || existing.filename,
+          language: (incoming.language) || existing.language,
+          filename: (incoming.filename) || existing.filename,
         };
       }
       case 'queue':
@@ -2274,28 +2546,29 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const incomingStatus = (incoming.status as string) || existingStatus;
         const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
         return {
-          toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
-          displayKey: (incoming.displayKey as string) || (existing.displayKey as string) || '',
-          fallbackDisplayName: (incoming.fallbackDisplayName as string) || (existing.fallbackDisplayName as string) || '',
-          summary: (incoming.summary as string) || (existing.summary as string) || '',
-          renderKind: (incoming.renderKind as string) || (existing.renderKind as string) || 'generic',
+          toolName: (incoming.toolName) || (existing.toolName) || '',
+          displayKey: (incoming.displayKey) || (existing.displayKey) || '',
+          fallbackDisplayName: (incoming.fallbackDisplayName) || (existing.fallbackDisplayName) || '',
+          summary: (incoming.summary) || (existing.summary) || '',
+          renderKind: (incoming.renderKind) || (existing.renderKind) || 'generic',
           status: existingIsTerminal ? existingStatus : incomingStatus,
-          paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
-          startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
-          completedAt: (incoming.completedAt as string) || (existing.completedAt as string) || '',
+          paramsJson: (incoming.paramsJson) || (existing.paramsJson) || '',
+          startedAt: (incoming.startedAt) || (existing.startedAt) || '',
+          completedAt: (incoming.completedAt) || (existing.completedAt) || '',
           durationMs: incoming.durationMs ?? existing.durationMs,
-          resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
-          actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
-          actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
-          primaryInput: (incoming.primaryInput as string) || (existing.primaryInput as string) || '',
-          primaryInputLanguage: (incoming.primaryInputLanguage as string) || (existing.primaryInputLanguage as string) || '',
+          resultJson: (incoming.resultJson) || (existing.resultJson) || '',
+          ...((incoming.uiTargets ?? existing.uiTargets) ? { uiTargets: incoming.uiTargets ?? existing.uiTargets } : {}),
+          actorId: (incoming.actorId) || (existing.actorId) || '',
+          actorName: (incoming.actorName) || (existing.actorName) || '',
+          primaryInput: (incoming.primaryInput) || (existing.primaryInput) || '',
+          primaryInputLanguage: (incoming.primaryInputLanguage) || (existing.primaryInputLanguage) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update
         return {
-          code: (incoming.code as string) || (existing.code as string) || '',
-          output: (incoming.output as string) || (existing.output as string) || '',
-          error: (incoming.error as string) || (existing.error as string) || '',
+          code: (incoming.code) || (existing.code) || '',
+          output: (incoming.output) || (existing.output) || '',
+          error: (incoming.error) || (existing.error) || '',
           outputAvailable: incoming.outputAvailable ?? existing.outputAvailable ?? false,
         };
       default:
@@ -2380,78 +2653,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Sends the result via SSE to the user.
    */
   generateConversationNameAsync(userId: string, conversationId: string, query: string, username?: string): void {
-    // Fire and forget - don't await at call site
-    this.generateConversationName(userId, conversationId, query, username).catch((err) => {
-      this.logger.error('Failed to generate conversation name', {
-        conversationId,
-        error: (err as Error).message,
-      });
-    });
-  }
-
-  private async generateConversationName(userId: string, conversationId: string, query: string, username?: string): Promise<void> {
-    try {
-      // Naming model is admin-configurable (Paramètres de conversation). Use the
-      // chosen model when set; otherwise fall back to the platform default.
-      // An empty model makes the gRPC name generation fail and the conversation
-      // keeps its default title.
-      const { conversationName } = await this.conversationSettings.getSettings();
-      const chosen = conversationName.modelId ? await this.modelsService.findById(conversationName.modelId).catch(() => null) : null;
-
-      // Chosen models are served by the LiteLLM proxy, so route via the proxy
-      // alias ("litellm_proxy/<model_name>"). Their stored litellmModel is a
-      // provider-prefixed target (e.g. "ollama/gemma3:4b") that would bypass the
-      // proxy and fail. The platform default keeps its litellmModel (unchanged).
-      const litellmModel = chosen ? `litellm_proxy/${chosen.id}` : (await this.modelsService.getDefaultModel())?.litellmModel || '';
-
-      const response = await this.callGenerateNameGrpc(query, litellmModel, username);
-      const generatedName = response.conversation_name || 'New Conversation';
-
-      // Update conversation title in database
-      await this.conversationService.updateConversationInternal(conversationId, {
-        title: generatedName,
-      });
-
-      // Send SSE event to user
-      this.streamGateway.sendToUser(userId, {
-        type: 'conversation_name_generated',
-        data: {
-          conversationId,
-          name: generatedName,
-        },
-      });
-
-      this.logger.debug('Conversation name generated', {
-        conversationId,
-        name: generatedName,
-      });
-    } catch (error) {
-      // Fallback: keep existing title, log warning
-      this.logger.warn('Name generation failed, keeping default title', {
-        conversationId,
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  private callGenerateNameGrpc(query: string, modelId?: string, username?: string): Promise<{ conversation_name: string }> {
-    return new Promise((resolve, reject) => {
-      if (!this.chatbotClient) {
-        reject(new Error('gRPC client not initialized'));
-        return;
-      }
-
-      // Create metadata with user header for LiteLLM logging + shared API key
-      const metadata = createGrpcMetadata(this.configService);
-      const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
-      metadata.set('user', userHeader);
-
-      const deadline = new Date(Date.now() + 60000); // 60s timeout
-      this.chatbotClient.GenerateConversationName({ query, model: modelId || '' }, metadata, { deadline }, (err: Error | null, response: { conversation_name: string }) => {
-        if (err) reject(err);
-        else resolve(response);
-      });
-    });
+    this.conversationNameService.generateConversationNameAsync(userId, conversationId, query, username, this.chatbotClient);
   }
 
   private async resolveMemberIds(conversationId: string): Promise<string[]> {
@@ -2501,7 +2703,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Runs a single linked agent via gRPC RunSingleAgent (agent_mode=mono on ADK side).
    * Used by single-agent channel replies — no manager orchestration, no SSE gateway.
    */
-  async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+  async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string; agentParamsExtras?: Record<string, string> }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     if (!this.isGrpcAvailable) {
       throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'gRPC service is not available for single-agent streaming');
     }
@@ -2516,6 +2718,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.resolveAgentBrainContexts(grpcAgents);
+
+    if (params.agentParamsExtras && grpcAgents[0]) {
+      const grpcAgent = grpcAgents[0] as unknown as Record<string, unknown>;
+      const existingParams = ((grpcAgent.agent_params as { params?: Record<string, unknown> })?.params) || {};
+      grpcAgent.agent_params = {
+        ...(grpcAgent.agent_params as Record<string, unknown>),
+        params: { ...existingParams, ...params.agentParamsExtras },
+      };
+      // Extra runtime tool resolved by the ADK native registry (e.g. Telegram
+      // owner validation). Not a stored tool — injected per channel only.
+      (grpcAgent.tools as unknown[]) = [...(grpcAgent.tools as unknown[]), {
+        name: params.agentParamsExtras.extraToolName || 'request_owner_validation',
+        description:
+          'HARD ROUTING RULE: for every external visitor request, answer directly only when the answer is explicitly available in the conversation or trusted knowledge AND is not time-sensitive. Time-sensitive questions — availability, scheduling, commitments, prices, or anything tied to a specific date, time, or current state — MUST always trigger a fresh request_owner_validation, even if a similar or older answer exists in the conversation; never reuse a past owner answer for a new date, time, or request. Do not infer, invent, reinterpret your identity, or use a generic statement to avoid an unknown answer. If the answer is not explicitly available, you MUST call request_owner_validation with the concrete question and omit choices so your owner can answer freely in text. Private or sensitive information must not be disclosed directly, but privacy alone is not a reason to refuse this owner-validation request. After calling it, tell the visitor the request was forwarded and end your turn; the answer will arrive as a follow-up message. Only skip this tool for requests that must be refused for safety or legal reasons.',
+        disabled: false,
+      }];
+    }
 
     const conversation = await this.conversationService.getConversationDocument(params.conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
@@ -2601,7 +2820,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       resetIdleTimeout();
 
-      call.on('data', (chunk: { action?: string; component?: Record<string, unknown> }) => {
+      call.on('data', (chunk: { action?: string; component?: Record<string, unknown>; metadata?: { agent_id?: string } }) => {
         resetIdleTimeout();
         if (chunk.action === 'heartbeat') return;
         chunkCount++;
@@ -2616,7 +2835,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           return;
         }
         if (action === 'add' || action === 'update') {
-          this.applyChunkToBuffer(buffer, action, comp);
+          this.applyChunkToBuffer(buffer, action, comp, undefined, chunk.metadata?.agent_id);
         }
       });
 

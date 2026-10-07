@@ -4,7 +4,8 @@ import { LiteLLMClient } from './litellm.client';
 import { LoggerService } from '../logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { LiteLLMModelInfoEntry } from './interfaces/model.interface';
-import { MODEL_STORE, type ModelRow, type ModelStore } from './persistence/model.store';
+import { type ModelRow,  type ModelStore } from './persistence/model.store';
+import { PgModelStore } from './persistence/pg-model.store';
 
 // Helper to build a LiteLLM /v1/model/info entry
 function entry(name: string, mode: string | undefined, provider = 'openai'): LiteLLMModelInfoEntry {
@@ -61,7 +62,7 @@ class InMemoryModelStore implements ModelStore {
   readonly rows = new Map<string, ModelRow>();
   readonly inserted: ModelRow[] = [];
   readonly clearedClassifierFor: string[] = [];
-  readonly exclusiveFlags: Array<{ modelId: string; flag: 'isDefault' | 'isConversationV2Default' }> = [];
+  readonly exclusiveFlags: { modelId: string; flag: 'isDefault' | 'isConversationV2Default' }[] = [];
   deactivatedNotIn: string[][] = [];
 
   async findByModelId(modelId: string): Promise<ModelRow | null> {
@@ -162,7 +163,7 @@ describe('ModelsService', () => {
     const mod = await Test.createTestingModule({
       providers: [
         ModelsService,
-        { provide: MODEL_STORE, useValue: store as unknown as ModelStore },
+        { provide: PgModelStore, useValue: store as unknown as ModelStore },
         { provide: LiteLLMClient, useValue: { fetchModels, isConfigured: () => true } },
         { provide: DRIZZLE_DB, useValue: fakeDb },
         {

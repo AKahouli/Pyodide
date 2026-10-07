@@ -1,14 +1,12 @@
 import { createHash, randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
-  PlaybookAssistantOperationKind,
-  PlaybookAssistantRequest,
-  PlaybookAssistantRequestDocument,
-} from '../schemas/playbook-assistant-request.schema';
+  PlaybookAssistantRequestRepository,
+  type PlaybookAssistantOperationKind,
+  type PlaybookAssistantRequestRecord,
+} from '../persistence/assistant-request.repository';
 import type { ResolvedConversationPlaybookHandoffV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
 const REQUEST_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -16,10 +14,7 @@ const LEGACY_DEFAULT_TENANT = 'default';
 
 @Injectable()
 export class PlaybookAssistantRequestService {
-  constructor(
-    @InjectModel(PlaybookAssistantRequest.name)
-    private readonly requestModel: Model<PlaybookAssistantRequestDocument>,
-  ) {}
+  constructor(private readonly requests: PlaybookAssistantRequestRepository) {}
 
   async claimTurn(input: {
     requestId?: string;
@@ -34,7 +29,7 @@ export class PlaybookAssistantRequestService {
     executionId?: string;
     attachmentIds?: string[];
     context?: Record<string, unknown>;
-  }): Promise<{ request: PlaybookAssistantRequest; replay: boolean }> {
+  }): Promise<{ request: PlaybookAssistantRequestRecord; replay: boolean }> {
     const requestId = input.requestId?.trim() || randomUUID();
     const conversationId = input.conversationId?.trim() || randomUUID();
     const text = input.text.trim();
@@ -58,52 +53,42 @@ export class PlaybookAssistantRequestService {
     });
 
     if (input.conversationId) {
-      const conversation = await this.requestModel.findOne({
-        conversationId,
-        ownerId: input.ownerId,
-        ...(input.playbookId ? { playbookId: input.playbookId } : {}),
-      }).lean().exec();
-      if (!conversation) {
+      if (!(await this.requests.conversationExists(input.ownerId, conversationId, input.playbookId))) {
         throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant conversation not found');
       }
     }
 
-    try {
-      const created = await this.requestModel.create({
-        requestId,
-        ownerId: input.ownerId,
-        agentId: input.agentId,
-        conversationId,
-        correlationId: `playbook-assistant:${randomUUID()}`,
-        operationKind: input.operationKind,
-        playbookId: input.playbookId ?? null,
-        expectedDefinitionRevision: input.expectedDefinitionRevision ?? null,
-        contextId: randomUUID(),
-        messageHash,
-        originalText: text,
-        selectedTaskId: input.selectedTaskId ?? null,
-        executionId: input.executionId ?? null,
-        attachmentIds: input.attachmentIds ?? [],
-        answers: [],
-        status: 'processing',
-        expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
-      });
-      return { request: created.toObject(), replay: false };
-    } catch (error) {
-      if ((error as { code?: number }).code !== 11000) throw error;
-      const existing = await this.requestModel.findOne({ requestId }).lean().exec();
-      if (!existing || ![messageHash, legacyMessageHash].includes(existing.messageHash)) {
-        throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request ID was reused with different content');
-      }
-      if (existing.status !== 'completed') {
-        throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request is already in progress');
-      }
-      return { request: existing, replay: true };
+    const created = await this.requests.insert({
+      requestId,
+      ownerId: input.ownerId,
+      agentId: input.agentId,
+      conversationId,
+      correlationId: `playbook-assistant:${randomUUID()}`,
+      operationKind: input.operationKind,
+      playbookId: input.playbookId ?? null,
+      expectedDefinitionRevision: input.expectedDefinitionRevision ?? null,
+      contextId: randomUUID(),
+      messageHash,
+      originalText: text,
+      selectedTaskId: input.selectedTaskId ?? null,
+      executionId: input.executionId ?? null,
+      attachmentIds: input.attachmentIds ?? [],
+      expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
+    });
+    if (created) return { request: created, replay: false };
+    // The request id is taken: replay the completed request it identifies, if it is the same one.
+    const existing = await this.requests.findByRequestId(requestId);
+    if (!existing || ![messageHash, legacyMessageHash].includes(existing.messageHash)) {
+      throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request ID was reused with different content');
     }
+    if (existing.status !== 'completed') {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request is already in progress');
+    }
+    return { request: existing, replay: true };
   }
 
-  async getBound(requestId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
-    const request = await this.requestModel.findOne({ requestId, ownerId: actor.ownerId }).lean().exec();
+  async getBound(requestId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequestRecord> {
+    const request = await this.requests.findByRequestId(requestId, actor.ownerId);
     if (!request || request.expiresAt.getTime() <= Date.now()) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
     }
@@ -119,7 +104,7 @@ export class PlaybookAssistantRequestService {
     text: string;
     requestedName?: string;
     handoff?: ResolvedConversationPlaybookHandoffV1;
-  }): Promise<PlaybookAssistantRequest> {
+  }): Promise<PlaybookAssistantRequestRecord> {
     const text = input.text.trim();
     const requestedName = input.requestedName?.trim() || null;
     const requestId = `platform-generation:${createHash('sha256')
@@ -159,9 +144,7 @@ export class PlaybookAssistantRequestService {
       preNameMessageHash,
       legacyPreNameMessageHash,
     ];
-    const existingBeforeInsert = await this.requestModel.findOne({
-      requestId: { $in: [requestId, legacyRequestId] },
-    }).lean().exec();
+    const existingBeforeInsert = await this.requests.findFirstByRequestIds([requestId, legacyRequestId]);
     if (existingBeforeInsert) {
       return this.assertMatchingCurrentTurnRequest(
         existingBeforeInsert,
@@ -169,44 +152,37 @@ export class PlaybookAssistantRequestService {
         acceptedMessageHashes,
       );
     }
-    try {
-      const created = await this.requestModel.create({
-        requestId,
-        ...input.actor,
-        operationKind: 'generation',
-        playbookId: null,
-        expectedDefinitionRevision: null,
-        contextId: randomUUID(),
-        messageHash,
-        originalText: text,
-        requestedName,
-        handoffContext: input.handoff?.context ?? null,
-        handoffProvenance: input.handoff ? {
-          handoffId: input.handoff.handoffId,
-          handoffVersion: input.handoff.handoffVersion,
-          sourceConversationId: input.handoff.sourceConversationId,
-          targetMessageId: input.handoff.targetMessageId,
-          displayedAnswerVersion: input.handoff.displayedAnswerVersion,
-          canonicalPathFingerprint: input.handoff.canonicalPathFingerprint,
-          contextFingerprint: input.handoff.contextFingerprint,
-          acceptedAt: input.handoff.acceptedAt,
-        } : null,
-        workspaceDefaultIds: input.handoff?.workspaceDefaultIds ?? [],
-        selectedTaskId: null,
-        executionId: null,
-        attachmentIds: [],
-        answers: [],
-        status: 'processing',
-        expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
-      });
-      return created.toObject();
-    } catch (error) {
-      if ((error as { code?: number }).code !== 11000) throw error;
-      const existing = await this.requestModel.findOne({
-        requestId: { $in: [requestId, legacyRequestId] },
-      }).lean().exec();
-      return this.assertMatchingCurrentTurnRequest(existing, input.actor, acceptedMessageHashes);
-    }
+    const created = await this.requests.insert({
+      requestId,
+      ...input.actor,
+      operationKind: 'generation',
+      playbookId: null,
+      expectedDefinitionRevision: null,
+      contextId: randomUUID(),
+      messageHash,
+      originalText: text,
+      requestedName,
+      handoffContext: input.handoff?.context ?? null,
+      handoffProvenance: input.handoff ? {
+        handoffId: input.handoff.handoffId,
+        handoffVersion: input.handoff.handoffVersion,
+        sourceConversationId: input.handoff.sourceConversationId,
+        targetMessageId: input.handoff.targetMessageId,
+        displayedAnswerVersion: input.handoff.displayedAnswerVersion,
+        canonicalPathFingerprint: input.handoff.canonicalPathFingerprint,
+        contextFingerprint: input.handoff.contextFingerprint,
+        acceptedAt: input.handoff.acceptedAt,
+      } : null,
+      workspaceDefaultIds: input.handoff?.workspaceDefaultIds ?? [],
+      selectedTaskId: null,
+      executionId: null,
+      attachmentIds: [],
+      expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
+    });
+    if (created) return created;
+    // A concurrent turn inserted it first.
+    const existing = await this.requests.findFirstByRequestIds([requestId, legacyRequestId]);
+    return this.assertMatchingCurrentTurnRequest(existing, input.actor, acceptedMessageHashes);
   }
 
   async claimCurrentTurnModification(input: {
@@ -214,7 +190,7 @@ export class PlaybookAssistantRequestService {
     playbookId: string;
     expectedDefinitionRevision: number;
     text: string;
-  }): Promise<PlaybookAssistantRequest> {
+  }): Promise<PlaybookAssistantRequestRecord> {
     const text = input.text.trim();
     const requestId = `platform-modification:${createHash('sha256')
       .update(JSON.stringify(this.canonicalize({ ...input.actor, playbookId: input.playbookId })))
@@ -238,9 +214,7 @@ export class PlaybookAssistantRequestService {
       ...fingerprintInput,
       tenantId: LEGACY_DEFAULT_TENANT,
     });
-    const existingBeforeInsert = await this.requestModel.findOne({
-      requestId: { $in: [requestId, legacyRequestId] },
-    }).lean().exec();
+    const existingBeforeInsert = await this.requests.findFirstByRequestIds([requestId, legacyRequestId]);
     if (existingBeforeInsert) {
       return this.assertMatchingCurrentTurnRequest(
         existingBeforeInsert,
@@ -249,36 +223,29 @@ export class PlaybookAssistantRequestService {
         input.playbookId,
       );
     }
-    try {
-      const created = await this.requestModel.create({
-        requestId,
-        ...input.actor,
-        operationKind: 'existing_construction',
-        playbookId: input.playbookId,
-        expectedDefinitionRevision: input.expectedDefinitionRevision,
-        contextId: randomUUID(),
-        messageHash,
-        originalText: text,
-        selectedTaskId: null,
-        executionId: null,
-        attachmentIds: [],
-        answers: [],
-        status: 'processing',
-        expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
-      });
-      return created.toObject();
-    } catch (error) {
-      if ((error as { code?: number }).code !== 11000) throw error;
-      const existing = await this.requestModel.findOne({
-        requestId: { $in: [requestId, legacyRequestId] },
-      }).lean().exec();
-      return this.assertMatchingCurrentTurnRequest(
-        existing,
-        input.actor,
-        [messageHash, legacyMessageHash],
-        input.playbookId,
-      );
-    }
+    const created = await this.requests.insert({
+      requestId,
+      ...input.actor,
+      operationKind: 'existing_construction',
+      playbookId: input.playbookId,
+      expectedDefinitionRevision: input.expectedDefinitionRevision,
+      contextId: randomUUID(),
+      messageHash,
+      originalText: text,
+      selectedTaskId: null,
+      executionId: null,
+      attachmentIds: [],
+      expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
+    });
+    if (created) return created;
+    // A concurrent turn inserted it first.
+    const existing = await this.requests.findFirstByRequestIds([requestId, legacyRequestId]);
+    return this.assertMatchingCurrentTurnRequest(
+      existing,
+      input.actor,
+      [messageHash, legacyMessageHash],
+      input.playbookId,
+    );
   }
 
   async rebindCorrelationForContinuation(input: {
@@ -286,67 +253,47 @@ export class PlaybookAssistantRequestService {
     playbookId?: string | null;
     actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
   }): Promise<void> {
-    const result = await this.requestModel.updateOne(
-      {
-        continuationId: input.continuationId,
-        ...(input.playbookId ? { playbookId: input.playbookId } : {}),
-        ownerId: input.actor.ownerId,
-        agentId: input.actor.agentId,
-        conversationId: input.actor.conversationId,
-        status: 'awaiting_clarification',
-        expiresAt: { $gt: new Date() },
-      },
-      { $set: { correlationId: input.actor.correlationId } },
-    ).exec();
-    if (result.matchedCount === 0) {
+    const rebound = await this.requests.rebindCorrelation({
+      continuationId: input.continuationId,
+      playbookId: input.playbookId,
+      ownerId: input.actor.ownerId,
+      agentId: input.actor.agentId,
+      conversationId: input.actor.conversationId,
+    }, input.actor.correlationId);
+    if (!rebound) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant clarification not found or expired');
     }
   }
 
   async claimAssessment(requestId: string): Promise<number> {
-    const claimed = await this.requestModel.findOneAndUpdate(
-      { requestId, status: 'processing' },
-      { $inc: { assessmentVersion: 1 } },
-      { new: true },
-    ).lean().exec();
-    if (!claimed) {
+    const assessmentVersion = await this.requests.claimAssessment(requestId);
+    if (assessmentVersion === null) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant assessment is not available for processing');
     }
-    return claimed.assessmentVersion;
+    return assessmentVersion;
   }
 
-  async saveAssessment(requestId: string, assessmentVersion: number, assessment: Record<string, unknown>): Promise<PlaybookAssistantRequest> {
+  async saveAssessment(requestId: string, assessmentVersion: number, assessment: Record<string, unknown>): Promise<PlaybookAssistantRequestRecord> {
     const needsClarification = assessment.status === 'needs_clarification';
     const continuationId = needsClarification ? randomUUID() : null;
-    const updated = await this.requestModel.findOneAndUpdate(
-      { requestId, assessmentVersion, status: 'processing' },
-      {
-        $set: {
-          assessment,
-          continuationId,
-          status: needsClarification ? 'awaiting_clarification' : 'ready',
-          expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
-        },
-      },
-      { new: true },
-    ).lean().exec();
+    const updated = await this.requests.saveAssessment(requestId, assessmentVersion, {
+      assessment,
+      continuationId,
+      status: needsClarification ? 'awaiting_clarification' : 'ready',
+      expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
+    });
     if (!updated) throw new ConflictException(ErrorCode.CONFLICT, 'Assistant assessment attempt is stale');
     return updated;
   }
 
-  async getByContinuation(continuationId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
-    const request = await this.requestModel.findOne({
-      continuationId,
-      ownerId: actor.ownerId,
-      status: 'awaiting_clarification',
-      expiresAt: { $gt: new Date() },
-    }).lean().exec();
+  async getByContinuation(continuationId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequestRecord> {
+    const request = await this.requests.findAwaitingContinuation(continuationId, actor.ownerId);
     if (!request) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant clarification not found or expired');
     return this.getBound(request.requestId, actor);
   }
 
-  async getContinuationForUser(continuationId: string, ownerId: string, playbookId: string, conversationId: string): Promise<PlaybookAssistantRequest> {
-    const request = await this.requestModel.findOne({ continuationId, ownerId, playbookId, conversationId }).lean().exec();
+  async getContinuationForUser(continuationId: string, ownerId: string, playbookId: string, conversationId: string): Promise<PlaybookAssistantRequestRecord> {
+    const request = await this.requests.findContinuation(continuationId, ownerId, playbookId, conversationId);
     if (!request || request.expiresAt.getTime() <= Date.now() || request.status !== 'awaiting_clarification') {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant clarification not found or expired');
     }
@@ -360,90 +307,44 @@ export class PlaybookAssistantRequestService {
     answers: Record<string, unknown>[];
     assessment: Record<string, unknown>;
   }): Promise<void> {
-    const claimed = await this.requestModel.findOneAndUpdate(
-      {
-        requestId: input.requestId,
-        continuationId: input.continuationId,
-        status: 'awaiting_clarification',
-        ownerId: input.actor.ownerId,
-        agentId: input.actor.agentId,
-        conversationId: input.actor.conversationId,
-        correlationId: input.actor.correlationId,
-        expiresAt: { $gt: new Date() },
-      },
-      {
-        $set: {
-          answers: input.answers,
-          assessment: input.assessment,
-          continuationId: null,
-          status: 'ready',
-        },
-      },
-      { new: true },
-    ).lean().exec();
+    const claimed = await this.requests.claimContinuation(
+      { requestId: input.requestId, continuationId: input.continuationId, ...input.actor },
+      { answers: input.answers, assessment: input.assessment },
+    );
     if (!claimed) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant clarification was already continued');
     }
   }
 
   async restoreContinuation(requestId: string, continuationId: string): Promise<void> {
-    await this.requestModel.updateOne(
-      { requestId, continuationId: null, status: 'processing', mutationOperationId: null },
-      { $set: { continuationId, status: 'awaiting_clarification' } },
-    ).exec();
+    await this.requests.restoreContinuation(requestId, continuationId);
   }
 
   async claimMutation(requestId: string, operationId: string): Promise<string> {
-    const claimed = await this.requestModel.findOneAndUpdate(
-      { requestId, mutationOperationId: null, status: { $in: ['processing', 'ready'] } },
-      { $set: { mutationOperationId: operationId } },
-      { new: true },
-    ).lean().exec();
-    if (claimed) return operationId;
-    const existing = await this.requestModel.findOne({ requestId }).lean().exec();
+    if (await this.requests.claimMutation(requestId, operationId)) return operationId;
+    const existing = await this.requests.findByRequestId(requestId);
     if (existing?.mutationOperationId) return existing.mutationOperationId;
     throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request is not ready for construction');
   }
 
   async complete(requestId: string, answer: string, operationId?: string, responsePayload?: Record<string, unknown>): Promise<void> {
-    const current = await this.requestModel.findOne({ requestId }).select({ status: 1 }).lean().exec();
-    await this.requestModel.updateOne(
-      { requestId },
-      {
-        $set: {
-          status: current?.status === 'awaiting_clarification' ? 'awaiting_clarification' : 'completed',
-            assistantAnswer: answer,
-            ...(operationId ? { mutationOperationId: operationId } : {}),
-            ...(responsePayload ? { responsePayload } : {}),
-        },
-      },
-    ).exec();
+    await this.requests.complete(requestId, answer, operationId, responsePayload);
   }
 
   async bindGeneratedPlaybook(requestId: string, playbookId: string, expectedDefinitionRevision: number): Promise<void> {
-    await this.requestModel.updateOne(
-      { requestId, operationKind: 'generation' },
-      { $set: { playbookId, expectedDefinitionRevision } },
-    ).exec();
+    await this.requests.bindGeneratedPlaybook(requestId, playbookId, expectedDefinitionRevision);
   }
 
   async resetMutation(requestId: string, operationId: string): Promise<boolean> {
-    const result = await this.requestModel.updateOne(
-      { requestId, mutationOperationId: operationId },
-      { $set: { mutationOperationId: null, playbookId: null, expectedDefinitionRevision: null, status: 'ready' } },
-    ).exec();
-    return result.modifiedCount === 1;
+    return this.requests.resetMutation(requestId, operationId);
   }
 
   async releaseMutation(requestId: string, operationId: string): Promise<void> {
-    await this.requestModel.updateOne(
-      { requestId, mutationOperationId: operationId },
-      { $set: { mutationOperationId: null } },
-    ).exec();
+    await this.requests.releaseMutation(requestId, operationId);
   }
 
   async fail(requestId: string): Promise<void> {
-    await this.requestModel.updateOne({ requestId }, { $set: { status: 'failed' } }).exec();
+    await this.requests.markFailed(requestId);
   }
 
   private createRequestFingerprint(input: Record<string, unknown>): string {
@@ -451,11 +352,11 @@ export class PlaybookAssistantRequestService {
   }
 
   private assertMatchingCurrentTurnRequest(
-    existing: PlaybookAssistantRequest | null,
+    existing: PlaybookAssistantRequestRecord | null,
     actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string },
     acceptedMessageHashes: string[],
     playbookId?: string,
-  ): PlaybookAssistantRequest {
+  ): PlaybookAssistantRequestRecord {
     if (!existing || existing.expiresAt.getTime() <= Date.now()) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
     }

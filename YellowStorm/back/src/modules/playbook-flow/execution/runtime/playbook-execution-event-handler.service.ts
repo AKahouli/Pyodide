@@ -1,10 +1,8 @@
 import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
-import { FlowRouterDecision, FlowRouterDecisionDocument } from '../../schemas/playbook-flow-router-decision.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
 import { RESERVED_LABELS } from '../../constants/reserved-labels';
+import { EXECUTION_OPEN_STATUSES, ExecutionRepository } from '../../persistence/execution.repository';
+import { RouterDecisionRepository } from '../../persistence/router-decision.repository';
+import { TASK_RESULT_OPEN_STATUSES, TaskResultRepository } from '../../persistence/task-result.repository';
 import { PlaybookFlowExecutionAdvisorService } from '../../services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowObservabilityService } from '../../services/observability/playbook-flow-observability.service';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
@@ -14,8 +12,6 @@ import { fromGrpcValue } from '../grpc/grpc-struct.mapper';
 import { PlaybookExecutionNodeEventHandlerService } from './playbook-execution-node-event-handler.service';
 import { PlaybookExecutionReplayRuntimeService } from './playbook-execution-replay-runtime.service';
 import { PlaybookDynamicReasoningEventHandlerService } from './playbook-dynamic-reasoning-event-handler.service';
-
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 
 export interface PlaybookRunEventContext {
   executionId: string;
@@ -30,12 +26,9 @@ export class PlaybookExecutionEventHandlerService {
   private fallbackNodeEventHandler?: PlaybookExecutionNodeEventHandlerService;
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowRouterDecision.name)
-    private readonly routerDecisionModel: Model<FlowRouterDecisionDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
+    private readonly routerDecisionRepository: RouterDecisionRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly observabilityService: PlaybookFlowObservabilityService,
     @Inject(forwardRef(() => PlaybookFlowExecutionAdvisorService))
@@ -90,8 +83,8 @@ export class PlaybookExecutionEventHandlerService {
   private getNodeHandler(): PlaybookExecutionNodeEventHandlerService {
     if (this.nodeEventHandler) return this.nodeEventHandler;
     this.fallbackNodeEventHandler ??= new PlaybookExecutionNodeEventHandlerService(
-      this.executionModel,
-      this.taskResultModel,
+      this.executionRepository,
+      this.taskResultRepository,
       this.streamEvents,
       this.observabilityService,
       this.advisorService,
@@ -109,7 +102,7 @@ export class PlaybookExecutionEventHandlerService {
   ): Promise<void> {
     const { executionId } = context;
     const label = String(payload.label || '');
-    await this.routerDecisionModel.create({
+    await this.routerDecisionRepository.create({
       executionId,
       routerNodeId: taskNodeId,
       iteration,
@@ -127,21 +120,19 @@ export class PlaybookExecutionEventHandlerService {
     const terminalStatus = label === '__error__' ? 'failed' : 'cancelled';
     const errorMsg = label === '__error__' ? `Router ${taskNodeId} returned __error__` : `Router ${taskNodeId} returned __cancelled__`;
 
-    const result = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-        { status: terminalStatus, error: errorMsg, endedAt: new Date() },
-      )
-      .exec();
+    const ended = await this.executionRepository.transition(executionId, {
+      from: EXECUTION_OPEN_STATUSES,
+      patch: { status: terminalStatus, error: errorMsg, endedAt: new Date() },
+    });
 
-    if (!(result as { modifiedCount?: number }).modifiedCount) return;
+    if (!ended) return;
 
     await this.tokenBufferService?.flushExecution(executionId);
     await context.releaseExecutionLease();
     this.streamEvents.emitExecutionComplete(executionId, terminalStatus, errorMsg);
 
-    const execution = await this.executionModel.findById(executionId, { ownerId: 1 }).lean();
-    const owner = execution ? (execution as unknown as Record<string, unknown>).ownerId as string : undefined;
+    const execution = await this.executionRepository.findById(executionId);
+    const owner = execution?.ownerId;
     if (owner) {
       context.scheduleQueueDrain(owner);
     }
@@ -153,23 +144,15 @@ export class PlaybookExecutionEventHandlerService {
     iteration: number,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const result = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-        {
-          status: 'pending_approval',
-          pendingApproval: {
-            nodeId: String(payload.node_id || taskNodeId),
-            iteration,
-            prompt: String(payload.prompt || ''),
-            requestedAt: new Date(),
-            interruptType: 'approval_request',
-            resumableActions: ['approve', 'reject'],
-          },
-        },
-      )
-      .exec();
-    if ((result as { modifiedCount?: number }).modifiedCount) {
+    const paused = await this.executionRepository.setPendingApproval(executionId, {
+      nodeId: String(payload.node_id || taskNodeId),
+      iteration,
+      prompt: String(payload.prompt || ''),
+      requestedAt: new Date(),
+      interruptType: 'approval_request',
+      resumableActions: ['approve', 'reject'],
+    });
+    if (paused) {
       this.streamEvents.emitInterrupt(
         executionId,
         String(payload.node_id || taskNodeId),
@@ -188,27 +171,19 @@ export class PlaybookExecutionEventHandlerService {
     const { executionId } = context;
     await this.tokenBufferService?.flushExecution(executionId);
     this.getNodeHandler().discardExecutionTokens(executionId);
-    const failedTask = await this.taskResultModel
-      .findOne({ executionId, status: 'failed' })
-      .sort({ endedAt: -1 })
-      .lean();
+    const failedTask = await this.taskResultRepository.findLatestFailed(executionId);
     if (failedTask) {
       await this.handleExecutionFailed(context, {
         error: failedTask.error || 'Execution failed because a task failed',
       });
       return;
     }
-    const result = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-        { status: 'completed', endedAt: new Date() },
-      )
-      .exec();
-    await this.taskResultModel.updateMany(
-      { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
-      { status: 'completed' },
-    );
-    if ((result as { modifiedCount?: number }).modifiedCount) {
+    const completed = await this.executionRepository.transition(executionId, {
+      from: EXECUTION_OPEN_STATUSES,
+      patch: { status: 'completed', endedAt: new Date() },
+    });
+    await this.taskResultRepository.updateManyForExecution(executionId, { statuses: TASK_RESULT_OPEN_STATUSES }, { status: 'completed' });
+    if (completed) {
       await context.releaseExecutionLease();
       this.streamEvents.emitExecutionComplete(executionId, 'completed');
     }
@@ -222,17 +197,12 @@ export class PlaybookExecutionEventHandlerService {
     await this.tokenBufferService?.flushExecution(executionId);
     this.getNodeHandler().discardExecutionTokens(executionId);
     const errorMessage = String(sanitizePlaybookPublicValue(payload.error || 'Execution failed'));
-    const result = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-        { status: 'failed', error: errorMessage, endedAt: new Date() },
-      )
-      .exec();
-    await this.taskResultModel.updateMany(
-      { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
-      { status: 'failed' },
-    );
-    if ((result as { modifiedCount?: number }).modifiedCount) {
+    const failed = await this.executionRepository.transition(executionId, {
+      from: EXECUTION_OPEN_STATUSES,
+      patch: { status: 'failed', error: errorMessage, endedAt: new Date() },
+    });
+    await this.taskResultRepository.updateManyForExecution(executionId, { statuses: TASK_RESULT_OPEN_STATUSES }, { status: 'failed' });
+    if (failed) {
       await context.releaseExecutionLease();
       this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
     }

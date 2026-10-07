@@ -1,13 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConnectedAppTokenService } from './connected-app-token.service';
-import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import { USER_APP_CONNECTION_STORE } from '../persistence/connected-app.store';
+import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { InMemoryConnectionStore } from '../persistence/connected-app.store.fake';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { ConnectionStatus } from '../connected-app.types';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 const userId = '507f1f77bcf86cd799439011';
 
@@ -43,7 +43,7 @@ describe('ConnectedAppTokenService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppTokenService,
-        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: PgUserAppConnectionStore, useValue: connectionStore },
         {
           // withTransaction() only needs db.transaction(fn) for these specs.
           provide: DRIZZLE_DB,

@@ -21,7 +21,6 @@ import {
   PaginatedPublicWorkspaces,
 } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
-import { stripLeadingTrailingChar, collapseRepeatedChar } from '@common/utils';
 import {
   NotFoundException,
   ConflictException,
@@ -30,8 +29,8 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.interface';
 import type { WorkspaceRecord } from './ports/workspace-records';
-import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
-import { SHARE_STORE, type ShareStore } from './stores/share-store';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
+import { PgShareStore } from './stores/postgres/pg-share-store';
 import { SemanticDataGrantRevocationService } from '../semantic-model/services/semantic-data-grant-revocation.service';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
@@ -40,8 +39,8 @@ import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 export class WorkspaceService implements OnModuleInit {
   constructor(
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
-    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
+    private readonly workspaceStore: PgWorkspaceStore,
+    private readonly shareStore: PgShareStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     private readonly agentRepository: AgentRepository,
@@ -80,16 +79,13 @@ export class WorkspaceService implements OnModuleInit {
    * Generate URL-friendly alias from workspace name
    */
   private generateAlias(name: string): string {
-    return stripLeadingTrailingChar(
-      collapseRepeatedChar(
-        name
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]+/g, '-'),
-        '-',
-      ),
-      '-',
-    ).substring(0, 100);
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .substring(0, 100);
   }
 
   /**

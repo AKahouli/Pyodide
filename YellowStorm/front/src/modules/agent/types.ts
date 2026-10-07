@@ -2,6 +2,34 @@
  * Agent Module Types
  */
 
+export type RootConfigurationMode = 'native' | 'root_constrained';
+
+export interface RootDelegateModeOverride {
+  agentId: string;
+  configurationMode: RootConfigurationMode;
+}
+
+/** Mirrors the backend RootExecutionPolicyV1 (WP01); version 1 only. */
+export interface RootExecutionPolicy {
+  version: 1;
+  delegation: { enabled: boolean; defaultConfigurationMode: RootConfigurationMode };
+  temporaryWorkers: { enabled: boolean; maxPerWorkGroup: number };
+  fanout: { enabled: boolean; maxItems: number; allowBackground: boolean };
+  background: {
+    enabled: boolean;
+    maxOutstandingPerConversation: number;
+    taskTimeoutSeconds: number;
+    maxAttempts: number;
+  };
+  limits: {
+    maxDepth: 1;
+    maxParallelWorkers: number;
+    maxChildExecutionsPerWorkGroup: number;
+    maxWorkGroupDurationSeconds: number;
+  };
+  perAgentModeOverrides?: RootDelegateModeOverride[];
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -24,6 +52,10 @@ export interface Agent {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  /** Root-delegation policy; present only when the agent is enrolled as a root. */
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   /** True when the agent has the "smart-memory" connector. */
   hasSmartMemory?: boolean;
   isDefault: boolean;
@@ -288,7 +320,7 @@ export interface AgentTelegramIntegration {
   botUsername?: string;
   status?: 'pending' | 'active' | 'error';
   webhookRegistered?: boolean;
-  messageKey?: 'webhook_success' | 'webhook_failed' | 'disabled' | 'saved';
+  messageKey?: 'webhook_success' | 'webhook_failed' | 'polling' | 'disabled' | 'saved';
   errorMessage?: string;
   linkCode?: string;
   linkCodeExpiresAt?: string;
@@ -323,6 +355,8 @@ export interface SkillOption {
 }
 
 export interface ConnectorActionOption {
+  workerAccess?: 'inherit' | 'allow' | 'block';
+  executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
   key: string;
   label: string;
   description: string;
@@ -491,6 +525,9 @@ export interface CreateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface UpdateAgentData {
@@ -516,4 +553,7 @@ export interface UpdateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  rootExecutionPolicy?: RootExecutionPolicy | null;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }

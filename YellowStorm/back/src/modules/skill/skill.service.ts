@@ -4,21 +4,21 @@ import * as yaml from 'js-yaml';
 import { LoggerService } from '../logger';
 import { isObjectId } from '@common/postgres';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
+import { MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
 import { SkillFileKind } from './skill.types';
-import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillRow, type SkillStore } from './persistence/skill.store';
+import { SKILL_STORE,   type SkillRow,   type SkillStore } from './persistence/skill.store';
 import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
+import { PgSkillCategoryStore } from './persistence/pg-skill.store';
 
 @Injectable()
 export class SkillService {
   constructor(
     @Inject(SKILL_STORE)
     private readonly skillStore: SkillStore,
-    @Inject(SKILL_CATEGORY_STORE)
-    private readonly categoryStore: SkillCategoryStore,
+    private readonly categoryStore: PgSkillCategoryStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(SkillService.name);
@@ -133,7 +133,7 @@ export class SkillService {
 
   /** Resolve category id -> name for the given skills in a single query. */
   private async buildCategoryNameMap(
-    skills: Array<{ categoryId?: string | null }>,
+    skills: { categoryId?: string | null }[],
   ): Promise<Map<string, string>> {
     const categoryIds = Array.from(
       new Set(skills.map((s) => s.categoryId).filter((id): id is string => Boolean(id))),
@@ -175,7 +175,7 @@ export class SkillService {
       }));
     }
     if (Object.prototype.hasOwnProperty.call(updateData, 'categoryId')) {
-      updateData.categoryId = (updateData.categoryId as string) || null;
+      updateData.categoryId = (updateData.categoryId) || null;
     }
 
     const updated = await this.skillStore.update(id, updateData);
@@ -195,7 +195,7 @@ export class SkillService {
   }
 
   async importPackage(createdBy: string, file: { originalname: string; buffer: Buffer; size?: number }): Promise<ISkillResponse> {
-    if (!file || !file.buffer?.length) {
+    if (!file?.buffer?.length) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A skill package file is required.');
     }
 
@@ -228,10 +228,9 @@ export class SkillService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The uploaded zip does not contain a SKILL.md file.');
     }
 
-    const skillRoot = stripTrailingChar(
-      skillEntry.entryName.replace(/(^|\/)SKILL\.md$/i, ''),
-      '/',
-    );
+    const skillRoot = skillEntry.entryName
+      .replace(/(^|\/)SKILL\.md$/i, '')
+      .replace(/\/+$/, '');
     const parsed = this.parseSkillPackage({
       skillMdContent: zip.readAsText(skillEntry, 'utf8'),
       packageName: file.originalname,
@@ -293,9 +292,9 @@ export class SkillService {
   private parseSkillPackage(input: {
     skillMdContent: string;
     packageName: string;
-    files: Array<{ path: string; content: string }>;
+    files: { path: string; content: string }[];
   }): CreateSkillDto {
-    const match = input.skillMdContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+    const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(input.skillMdContent);
     if (!match) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'SKILL.md must start with YAML frontmatter.');
     }
@@ -348,7 +347,7 @@ export class SkillService {
 
   private toResponse(skill: SkillRow | Record<string, unknown>): ISkillResponse {
     const doc = skill as Record<string, unknown>;
-    const files = Array.isArray(doc.files) ? doc.files as Array<Record<string, unknown>> : [];
+    const files = Array.isArray(doc.files) ? doc.files as Record<string, unknown>[] : [];
 
     return {
       id: (doc.id as { toString(): string }).toString(),

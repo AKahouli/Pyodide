@@ -5,18 +5,15 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
-import {
-  CONNECTED_APP_DEFINITION_STORE,
-  CONNECTED_APP_OAUTH_STATE_STORE,
-  USER_APP_CONNECTION_STORE,
-  type ConnectedAppDefinitionRow,
-  type ConnectedAppDefinitionStore,
-  type ConnectedAppOauthStateRow,
-  type ConnectedAppOauthStateStore,
-  type NewConnectedAppDefinition,
-  type UpsertConnectionPayload,
-  type UserAppConnectionRow,
-  type UserAppConnectionStore,
+import {  
+  type ConnectedAppDefinitionRow,   
+  type ConnectedAppDefinitionStore,   
+  type ConnectedAppOauthStateRow,   
+  type ConnectedAppOauthStateStore,   
+  type NewConnectedAppDefinition,   
+  type UpsertConnectionPayload,   
+  type UserAppConnectionRow,   
+  type UserAppConnectionStore,   
 } from './connected-app.store';
 
 type DefRow = typeof schema.integrationsConnectedAppDefinitions.$inferSelect;

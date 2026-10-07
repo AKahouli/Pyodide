@@ -102,13 +102,13 @@ function toGeminiSchema(schema: Record<string, any> | undefined): Record<string,
 
 /** Connector actions -> Gemini function declarations (the concierge's tools). */
 export function connectorActionsToFunctionDeclarations(
-  actions: Array<{ key: string; description?: string; parameterSchema?: Record<string, unknown> }>,
+  actions: { key: string; description?: string; parameterSchema?: Record<string, unknown> }[],
 ): FunctionDeclaration[] {
   return actions.map((a) => ({
     name: a.key,
     description: a.description ?? '',
     parameters: toGeminiSchema(a.parameterSchema as Record<string, any>),
-  })) as unknown as FunctionDeclaration[];
+  }));
 }
 
 /**

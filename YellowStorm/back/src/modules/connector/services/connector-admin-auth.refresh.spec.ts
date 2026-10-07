@@ -1,9 +1,7 @@
 import { ConnectorAdminAuthService } from './connector-admin-auth.service';
 import { describeIntegration, makeTestDb } from '../../postgres/testing/pg-integration';
-import {
-  CONNECTOR_ADMIN_AUTH_STORE,
-  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
-  type ConnectorAdminAuthStore,
+import { 
+  type ConnectorAdminAuthStore,  
 } from '../persistence/connector.store';
 import { PgConnectorAdminAuthStore, PgConnectorAdminOauthStateStore } from '../persistence/pg-connector.store';
 import * as schema from '@modules/postgres/schema';
@@ -18,7 +16,7 @@ jest.setTimeout(60000);
  */
 describeIntegration('ConnectorAdminAuthService refresh (integration)', () => {
   const { db, close } = makeTestDb();
-  const authStore: ConnectorAdminAuthStore = new PgConnectorAdminAuthStore(db as never);
+  const authStore = new PgConnectorAdminAuthStore(db as never);
   const service = new ConnectorAdminAuthService(
     new PgConnectorAdminOauthStateStore(db as never),
     authStore,

@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { MEMBERSHIP_STORE, type GovernanceMembershipCreateInput, type GovernanceMembershipPatch, type MembershipStore } from '../membership-store';
+import { type GovernanceMembershipCreateInput,  type GovernanceMembershipPatch,  type MembershipStore } from '../membership-store';
 import { DuplicateKeyError, type GovernanceMembershipRecord } from '../governance-records';
 
 const MEMBERSHIPS = schema.governanceMemberships;
@@ -84,7 +84,7 @@ export class PgMembershipStore implements MembershipStore {
         and(
           eq(MEMBERSHIPS.programId, programId),
           scopeId === null ? isNull(MEMBERSHIPS.scopeId) : eq(MEMBERSHIPS.scopeId, scopeId),
-          target.userId ? eq(MEMBERSHIPS.userId, target.userId) : eq(MEMBERSHIPS.groupId, target.groupId as string),
+          target.userId ? eq(MEMBERSHIPS.userId, target.userId) : eq(MEMBERSHIPS.groupId, target.groupId!),
         ),
       )
       .limit(1);

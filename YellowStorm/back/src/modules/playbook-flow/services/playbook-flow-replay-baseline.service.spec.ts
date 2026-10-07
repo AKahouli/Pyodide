@@ -1,6 +1,6 @@
 import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
-import { FlowReplayOutputContractType } from '../schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayOutputContractType } from '../models/playbook-flow-validated-replay.model';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 
 describe('PlaybookFlowReplayBaselineService', () => {

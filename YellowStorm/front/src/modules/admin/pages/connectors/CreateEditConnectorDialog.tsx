@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { ConnectorWorkerSettings } from './ConnectorWorkerSettings';
 import {
   Dialog,
   DialogContent,
@@ -242,7 +243,9 @@ function mapInspectToolsToActions(
     ),
     parameterSchema: tool.inputSchema ?? {},
     outputSchema: {},
-    safety: 'read',
+    safety: tool.safety ?? 'read',
+    workerAccess: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.workerAccess ?? 'inherit',
+    executionKind: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.executionKind ?? 'inherit',
     supportsBatch: false,
     supportsIteration: false,
     isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.isEnabled ?? true,
@@ -346,11 +349,13 @@ export function CreateEditConnectorDialog({
           githubPatToken: parsedServerConfig.githubPatToken,
           mcpServerConfig: parsedServerConfig.serverConfigText,
           dynamicHeaders: dynamicHeadersToRows(connector.dynamicHeaders),
+          workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
           actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
           referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
           isHidden: connector.isHidden ?? false,
+          isSystem: connector.isSystem ?? false,
         });
 
         if (connector.connectedAppKey) {
@@ -1033,6 +1038,8 @@ export function CreateEditConnectorDialog({
             )}
           </div>
 
+          <ConnectorWorkerSettings policy={form.workerPolicy} actions={form.actions ?? []} onPolicyChange={(workerPolicy) => setForm({ ...form, workerPolicy })} onActionsChange={(actions) => setForm({ ...form, actions, actionsJson: JSON.stringify(actions, null, 2) })} />
+
           <div className='min-w-0 space-y-3'>
             <div>
               <Label>{t('connectors.form.actions.title')}</Label>
@@ -1167,6 +1174,11 @@ export function CreateEditConnectorDialog({
           <div className='flex items-center gap-2'>
             <Switch id='connector-hidden' checked={form.isHidden} onCheckedChange={(checked) => setForm({ ...form, isHidden: checked })} />
             <Label htmlFor='connector-hidden'>{t('connectors.form.fields.hidden.label')}</Label>
+          </div>
+
+          <div className='flex items-center gap-2'>
+            <Switch id='connector-system' checked={form.isSystem} onCheckedChange={(checked) => setForm({ ...form, isSystem: checked })} />
+            <Label htmlFor='connector-system'>{t('connectors.form.fields.system.label')}</Label>
           </div>
         </div>
         <DialogFooter>

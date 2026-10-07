@@ -50,7 +50,7 @@ class TestDelegationFactoryHelperExtended:
         agent.tools = []
         config = _config()
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.MCPHelper.create_toolsets",
+            "src.smart_rag.agents.factories.delegation_factory.MCPHelper.create_toolsets",
             return_value=[MagicMock()],
         ):
             _attach_mcp_toolset(
@@ -71,7 +71,7 @@ class TestDelegationFactoryHelperExtended:
         tool_helper = MagicMock()
         agent_factory = MagicMock()
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.create_search_agent_with_tools",
+            "src.smart_rag.agents.factories.delegation_factory.create_search_agent_with_tools",
             return_value=(MagicMock(), MagicMock()),
         ) as mock_create:
             create_regular_agent(
@@ -90,7 +90,7 @@ class TestDelegationFactoryHelperExtended:
 
     def test_create_agent_for_delegation_delegates(self):
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.create_regular_agent",
+            "src.smart_rag.agents.factories.delegation_factory.create_regular_agent",
             return_value=(MagicMock(), None),
         ) as mock_create:
             create_agent_for_delegation(
@@ -124,10 +124,10 @@ class TestDelegationFactoryHelperExtended:
         }
         agent_config["tools"].append({"name": "save_file_to_workspace"})
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.create_connector_tools",
+            "src.smart_rag.agents.factories.delegation_factory.create_connector_tools",
             return_value=[MagicMock()],
         ), patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             agent, toolkit = create_search_agent_with_tools(
@@ -159,7 +159,7 @@ class TestDelegationFactoryHelperExtended:
             "user_id": "user-1",
         })
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             agent, toolkit = create_standard_agent_with_tools(
@@ -185,7 +185,7 @@ class TestDelegationFactoryHelperExtended:
         agent_config = _agent_config()
         agent_config["tools"] = [{"name": "render_chart"}]
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             create_standard_agent_with_tools(
@@ -201,7 +201,7 @@ class TestDelegationFactoryHelperExtended:
         agent_config = _agent_config()
         agent_config["tools"] = [{"name": "render_chart", "enabled": False}]
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             create_standard_agent_with_tools(
@@ -217,7 +217,7 @@ class TestDelegationFactoryHelperExtended:
         agent_config = _agent_config(with_search=True)
         agent_config["tools"].append({"name": "render_chart", "enabled": False})
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             create_search_agent_with_tools(
@@ -237,7 +237,7 @@ class TestDelegationFactoryHelperExtended:
             "instructions": "Return HTML.",
         }]
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             create_standard_agent_with_tools(
@@ -255,7 +255,7 @@ class TestDelegationFactoryHelperExtended:
         agent_config = _agent_config(with_search=True)
         agent_config["agent_type"] = "visualizer"
         with patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            "src.smart_rag.agents.factories.delegation_factory.prepare_agent_data",
             return_value=([], [], "prompt", ["b1"], "vs", "bot"),
         ):
             create_search_agent_with_tools(

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
@@ -38,13 +38,17 @@ import {
 } from "./AgentFormSchema";
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
+import { RootExecutionPolicyFields } from "./RootExecutionPolicyFields";
+import { defaultRootExecutionPolicy, toRootPolicyFormValues, isRootAgentType, isDelegateAgentType } from "./root-execution-policy-schema";
+import { getAllTeams } from "@/modules/team/api";
+import type { SelectOption } from "./RootExecutionPolicyFields";
 import { AgentDeploymentSection } from "./AgentDeploymentSection";
 import { AgentConnectorFields } from './AgentConnectorFields';
 import { AgentGuardrailsTab } from './AgentGuardrailsTab';
 import { AgentReasoningEffortField } from './AgentReasoningEffortField';
-import { useAgentTypes, useAgentStore } from "../store";
+import { useAgentTypes, useAgentStore, useAgents } from "../store";
 import { useModels, useModelsStore } from "@/modules/models";
-import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
+import { getActiveSkills, getActiveTools, getActiveConnectors, getConnectorById, type ToolOption, type ConnectorOption } from "../api";
 import { getWorkspaces } from "@/modules/workspace";
 import type { Workspace } from "@/modules/workspace/types";
 import type { Agent } from "../types";
@@ -133,6 +137,7 @@ export function CreateEditAgentDialog({
   readOnly = false,
 }: CreateEditAgentDialogProps) {
   const agentTypes = useAgentTypes();
+  const allAgents = useAgents();
   const models = useModels();
   const [availableTools, setAvailableTools] = useState<ToolOption[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
@@ -167,7 +172,19 @@ export function CreateEditAgentDialog({
         useModelsStore.getState().fetchModels().catch(() => { }),
         getActiveTools().catch(() => [] as ToolOption[]),
         getActiveSkills().catch(() => [] as SkillOption[]),
-        getActiveConnectors().catch(() => [] as ConnectorOption[]),
+        getActiveConnectors()
+          .then(async (connectors) => {
+            // The visible list filters out hidden connectors; re-fetch any
+            // hidden connector already attached to this agent so its chip
+            // renders and it can be detached.
+            const missing = (agent?.connectors || [])
+              .filter((id) => !connectors.some((c) => c.id === id));
+            const hidden = await Promise.all(
+              missing.map((id) => getConnectorById(id).catch(() => null)),
+            );
+            return [...connectors, ...hidden.filter((c): c is ConnectorOption => Boolean(c))];
+          })
+          .catch(() => [] as ConnectorOption[]),
         getWorkspaces({ limit: 100 }).then((res) => res.workspaces).catch(() => [] as Workspace[]),
         getAdminGuardrailsSettings().catch(() => null),
       ]).then(([, , tools, skills, connectors, ws, guardrailsSettings]) => {
@@ -198,6 +215,11 @@ export function CreateEditAgentDialog({
             isActive: agent.isActive,
             enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
             max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
+            rootExecutionPolicy: agent.rootExecutionPolicy
+              ? toRootPolicyFormValues(agent.rootExecutionPolicy)
+              : undefined,
+            delegateAgentIds: agent.delegateAgentIds ?? [],
+            delegateTeamIds: agent.delegateTeamIds ?? [],
             guardrails: normalizeGuardrails(agent.guardrails),
             deploymentSettings: {
               ...defaultFormValues.deploymentSettings,
@@ -214,8 +236,76 @@ export function CreateEditAgentDialog({
     }
   }, [open, agent, reset]);
 
-  // Auto-select default tools when agent type changes (skip if it matches the loaded edit value)
   const selectedAgentTypeId = watch("agentType");
+  const watchRootPolicy = watch("rootExecutionPolicy");
+  const watchDelegateAgents = watch("delegateAgentIds");
+  const watchDelegateTeams = watch("delegateTeamIds");
+
+  // Only the currently selected mono-agent type may carry a Root policy.
+  const isRootCandidate = useMemo(() => {
+    const picked = agentTypes.find((type) => type.id === selectedAgentTypeId);
+    return isRootAgentType(picked?.slug ?? (selectedAgentTypeId === agent?.agentType.id ? agent.agentType.slug : undefined));
+  }, [agent, agentTypes, selectedAgentTypeId]);
+  const removesRootSettings = Boolean(agent && isRootAgentType(agent.agentType.slug) && !isRootCandidate);
+
+  const formTabs = useMemo<
+    Array<{
+      value: AgentFormTab | "delegation";
+      labelKey: (typeof AGENT_FORM_TABS)[number]["labelKey"] | "createEdit.tabs.delegation";
+      tipKey: (typeof AGENT_FORM_TABS)[number]["tipKey"] | "createEdit.tabs.delegationTip";
+    }>
+  >(() => {
+    if (!isRootCandidate) return [...AGENT_FORM_TABS];
+    const tabs: Array<{
+      value: AgentFormTab | "delegation";
+      labelKey: (typeof AGENT_FORM_TABS)[number]["labelKey"] | "createEdit.tabs.delegation";
+      tipKey: (typeof AGENT_FORM_TABS)[number]["tipKey"] | "createEdit.tabs.delegationTip";
+    }> = [...AGENT_FORM_TABS];
+    const behaviourIndex = tabs.findIndex((tab) => tab.value === "behaviour");
+    tabs.splice(behaviourIndex + 1, 0, {
+      value: "delegation",
+      labelKey: "createEdit.tabs.delegation",
+      tipKey: "createEdit.tabs.delegationTip",
+    });
+    return tabs;
+  }, [isRootCandidate]);
+
+  const [teamOptions, setTeamOptions] = useState<SelectOption[]>([]);
+  useEffect(() => {
+    if (!open || !isRootCandidate || teamOptions.length > 0) return;
+    let cancelled = false;
+    getAllTeams()
+      .then((teams) => {
+        if (cancelled) return;
+        setTeamOptions(
+          (teams || [])
+            .filter((team) => team.isActive)
+            .map((team) => ({ value: team.id, label: team.name, description: team.description || undefined })),
+        );
+      })
+      .catch(() => {
+        /* selector degrades to agent-only picking when teams are unavailable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isRootCandidate, teamOptions.length]);
+
+  const agentIdOptions: SelectOption[] = useMemo(() => {
+    return allAgents
+      .filter((candidate) => candidate.id !== agent?.id)
+      .filter((candidate) => {
+        const slug = candidate.agentType.slug || "";
+        return isDelegateAgentType(slug);
+      })
+      .filter((candidate) => candidate.isActive)
+      .map((candidate) => ({
+        value: candidate.id,
+        label: candidate.name,
+        description: candidate.description || undefined,
+      }));
+  }, [allAgents, agent]);
+
   useEffect(() => {
     if (!selectedAgentTypeId || !availableTools.length) return;
     if (loadedAgentTypeId.current) {
@@ -315,14 +405,16 @@ export function CreateEditAgentDialog({
           </div>
         ) : (
           <form
-            onSubmit={readOnly ? (event) => event.preventDefault() : handleSubmit(onSave, scrollToFirstError)}
+            onSubmit={readOnly ? (event) => event.preventDefault() : handleSubmit((data) => onSave(removesRootSettings
+              ? { ...data, rootExecutionPolicy: null, delegateAgentIds: [], delegateTeamIds: [], enable_temporary_child_agents: false }
+              : data), scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
               <TooltipProvider delayDuration={300}>
                 <div className="w-full shrink-0 overflow-x-auto">
                   <TabsList className="flex h-auto w-max min-w-full flex-nowrap justify-start gap-1">
-                    {AGENT_FORM_TABS.map((tab) => (
+                    {formTabs.map((tab) => (
                       <Tooltip key={tab.value}>
                         <TooltipTrigger asChild>
                           <TabsTrigger
@@ -397,6 +489,7 @@ export function CreateEditAgentDialog({
                         {errors.agentType && (
                           <p className="text-xs text-destructive">{errors.agentType.message}</p>
                         )}
+                        {removesRootSettings && <p className="text-xs text-muted-foreground">{t('createEdit.fields.typeChangeRemovesRoot')}</p>}
                       </div>
 
                       {/* Role */}
@@ -413,6 +506,7 @@ export function CreateEditAgentDialog({
                         )}
                       </div>
 
+                      {!isRootCandidate && (
                       <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">{t('library.manage')}</summary><div className="mt-4 space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
@@ -447,6 +541,7 @@ export function CreateEditAgentDialog({
                       </div>
 
 </div></details>
+                      )}
                       {/* Description */}
                       <div className="space-y-2">
                         <Label htmlFor="user-agent-description">{t('createEdit.fields.description')}</Label>
@@ -667,6 +762,23 @@ export function CreateEditAgentDialog({
                   <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <EvaluationTab agent={agent} readOnly={readOnly} />
                   </TabsContent>
+
+                  {/* Delegation & execution (WP02) — mono-agent roots only */}
+                  {isRootCandidate && (
+                    <TabsContent value="delegation" forceMount className="mt-0 data-[state=inactive]:hidden">
+                      <RootExecutionPolicyFields
+                        policy={watchRootPolicy ?? defaultRootExecutionPolicy}
+                        delegateAgentIds={watchDelegateAgents ?? []}
+                        delegateTeamIds={watchDelegateTeams ?? []}
+                        onPolicyChange={(policy) => setValue("rootExecutionPolicy", policy, { shouldDirty: true })}
+                        onDelegateAgentsChange={(ids) => setValue("delegateAgentIds", ids, { shouldDirty: true })}
+                        onDelegateTeamsChange={(ids) => setValue("delegateTeamIds", ids, { shouldDirty: true })}
+                        agentOptions={agentIdOptions}
+                        teamOptions={teamOptions}
+                        readOnly={readOnly}
+                      />
+                    </TabsContent>
+                  )}
                 </div>
                 </fieldset>
               </ScrollArea>

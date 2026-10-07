@@ -7,7 +7,7 @@ import { assertUrlIsSafe } from '../workspace/services/url-safety';
 import { BrowserSessionService } from './browser-session.service';
 import { BrowserSessionGateway } from './browser-session.gateway';
 import { PlaywrightBrowserEngine } from './playwright-browser-engine';
-import { BROWSER_ENGINE, URL_SAFETY } from './browser-session.types';
+import { URL_SAFETY } from './browser-session.types';
 
 @Module({
   imports: [ConfigModule.forFeature(browserSessionConfig), AuthModule, LoggerModule],
@@ -15,7 +15,6 @@ import { BROWSER_ENGINE, URL_SAFETY } from './browser-session.types';
     BrowserSessionService,
     BrowserSessionGateway,
     PlaywrightBrowserEngine,
-    { provide: BROWSER_ENGINE, useExisting: PlaywrightBrowserEngine },
     { provide: URL_SAFETY, useValue: assertUrlIsSafe },
   ],
 })

@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChatCompletionService } from '@modules/chat-completion';
 import { ModelsService } from '@modules/models/models.service';
-import { stripLeadingTrailingChars } from '@common/utils';
 
 const TITLE_SYSTEM_PROMPT = `You generate a short, descriptive conversation title from the user's first message.
 
@@ -25,16 +24,18 @@ export class ConversationV2NameGeneratorService {
 
   /**
    * Generate a short title from the first user message via LiteLLM.
-   * Returns null on any failure — the caller should fall back to keeping the
-   * existing (likely empty) title. Resolves the model in this order:
-   * caller-supplied → admin default.
+   * Always returns a non-empty string when `query` has content: LLM output when
+   * available, otherwise a clipped heuristic from the message. Resolves the
+   * model as: preferred (modelId or litellmModel) → conversation-v2 default →
+   * global default.
    */
   async generate(query: string, preferredModelId?: string): Promise<string | null> {
+    const fallback = this.fallbackFromQuery(query);
     try {
       const modelId = await this.resolveModelId(preferredModelId);
       if (!modelId) {
-        this.logger.warn('No model available for name generation');
-        return null;
+        this.logger.warn('No model available for name generation; using message fallback');
+        return fallback;
       }
       const raw = await this.chatCompletion.completeText(query, {
         modelId,
@@ -42,26 +43,41 @@ export class ConversationV2NameGeneratorService {
         temperature: 0.3,
       });
       const cleaned = this.sanitize(raw);
-      return cleaned.length > 0 ? cleaned : null;
+      return cleaned.length > 0 ? cleaned : fallback;
     } catch (err) {
       this.logger.warn(`Name generation failed: ${(err as Error).message}`);
-      return null;
+      return fallback;
     }
   }
 
   private async resolveModelId(preferredModelId?: string): Promise<string | null> {
     if (preferredModelId) {
-      const m = await this.modelsService.findById(preferredModelId).catch(() => null);
+      // Stream passes getModelIdentifier() (often litellmModel), not only modelId.
+      const m = await this.modelsService
+        .findByIdOrLitellmModel(preferredModelId)
+        .catch(() => null);
       if (m?.id) return m.id;
     }
+    const conversationV2Default = await this.modelsService
+      .getConversationV2DefaultModel()
+      .catch(() => null);
+    if (conversationV2Default?.id) return conversationV2Default.id;
     const def = await this.modelsService.getDefaultModel().catch(() => null);
     return def?.id ?? null;
   }
 
   private sanitize(raw: string): string {
     // Strip surrounding quotes/whitespace and clamp length to keep DB tidy.
-    const trimmed = stripLeadingTrailingChars(raw.trim(), '\'"`').trim();
-    const oneLine = trimmed.split(/\r?\n/)[0].trim();
+    const trimmed = raw.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
+    const oneLine = trimmed.split(/\r?\n/)[0]?.trim() ?? '';
     return oneLine.length > 120 ? oneLine.slice(0, 120).trim() : oneLine;
+  }
+
+  /** Deterministic title when the LLM is unavailable — never leave apps untitled. */
+  private fallbackFromQuery(query: string): string | null {
+    const oneLine = query.trim().split(/\r?\n/)[0]?.trim() ?? '';
+    if (!oneLine) return null;
+    const clipped = oneLine.split(/\s+/).slice(0, 7).join(' ');
+    return clipped.length > 80 ? `${clipped.slice(0, 77).trim()}…` : clipped;
   }
 }

@@ -7,7 +7,6 @@ import { M365TransferAdapter } from './adapters/m365-transfer.adapter';
 import { WorkspaceDocumentService } from '../workspace/workspace-document.service';
 import { WorkspaceShareService } from '../workspace/workspace-share.service';
 import { DocumentService } from '../document/document.service';
-import { stripLeadingTrailingChar } from '@common/utils';
 
 export interface TransferResult {
   success: boolean;
@@ -24,14 +23,14 @@ export interface ImportTransferResult {
   success: boolean;
   mode: 'file' | 'files' | 'folder';
   workspaceId: string;
-  imported: Array<TransferResult & { finalFilename?: string; sourcePath?: string; collisionResolved?: boolean }>;
+  imported: (TransferResult & { finalFilename?: string; sourcePath?: string; collisionResolved?: boolean })[];
   summary: { requested: number; imported: number; failed: number };
-  errors: Array<{ sourcePath?: string; error: string }>;
+  errors: { sourcePath?: string; error: string }[];
 }
 
 @Injectable()
 export class ConnectorTransferService {
-  private readonly adapters: Map<string, ConnectorTransferAdapter> = new Map();
+  private readonly adapters = new Map<string, ConnectorTransferAdapter>();
 
   constructor(
     private readonly connectorService: ConnectorService,
@@ -80,7 +79,7 @@ export class ConnectorTransferService {
       connectorId,
     });
 
-    if (!auth.headers['Authorization']) {
+    if (!auth.headers.Authorization) {
       throw new Error(
         `Could not resolve auth for connector "${connector.slug}". ` +
         `Ensure the connected app is linked and has an active token.`,
@@ -91,10 +90,10 @@ export class ConnectorTransferService {
   }
 
   private sanitizePathSegment(value: string): string {
-    return stripLeadingTrailingChar(
-      value.replace(/[^a-zA-Z0-9._-]+/g, '_'),
-      '_',
-    ).toLowerCase();
+    return value
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
   }
 
   private buildCollisionFilename(filename: string, sourcePath: string, usedNames: Set<string>): string {

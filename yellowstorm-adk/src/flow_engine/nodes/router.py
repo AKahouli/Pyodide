@@ -37,9 +37,15 @@ async def run_router(
     node_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     iteration = state["iterations"].get(node_id, 0)
-    output_labels = node_config.get("router_config", {}).get("output_labels", ["continue"])
+    router_cfg = node_config.get("router_config", {}) or {}
+    output_labels = router_cfg.get("output_labels", ["continue"])
     label = str(node_config.get("label") or node_id)
-    router_prompt = node_config.get("router_config", {}).get("prompt", "")
+    router_prompt = str(router_cfg.get("prompt") or "")
+    router_mode = str(router_cfg.get("mode") or "").strip().lower()
+    if router_mode not in ("ai", "deterministic"):
+        router_mode = ""
+    # ponytail: model reuses top-level model_id like step nodes; no separate router model field
+    model = str(node_config.get("model_id") or DEFAULT_MODEL)
 
     logger.info("[router] Running router node", node_id=node_id, iteration=iteration, labels=output_labels)
 
@@ -77,26 +83,28 @@ async def run_router(
     chosen_label = output_labels[0]
     decision_payload: dict[str, Any] = {"label": chosen_label, "mode": "llm"}
 
-    try:
-        deterministic_decision = choose_deterministic_label(
-            node_config,
-            state,
-            node_id=node_id,
-            node_inputs=node_inputs,
-        )
-    except RouterConditionSourceUnavailableError as exc:
-        writer({
-            "type": "NodeFailed",
-            "node_id": node_id,
-            "iteration": iteration,
-            "payload": {"error": str(exc)},
-        })
-        logger.warning(
-            "[router] Deterministic routing blocked by unavailable source output",
-            node_id=node_id,
-            error=str(exc),
-        )
-        raise
+    deterministic_decision: dict[str, Any] | None = None
+    if router_mode != "ai":
+        try:
+            deterministic_decision = choose_deterministic_label(
+                node_config,
+                state,
+                node_id=node_id,
+                node_inputs=node_inputs,
+            )
+        except RouterConditionSourceUnavailableError as exc:
+            writer({
+                "type": "NodeFailed",
+                "node_id": node_id,
+                "iteration": iteration,
+                "payload": {"error": str(exc)},
+            })
+            logger.warning(
+                "[router] Deterministic routing blocked by unavailable source output",
+                node_id=node_id,
+                error=str(exc),
+            )
+            raise
 
     if deterministic_decision is not None:
         chosen_label = str(deterministic_decision["label"])
@@ -109,20 +117,24 @@ async def run_router(
             used_default=decision_payload.get("used_default"),
         )
 
-    if deterministic_decision is None:
+    if deterministic_decision is None and router_mode != "deterministic":
         try:
             litellm.api_base = settings.LITELLM_API_BASE_URL
             litellm.api_key = settings.LITELLM_API_SECRET_KEY
             litellm.drop_params = True
 
             labels_str = ", ".join(json.dumps(l) for l in output_labels)
+            # The routing prompt is instructions for the model, so it belongs in the
+            # system message. The user message always carries the context inputs —
+            # previously a configured prompt replaced them and the model went blind.
             system_msg = (
                 f"You are a routing decision engine. "
                 f"Choose exactly one of the following labels: [{labels_str}]. "
-                f"Respond with only the label string, nothing else."
+                + (f"{router_prompt} " if router_prompt else "")
+                + "Respond with only the label string, nothing else."
             )
             router_context = node_inputs if node_inputs is not None else state.get("inputs", {})
-            user_msg = router_prompt or (
+            user_msg = (
                 f"Context: {json.dumps(router_context, default=str)}\n"
                 f"Previous outputs: {json.dumps({str(k): v for k, v in state.get('task_outputs', {}).items()}, default=str)}\n"
                 f"Iteration: {iteration}\n"
@@ -130,12 +142,12 @@ async def run_router(
             )
 
             response = await litellm.acompletion(
-                model=DEFAULT_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": user_msg},
                 ],
-                temperature=normalize_temperature_for_model(DEFAULT_MODEL, 0.1),
+                temperature=normalize_temperature_for_model(model, 0.1),
                 max_tokens=50,
                 stream=False,
             )
@@ -153,6 +165,10 @@ async def run_router(
         except Exception as exc:
             decision_payload = {"label": chosen_label, "mode": "llm-fallback", "used_default": True}
             logger.warning("[router] LLM routing failed — falling back to first label", node_id=node_id, error=str(exc))
+
+    if deterministic_decision is None and router_mode == "deterministic":
+        chosen_label = str(router_cfg.get("default_label") or output_labels[0])
+        decision_payload = {"label": chosen_label, "mode": "deterministic", "used_default": True}
 
     writer({
         "type": "RouterDecision",

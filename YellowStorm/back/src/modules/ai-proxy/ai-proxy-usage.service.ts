@@ -1,17 +1,12 @@
-import { Injectable, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Injectable,  Optional} from '@nestjs/common';
 import { Request } from 'express';
-import { Model } from 'mongoose';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { UsageService, UsageType } from '../usage';
 import { AppBuilderAiUsageService } from '../app-builder-ai/services/app-builder-ai-usage.service';
 import { AppDataCatalogService } from '../app-data/services/app-data-catalog.service';
 import { AppDataClientService } from '../app-data/services/app-data-client.service';
-import {
-  ConversationV2Session,
-  ConversationV2SessionDocument,
-} from '../conversation-v2/schemas/conversation-v2-session.schema';
+import { PgConversationV2SessionStore } from '../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 import { AI_PROXY_CHAT_ENDPOINT } from './constants/ai-proxy.constants';
 import {
   AiProxyModelPricing,
@@ -49,8 +44,7 @@ export class AiProxyUsageService {
     private readonly logger: LoggerService,
     @Optional() private readonly appBuilderAiUsage?: AppBuilderAiUsageService,
     @Optional()
-    @InjectModel(ConversationV2Session.name)
-    private readonly sessions?: Model<ConversationV2SessionDocument>,
+        private readonly sessions?: PgConversationV2SessionStore,
     @Optional() private readonly appDataCatalog?: AppDataCatalogService,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
@@ -206,10 +200,7 @@ export class AiProxyUsageService {
     const sessionId = attribution.sessionId;
     if (typeof sessionId !== 'string' || !sessionId || !this.sessions) return;
     try {
-      await this.sessions.updateOne(
-        { _id: sessionId, deletedAt: null },
-        { $set: { hasAiFeatures: true } },
-      );
+      await this.sessions.setAiFeaturesFlag(sessionId, true, null);
     } catch (error) {
       this.logger.warn('Failed to mark session hasAiFeatures after AI proxy usage', {
         sessionId,
@@ -234,20 +225,10 @@ export class AiProxyUsageService {
     if (workspaceId) result.workspaceId = workspaceId;
 
     if (workspaceId && this.sessions) {
-      const session = await this.sessions
-        .findOne({
-          aiSessionId: workspaceId,
-          deletedAt: null,
-        })
-        .select('_id title deployedAppTitle')
-        .lean()
-        .exec();
+      const session = await this.sessions.findByAiSessionId(workspaceId);
       if (session) {
-        result.sessionId = session._id.toString();
-        result.appTitle =
-          (session as { deployedAppTitle?: string }).deployedAppTitle
-          || (session as { title?: string }).title
-          || '';
+        result.sessionId = session.id;
+        result.appTitle = session.deployedAppTitle || session.title || '';
       }
     }
 
@@ -263,7 +244,7 @@ export class AiProxyUsageService {
       try {
         const status = await this.appDataClient.getStatus(appDataId);
         const fromRemote = this.pickWorkspaceId(
-          status.app as Record<string, unknown> | undefined,
+          status.app,
         );
         if (fromRemote) return fromRemote;
       } catch (error) {

@@ -4,7 +4,7 @@ import {
   CONVERSATION_V2_SHARED_SESSION_PERMISSIONS,
   type ConversationV2SessionPermission,
 } from '../constants/conversation-v2-session-permissions';
-import type { ConversationV2SessionDocument } from '../schemas/conversation-v2-session.schema';
+import type { ConversationV2SessionRecord } from '../persistence/conversation-v2-session.store';
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
 
@@ -17,7 +17,7 @@ export interface ConversationV2SessionAccess {
 }
 
 export interface ConversationV2ResolvedSession {
-  pointer: ConversationV2SessionDocument;
+  pointer: ConversationV2SessionRecord;
   ownerId: string;
   /** Authenticated user id (may differ from ownerId for shared access). */
   actorUserId: string;
@@ -43,10 +43,7 @@ export class ConversationV2SessionAccessService {
     const pointer = await this.sessions.getById(sessionId);
     if (!pointer) return null;
 
-    const ownerId =
-      typeof pointer.ownerId === 'string'
-        ? pointer.ownerId
-        : (pointer.ownerId as { toString(): string }).toString();
+    const ownerId = pointer.ownerId;
 
     if (ownerId === userId) {
       return {

@@ -7,6 +7,9 @@ import type { MessageComponent } from '../types';
  * (across pages or markers) collapse into a single sources-list entry.
  */
 function citationKey(citation: CitationData): string {
+  if (citation.evidenceId !== undefined || citation.executionId !== undefined) {
+    return JSON.stringify([citation.executionId, citation.evidenceId]);
+  }
   return [citation.source, citation.fileName ?? ''].join('|');
 }
 
@@ -14,6 +17,8 @@ function toCitationData(data: Record<string, unknown>): CitationData | null {
   if (typeof data.source !== 'string' || !data.source) return null;
   return {
     parentId: typeof data.parentId === 'string' ? data.parentId : '',
+    evidenceId: data.evidenceId as string | undefined,
+    executionId: data.executionId as string | undefined,
     sourceType: data.sourceType === 'web' ? 'web' : data.sourceType === 'image' ? 'image' : 'text',
     ...(data.sourceKind === 'web' ? { sourceKind: 'web' as const } : {}),
     source: data.source,

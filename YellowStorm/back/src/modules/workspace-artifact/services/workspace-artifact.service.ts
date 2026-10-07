@@ -10,18 +10,15 @@ import { UpdateDecisionFlowDto } from '../dto/update-decision-flow.dto';
 import { WorkspaceArtifactQueryDto } from '../dto/workspace-artifact-query.dto';
 import type { DecisionFlowPayload } from '../interfaces/decision-flow.interface';
 import { DEFAULT_DECISION_FLOW_GENERATION_OPTIONS, DecisionFlowGenerationOptions, WorkspaceArtifactResponse, WorkspaceArtifactStatus, WorkspaceArtifactType } from '../interfaces/workspace-artifact.interface';
-import {
-  WORKSPACE_ARTIFACT_STORE,
-  type WorkspaceArtifactRecord,
-  type WorkspaceArtifactStore,
-} from '../persistence/workspace-artifact-store';
+import { type WorkspaceArtifactRecord } from '../persistence/workspace-artifact-store';
+import { PostgresWorkspaceArtifactStore } from '../persistence/postgres/postgres-workspace-artifact-store';
 import { DecisionFlowValidatorService } from './decision-flow-validator.service';
 import { WorkspaceTransformationSettingsService } from '../../system/workspace-transformation-settings.service';
 
 @Injectable()
 export class WorkspaceArtifactService {
   constructor(
-    @Inject(WORKSPACE_ARTIFACT_STORE) private readonly artifacts: WorkspaceArtifactStore,
+    private readonly artifacts: PostgresWorkspaceArtifactStore,
     private readonly documents: WorkspaceDocumentService,
     private readonly transformations: WorkspaceTransformationSettingsService,
     private readonly agents: AgentService,

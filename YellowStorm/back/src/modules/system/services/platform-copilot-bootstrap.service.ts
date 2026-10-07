@@ -4,7 +4,6 @@ import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
-  PLATFORM_COPILOT_DEFAULT_INSTRUCTION,
   RESERVED_SYSTEM_OWNER_ID,
 } from '@modules/agent/constants/platform-copilot.constants';
 import { AgentTypeService } from '@modules/agent-type/agent-type.service';
@@ -36,7 +35,7 @@ export class PlatformCopilotBootstrapService implements OnApplicationBootstrap {
       role: 'Yellowmind platform copilot',
       description: 'Global Yellowmind platform copilot',
       temperature: 0,
-      instruction: PLATFORM_COPILOT_DEFAULT_INSTRUCTION,
+      instruction: '',
       ignorePrePrompt: false,
       knowledgeBases: [],
       tools: [],

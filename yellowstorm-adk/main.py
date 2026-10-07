@@ -17,7 +17,6 @@ from starlette.responses import JSONResponse
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
 
 from src.logger.setup_logging import setup_logging
-from src.logger.logging import configure_logging, CorrelationIdFilter
 from src.logger.logging import get_logger
 from src.middleware import add_middleware
 # from src.config.settings import get_settings
@@ -72,9 +71,8 @@ async def lifespan(app: FastAPI):
                 "Missing optional dependency 'azure-monitor-opentelemetry' required for Application Insights logging"
             ) from exc
 
-        # logging in application insights
-        configure_logging()
-        logger.addFilter(CorrelationIdFilter())
+        # logging in application insights (P11: CorrelationIdFilter/configure_logging retired;
+        # the unified-logging SDK owns the bootstrap and exports OTel trace context itself)
         configure_azure_monitor(
             connection_string=app_settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
             logger_name="api",
@@ -112,8 +110,10 @@ async def lifespan(app: FastAPI):
     try:
         from src.evaluation.agent_evaluator import apply_litellm_debug_patch
         apply_litellm_debug_patch()
-        from src.companion_ai.adk_patches import apply_replay_barrier_timeout_patch
+        from src.companion_ai.adk.adk_patches import (
+            apply_replay_barrier_timeout_patch, apply_replay_barrier_resilience_patch)
         apply_replay_barrier_timeout_patch()
+        apply_replay_barrier_resilience_patch()
         logger.info("✅ Global LLM patches applied successfully at startup")
     except Exception as e:
         logger.error(f"Failed to apply global LLM patches: {e}")

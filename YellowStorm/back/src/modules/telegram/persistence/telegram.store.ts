@@ -2,6 +2,7 @@
 export const TELEGRAM_INTEGRATION_STORE = Symbol('TELEGRAM_INTEGRATION_STORE');
 export const TELEGRAM_BINDING_STORE = Symbol('TELEGRAM_BINDING_STORE');
 export const TELEGRAM_LINK_CODE_STORE = Symbol('TELEGRAM_LINK_CODE_STORE');
+export const TELEGRAM_VALIDATION_STORE = Symbol('TELEGRAM_VALIDATION_STORE');
 
 export interface TelegramIntegrationRow {
   id: string;
@@ -22,6 +23,8 @@ export interface TelegramIntegrationRow {
 export interface TelegramIntegrationStore {
   findByAgent(agentId: string): Promise<TelegramIntegrationRow | null>;
   findById(id: string): Promise<TelegramIntegrationRow | null>;
+  /** Enabled integrations with a stored token (polling + boot webhook sync). */
+  listEnabled(): Promise<TelegramIntegrationRow[]>;
   insert(row: {
     userId: string;
     agentId: string;
@@ -51,6 +54,7 @@ export interface TelegramBindingRow {
   telegramChatId: string;
   telegramUserId: string | null;
   conversationId: string | null;
+  bindingType: string;
   lastMessageAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -58,6 +62,9 @@ export interface TelegramBindingRow {
 
 export interface TelegramBindingStore {
   findByChat(integrationId: string, telegramChatId: string): Promise<TelegramBindingRow | null>;
+  findByConversation(integrationId: string, conversationId: string): Promise<TelegramBindingRow | null>;
+  /** Latest owner (member) binding for the integration's user — the approval chat. */
+  findOwnerBinding(integrationId: string, userId: string): Promise<TelegramBindingRow | null>;
   /** ON CONFLICT (integration_id, telegram_chat_id) DO UPDATE (plan 4.7). */
   upsert(row: {
     integrationId: string;
@@ -65,6 +72,7 @@ export interface TelegramBindingStore {
     agentId: string;
     telegramChatId: string;
     telegramUserId: string | null;
+    bindingType: string;
     lastMessageAt: Date;
   }): Promise<TelegramBindingRow>;
   updateLastMessage(id: string, lastMessageAt: Date): Promise<void>;
@@ -95,4 +103,44 @@ export interface TelegramLinkCodeStore {
    */
   consume(codeHash: string, integrationId: string): Promise<TelegramLinkCodeRow | null>;
   deleteAllForIntegration(integrationId: string): Promise<void>;
+}
+
+export interface TelegramValidationRow {
+  id: string;
+  integrationId: string;
+  agentId: string;
+  conversationId: string;
+  guestTelegramChatId: string;
+  guestLabel: string | null;
+  question: string;
+  choices: string[];
+  status: string;
+  answer: string | null;
+  answeredAt: Date | null;
+  expiresAt: Date;
+  ownerMessageId: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TelegramValidationStore {
+  insert(row: {
+    integrationId: string;
+    agentId: string;
+    conversationId: string;
+    guestTelegramChatId: string;
+    guestLabel: string | null;
+    question: string;
+    choices: string[];
+    status: string;
+    expiresAt: Date;
+  }): Promise<TelegramValidationRow>;
+  findById(id: string): Promise<TelegramValidationRow | null>;
+  /** Pending, non-expired validations for an integration, newest first. */
+  findPendingByIntegration(integrationId: string): Promise<TelegramValidationRow[]>;
+  /** Pending, non-expired validation for a conversation, optionally since a time. */
+  hasPendingForConversation(integrationId: string, conversationId: string, since?: Date): Promise<boolean>;
+  setOwnerMessageId(id: string, ownerMessageId: number): Promise<void>;
+  markAnswered(id: string, answer: string): Promise<void>;
+  markExpired(id: string): Promise<void>;
 }

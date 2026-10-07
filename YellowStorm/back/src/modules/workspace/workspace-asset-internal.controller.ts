@@ -12,9 +12,11 @@ import {
   UseGuards,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
-import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { IsMongoId, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsMongoId, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import { pipeline } from 'stream/promises';
 import { Public } from '../auth/decorators/public.decorator';
@@ -22,10 +24,22 @@ import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { DocumentService } from '../document/document.service';
 import { SkipResponseWrap } from '../response/decorators/skip-response-wrap.decorator';
 import { WorkspaceDocumentRead } from './document/document-read';
+import { WorkspaceDocumentWrite } from './document/document-write';
 import { DocumentStatus } from './interfaces/document-status.enum';
 import { WorkspaceShareService } from './workspace-share.service';
 
 const SEMANTIC_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
+// An e-mail archive is read entry by entry and streamed to disk by the runtime, never held in memory.
+const SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES = 1024 * 1024 * 1024;
+// The most an admin may allow for one archive (Admin > Semantic models > E-mail archives).
+const SEMANTIC_EMAIL_ARCHIVE_CEILING_MB = 51200;
+const EMAIL_ARCHIVE_MIME_TYPES = new Set(['application/zip', 'application/x-zip-compressed', 'message/rfc822']);
+
+/** `archiveMb`: the admin's archive size limit, sent by the runtime with the run's limits. */
+function semanticReadLimit(mimeType: string | undefined, archiveMb?: number): number {
+  if (!mimeType || !EMAIL_ARCHIVE_MIME_TYPES.has(mimeType)) return SEMANTIC_PREVIEW_MAX_BYTES;
+  return archiveMb ? Math.min(archiveMb, SEMANTIC_EMAIL_ARCHIVE_CEILING_MB) * 1024 * 1024 : SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES;
+}
 
 class SemanticAssetQueryDto {
   @ApiProperty()
@@ -39,7 +53,22 @@ class SemanticAssetQueryDto {
   @ApiProperty()
   @IsMongoId()
   documentId!: string;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: SEMANTIC_EMAIL_ARCHIVE_CEILING_MB, description: 'Largest e-mail archive to stream, in MB (the run limits)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(SEMANTIC_EMAIL_ARCHIVE_CEILING_MB)
+  maxArchiveMb?: number;
 }
+
+class SemanticDerivedFileQueryDto extends SemanticAssetQueryDto {
+  /** Name of the derived file inside `derived/<source name>/`; no path separators. */
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  @Matches(/^[^/\\\x00-\x1f]+$/)
+  fileName!: string;
+}
+
+const DERIVED_FILE_MAX_BYTES = 50 * 1024 * 1024;
 
 class SemanticDatasetQueryDto extends SemanticAssetQueryDto {
   @ApiProperty()
@@ -59,6 +88,7 @@ export class WorkspaceAssetInternalController {
     private readonly documents: WorkspaceDocumentRead,
     private readonly storage: DocumentService,
     config: ConfigService,
+    private readonly writer: WorkspaceDocumentWrite,
   ) {
     this.datasetPrefix = config.get<string>('storage.semanticDatasetPrefix', 'semantic-model/datasets')
       .replace(/^\/+|\/+$/g, '');
@@ -106,7 +136,7 @@ export class WorkspaceAssetInternalController {
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED || !document.path) {
       throw new BadRequestException('Document is not available for semantic discovery');
     }
-    if (document.size > SEMANTIC_PREVIEW_MAX_BYTES) {
+    if (document.size > semanticReadLimit(document.mimeType, query.maxArchiveMb)) {
       throw new PayloadTooLargeException('Document exceeds the semantic preview limit');
     }
 
@@ -145,7 +175,60 @@ export class WorkspaceAssetInternalController {
   }
 
   @Public()
+  @Put('semantic-derived-file')
+  @SkipResponseWrap()
+  @ApiOperation({ summary: 'Store a file derived from an e-mail archive (message text, attachment) and index it' })
+  async putDerivedFile(
+    @Query() query: SemanticDerivedFileQueryDto,
+    @Headers('content-type') rawType: string | undefined,
+    @Headers('content-length') rawLength: string | undefined,
+    @Headers('x-content-sha256') contentHash: string | undefined,
+    @Req() request: Request,
+  ): Promise<{ documentId: string; originalName: string; created: boolean; indexingStatus: string }> {
+    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+    const source = await this.documents.findById(query.workspaceId, query.documentId);
+    if (source.isFolder || source.status !== DocumentStatus.COMPLETED || !EMAIL_ARCHIVE_MIME_TYPES.has(source.mimeType)) {
+      throw new BadRequestException('Derived files can only come from an e-mail archive');
+    }
+    const size = Number(rawLength);
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new BadRequestException('A valid Content-Length is required');
+    }
+    if (size > DERIVED_FILE_MAX_BYTES) {
+      throw new PayloadTooLargeException('Derived file exceeds the size limit');
+    }
+    if (!contentHash || !/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new BadRequestException('A lowercase SHA-256 content hash is required');
+    }
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for await (const chunk of request) {
+      received += (chunk as Buffer).length;
+      if (received > size) throw new BadRequestException('Body is longer than Content-Length');
+      chunks.push(chunk as Buffer);
+    }
+    const body = Buffer.concat(chunks);
+    if (body.length !== size || createHash('sha256').update(body).digest('hex') !== contentHash) {
+      throw new BadRequestException('Body does not match its length or hash');
+    }
+    const mimeType = (rawType ?? '').split(';', 1)[0].trim();
+    const { document, created } = await this.writer.storeDerivedFile({
+      workspaceId: query.workspaceId,
+      userId: query.actorUserId,
+      sourceDocumentId: source.id,
+      sourceName: source.originalName,
+      fileName: query.fileName,
+      mimeType,
+      file: body,
+    });
+    return { documentId: document.id, originalName: document.originalName, created,
+      indexingStatus: String(document.indexingStatus ?? '') };
+  }
+
+  @Public()
   @Put('semantic-dataset')
+  // The runtime checks this exact body against its manifest; the usual { success, data } envelope breaks that.
+  @SkipResponseWrap()
   @ApiOperation({ summary: 'Store a prepared semantic dataset under an identity-derived key' })
   async putDataset(
     @Query() query: SemanticDatasetQueryDto,

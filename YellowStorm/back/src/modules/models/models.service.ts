@@ -2,12 +2,13 @@ import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { LoggerService } from '../logger';
 import { LiteLLMClient } from './litellm.client';
-import { MODEL_STORE, type ModelPatch, type ModelRow, type ModelStore, type NewModelRow } from './persistence/model.store';
+import { type ModelPatch,   type ModelRow,   type NewModelRow } from './persistence/model.store';
 import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot } from './interfaces/model.interface';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import { PgModelStore } from './persistence/pg-model.store';
 import * as schema from '@modules/postgres/schema';
 
 // Provider display name mappings
@@ -38,8 +39,7 @@ const CHEF_DISPLAY_NAMES: Record<string, string> = {
 @Injectable()
 export class ModelsService implements OnApplicationBootstrap {
   constructor(
-    @Inject(MODEL_STORE)
-    private readonly modelStore: ModelStore,
+    private readonly modelStore: PgModelStore,
     private readonly litellmClient: LiteLLMClient,
     private readonly logger: LoggerService,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
@@ -206,7 +206,7 @@ export class ModelsService implements OnApplicationBootstrap {
    *   DB now also holds embeddings, image generation, etc. The admin passes
    *   false to see every type.
    */
-  async findAll(activeOnly: boolean = true, chatOnly: boolean = true): Promise<ModelsListResponse> {
+  async findAll(activeOnly = true, chatOnly = true): Promise<ModelsListResponse> {
     const models = await this.modelStore.list({ activeOnly, chatOnly });
 
     return {
@@ -223,6 +223,12 @@ export class ModelsService implements OnApplicationBootstrap {
     }
 
     return this.toModelResponse(model);
+  }
+
+
+  async findByIdOrLitellmModel(id: string): Promise<ModelResponse | null> {
+    const model = await this.modelStore.findByIdOrLitellmModel(id);
+    return model ? this.toModelResponse(model) : null;
   }
 
   async findPricing(id: string): Promise<ModelPricingSnapshot | null> {
@@ -350,7 +356,7 @@ export class ModelsService implements OnApplicationBootstrap {
     // "gemini-1.5-pro" -> "Gemini 1.5 Pro"
 
     // Remove date suffixes (e.g., "-20240229")
-    let name = id.replace(/-\d{8}$/, '');
+    const name = id.replace(/-\d{8}$/, '');
 
     // Split by hyphens and underscores
     const parts = name.split(/[-_]/);

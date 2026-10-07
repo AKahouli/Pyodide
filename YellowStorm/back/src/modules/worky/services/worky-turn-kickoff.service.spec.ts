@@ -2,7 +2,10 @@ import { WorkyTurnKickoffService } from './worky-turn-kickoff.service';
 
 describe('WorkyTurnKickoffService', () => {
   const streams = {
-    ensureKickoffContext: jest.fn().mockResolvedValue({ aiSessionId: 'session-1' }),
+    ensureKickoffContext: jest.fn().mockResolvedValue({
+      aiSessionId: 'session-1',
+      ownerUserId: 'owner-1',
+    }),
   };
   const orchestrator = {
     runTask: jest.fn().mockResolvedValue({ sessionId: 'session-1', accepted: true, runId: 'run-1' }),
@@ -56,7 +59,7 @@ describe('WorkyTurnKickoffService', () => {
     ).resolves.toBe('turn-1');
 
     expect(orchestrator.runTask).toHaveBeenCalledWith(
-      'user-1',
+      'owner-1',
       'session-1',
       'Continue the plan',
       {
@@ -102,7 +105,7 @@ describe('WorkyTurnKickoffService', () => {
     });
     await Promise.resolve();
 
-    expect(planning.failTurn).toHaveBeenCalledWith('user-1', 'stream-1', 'turn-2');
+    expect(planning.failTurn).toHaveBeenCalledWith('owner-1', 'stream-1', 'turn-2');
   });
 
   it.each([

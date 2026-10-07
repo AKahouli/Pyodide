@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import requests
+from hashlib import sha256
 from google.adk.tools.tool_context import ToolContext
 
 from src.connector_tool_name import build_connector_tool_name
@@ -14,6 +15,7 @@ from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
+from src.smart_rag.tools.utilities.connector_citations import normalize_connector_citations, normalize_vectorstore_source
 from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
     DISPLAY_PURPOSE_DESCRIPTION,
@@ -210,9 +212,17 @@ def _buffer_mcp_images_for_model(response: Any, tool_context: Optional[ToolConte
     return _strip_mcp_content_parts(response)
 
 
+def _capture_connector_source(signature: str, reference: str, source: Dict[str, Any], source_is_bound: bool) -> None:
+    if not source_is_bound:
+        return
+    from src.root_runtime.evidence_capture import capture_citation
+    capture_citation(sha256(signature.encode()).hexdigest(), reference, source)
+
+
 def _register_connector_text_source(
     source: Dict[str, Any],
     tool_context: ToolContext,
+    *, source_is_bound: bool = False,
 ) -> Dict[str, Any]:
     state = tool_context.state
     signatures = state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
@@ -224,6 +234,7 @@ def _register_connector_text_source(
     existing_reference = signatures.get(signature)
     if existing_reference:
         source["reference"] = existing_reference
+        _capture_connector_source(signature, existing_reference, source, source_is_bound)
         return source
 
     next_ref = int(state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1
@@ -259,8 +270,8 @@ def _register_connector_text_source(
                         "page": str(source.get("page") or ""),
                         "file_name": str(source.get("file_name") or ""),
                         "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
+                        "workspace_id": str(source.get("workspace_id") or ""),
+                        "brain_id": str(source.get("brain_id") or ""),
                         "height": str(source.get("height") or ""),
                         "width": str(source.get("width") or ""),
                         "highlight_text": str(source.get("highlight_text") or ""),
@@ -281,8 +292,8 @@ def _register_connector_text_source(
                         "page": str(source.get("page") or ""),
                         "page_content": str(source.get("page_content") or ""),
                         "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
+                        "workspace_id": str(source.get("workspace_id") or ""),
+                        "brain_id": str(source.get("brain_id") or ""),
                         "_read_content_doc": bool(source.get("_read_content_doc")),
                         "_pages_cache": source.get("_pages_cache") or [],
                         "highlight_text": str(source.get("highlight_text") or ""),
@@ -293,6 +304,7 @@ def _register_connector_text_source(
             }
         )
 
+    _capture_connector_source(signature, reference, source, source_is_bound)
     return source
 
 
@@ -301,6 +313,7 @@ def _register_connector_response_sources(
     tool_context: Optional[ToolContext],
     action_key: str = "",
     trusted_web_result: bool = False,
+    source_context: Optional[ConnectorToolContext] = None,
 ) -> Any:
     if not tool_context or not isinstance(response, dict):
         return response
@@ -308,6 +321,8 @@ def _register_connector_response_sources(
         return _strip_legacy_citation_fields(response)
 
     citation_sources = response.get("citation_sources")
+    if not isinstance(citation_sources, list) and _is_locate_answer_citations_action(action_key) and isinstance(response.get("citations"), list):
+        citation_sources = normalize_connector_citations(response["citations"])
     if not isinstance(citation_sources, list) or not citation_sources:
         return response
 
@@ -316,7 +331,22 @@ def _register_connector_response_sources(
     for source in citation_sources:
         if not isinstance(source, dict):
             continue
-        normalized = _register_connector_text_source(dict(source), tool_context)
+        source = dict(source)
+        source_is_bound = trusted_web_result and source.get("type") == "web"
+        if source_context and source.get("type", "text") != "web":
+            path = normalize_vectorstore_source(source.get("source") or source.get("path"))
+            matches = [doc for doc in source_context.brain_documents or []
+                       if isinstance(doc, dict) and path and normalize_vectorstore_source(doc.get("filepath")) == path]
+            if len(matches) == 1:
+                workspace = str(matches[0].get("workspace_id") or source_context.workspace_id or "")
+                document_id = str(matches[0].get("document_id") or matches[0].get("_id") or "")
+                source_is_bound = bool(workspace and (not source.get("workspace_id") or source["workspace_id"] == workspace)
+                                       and (not source.get("document_id") or source["document_id"] == document_id))
+                if source_is_bound:
+                    source.update(workspace_id=workspace, file_path=path)
+                    if document_id:
+                        source["document_id"] = document_id
+        normalized = _register_connector_text_source(source, tool_context, source_is_bound=source_is_bound)
         normalized_sources.append(normalized)
         reference = str(normalized.get("reference") or "").strip()
         if reference:
@@ -950,6 +980,9 @@ def create_connector_tools(
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
         fixed_params = binding.get("fixed_params") or {}
+        enforced_params = binding.get("enforced_params", {})
+        if not isinstance(enforced_params, dict):
+            raise ValueError("Connector enforced parameters must be an object")
         binding_auth_headers = binding.get("auth_headers") or {}
         if is_logical_search:
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
@@ -1045,6 +1078,7 @@ def create_connector_tools(
                 _server_config: Dict[str, Any] = server_config,
                 _action_key: str = action_key,
                 _fixed_params: Dict[str, Any] = fixed_params,
+                _enforced_params: Dict[str, Any] = dict(enforced_params),
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
                 _dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
@@ -1122,6 +1156,11 @@ def create_connector_tools(
                 # send so the recipient gets a formatted message.
                 if _action_key == "send_email" and isinstance(merged_params.get("body"), str) and merged_params["body"].strip():
                     merged_params["body"] = _markdown_to_email_html(merged_params["body"])
+                # Teams renders HTML (chatMessage contentType html), not raw
+                # Markdown — the executor's Markdown showed literal ** and # in the
+                # chat. Convert the message the same way as an email body at send.
+                elif _action_key == "send_teams_message" and isinstance(merged_params.get("message"), str) and merged_params["message"].strip():
+                    merged_params["message"] = _markdown_to_email_html(merged_params["message"])
                 # Run/turn correlation applies to every HTTP MCP transport, not
                 # just streamable_http. There is no flow execution here, so the
                 # ADK invocation id (one per agent turn) is the execution id.
@@ -1155,6 +1194,12 @@ def create_connector_tools(
                     effective_server_config,
                     _dynamic_headers,
                 )
+                # Trusted root restrictions apply after model args, approval edits
+                # and workspace defaults; fixed_params alone are only defaults.
+                for key, value in _enforced_params.items():
+                    if key in merged_params and merged_params[key] != value:
+                        return {"error": "The requested resource is outside the execution scope."}
+                    merged_params[key] = value
                 response = await call_mcp_tool(
                     _transport_type,
                     _server_url,
@@ -1182,6 +1227,7 @@ def create_connector_tools(
                     tool_context,
                     action_key=_action_key,
                     trusted_web_result=_result_kind in {"web_search", "web_fetch"},
+                    source_context=context,
                 )
                 return registered_response
 
@@ -1198,7 +1244,9 @@ def create_connector_tools(
             _connector_tool.__annotations__ = {
                 p.name: p.annotation for p in runtime_signature.parameters.values()
             }
-            tools.append(SearchToolADK(_connector_tool, schema))
+            from src.root_runtime.leaf_tools import register_tool_execution_kind
+            tool = SearchToolADK(_connector_tool, schema, reject_unknown_args=True)
+            tools.append(register_tool_execution_kind(tool, action.get("execution_kind", "unknown")))
 
         logger.info(
             "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s workspace_names=%s",
@@ -1266,6 +1314,15 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                     return f"Error saving file to workspace: HTTP {resp.status_code} - {response_error}"
                 data = resp.json()
                 doc = data.get("document", {})
+                if isinstance(doc, dict) and doc.get('id') and (doc.get('filePath') or doc.get('azurePath')):
+                    from src.root_runtime.evidence_capture import capture_evidence
+                    capture_evidence('artifact', str(doc['id']), {
+                        'document_id': str(doc['id']), 'workspace_id': workspace_id,
+                        'file_path': doc.get('filePath') or doc.get('azurePath'),
+                        'filename': doc.get('originalName') or filename,
+                        'mime_type': doc.get('mimeType') or mime_type or '',
+                        'size_bytes': doc.get('size', 0), 'availability': 'ready',
+                    })
 
                 # Make the saved file available to code interpreter in this session.
                 if tool_context and doc:
@@ -1303,4 +1360,5 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
             )
             return f"Error saving file to workspace: {error_message}"
 
-    return save_file_to_workspace
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    return register_tool_execution_kind(save_file_to_workspace, "leaf")

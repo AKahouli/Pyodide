@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
-import type { DataBinding } from '../schemas/playbook-flow.schema';
+import type { DataBinding } from '../models/playbook-flow.model';
 import {
   createManagedPlaybookInputPath,
   isCompleteDataBinding,
@@ -88,9 +88,9 @@ export class PlaybookIntentExternalInputNormalizerService {
     return { suggestion: { ...suggestion, changes }, diagnostics };
   }
 
-  private requiredTargets(changes: PlaybookIntentWorkflowChange[]): Array<{
+  private requiredTargets(changes: PlaybookIntentWorkflowChange[]): {
     taskId: string | null; nodeRef: string | null; portId: string; semanticText: string;
-  }> {
+  }[] {
     return changes.flatMap((change) => {
       if (change.type !== 'create_node' && change.type !== 'update_node') return [];
       const taskId = change.type === 'update_node' ? change.targetTaskId : null;

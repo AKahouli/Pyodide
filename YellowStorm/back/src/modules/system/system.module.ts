@@ -22,9 +22,13 @@ import { ConversationSettingsService } from './conversation-settings.service';
 import { AdminConversationSettingsController } from './controllers/admin-conversation-settings.controller';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import { PlatformCopilotBootstrapService } from './services/platform-copilot-bootstrap.service';
+import { SemanticExtractionAgentBootstrapService } from './services/semantic-extraction-agent.bootstrap';
 import { AppearanceLogoService } from './services/appearance-logo.service';
 import { AppearanceLogoController } from './controllers/appearance-logo.controller';
 import { NavigationSettingsService } from './navigation-settings.service';
+import { PlatformSettingsService } from './platform-settings.service';
+import { AdminPlatformSettingsController } from './controllers/admin-platform-settings.controller';
+import { AdminSystemSettingsController } from './controllers/admin-system-settings.controller';
 import { SYSTEM_SETTING_STORE } from './persistence/system-setting.store';
 import { PgSystemSettingStore } from './persistence/pg-system-setting.store';
 import { APPEARANCE_LOGO_STORE } from './persistence/appearance-logo.store';
@@ -59,6 +63,8 @@ import { PgAppearanceLogoStore } from './persistence/pg-appearance-logo.store';
     AdminWorkspaceEvidenceSearchSettingsController,
     AdminWorkspaceTransformationSettingsController,
     AdminConversationSettingsController,
+    AdminPlatformSettingsController,
+    AdminSystemSettingsController,
   ],
   providers: [
     SystemService,
@@ -71,14 +77,16 @@ import { PgAppearanceLogoStore } from './persistence/pg-appearance-logo.store';
     WorkspaceEvidenceSearchSettingsService,
     WorkspaceTransformationSettingsService,
     ConversationSettingsService,
+    PlatformSettingsService,
     FeatureVisibilityService,
     NavigationSettingsService,
     PlatformCopilotBootstrapService,
+    SemanticExtractionAgentBootstrapService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, SYSTEM_SETTING_STORE, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService, NavigationSettingsService],
+  exports: [SystemService, SYSTEM_SETTING_STORE, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService, NavigationSettingsService, PlatformSettingsService],
 })
 export class SystemModule {}

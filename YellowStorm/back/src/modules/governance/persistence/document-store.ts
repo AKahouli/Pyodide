@@ -1,6 +1,5 @@
 import type { GovernanceDocumentRecord } from './governance-records';
 
-export const GOVERNANCE_DOCUMENT_STORE = Symbol('GOVERNANCE_DOCUMENT_STORE');
 
 export interface GovernanceDocumentUpsertInput {
   programId: string;
@@ -40,7 +39,7 @@ export interface GovernanceDocumentUpdateSet {
 export interface GovernanceDocumentUpdate {
   set: GovernanceDocumentUpdateSet;
   /** Clears optional fields (Mongo `$unset`-equivalent). */
-  unset?: Array<'archivedAt' | 'archivedBy' | 'archiveReason'>;
+  unset?: ('archivedAt' | 'archivedBy' | 'archiveReason')[];
   bumpGovernanceRevision?: boolean;
   bumpTemporalDecisionRevision?: boolean;
 }

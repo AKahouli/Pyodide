@@ -2,7 +2,6 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
-  Inject,
 } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
@@ -10,7 +9,7 @@ import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import type { AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord } from '../ports/workspace-records';
-import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
+import { PgWorkspaceStore } from '../stores/postgres/pg-workspace-store';
 
 interface RequestWithWorkspace extends Request {
   user?: AuthUser;
@@ -26,8 +25,7 @@ interface RequestWithWorkspace extends Request {
 @Injectable()
 export class WorkspaceOwnerGuard implements CanActivate {
   constructor(
-    @Inject(WORKSPACE_STORE)
-    private readonly workspaceStore: WorkspaceStore,
+    private readonly workspaceStore: PgWorkspaceStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

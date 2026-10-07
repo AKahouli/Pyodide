@@ -7,14 +7,13 @@ Classes:
 
 import asyncio
 import json
-import os
 import re2 as re
 import time
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Optional, Tuple, Any, List, Dict
-from google.adk import Agent, Runner
+from google.adk import Agent
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
 from src.temporary_child_summary import record_temporary_child_tool_call
@@ -30,7 +29,6 @@ from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
     set_latency_diag_phase,
 )
 from src.smart_rag.infrastructure.processing import PromptProcessor
-from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
@@ -48,6 +46,11 @@ from src.smart_rag.tool_activity_presenter import (
     tool_args_without_display_purpose,
 )
 from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
+from src.smart_rag.tools.utilities.connector_citations import (
+    display_source_name as _display_source_name,
+    normalize_vectorstore_source as _normalize_vectorstore_source,
+    normalize_connector_citations,
+)
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 
@@ -93,7 +96,6 @@ class _latency_diag_phase:
     def __exit__(self, exc_type, exc, tb) -> None:
         reset_latency_diag_phase(self._token)
 
-APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_WEB_SOURCES = "_connector_web_sources"
@@ -144,37 +146,6 @@ def _loggable_structured_response(tool_name: str, response: Any) -> Any:
     if _registers_connector_citations(tool_name):
         return response
     return "[non-locator structured response omitted]"
-
-
-def _display_source_name(value: Any) -> str:
-    """Normalize a source field to a filename when it contains a URL or path."""
-    text = str(value or "").strip()
-    if not text:
-        return ""
-
-    parsed = urlparse(text)
-    if parsed.scheme and parsed.netloc:
-        path = parsed.path.rstrip("/")
-        if path:
-            candidate = path.rsplit("/", 1)[-1].strip()
-            if candidate:
-                return candidate
-
-    normalized = text.rstrip("/")
-    if "/" in normalized:
-        candidate = normalized.rsplit("/", 1)[-1].strip()
-        if candidate:
-            return candidate
-
-    return text
-
-
-def _normalize_vectorstore_source(value: Any) -> str:
-    text = str(value or "").strip()
-    prefix = "s3://vectorstore/"
-    if text.startswith(prefix):
-        return text[len(prefix):]
-    return text
 
 
 def _normalize_reference_token(value: Any) -> str:
@@ -243,6 +214,9 @@ class AgentRunner:
         session_id: Optional[str] = None,
         seed_events: Optional[list] = None,
         task_summary: Optional[str] = None,
+        execution_scope=None,
+        abort_signal: Optional[asyncio.Event] = None,
+        native_input_responses=None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -264,6 +238,21 @@ class AgentRunner:
                 - dict: Execution summary with performance and usage metrics
                 :param agent_config:
         """
+        from src.root_runtime.invocation import INPUT_FUNCTIONS, native_run_options
+        from src.root_runtime.background_sessions import native_app_name
+        app_name = native_app_name(session_helper)
+
+        native_run_options(execution_scope, None, native_input_responses)
+        resuming = execution_scope is not None and execution_scope.resume_intent == "resume"
+        if execution_scope is not None and execution_scope.native_session_id:
+            session_id = execution_scope.native_session_id
+        if abort_signal is not None and abort_signal.is_set():
+            from src.root_runtime.invocation import NativeInvocationProjection
+            from src.root_runtime.contracts import InvocationLifecycleState
+            await NativeInvocationProjection(execution_scope, session_id or "", str(agent_id)).emit(
+                q, InvocationLifecycleState.CANCELLED,
+            )
+            return (None, [], {}, [])
         try:
             # Build initial session state from agent's code interpreter params (if any)
             initial_state = {}
@@ -281,7 +270,7 @@ class AgentRunner:
                 _mark_session_stage("mark_session_create_seed_start")
                 with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                     session = await session_helper.create_session(
-                        app_name="manager_app",
+                        app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
                         state=initial_state or None,
@@ -291,16 +280,18 @@ class AgentRunner:
                 _mark_session_stage("mark_session_lookup_start")
                 with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                     session = await session_helper.get_session(
-                        app_name="manager_app",
+                        app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
                     )
                 _mark_session_stage("mark_session_lookup_end")
                 if session is None:
+                    if resuming:
+                        raise ValueError("The native session to resume does not exist")
                     _mark_session_stage("mark_session_create_seed_start")
                     with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                         session = await session_helper.create_session(
-                            app_name="manager_app",
+                            app_name=app_name,
                             user_id=user_id,
                             session_id=session_id,
                             state=initial_state or None,
@@ -310,6 +301,21 @@ class AgentRunner:
                             await session_helper.append_event(session, seed_event)
                     _mark_session_stage("mark_session_create_seed_end")
             logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
+            if resuming:
+                events = [event for event in session.events
+                          if event.invocation_id == execution_scope.native_invocation_id]
+                if not events:
+                    raise ValueError("The native invocation to resume does not exist")
+                pending = {}
+                for event in events:
+                    for part in getattr(event.content, "parts", None) or []:
+                        if part.function_call and part.function_call.name in INPUT_FUNCTIONS:
+                            pending[part.function_call.id] = part.function_call.name
+                        if part.function_response:
+                            pending.pop(part.function_response.id, None)
+                for response in native_input_responses or []:
+                    if pending.get(response["input_id"]) != response["function_name"]:
+                        raise ValueError("Native response does not match a pending input")
 
         except Exception as e:
             logger.error(
@@ -361,10 +367,15 @@ class AgentRunner:
                     agent_id,
                     session,
                     agent_config,
+                    execution_scope,
+                    abort_signal,
+                    native_input_responses,
                 )
             else:
                 return await self._run_html_agent(
-                    agent, session_helper, user_id, session_id, content, q, agent_id
+                    agent, session_helper, user_id, session_id, content, q, agent_id,
+                    execution_scope=execution_scope, abort_signal=abort_signal,
+                    native_input_responses=native_input_responses,
                 )
 
         except Exception as e:
@@ -387,6 +398,9 @@ class AgentRunner:
         agent_id,
         session=None,
         agent_config=None,
+        execution_scope=None,
+        abort_signal=None,
+        native_input_responses=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -408,11 +422,22 @@ class AgentRunner:
             Tuple containing the final result, MCP tools used, execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
+        from src.root_runtime.invocation import INPUT_FUNCTIONS, NativeInvocationProjection, native_run_options
+        from src.root_runtime.contracts import InvocationLifecycleState
+
+        projection = NativeInvocationProjection(execution_scope, session_id, str(agent_id))
+        await projection.restore_pending(session_helper, user_id, native_input_responses)
+        scoped_result = None
         agent_role = (
             "temporary_child"
             if agent_config and agent_config.get("_is_temporary_child_agent")
             else "parent"
         )
+        # WP04: when this run is an enrolled root with the delegation
+        # dispatcher, text emitted by delegated specialists (different event
+        # author) must never stream as the root's public answer — the bounded
+        # result reaches the root through the tool response instead (plan §9.3).
+        delegation_root_active = bool((agent_config or {}).get("_delegation_root"))
         activity_actor_name = str((agent_config or {}).get("display_name") or agent_name or "")
         accumulated_text = ""
         # Citation buffering using MessageTransformer
@@ -426,20 +451,28 @@ class AgentRunner:
         pending_tool_components_by_name: Dict[str, List[str]] = {}
         pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         seen_tool_component_ids: set[str] = set()
+        owner_validation_response: Dict[str, Any] | None = None
         thought_activity_tracker = ThoughtActivityTracker()
         citation_session_state = dict(getattr(session, "state", {}) or {})
 
         _mark_session_stage("mark_runner_construction_start")
-        runner = make_chat_runner(agent, session_helper)
+        if execution_scope is not None:
+            from src.root_runtime.compiler import make_role_runner
+
+            runner = make_role_runner(agent, session_helper, execution_scope)
+        else:
+            runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
         guarded_output = agent_tree_has_output_guardrail(agent)
 
         _mark_runner_invoked()
+        run_options = {"abort_signal": abort_signal} if abort_signal is not None else {}
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
-            new_message=content,
+            **native_run_options(execution_scope, content, native_input_responses),
             run_config=self.config,
+            **run_options,
         )
         should_close_stream = True
         _note_diag_session_id(session_id)
@@ -451,10 +484,18 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                await projection.observe(event, q)
                 state_delta = getattr(getattr(event, "actions", None), "state_delta", None)
                 if isinstance(state_delta, dict):
                     citation_session_state.update(state_delta)
-                if q and event.usage_metadata:
+                if q and event.usage_metadata and not (
+                    delegation_root_active
+                    and (getattr(event, "author", "") or "") != agent.name
+                ):
+                    # Delegated specialists' usage must not be absorbed into
+                    # the root's attribution (plan 9.3: unique call identity);
+                    # producer-scoped usage reporting lands with the projector
+                    # work in WP05+.
                     model_name = event.model_version if getattr(event, "model_version", None) else "unknown"
                     await q.put({
                         "usage": {
@@ -466,7 +507,8 @@ class AgentRunner:
                             "model": model_name,
                             "context_window_tokens": get_context_window_for_model(model_name) or 0,
                         },
-                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or "")},
+                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or ""),
+                            "native_event_id": event.id, "native_invocation_id": event.invocation_id},
                     })
                 # Log event for debugging
                 logger.debug(
@@ -479,6 +521,12 @@ class AgentRunner:
                 has_function_call = any(part.function_call for part in event.content.parts)
 
                 for part in event.content.parts:
+                    if ((part.function_call and part.function_call.name in INPUT_FUNCTIONS)
+                        or (part.function_response and part.function_response.name in INPUT_FUNCTIONS)):
+                        # Invocation control has its own owner-only projection.
+                        # Generic tool activity must never expose the original
+                        # confirmation call, private payload or schema hints.
+                        continue
                     is_thought = (
                         agent_type != "html"
                         and part.text
@@ -491,6 +539,17 @@ class AgentRunner:
                         thought_activity_tracker.end_for_visible_text()
                     if part.function_call or part.function_response:
                         thought_activity_tracker.end_for_tool_boundary()
+
+                    if (
+                        delegation_root_active
+                        and part.text
+                        and not part.function_call
+                        and not part.function_response
+                        and (getattr(event, "author", "") or "") != agent.name
+                    ):
+                        # Delegated specialist's narrative text is not the
+                        # root's answer and not root activity.
+                        continue
 
                     if is_thought:
                         observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -636,7 +695,14 @@ class AgentRunner:
                             await q.put(output)
                             accumulated_text += text_to_send
 
-                    if part.function_call:
+                    # ADK 2.11 streams function calls progressively: every
+                    # partial event re-carries the in-progress function_call
+                    # with args still filling in. ADK itself executes tools
+                    # only on the non-partial event (flows/llm_flows/functions.py
+                    # "Only execute function calls in the non-partial events"),
+                    # so observing partials here would queue each call once per
+                    # streamed chunk (seen: 670 observations for 1 execution).
+                    if part.function_call and not event.partial:
                         if accumulated_text != "":
                             recorder.record_chunk(accumulated_text)
                             accumulated_text = ""
@@ -655,10 +721,10 @@ class AgentRunner:
                             else "standard"
                         )
 
-                        recorder.record_function_call(
-                            func_name, dict(part.function_call.args), tool_category
-                        )
                         tool_args = dict(part.function_call.args or {})
+                        recorder.record_function_call(
+                            func_name, dict(part.function_call.args or {}), tool_category
+                        )
                         presentation = present_tool_call(func_name, tool_args)
                         logger.info(
                             "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s argument_keys=%s summary=%s",
@@ -817,6 +883,10 @@ class AgentRunner:
 
                         # Name of the tool this response belongs to
                         func_name = part.function_response.name
+                        if func_name == "request_owner_validation":
+                            response = part.function_response.response
+                            if isinstance(response, dict):
+                                owner_validation_response = response
 
                         if q:
                             raw_call_id = getattr(part.function_response, "id", None)
@@ -962,7 +1032,15 @@ class AgentRunner:
                             )
 
 
-                if event.is_final_response() and event.content and event.content.parts:
+                if (
+                    event.is_final_response()
+                    and event.content
+                    and event.content.parts
+                    # A delegated specialist's final event is not the root's:
+                    # returning here would tear down the invocation before the
+                    # dispatcher hands the result back (plan 9.3).
+                    and (not delegation_root_active or (getattr(event, 'author', '') or '') == agent.name)
+                ):
                     final_text_for_citations = "".join(
                         (part.text or "")
                         for part in event.content.parts
@@ -1057,12 +1135,53 @@ class AgentRunner:
                         session_helper, user_id, session_id
                     )
 
-                    return (
+                    result = (
                         final_result,
                         mcp_tools_used,
                         execution_summary,
                         generated_files,
                     )
+                    if execution_scope is None:
+                        return result
+                    scoped_result = result
+
+            lifecycle = await projection.finish(q, abort_signal, scoped_result is not None)
+            if lifecycle in {InvocationLifecycleState.WAITING, InvocationLifecycleState.CANCELLED}:
+                return (None, mcp_tools_used, recorder.get_execution_summary(), [])
+            if scoped_result is not None:
+                return scoped_result
+
+            if owner_validation_response:
+                fallback_text = str(
+                    owner_validation_response.get("detail")
+                    or "I forwarded your request to my owner and will follow up with their answer."
+                )
+                logger.warning(
+                    "[STREAM END] ADK closed after request_owner_validation; sending fallback response"
+                )
+                if q:
+                    await q.put(
+                        self.streaming_formatter.format_streaming_event(
+                            agent_id=agent_id,
+                            agent_name=agent_name,
+                            agent_type=agent_type,
+                            chunk=fallback_text,
+                            message_id=session_id,
+                            content_type="chunk",
+                        )
+                    )
+                recorder.record_chunk(fallback_text)
+                recorder.record_final_result(fallback_text)
+                execution_summary = recorder.get_execution_summary()
+                generated_files = await self._extract_generated_files(
+                    session_helper, user_id, session_id
+                )
+                return (
+                    fallback_text,
+                    mcp_tools_used,
+                    execution_summary,
+                    generated_files,
+                )
 
             raise RuntimeError("Agent stream ended without a final response")
 
@@ -1075,6 +1194,7 @@ class AgentRunner:
 
             logger.error(f"🔴 Full traceback: {traceback.format_exc()}")
             recorder.record_error(e)
+            await projection.emit(q, InvocationLifecycleState.FAILED)
             raise
         finally:
             reset_latency_diag_phase(runner_phase_token)
@@ -1084,7 +1204,9 @@ class AgentRunner:
                     await aclose()
 
     async def _run_html_agent(
-        self, agent, session_helper, user_id, session_id, content, q, agent_id
+        self, agent, session_helper, user_id, session_id, content, q, agent_id,
+        execution_scope=None, abort_signal=None,
+        native_input_responses=None,
     ):
         """Run HTML agent with detailed execution recording.
 
@@ -1100,17 +1222,29 @@ class AgentRunner:
             Tuple containing the final result, False (no MCP tools), execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
+        from src.root_runtime.invocation import NativeInvocationProjection, native_run_options
+        from src.root_runtime.contracts import InvocationLifecycleState
+
+        projection = NativeInvocationProjection(execution_scope, session_id, str(agent_id))
+        await projection.restore_pending(session_helper, user_id, native_input_responses)
+        scoped_result = None
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
         _mark_session_stage("mark_runner_construction_start")
-        runner = make_chat_runner(agent, session_helper)
+        if execution_scope is not None:
+            from src.root_runtime.compiler import make_role_runner
+
+            runner = make_role_runner(agent, session_helper, execution_scope)
+        else:
+            runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
 
         _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
-            new_message=content,
+            **native_run_options(execution_scope, content, native_input_responses),
+            **({"abort_signal": abort_signal} if abort_signal is not None else {}),
         )
         should_close_stream = True
         _note_diag_session_id(session_id)
@@ -1119,6 +1253,7 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                await projection.observe(event, q)
                 if not event.content or not event.content.parts:
                     continue
                 if guarded_output and event.is_final_response():
@@ -1158,15 +1293,22 @@ class AgentRunner:
                     recorder.record_final_result(final_result)
                     execution_summary = recorder.get_execution_summary()
 
-                    return (final_result, [], execution_summary, [])
+                    result = (final_result, [], execution_summary, [])
+                    if execution_scope is None:
+                        return result
+                    scoped_result = result
 
-            return (None, [], recorder.get_execution_summary(), [])
+            await projection.finish(q, abort_signal, scoped_result is not None)
+            if abort_signal is not None and abort_signal.is_set() or projection.pending:
+                return (None, [], recorder.get_execution_summary(), [])
+            return scoped_result or (None, [], recorder.get_execution_summary(), [])
 
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
             raise
         except Exception as e:
             logger.error(f"🔴 Exception occurred in HTML agent: {str(e)}")
+            await projection.emit(q, InvocationLifecycleState.FAILED)
             recorder.record_error(e)
             execution_summary = recorder.get_execution_summary()
             return (None, [], execution_summary, [])
@@ -1180,8 +1322,9 @@ class AgentRunner:
     async def _extract_generated_files(self, session_helper, user_id, session_id):
         """Read generated files from session state after agent execution."""
         try:
+            from src.root_runtime.background_sessions import native_app_name
             session = await session_helper.get_session(
-                app_name="manager_app", user_id=user_id, session_id=session_id
+                app_name=native_app_name(session_helper), user_id=user_id, session_id=session_id
             )
             if session and session.state:
                 from src.smart_rag.tools.utilities.code_interpreter import (
@@ -1236,7 +1379,7 @@ class AgentRunner:
         # Create specialized search event if applicable
         search_event = self.streaming_formatter.create_search_events_for_function(
             func_name,
-            dict(part.function_call.args),
+            dict(part.function_call.args or {}),
             agent_name,
             session_id,
             agent_id,
@@ -1276,46 +1419,6 @@ class AgentRunner:
             if getattr(part, "text", None)
             and getattr(part, "thought", False) is not True
         )
-
-        # OLD LOGIC: Sending all sources at the end - DISABLED
-        # Sources are now sent dynamically as citations are detected during streaming
-        # if toolkit and hasattr(toolkit, 'sources_text') and hasattr(toolkit, 'sources_image'):
-        #     sources = toolkit.sources_text + toolkit.sources_image
-        #     if q and sources:  # Only send sources if they exist
-        #         unique_sources = []
-        #         seen_signatures = set()
-        #         for source in sources:
-        #             try:
-        #                 signature = json.dumps(source, sort_keys=True, default=str)
-        #             except (TypeError, ValueError):
-        #                 signature = str(source)
-        #             if signature in seen_signatures:
-        #                 continue
-        #             seen_signatures.add(signature)
-        #             unique_sources.append(source)
-        #
-        #         if len(unique_sources) < len(sources):
-        #             logger.info(
-        #                 f"[AGENT RUNNER] Filtered {len(sources) - len(unique_sources)} duplicate sources "
-        #                 f"- agent_name: {agent_name}, session_id: {session_id}"
-        #             )
-        #
-        #         logger.info(f"[AGENT RUNNER] Sending {len(unique_sources)} sources to backend - agent_name: {agent_name}, session_id: {session_id}")
-        #         for source in unique_sources:
-        #             output = self.streaming_formatter.format_streaming_event(
-        #                 agent_name=agent_name, agent_type="agent",
-        #                 chunk=json.dumps(source), message_id=session_id,
-        #                 content_type="source"
-        #             )
-        #             await q.put(output)
-        #
-        # elif agent_name == "ReportWriterAgent" and q:
-        #     output = self.streaming_formatter.format_streaming_event(
-        #         agent_name="ReportWriterAgent", agent_type="reporter",
-        #         chunk=json.dumps([]), message_id=session_id,
-        #         content_type="source"
-        #     )
-        #     await q.put(output)
 
         # Handle diagram references in the final response
         # Replace any remaining diagram references with actual diagram content
@@ -2053,67 +2156,7 @@ class AgentRunner:
         result_payload = response_data.get("result")
         raw_citations = response_data.get("citations")
         if isinstance(raw_citations, list):
-            citation_sources: List[Dict[str, Any]] = []
-            seen = set()
-            for index, citation in enumerate(raw_citations):
-                if not isinstance(citation, dict):
-                    continue
-
-                raw_source = citation.get("source") or citation.get("path") or ""
-                source = _normalize_vectorstore_source(raw_source)
-                file_name = _display_source_name(raw_source)
-                page = str(
-                    citation.get("page")
-                    or citation.get("page_number")
-                    or ""
-                ).strip()
-                highlight_text = str(
-                    citation.get("highlight_text")
-                    or citation.get("highlightText")
-                    or citation.get("page_content")
-                    or ""
-                )
-                highlight_bbox = (
-                    citation.get("highlight_bbox")
-                    or citation.get("highlightBBox")
-                    or []
-                )
-                reference = str(
-                    citation.get("reference")
-                    or citation.get("citation")
-                    or index + 1
-                )
-                signature = (source, page, highlight_text)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-
-                citation_sources.append(
-                    {
-                        "type": "text",
-                        "source": source,
-                        "file_name": file_name,
-                        "page": page,
-                        "page_content": highlight_text,
-                        "workspace_id": str(
-                            citation.get("workspace_id")
-                            or citation.get("workspace_name")
-                            or ""
-                        ),
-                        "reference": reference,
-                        "reference_aliases": [],
-                        "highlight_text": highlight_text,
-                        "highlight_bbox": highlight_bbox,
-                        "block_bbox": highlight_bbox,
-                    }
-                )
-            if citation_sources:
-                logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s extracted_citation_sources_from_citations count=%s",
-                    tool_name,
-                    len(citation_sources),
-                )
-            return citation_sources
+            return normalize_connector_citations(raw_citations)
 
         if isinstance(result_payload, str):
             try:

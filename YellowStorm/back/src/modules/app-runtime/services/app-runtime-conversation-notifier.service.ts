@@ -1,13 +1,16 @@
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { ConversationV2StreamService } from '@modules/conversation-v2/services/conversation-v2-stream.service';
-import type { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
-import type { FilesTreeNode } from '@modules/conversation-v2/types/conversation-v2.types';
+import type { RuntimeBindingRecord } from '../persistence/runtime-binding.store';
+import {
+  APPLICATION_COMPONENT_EVENT_PUBLISHER,
+  type ApplicationComponentEventPublisher,
+  type ApplicationComponentTreeNode,
+} from '../ports/application-component-events.port';
 import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
 
 function countFileTreeNodes(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
-  const record = node as FilesTreeNode;
+  const record = node as ApplicationComponentTreeNode;
   let count = record.type === 'file' ? 1 : 0;
   if (Array.isArray(record.children)) {
     for (const child of record.children) {
@@ -17,7 +20,7 @@ function countFileTreeNodes(node: unknown): number {
   return count;
 }
 
-function normalizeFilesTree(node: unknown): FilesTreeNode | null {
+function normalizeFilesTree(node: unknown): ApplicationComponentTreeNode | null {
   if (!node || typeof node !== 'object') return null;
   const record = node as Record<string, unknown>;
   const rawType = String(record.type ?? 'file');
@@ -30,7 +33,7 @@ function normalizeFilesTree(node: unknown): FilesTreeNode | null {
     type,
     ...(typeof record.path === 'string' ? { path: record.path } : {}),
     ...(typeof record.size === 'number' ? { size: record.size } : {}),
-    ...(children?.length ? { children: children as FilesTreeNode[] } : {}),
+    ...(children?.length ? { children: children as ApplicationComponentTreeNode[] } : {}),
   };
 }
 
@@ -43,13 +46,14 @@ export class AppRuntimeConversationNotifierService {
   private readonly logger = new Logger(AppRuntimeConversationNotifierService.name);
 
   constructor(
-    @Inject(forwardRef(() => ConversationV2StreamService))
-    private readonly streamService: ConversationV2StreamService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    @Optional()
+    @Inject(forwardRef(() => APPLICATION_COMPONENT_EVENT_PUBLISHER))
+    private readonly components?: ApplicationComponentEventPublisher,
   ) {}
 
   async notifyFinalize(
-    binding: AppRuntimeBinding,
+    binding: RuntimeBindingRecord,
     args: Record<string, unknown>,
     result: Record<string, unknown>,
   ): Promise<void> {
@@ -77,15 +81,15 @@ export class AppRuntimeConversationNotifierService {
       cephManifestPath: cephPath ?? null,
     });
 
-    await this.streamService.publishApplicationComponent(binding.userId, binding.workspaceId, {
-      event_id: eventId,
+    await this.components?.publishApplicationComponent(binding.userId, binding.workspaceId, {
+      eventId,
       timestamp,
       url: 'nodepod://preview',
       title,
-      ceph_path: cephPath,
-      files_tree: filesTree,
-      file_count: fileCount,
-      revision_id: revisionId,
+      cephPath,
+      filesTree,
+      fileCount,
+      revisionId,
     });
 
     this.logger.log(

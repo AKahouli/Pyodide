@@ -1,6 +1,5 @@
 import type { GovernanceDryRunRecord } from './governance-records';
 
-export const DRY_RUN_STORE = Symbol('GOVERNANCE_DRY_RUN_STORE');
 
 export interface GovernanceDryRunCreateInput {
   programId: string;
@@ -11,7 +10,7 @@ export interface GovernanceDryRunCreateInput {
   testerId: string;
   status: GovernanceDryRunRecord['status'];
   executionMode: GovernanceDryRunRecord['executionMode'];
-  testCases?: Array<Record<string, unknown>>;
+  testCases?: Record<string, unknown>[];
   checks?: Record<string, unknown>;
 }
 

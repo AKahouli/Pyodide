@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
-from src.companion_ai import scheduler, service as svc
+from src.companion_ai import scheduler
+from src.companion_ai.adk import service as svc
 from src.companion_ai.plan import Plan, Status, Step
 
 
@@ -1149,7 +1150,7 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
     import unittest.mock as mock
-    from src.companion_ai import nodes as nodes_mod
+    from src.companion_ai.adk import nodes as nodes_mod
 
     class _ScriptedLlm(BaseLlm):
         _n: int = PrivateAttr(default=0)
@@ -1290,7 +1291,7 @@ def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence()
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
     import unittest.mock as mock
-    from src.companion_ai import nodes as nodes_mod
+    from src.companion_ai.adk import nodes as nodes_mod
 
     class _ScriptedLlm(BaseLlm):
         _n: int = PrivateAttr(default=0)
@@ -1378,7 +1379,7 @@ def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
     single interrupt id made every approval hit whichever gate it pointed at, so
     a second card's approval landed on the first card's gate and mis-applied its
     edits. resume_turn must answer the gate the CARD names (its questionId), and
-    if it has to fall back to a different gate, it must DROP the edits."""
+    refuse a stale target rather than approving another pending send."""
     import unittest.mock as mock
     from google.genai import types
     gateA, gateB = "confirm::adk-AAAA", "confirm::adk-BBBB"
@@ -1416,13 +1417,17 @@ def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
     assert captured["fc_id"] == "adk-BBBB", f"answered the wrong gate: {captured['fc_id']}"
     assert captured["payload"] == {"subject": "x"}, "edits should ride to the targeted gate"
 
-    # Now B's id has drifted (no longer outstanding); the approval must fall back
-    # to A but DROP B's edits (never apply one send's edits to another).
+    # A stale B card must not approve A after B is no longer pending.
     rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA")])
     captured.clear()
-    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
-    assert captured["fc_id"] == "adk-AAAA", "should fall back to the only outstanding gate"
-    assert captured["payload"] is None, "edits for a gone gate must be dropped, not applied to A"
+    with pytest.raises(RuntimeError, match="no longer pending"):
+        asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured == {}, "a stale approval must not resume another gate"
+
+    # Untargeted chat verdicts may still recover from a stale session default.
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateB, "sB")])
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer="approve", model="fake"))
+    assert captured["fc_id"] == "adk-BBBB"
 
 
 async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
@@ -1783,7 +1788,7 @@ def test_a_step_producing_several_files_records_every_one():
 def test_a_single_file_result_is_captured_and_a_fileless_one_is_not():
     """send_file_to_user returns the path on the result itself, not in a list.
     Every other tool call returns no file at all and must produce no row."""
-    from src.companion_ai import nodes as n
+    from src.companion_ai.adk import nodes as n
 
     single = n.artifacts_from_tool_result(
         {"ceph_path": "ceph/x/report.pdf", "path": "/home/ubuntu/report.pdf"})
@@ -1798,7 +1803,7 @@ def test_a_single_file_result_is_captured_and_a_fileless_one_is_not():
 def test_a_projection_failure_never_fails_the_tool_call():
     """The file exists whether or not the row lands. Losing a step's real work
     because a read-model write failed is the worse trade."""
-    from src.companion_ai import nodes as n
+    from src.companion_ai.adk import nodes as n
 
     async def boom(_artifact):
         raise RuntimeError("read model down")

@@ -185,7 +185,7 @@ def resolve_model_config(model_config: object) -> str:
 # models with no sampling-temperature knob). Add here, not a one-off check,
 # as more of these show up -- e.g. kimi-k3: "invalid temperature: only 1 is
 # allowed for this model".
-_FIXED_TEMPERATURE_ONE_MARKERS = ("gpt-5", "kimi")
+_FIXED_TEMPERATURE_ONE_MARKERS = ("gpt-5", "gpt-6", "kimi")
 
 
 def _requires_temperature_one(model_name: object) -> bool:

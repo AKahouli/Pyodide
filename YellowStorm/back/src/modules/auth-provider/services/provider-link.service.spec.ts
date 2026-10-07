@@ -4,12 +4,12 @@ import { ProviderLinkService } from './provider-link.service';
 import { UserService } from '@modules/user/user.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { USER_PROVIDER_LINK_STORE } from '../persistence/auth-provider.stores';
 import {
   linkRecord,
   makeUserProviderLinkStoreFake,
   type UserProviderLinkStoreFake,
 } from '../persistence/auth-provider-stores.fake';
+import { PgUserProviderLinkStore } from '../persistence/pg-auth-provider.stores';
 
 describe('ProviderLinkService', () => {
   let service: ProviderLinkService;
@@ -41,7 +41,7 @@ describe('ProviderLinkService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProviderLinkService,
-        { provide: USER_PROVIDER_LINK_STORE, useValue: linkStore },
+        { provide: PgUserProviderLinkStore, useValue: linkStore },
         { provide: UserService, useValue: userService },
         { provide: LoggerService, useValue: mockLoggerService },
       ],

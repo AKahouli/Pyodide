@@ -1,9 +1,10 @@
-import { Inject, Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable,  OnModuleInit,  OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HealthCheckDetailRecord } from './schemas/health-history.schema';
-import { HEALTH_HISTORY_STORE, type HealthHistoryRow, type HealthHistoryStore } from './persistence/health-history.store';
+import { type HealthHistoryRow} from './persistence/health-history.store';
 import { HealthService } from './health.service';
 import { LoggerService } from '../logger';
+import { PgHealthHistoryStore } from './persistence/pg-health-history.store';
 
 // Row shape kept for API parity with the former Mongo lean documents
 export type HealthHistoryRecord = HealthHistoryRow;
@@ -53,8 +54,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
   private isRunning = false;
 
   constructor(
-    @Inject(HEALTH_HISTORY_STORE)
-    private readonly healthHistoryStore: HealthHistoryStore,
+    private readonly healthHistoryStore: PgHealthHistoryStore,
     private readonly healthService: HealthService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -137,7 +137,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
           timestamp: result.timestamp,
           version: result.version,
           uptime: result.uptime,
-          checks: result.checks as Record<string, HealthCheckDetailRecord>,
+          checks: result.checks,
         },
         expireAt,
       );
@@ -254,7 +254,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
         timestamp: result.timestamp,
         version: result.version,
         uptime: result.uptime,
-        checks: result.checks as Record<string, HealthCheckDetailRecord>,
+        checks: result.checks,
       },
       expireAt,
     );

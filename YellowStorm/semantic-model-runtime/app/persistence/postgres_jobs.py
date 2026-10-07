@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from app.datasource.discovery import parser_fingerprint
+from app.datasource.email_archive import resolve_column
 from app.jobs.models import (
     Admission,
     IdempotencyConflict,
@@ -139,7 +140,9 @@ class PostgresJobRepository:
                           CASE WHEN $3 THEN 'unavailable' ELSE 'checking' END,
                           jsonb_build_array(jsonb_build_object('code', 'source_observation_changed'))
                         FROM semantic_model.source_mappings m
+                        -- A workspace key names a whole workspace, never one file that could change.
                         WHERE m.workspace_id=$1 AND m.document_id=$2
+                          AND m.document_id NOT LIKE 'workspace:%'
                         ON CONFLICT (model_id, mapping_id) DO UPDATE SET
                           state=EXCLUDED.state, missing_fields='[]'::jsonb,
                           available_fields='[]'::jsonb,
@@ -155,7 +158,7 @@ class PostgresJobRepository:
                         """
                         SELECT DISTINCT model_id::text
                         FROM semantic_model.source_mappings
-                        WHERE workspace_id = $1 AND document_id = $2
+                        WHERE workspace_id = $1 AND (document_id = $2 OR scope = 'workspace')
                         """,
                         workspace_id, asset_id,
                     )
@@ -287,6 +290,16 @@ class PostgresJobRepository:
                     )
                     if existing is None or existing["command_hash"] != command_hash:
                         raise IdempotencyConflict("idempotency key already has a different payload")
+                    # A failed discovery is retried too: handing back the failure would leave the
+                    # file unreadable until its content changes, even once the cause is fixed.
+                    if (job_type in ("population.run", "datasource.discovery")
+                            and existing["state"] in ("failed", "cancelled")):
+                        # A retry of a terminal failure or a stopped run needs a fresh durable job,
+                        # while concurrent retries must converge on the same one.
+                        effective_key = hashlib.sha256(
+                            f"{idempotency_key}:{existing['id']}".encode()
+                        ).hexdigest()
+                        continue
                     if (job_type == "datasource.discovery"
                             and effective_key == idempotency_key
                             and existing["state"] in TERMINAL_JOB_STATES):
@@ -361,6 +374,145 @@ class PostgresJobRepository:
             "updatedAt": row["updated_at"],
         }
 
+    async def list_jobs(
+        self, *, actor_user_id: str, model_id: str, job_type: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """The actor's latest jobs of this type for the model, newest first."""
+        rows = await self.pool.fetch(
+            """
+            SELECT id::text FROM semantic_jobs.jobs
+            WHERE actor_user_id = $1 AND model_id = $2 AND job_type = $3
+            ORDER BY created_at DESC
+            LIMIT $4
+            """,
+            actor_user_id,
+            model_id,
+            job_type,
+            limit,
+        )
+        jobs = [await self.get_job(row["id"], actor_user_id) for row in rows]
+        return [job for job in jobs if job is not None]
+
+    async def find_active_job(
+        self, *, actor_user_id: str, model_id: str, job_type: str
+    ) -> dict[str, Any] | None:
+        """The actor's latest job of this type for the model that has not ended yet."""
+        job_id = await self.pool.fetchval(
+            """
+            SELECT id::text FROM semantic_jobs.jobs
+            WHERE actor_user_id = $1 AND model_id = $2 AND job_type = $3
+              AND state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            actor_user_id,
+            model_id,
+            job_type,
+        )
+        return await self.get_job(job_id, actor_user_id) if job_id else None
+
+    async def request_cancel(self, job_id: str, actor_user_id: str) -> dict[str, Any] | None:
+        """Stop a job. One that has not started ends at once; a running one is asked to stop
+        and its worker ends it at its next progress report, keeping nothing it read."""
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                job = await connection.fetchrow(
+                    """
+                    SELECT id::text, state FROM semantic_jobs.jobs
+                    WHERE id = $1::uuid AND actor_user_id = $2
+                    FOR UPDATE
+                    """,
+                    job_id,
+                    actor_user_id,
+                )
+                if job is None:
+                    return None
+                if job["state"] not in TERMINAL_JOB_STATES and job["state"] != "cancel_requested":
+                    running = await connection.fetchval(
+                        "SELECT count(*) FROM semantic_jobs.tasks WHERE job_id = $1::uuid AND state = 'running'",
+                        job_id,
+                    )
+                    if running:
+                        await connection.execute(
+                            """
+                            UPDATE semantic_jobs.jobs SET state = 'cancel_requested', updated_at = now()
+                            WHERE id = $1::uuid
+                            """,
+                            job_id,
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO semantic_jobs.events (job_id, event_type, payload)
+                            VALUES ($1::uuid, 'job.cancel_requested', '{}'::jsonb)
+                            """,
+                            job_id,
+                        )
+                    else:
+                        await connection.execute(
+                            """
+                            UPDATE semantic_jobs.tasks
+                            SET state = 'cancelled', completed_at = now(), updated_at = now()
+                            WHERE job_id = $1::uuid AND state = 'queued'
+                            """,
+                            job_id,
+                        )
+                        await self._finish_cancelled(connection, job_id, None)
+        return await self.get_job(job_id, actor_user_id)
+
+    async def cancel_requested(self, job_id: str) -> bool:
+        return await self.pool.fetchval(
+            "SELECT state = 'cancel_requested' FROM semantic_jobs.jobs WHERE id = $1::uuid", job_id
+        ) is True
+
+    async def cancel_task(self, *, task_id: int, lease_owner: str, lease_epoch: int) -> dict[str, Any]:
+        """End a running task whose job was asked to stop, while still holding its lease."""
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    UPDATE semantic_jobs.tasks
+                    SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
+                        lease_expires_at = NULL, updated_at = now()
+                    WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
+                      AND state = 'running' AND lease_expires_at > now()
+                    RETURNING job_id::text
+                    """,
+                    task_id,
+                    lease_owner,
+                    lease_epoch,
+                )
+                if row is None:
+                    raise StaleLease("task lease is stale or expired")
+                await self._finish_cancelled(connection, row["job_id"], task_id)
+                return {"jobId": row["job_id"], "state": "cancelled"}
+
+    async def _finish_cancelled(self, connection: Any, job_id: str, task_id: int | None) -> None:
+        job = await connection.fetchrow(
+            """
+            UPDATE semantic_jobs.jobs
+            SET state = 'cancelled', error_code = 'cancelled', completed_at = now(), updated_at = now()
+            WHERE id = $1::uuid AND state NOT IN ('completed', 'completed_with_gaps', 'failed',
+                                                  'cancelled', 'superseded')
+            RETURNING model_id
+            """,
+            job_id,
+        )
+        if job is None:
+            return
+        await connection.execute(
+            """
+            INSERT INTO semantic_jobs.events (job_id, task_id, event_type, payload)
+            VALUES ($1::uuid, $2, 'job.cancelled', jsonb_build_object('state', 'cancelled'))
+            """,
+            job_id,
+            task_id,
+        )
+        if self.realtime_enabled and job["model_id"]:
+            await enqueue_ui_signal(
+                connection, model_id=job["model_id"], event_type="population-status-changed",
+                resource=job_id, payload={"resource": job_id, "status": "cancelled", "reason": "job_terminal"},
+            )
+
     async def list_events(
         self, job_id: str, actor_user_id: str, after: int, limit: int
     ) -> list[dict[str, Any]]:
@@ -405,6 +557,9 @@ class PostgresJobRepository:
                       WHERE id = $4 AND queue_name = $1
                         AND (state = 'queued'
                              OR (state = 'running' AND lease_expires_at < now()))
+                        AND NOT EXISTS (SELECT 1 FROM semantic_jobs.jobs j
+                                        WHERE j.id = semantic_jobs.tasks.job_id
+                                          AND j.state IN ('cancel_requested', 'cancelled'))
                       ORDER BY created_at, id
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
@@ -751,7 +906,8 @@ class PostgresJobRepository:
             required = [item.get("sourceField") for item in mappings or []
                         if isinstance(item, dict) and item.get("mode") == "direct"
                         and isinstance(item.get("sourceField"), str)]
-            missing = [field for field in required if field not in available_set]
+            missing = [field for field in required
+                       if resolve_column(field, available_set) not in available_set]
             if not row["source_enabled"]:
                 state = "unavailable"
             elif missing:
@@ -795,6 +951,8 @@ class PostgresJobRepository:
             WHERE workspace_id=$1 AND asset_id=$2 AND source_fingerprint=$3
               AND options_fingerprint=$4 AND parser_version=$5
               AND source_version IS NOT DISTINCT FROM $6
+              -- "Indexing required" depends on the index, not on the file: read the file again.
+              AND profile->>'status' IS DISTINCT FROM 'indexing_required'
             ORDER BY completed_at DESC LIMIT 1
             """,
             source.get("workspaceId"), source.get("assetId"), source_fingerprint,
@@ -855,6 +1013,26 @@ class PostgresJobRepository:
                 )
                 return True
 
+    async def release_abandoned_leases(self, *, node_prefix: str, boot_prefix: str) -> int:
+        """Expire the leases a worker node held before it restarted.
+
+        Lease owners are ``<node_prefix><boot id>:<run id>``; a node that starts again
+        gets a new boot id, so any lease of the node under another boot id belongs to a
+        process that is gone. Expired now, recovery ends a run asked to stop and requeues
+        the others at once instead of waiting for the lease to run out.
+        """
+        result = await self.pool.execute(
+            """
+            UPDATE semantic_jobs.tasks
+            SET lease_expires_at = now() - interval '1 second', updated_at = now()
+            WHERE state = 'running' AND lease_expires_at > now()
+              AND starts_with(lease_owner, $1) AND NOT starts_with(lease_owner, $2)
+            """,
+            node_prefix,
+            boot_prefix,
+        )
+        return int(result.split()[-1]) if result else 0
+
     async def recover_stalled_tasks(
         self,
         *,
@@ -882,15 +1060,30 @@ class PostgresJobRepository:
             async with connection.transaction():
                 expired = await connection.fetch(
                     """
-                    SELECT id, attempt_count
-                    FROM semantic_jobs.tasks
-                    WHERE state = 'running' AND lease_expires_at < now()
-                    ORDER BY lease_expires_at, id
-                    FOR UPDATE SKIP LOCKED
+                    SELECT t.id, t.attempt_count, t.job_id::text AS job_id,
+                           j.state = 'cancel_requested' AS stopping
+                    FROM semantic_jobs.tasks t
+                    JOIN semantic_jobs.jobs j ON j.id = t.job_id
+                    WHERE t.state = 'running' AND t.lease_expires_at < now()
+                    ORDER BY t.lease_expires_at, t.id
+                    FOR UPDATE OF t SKIP LOCKED
                     LIMIT $1
                     """,
                     batch,
                 )
+                stopped = [row for row in expired if row["stopping"]]
+                for row in stopped:
+                    await connection.execute(
+                        """
+                        UPDATE semantic_jobs.tasks
+                        SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
+                            lease_expires_at = NULL, updated_at = now()
+                        WHERE id = $1 AND state = 'running'
+                        """,
+                        row["id"],
+                    )
+                    await self._finish_cancelled(connection, row["job_id"], row["id"])
+                expired = [row for row in expired if not row["stopping"]]
                 stalled = await connection.fetch(
                     """
                     SELECT t.id, o.attempt_count AS dispatch_count

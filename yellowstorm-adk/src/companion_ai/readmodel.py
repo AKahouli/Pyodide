@@ -115,6 +115,21 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, component_id)
             )""")
+        # Rich components of a PLAN STEP (the client's `plan_step_components`
+        # Electric shape) — same idea as message_components but keyed by step, so
+        # the task drawer can show a step's tool calls / reasoning as an activity
+        # card (AssistantActivity), for traceability. One step → many components.
+        await con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_q(schema,'plan_step_components')} (
+                session_id   TEXT NOT NULL,
+                step_id      TEXT NOT NULL,   -- joins plan_steps(session_id, step_id)
+                component_id TEXT NOT NULL,
+                ordinal      INTEGER NOT NULL DEFAULT 0,
+                type         TEXT NOT NULL,   -- toolActivity | agentActivity | text | …
+                data         JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (session_id, component_id)
+            )""")
         await con.execute(
             f'ALTER TABLE {_q(schema,"messages")} ADD COLUMN IF NOT EXISTS turn_id TEXT')
         # Internal (not published to Electric): which step is waiting on which
@@ -273,9 +288,12 @@ class ReadModel:
     async def set_step_status(self, session_id: str, step_id: str, status: str, *,
                               result: Optional[str] = None,
                               blocked_reason: Optional[str] = None,
-                              interrupt_id: Optional[str] = None) -> None:
+                              interrupt_id: Optional[str] = None,
+                              question: Optional[str] = None) -> None:
         """`interrupt_id` is written as given, not merged: a step that moves to any
-        status without one is no longer parked, so the default clears it."""
+        status without one is no longer parked, so the default clears it. `question`
+        is COALESCE'd (kept unless given) — used to surface a runtime ask_user
+        question on a step whose plan-time question was empty."""
         async with self._pool.acquire() as con:
             await con.execute(f"""
                 UPDATE {_q(self._schema,'plan_steps')}
@@ -283,9 +301,11 @@ class ReadModel:
                     result=COALESCE($4, result),
                     blocked_reason=$5,
                     interrupt_id=$6,
+                    question=COALESCE($7, question),
                     updated_at=now()
                 WHERE session_id=$1 AND step_id=$2
-            """, session_id, step_id, status, result, blocked_reason, interrupt_id)
+            """, session_id, step_id, status, result, blocked_reason, interrupt_id,
+                 question)
 
     async def outstanding_interrupts(self, session_id: str) -> List[Tuple[str, str]]:
         """(interrupt_id, step_id) for every step still parked on an answer.
@@ -322,6 +342,20 @@ class ReadModel:
                 VALUES ($1,$2,$3,$4,$5,$6::jsonb)
                 ON CONFLICT (session_id, component_id) DO NOTHING
             """, session_id, message_id, component_id, ordinal, type, json.dumps(data))
+
+    async def add_step_component(self, session_id: str, step_id: str, component_id: str,
+                                 type: str, data: dict, ordinal: int = 0) -> None:
+        """Attach one rich component to a plan step (the `plan_step_components`
+        shape). Idempotent on (session_id, component_id) — a re-drive/replay
+        re-projects the same tool call, and DO NOTHING keeps the first write."""
+        import json
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                INSERT INTO {_q(self._schema,'plan_step_components')}
+                    (session_id,step_id,component_id,ordinal,type,data)
+                VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+                ON CONFLICT (session_id, component_id) DO NOTHING
+            """, session_id, step_id, component_id, ordinal, type, json.dumps(data))
 
     async def close_confirm_choices(self, session_id: str, keep_ids: List[str]) -> None:
         """Mark every `confirm::` approve/decline card in the session as submitted
@@ -434,6 +468,17 @@ class ReadModel:
                 f"UPDATE {_q(self._schema,'mail_waits')} SET interrupt_id=$3 "
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
+
+    async def mail_wait_target(self, session_id: str, step_id: str):
+        """(conversation_id, expected_from) of a step's open wait, or None if it has
+        no waiting row. Both None means no send bound a routable target to it — a
+        reply can never be matched (the await would hang forever)."""
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                f"SELECT conversation_id, expected_from FROM {_q(self._schema,'mail_waits')} "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
+        return (row["conversation_id"], row["expected_from"]) if row else None
 
     async def cancel_mail_wait(self, session_id: str, step_id: str) -> None:
         """Drop one step's wait — its reply can never arrive (e.g. the send it was

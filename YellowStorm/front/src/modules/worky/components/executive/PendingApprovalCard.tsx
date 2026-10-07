@@ -30,6 +30,7 @@ export function PendingApprovalCard({ streamId, approval }: { streamId: string; 
   const send = useSendMessage(streamId);
   const beginTurn = useWorkyStore((state) => state.beginTurn);
   const finishTurn = useWorkyStore((state) => state.finishTurn);
+  const markConfirmSubmitted = useWorkyStore((state) => state.markConfirmSubmitted);
   const notifySendError = useWorkyUiStore((state) => state.notifySendError);
 
   if (!choice) return null;
@@ -48,6 +49,10 @@ export function PendingApprovalCard({ streamId, approval }: { streamId: string; 
     if (send.isPending) return;
     const turnId = crypto.randomUUID();
     beginTurn(turnId);
+    // Optimistically retire this card so it leaves "Needs you" immediately;
+    // the SSE path won't deliver the ready->submitted flip live. A refetch
+    // reconciles the true status (and re-arms it if the send actually failed).
+    markConfirmSubmitted(choice.questionId);
     send.mutate({ content, turnId }, {
       onError: (error) => {
         finishTurn(turnId);

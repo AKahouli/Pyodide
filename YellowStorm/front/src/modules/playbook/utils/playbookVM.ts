@@ -35,6 +35,7 @@ export interface PlaybookVM {
   stepCount: number | null;
   labels: string[];
   isFavorite: boolean;
+  isShared: boolean;
   workspaceId: string;
   trigger: { kind: TriggerKind; label: string; nextRunAt: string | null };
   lastRun: { id: string; outcome: RunOutcome; startedAt: string; durationMs: number | null } | null;
@@ -251,12 +252,14 @@ function deriveLive(execution: PlaybookExecution, stepCount: number | null): Pla
   };
 }
 
-function deriveApproval(execution: PlaybookExecution): PlaybookVM['approval'] | undefined {
+function deriveApproval(execution: PlaybookExecution, nodes: RawPlaybookListItem['nodes']): PlaybookVM['approval'] | undefined {
   const interrupt = execution.interruptPayload ?? execution.pendingInterrupts?.[0] ?? null;
   if (!interrupt) return undefined;
+  const nodeLabel = nodes?.find((node) => node.id === interrupt.taskId)?.label;
+  const nodeName = [interrupt.taskTitle, nodeLabel].find((title) => title?.trim() && title !== interrupt.taskId) ?? '';
   return {
     runId: execution.id,
-    nodeName: interrupt.taskTitle || interrupt.taskId,
+    nodeName,
     summary: interrupt.message || interrupt.taskDescription || '',
     blockedSince: execution.updatedAt,
     taskId: interrupt.taskId,
@@ -307,6 +310,7 @@ export function buildPlaybookVM(raw: RawPlaybookListItem, ctx: PlaybookVMContext
     stepCount,
     labels: deriveLabels(raw.name, purpose),
     isFavorite: Boolean(raw.isFavorite),
+    isShared: raw.accessLevel !== undefined && raw.accessLevel !== 'owner',
     workspaceId: raw.workspaces?.[0] ?? '',
     trigger: deriveTrigger(raw),
     lastRun,
@@ -325,7 +329,7 @@ export function buildPlaybookVM(raw: RawPlaybookListItem, ctx: PlaybookVMContext
   };
 
   if (liveExecution) {
-    if (state === 'awaiting_approval') vm.approval = deriveApproval(liveExecution);
+    if (state === 'awaiting_approval') vm.approval = deriveApproval(liveExecution, raw.nodes);
     else if (['running', 'queued', 'pending'].includes(state)) vm.live = deriveLive(liveExecution, stepCount);
   }
   if ((state === 'failed' || state === 'interrupted') && lastRun?.id) {

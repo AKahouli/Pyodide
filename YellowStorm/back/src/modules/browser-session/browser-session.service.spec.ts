@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { BrowserSessionService } from './browser-session.service';
-import {
-  BROWSER_ENGINE, URL_SAFETY, BrowserEngine, EngineSession, InputEvent, NavAction, UrlSafetyFn,
+import { URL_SAFETY,  BrowserEngine,  EngineSession,  InputEvent,  NavAction,  UrlSafetyFn, 
 } from './browser-session.types';
 import { LoggerService } from '../logger';
+import { PlaywrightBrowserEngine } from './/playwright-browser-engine';
 
 class FakeSession implements EngineSession {
   frameCb?: (f: string) => void;
@@ -41,7 +41,7 @@ async function build(engine: FakeEngine, safety: UrlSafetyFn = async () => {}) {
   const mod = await Test.createTestingModule({
     providers: [
       BrowserSessionService,
-      { provide: BROWSER_ENGINE, useValue: engine },
+      { provide: PlaywrightBrowserEngine, useValue: engine },
       { provide: URL_SAFETY, useValue: safety },
       { provide: ConfigService, useValue: { get: () => CONFIG } },
       { provide: LoggerService, useValue: { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } },
@@ -57,7 +57,7 @@ describe('BrowserSessionService', () => {
   it('creates a session and relays frames + navigations', async () => {
     const engine = new FakeEngine();
     const svc = await build(engine);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     const id = await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     expect(id).toBeTruthy();
     const s = engine.sessions[0];
@@ -71,7 +71,7 @@ describe('BrowserSessionService', () => {
   it('relays engine loading state to the client', async () => {
     const engine = new FakeEngine();
     const svc = await build(engine);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     engine.sessions[0].loadingCb!(true);
     engine.sessions[0].loadingCb!(false);
@@ -99,7 +99,7 @@ describe('BrowserSessionService', () => {
     const engine = new FakeEngine();
     const safety = async (u: string) => { if (u.includes('169.254')) throw new Error('blocked'); };
     const svc = await build(engine, safety);
-    const events: Array<{ e: string; p: unknown }> = [];
+    const events: { e: string; p: unknown }[] = [];
     await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
     engine.sessions[0].navCb!({ url: 'http://169.254.169.254/', title: 'meta' });
     await Promise.resolve();

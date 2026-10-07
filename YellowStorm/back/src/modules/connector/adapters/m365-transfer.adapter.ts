@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../../logger';
 import { ConnectorTransferAdapter } from '../interfaces/connector-transfer.interface';
-import { collapseRepeatedChar } from '@common/utils';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
@@ -16,7 +15,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
 
   private buildHeaders(authHeaders: Record<string, string>): Record<string, string> {
     return {
-      Authorization: authHeaders['Authorization'] || '',
+      Authorization: authHeaders.Authorization || '',
       ...authHeaders,
     };
   }
@@ -46,7 +45,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     itemRef: Record<string, unknown>,
     authHeaders: Record<string, string>,
     options?: { recursive?: boolean },
-  ): Promise<Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }>> {
+  ): Promise<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }[]> {
     const recursive = options?.recursive ?? true;
     const headers = this.buildHeaders(authHeaders);
     const itemPath = this.buildItemPath(itemRef);
@@ -65,23 +64,23 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     const parentReference = (meta.parentReference as Record<string, unknown> | undefined) || {};
     const parentPath = ((parentReference.path as string) || '').replace(/^\/drives\/[^/]+\/root:?/, '');
     const itemName = (meta.name as string) || 'unknown';
-    const sourcePath = collapseRepeatedChar(`${parentPath}/${itemName}`, '/');
+    const sourcePath = `${parentPath}/${itemName}`.replace(/\/{2,}/g, '/');
 
     if (!meta.folder) {
       const file = meta.file as Record<string, unknown> | undefined;
       return [{
-        itemRef: { driveId, itemId: meta.id as string },
+        itemRef: { driveId, itemId: meta.id },
         filename: itemName,
         mimeType: (file?.mimeType as string) || 'application/octet-stream',
         sourcePath,
       }];
     }
 
-    const queue: Array<{ itemId: string; prefix: string }> = [{
+    const queue: { itemId: string; prefix: string }[] = [{
       itemId: meta.id as string,
       prefix: sourcePath.replace(/^\//, ''),
     }];
-    const files: Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }> = [];
+    const files: { itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }[] = [];
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -97,10 +96,10 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
           throw new Error(`Failed to list folder children: ${childrenResp.status} ${text}`);
         }
 
-        const payload = (await childrenResp.json()) as { value?: Array<Record<string, unknown>>; '@odata.nextLink'?: string };
+        const payload = (await childrenResp.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
         for (const child of payload.value || []) {
           const childName = (child.name as string) || 'unknown';
-          const childSourcePath = collapseRepeatedChar(`/${current.prefix}/${childName}`, '/');
+          const childSourcePath = `/${current.prefix}/${childName}`.replace(/\/{2,}/g, '/');
           if (child.folder) {
             if (recursive) {
               queue.push({ itemId: child.id as string, prefix: childSourcePath.replace(/^\//, '') });
@@ -110,7 +109,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
 
           const file = child.file as Record<string, unknown> | undefined;
           files.push({
-            itemRef: { driveId, itemId: child.id as string },
+            itemRef: { driveId, itemId: child.id },
             filename: childName,
             mimeType: (file?.mimeType as string) || 'application/octet-stream',
             sourcePath: childSourcePath,
@@ -185,7 +184,7 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     }
 
     const headers = {
-      Authorization: authHeaders['Authorization'] || '',
+      Authorization: authHeaders.Authorization || '',
       ...authHeaders,
     };
 

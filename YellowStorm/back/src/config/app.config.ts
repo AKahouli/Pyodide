@@ -11,8 +11,6 @@ export default registerAs('app', () => ({
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET || '',
   githubCallbackUrl: process.env.GITHUB_CALLBACK_URL || '',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-  throttleTtl: Number.parseInt(process.env.THROTTLE_TTL || '60', 10),
-  throttleLimit: Number.parseInt(process.env.THROTTLE_LIMIT || '100', 10),
   /**
    * Express `trust proxy` (TRUST_PROXY). Empty/false = ignore X-Forwarded-*.
    * Production behind an ingress should set hop count (e.g. `1`) or proxy CIDRs.

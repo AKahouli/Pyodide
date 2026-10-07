@@ -1,15 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
 import {
-  AppRuntimeBinding,
-  AppRuntimeBindingDocument,
-} from '../schemas/app-runtime-binding.schema';
+  RUNTIME_SESSION_SEED_SOURCE,
+  type RuntimeSessionSeedSource,
+} from '../ports/runtime-session-seed.port';
+import { TEMPLATE_REVISION_PREFIX } from '../constants/revision-id.constants';
+import { type RuntimeBindingRecord } from '../persistence/runtime-binding.store';
+import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
-import { DEFAULT_STARTER_REVISION_ID } from '../constants/starter-revisions';
+import {
+  DEFAULT_STARTER_REVISION_ID,
+  isSystemStarterRevisionId,
+} from '../constants/starter-revisions';
+import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
 
 export interface BindRuntimeParams {
   conversationSessionId: string;
@@ -27,6 +32,9 @@ export interface BindRuntimeResult {
   appDataMcpUrl?: string;
 }
 
+/** Workspace revision holding the template normalized with the Platform Kit. */
+const BASELINE_REVISION_ID = 'rev_1';
+
 export interface MarkBrowserActiveParams {
   workspaceId: string;
   browserRuntimeId: string;
@@ -34,20 +42,21 @@ export interface MarkBrowserActiveParams {
   lastHeartbeatAt: Date;
 }
 
-function isDuplicateKeyError(error: unknown): boolean {
-  return (error as { code?: number } | null)?.code === 11000;
-}
-
 @Injectable()
 export class RuntimeBindingService {
   private readonly logger = new Logger(RuntimeBindingService.name);
 
   constructor(
-    @InjectModel(AppRuntimeBinding.name)
-    private readonly model: Model<AppRuntimeBindingDocument>,
+    private readonly store: PgRuntimeBindingStore,
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
+    private readonly baseline: PlatformBaselineService,
     private readonly config: ConfigService,
+    // forwardRef: seed source lives in ConversationV2, which also injects this
+    // binding service through StreamService / controllers.
+    @Optional()
+    @Inject(forwardRef(() => RUNTIME_SESSION_SEED_SOURCE))
+    private readonly sessionSeeds?: RuntimeSessionSeedSource,
   ) {}
 
   /**
@@ -59,8 +68,7 @@ export class RuntimeBindingService {
     const { conversationSessionId, userId } = params;
     const { token, hash } = this.tokens.issue();
 
-    const binding = await this.upsertWithRetry(conversationSessionId, userId, hash);
-    await this.revisions.ensureStarterRevision(binding.workspaceId);
+    const binding = await this.seedBinding(conversationSessionId, userId, hash);
 
     this.logger.log(
       `App runtime bound bindingId=${binding.bindingId} workspaceId=${binding.workspaceId} userId=${userId} revisionId=${binding.latestRevisionId}`,
@@ -84,67 +92,166 @@ export class RuntimeBindingService {
   async ensureForSession(
     conversationSessionId: string,
     userId: string,
-  ): Promise<AppRuntimeBinding> {
-    const binding = await this.upsertWithRetry(conversationSessionId, userId, null);
-    await this.revisions.ensureStarterRevision(binding.workspaceId);
+  ): Promise<RuntimeBindingRecord> {
+    return this.seedBinding(conversationSessionId, userId, null);
+  }
+
+  /**
+   * Resolve the session's template/starter seed, upsert the binding, promote
+   * off a stale system-starter row when needed, then apply the Platform Kit.
+   */
+  private async seedBinding(
+    conversationSessionId: string,
+    userId: string,
+    mcpTokenHash: string | null,
+  ): Promise<RuntimeBindingRecord> {
+    const session = await this.sessionSeeds?.findSeedByAiSessionId(conversationSessionId);
+    const seedRevisionId = session?.starterRevisionId ?? undefined;
+
+    let binding = await this.upsertWithRetry(
+      conversationSessionId,
+      userId,
+      mcpTokenHash,
+      seedRevisionId,
+    );
+    binding = await this.promoteTemplateSeedIfNeeded(binding, seedRevisionId);
+
+    await this.revisions.ensureWorkspaceRevision(
+      binding.workspaceId,
+      binding.latestRevisionId,
+    );
+    binding = await this.ensurePlatformBaseline(binding);
+
+    if (seedRevisionId?.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      const revisionReady = await this.revisions.revisionExists(
+        binding.workspaceId,
+        binding.latestRevisionId,
+      );
+      if (!revisionReady) {
+        this.logger.warn(
+          `Revision ${binding.latestRevisionId} is missing for workspace ${binding.workspaceId}; ` +
+            `falling back to template seed ${seedRevisionId}`,
+        );
+        await this.store.updateRevision(binding.workspaceId, seedRevisionId);
+        await this.revisions.ensureWorkspaceRevision(binding.workspaceId, seedRevisionId);
+        binding = { ...binding, latestRevisionId: seedRevisionId };
+      } else if (binding.latestRevisionId !== seedRevisionId) {
+        await this.revisions.ensureWorkspaceRevision(
+          binding.workspaceId,
+          binding.latestRevisionId,
+        );
+      }
+    }
+
     return binding;
   }
 
-  findByWorkspaceId(workspaceId: string): Promise<AppRuntimeBinding | null> {
-    return this.model.findOne({ workspaceId }).lean().exec();
+  /**
+   * Upsert on conflict intentionally leaves `latestRevisionId` alone so agent
+   * work is never clobbered. If the row was created on the system starter
+   * before the session's template seed was visible, promote it once.
+   */
+  private async promoteTemplateSeedIfNeeded(
+    binding: RuntimeBindingRecord,
+    seedRevisionId: string | undefined,
+  ): Promise<RuntimeBindingRecord> {
+    if (
+      !seedRevisionId?.startsWith(TEMPLATE_REVISION_PREFIX) ||
+      !this.isStaleSystemStarterRevision(binding.latestRevisionId)
+    ) {
+      return binding;
+    }
+
+    this.logger.log(
+      `Promoting workspace ${binding.workspaceId} from ${binding.latestRevisionId} to template seed ${seedRevisionId}`,
+    );
+    await this.store.updateRevision(binding.workspaceId, seedRevisionId);
+    return { ...binding, latestRevisionId: seedRevisionId };
   }
 
-  findByMcpTokenHash(mcpTokenHash: string): Promise<AppRuntimeBinding | null> {
-    return this.model.findOne({ mcpTokenHash }).lean().exec();
+  private isStaleSystemStarterRevision(revisionId: string): boolean {
+    return revisionId === this.starterRevisionId || isSystemStarterRevisionId(revisionId);
+  }
+
+  /**
+   * Admin templates ship none of the platform files, so the workspace baseline
+   * is the template plus the injected Platform Kit. The browser then boots on
+   * that normalized revision instead of the raw template.
+   */
+  private async ensurePlatformBaseline(
+    binding: RuntimeBindingRecord,
+  ): Promise<RuntimeBindingRecord> {
+    if (!binding.latestRevisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      return binding;
+    }
+
+    try {
+      const { revisionId, plan } = await this.baseline.applyBaseline({
+        workspaceId: binding.workspaceId,
+        baseRevisionId: binding.latestRevisionId,
+        newRevisionId: BASELINE_REVISION_ID,
+        mode: 'seed',
+      });
+
+      if (plan.violations.length) {
+        this.logger.warn(
+          `Template ${binding.latestRevisionId} cannot be normalized automatically: ${plan.violations.join(' ')}`,
+        );
+      }
+      if (revisionId === binding.latestRevisionId) {
+        return binding;
+      }
+
+      await this.store.updateRevision(binding.workspaceId, revisionId);
+      return { ...binding, latestRevisionId: revisionId };
+    } catch (error) {
+      // A failed normalization must not block the session; deploy still gates.
+      this.logger.error(
+        `Platform baseline failed for workspaceId=${binding.workspaceId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return binding;
+    }
+  }
+
+  findByWorkspaceId(workspaceId: string): Promise<RuntimeBindingRecord | null> {
+    return this.store.findByWorkspaceId(workspaceId);
+  }
+
+  findByMcpTokenHash(mcpTokenHash: string): Promise<RuntimeBindingRecord | null> {
+    return this.store.findByMcpTokenHash(mcpTokenHash);
   }
 
   async markBrowserActive(params: MarkBrowserActiveParams): Promise<void> {
-    await this.model
-      .updateOne(
-        { workspaceId: params.workspaceId },
-        {
-          $set: {
-            status: 'browser_active',
-            browserRuntimeId: params.browserRuntimeId,
-            browserCapabilities: params.capabilities,
-            lastHeartbeatAt: params.lastHeartbeatAt,
-          },
-        },
-      )
-      .exec();
+    await this.store.updateStatus(params.workspaceId, null, 'browser_active', {
+      browserRuntimeId: params.browserRuntimeId,
+      browserCapabilities: params.capabilities,
+      lastHeartbeatAt: params.lastHeartbeatAt,
+    });
   }
 
   async markWaitingForBrowser(workspaceId: string): Promise<void> {
-    await this.model
-      .updateOne(
-        { workspaceId, status: 'browser_active' },
-        { $set: { status: 'waiting_for_browser' } },
-      )
-      .exec();
+    await this.store.updateStatus(workspaceId, 'browser_active', 'waiting_for_browser');
   }
 
   async touchHeartbeat(workspaceId: string, at: Date): Promise<void> {
-    await this.model
-      .updateOne({ workspaceId }, { $set: { lastHeartbeatAt: at } })
-      .exec();
+    await this.store.updateHeartbeat(workspaceId, at);
   }
 
   async updateRevision(workspaceId: string, revisionId: string): Promise<void> {
-    await this.model
-      .updateOne({ workspaceId }, { $set: { latestRevisionId: revisionId } })
-      .exec();
+    await this.store.updateRevision(workspaceId, revisionId);
   }
 
   private async upsertWithRetry(
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
-  ): Promise<AppRuntimeBinding> {
-    let binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
+    starterRevisionId?: string,
+  ): Promise<RuntimeBindingRecord> {
+    let binding = await this.upsert(conversationSessionId, userId, mcpTokenHash, starterRevisionId);
     if (!binding) {
-      // Lost an insert race against a concurrent bind for the same session:
-      // the document now exists, so the retry takes the update path.
-      binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
+      binding = await this.upsert(conversationSessionId, userId, mcpTokenHash, starterRevisionId);
     }
 
     if (!binding) {
@@ -190,38 +297,16 @@ export class RuntimeBindingService {
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
-  ): Promise<AppRuntimeBinding | null> {
-    try {
-      return await this.model
-        .findOneAndUpdate(
-          { workspaceId: conversationSessionId },
-          {
-            $set: {
-              conversationSessionId,
-              userId,
-              // A field may not appear in both $set and $setOnInsert.
-              ...(mcpTokenHash === null ? {} : { mcpTokenHash }),
-            },
-            $setOnInsert: {
-              bindingId: `arb_${randomBytes(6).toString('hex')}`,
-              workspaceId: conversationSessionId,
-              status: 'created',
-              // New workspaces start on the Ceph-seeded React/Vite starter.
-              latestRevisionId: this.starterRevisionId,
-              // Empty hash matches no token, so a binding created for a ticket
-              // stays unusable over MCP until APImanus actually binds it.
-              ...(mcpTokenHash === null ? { mcpTokenHash: '' } : {}),
-            },
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        )
-        .lean()
-        .exec();
-    } catch (error) {
-      if (isDuplicateKeyError(error)) {
-        return null;
-      }
-      throw error;
-    }
+    starterRevisionId?: string,
+  ): Promise<RuntimeBindingRecord | null> {
+    return this.store.upsertByWorkspaceId({
+      workspaceId: conversationSessionId,
+      conversationSessionId,
+      userId,
+      mcpTokenHash,
+      bindingId: `arb_${randomBytes(6).toString('hex')}`,
+      status: 'created',
+      latestRevisionId: starterRevisionId || this.starterRevisionId,
+    });
   }
 }

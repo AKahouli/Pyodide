@@ -11,7 +11,7 @@ import {
   ValidatorConstraintInterface,
   Validate,
 } from 'class-validator';
-import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../models/playbook-flow.model';
 
 const EXECUTION_MODES = ['live', 'inherit', 'replay_strict', 'replay_flex', 'replay_adaptive'] as const;
 const STEP_EXECUTION_MODES = ['live', 'replay_strict', 'replay_flex', 'replay_adaptive'] as const;

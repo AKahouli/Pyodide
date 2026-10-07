@@ -1,5 +1,5 @@
-import type { FlowTaskToolTraceItem } from '../schemas/playbook-flow-task-result.schema';
-import type { FlowReplayToolPolicy } from '../schemas/playbook-flow-validated-replay.schema';
+import type { FlowTaskToolTraceItem } from '../models/playbook-flow-task-result.model';
+import type { FlowReplayToolPolicy } from '../models/playbook-flow-validated-replay.model';
 import type {
   ReplayContextMappingEntry,
   ReplayPlanToolStep,

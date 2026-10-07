@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   BadRequestException,
   BadGatewayException,
@@ -55,22 +55,19 @@ export class AiProxyService {
 
   async proxyChatCompletion(
     body: ChatCompletionDto,
-    user: UserDocument,
+    user: AuthUser,
     request?: Request,
     res?: Response,
   ): Promise<Record<string, unknown> | void> {
     this.validateRequestLimits(body);
 
-    const validation = await this.modelsService.validateModelActive(body.model, 'chat');
-    if (!validation.valid || (
-      this.allowedModels.size > 0 && !this.allowedModels.has(body.model)
-    )) {
-      throw new BadRequestException(
-        `Model '${body.model}' is not available`,
-      );
-    }
+    // Accept catalog modelId or litellmModel (studio sessions send the latter
+    // to OpenCode). Always forward the catalog id LiteLLM knows as model_name.
+    const requestedModel = body.model;
+    const resolved = await this.resolveActiveChatModel(requestedModel);
+    body.model = resolved.id;
 
-    this.normalizeSamplingParams(body, validation.model);
+    this.normalizeSamplingParams(body, resolved);
 
     const pricing = await this.usageService.resolvePricing(body.model);
 
@@ -139,7 +136,7 @@ export class AiProxyService {
 
   async listModels(): Promise<{
     object: 'list';
-    data: Array<{ id: string; object: 'model'; owned_by: string }>;
+    data: { id: string; object: 'model'; owned_by: string }[];
   }> {
     const { models } = await this.modelsService.findAll(true, true);
     const visibleModels = this.allowedModels.size > 0
@@ -160,6 +157,25 @@ export class AiProxyService {
         owned_by: model.chefSlug || 'unknown',
       })),
     };
+  }
+
+  /**
+   * Resolve a chat model for App Builder clients.
+   * `findByIdOrLitellmModel` covers both catalog ids and the LiteLLM identifier
+   * used by the Conversation V2 studio composer.
+   */
+  private async resolveActiveChatModel(requested: string): Promise<ModelResponse> {
+    const alias = await this.modelsService.findByIdOrLitellmModel(requested);
+    const catalogId = alias?.id ?? requested;
+    const validation = await this.modelsService.validateModelActive(catalogId, 'chat');
+    if (
+      !validation.valid ||
+      !validation.model ||
+      (this.allowedModels.size > 0 && !this.allowedModels.has(validation.model.id))
+    ) {
+      throw new BadRequestException(`Model '${requested}' is not available`);
+    }
+    return validation.model;
   }
 
   private validateRequestLimits(body: ChatCompletionDto): void {

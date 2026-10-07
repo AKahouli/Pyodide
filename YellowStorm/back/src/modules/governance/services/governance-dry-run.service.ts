@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
@@ -6,9 +6,12 @@ import { StreamService } from '@modules/conversation/services/stream.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDryRunDto, MarkGovernanceDryRunDto } from '../dto';
-import { DEPLOYMENT_STORE, DRY_RUN_STORE, REVISION_STORE, type DeploymentStore, type DryRunStore, type GovernanceDryRunRecord, type RevisionStore } from '../persistence';
+import {      type GovernanceDryRunRecord} from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
 
 export interface GovernanceDryRunResponse {
   id: string;
@@ -20,7 +23,7 @@ export interface GovernanceDryRunResponse {
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
   executionMode: 'conversation' | 'manual';
-  testCases: Array<Record<string, unknown>>;
+  testCases: Record<string, unknown>[];
   checks: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -29,9 +32,9 @@ export interface GovernanceDryRunResponse {
 @Injectable()
 export class GovernanceDryRunService {
   constructor(
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
     private readonly conversationService: ConversationService,
@@ -162,13 +165,13 @@ export class GovernanceDryRunService {
     return this.toResponse(updated);
   }
 
-  async messages(actorId: string, dryRunId: string): Promise<Array<Record<string, unknown>>> {
+  async messages(actorId: string, dryRunId: string): Promise<Record<string, unknown>[]> {
     const dryRun = await this.findOwnedDryRun(actorId, dryRunId);
     if (dryRun.conversationId) {
       const page = await this.messageService.findByConversation(dryRun.conversationId, { page: 1, limit: 100 });
-      return page.messages as unknown as Array<Record<string, unknown>>;
+      return page.messages as unknown as Record<string, unknown>[];
     }
-    return dryRun.testCases as Array<Record<string, unknown>>;
+    return dryRun.testCases;
   }
 
   private async finishDryRun(dryRunId: string, status: 'passed' | 'failed', extraChecks: Record<string, unknown>): Promise<void> {
@@ -177,7 +180,7 @@ export class GovernanceDryRunService {
     await this.dryRunStore.update(dryRunId, { status, checks: { ...dryRun.checks, ...extraChecks } });
   }
 
-  private firstTestCaseInput(testCases?: Array<Record<string, unknown>>): string | undefined {
+  private firstTestCaseInput(testCases?: Record<string, unknown>[]): string | undefined {
     const value = testCases?.find((testCase) => typeof testCase.input === 'string')?.input;
     return typeof value === 'string' ? value : undefined;
   }

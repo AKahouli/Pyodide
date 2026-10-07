@@ -487,7 +487,7 @@ describe('StreamService guardrail metadata buffering', () => {
         isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
       },
       teamService: { resolveExecutionDefinition },
-      semanticModelService: { resolveSearchSchema: jest.fn() },
+      semanticModelService: { resolveChatModel: jest.fn() },
       agentService: { buildGovernedAgentsForStream, buildGrpcAgentsForPlaybook },
       buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
       buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
@@ -537,6 +537,45 @@ describe('StreamService guardrail metadata buffering', () => {
       undefined,
       compaction,
     );
+  });
+
+  it('resolves a selected semantic model for chat and passes it to the agents instead of workspace contexts', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const agent = { id: 'agent-1', tools: [], brain_context: [] };
+    const buildAgentsForStream = jest.fn().mockResolvedValue([agent]);
+    const buildWorkspaceContexts = jest.fn().mockResolvedValue([{ workspace_id: 'workspace-1' }]);
+    const resolveChatModel = jest.fn().mockResolvedValue({ id: 'model-1', name: 'Contracts' });
+    Object.assign(service as object, {
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({ isGroup: false, systemWorkspaceId: 'system-1', groupTaggedAgentIds: [] }),
+      },
+      conversationSettings: {
+        getSettings: jest.fn().mockResolvedValue({ compaction: { enabled: false } }),
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
+      },
+      semanticModelService: { resolveChatModel },
+      agentService: { buildAgentsForStream },
+      buildWorkspaceContexts,
+      buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
+      skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
+      agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+    });
+
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      semanticModelId: 'model-1',
+    } as any);
+
+    expect(resolveChatModel).toHaveBeenCalledWith('user-1', 'model-1');
+    expect(buildWorkspaceContexts).not.toHaveBeenCalled();
+    expect(buildAgentsForStream).toHaveBeenCalledTimes(1);
+    expect(buildAgentsForStream.mock.calls[0][6]).toEqual({ id: 'model-1', name: 'Contracts' });
   });
 
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
@@ -1332,76 +1371,5 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(await startedResult).toBe(runtimeError);
     expect((service as any).activeStreams.has('user-1')).toBe(false);
     expect(releaseStreamExecution).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('StreamService conversation name generation', () => {
-  const buildService = (grpcError: Error | null, grpcResponse: { conversation_name: string }) => {
-    const service = Object.create(StreamService.prototype) as StreamService;
-    const updateConversationInternal = jest.fn().mockResolvedValue(undefined);
-    const sendToUser = jest.fn();
-    const generateName = jest.fn((_request: unknown, _metadata: unknown, _options: unknown, callback: (err: Error | null, response: { conversation_name: string }) => void) => {
-      callback(grpcError, grpcResponse);
-    });
-    Object.assign(service as object, {
-      modelsService: {
-        getDefaultModel: jest.fn().mockResolvedValue({ litellmModel: 'default-model' }),
-        findById: jest.fn().mockResolvedValue(null),
-      },
-      conversationSettings: {
-        getSettings: jest.fn().mockResolvedValue({ conversationName: { modelId: null } }),
-      },
-      conversationService: { updateConversationInternal },
-      streamGateway: { sendToUser },
-      chatbotClient: { GenerateConversationName: generateName },
-      configService: { get: jest.fn((_key: string, fallback: unknown) => fallback) },
-      logger: { log: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
-    });
-    return { service, updateConversationInternal, sendToUser, generateName };
-  };
-
-  it('resolves the default model even when the request carries no modelId (governed conversations)', async () => {
-    const { service, generateName, updateConversationInternal, sendToUser } = buildService(null, {
-      conversation_name: 'Excel classification guide',
-    });
-
-    await (service as any).generateConversationName('user-1', 'conversation-1', 'hello', 'user@example.com');
-
-    expect(generateName).toHaveBeenCalledWith(expect.objectContaining({ query: 'hello', model: 'default-model' }), expect.anything(), expect.anything(), expect.any(Function));
-    expect(updateConversationInternal).toHaveBeenCalledWith('conversation-1', {
-      title: 'Excel classification guide',
-    });
-    expect(sendToUser).toHaveBeenCalledWith('user-1', {
-      type: 'conversation_name_generated',
-      data: { conversationId: 'conversation-1', name: 'Excel classification guide' },
-    });
-  });
-
-  it('uses the admin-configured naming model when one is set', async () => {
-    const { service, generateName } = buildService(null, { conversation_name: 'Some title' });
-    Object.assign(service as object, {
-      modelsService: {
-        getDefaultModel: jest.fn().mockResolvedValue({ litellmModel: 'default-model' }),
-        // Chosen model: id is the proxy alias; litellmModel is the provider-prefixed target.
-        findById: jest.fn().mockResolvedValue({ id: 'gemma3:4b', litellmModel: 'ollama/gemma3:4b' }),
-      },
-      conversationSettings: {
-        getSettings: jest.fn().mockResolvedValue({ conversationName: { modelId: 'gemma3:4b' } }),
-      },
-    });
-
-    await (service as any).generateConversationName('user-1', 'conversation-1', 'hello', 'user@example.com');
-
-    // Routed via the proxy alias, not the provider-prefixed litellmModel.
-    expect(generateName).toHaveBeenCalledWith(expect.objectContaining({ model: 'litellm_proxy/gemma3:4b' }), expect.anything(), expect.anything(), expect.any(Function));
-  });
-
-  it('keeps the default title when name generation fails', async () => {
-    const { service, updateConversationInternal, sendToUser } = buildService(new Error('model is required'), { conversation_name: '' });
-
-    await expect((service as any).generateConversationName('user-1', 'conversation-1', 'hello')).resolves.toBeUndefined();
-
-    expect(updateConversationInternal).not.toHaveBeenCalled();
-    expect(sendToUser).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
 import { PopulationRefreshPanel } from './PopulationRefreshPanel';
 
-const api = vi.hoisted(() => ({ requestPopulationRefresh: vi.fn() }));
+const api = vi.hoisted(() => ({ requestPopulationRefresh: vi.fn(), getPopulationJob: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
@@ -18,14 +17,15 @@ const mappings = [
   { ...base, status: 'stale', id: 'm-3', conceptId: 'c-1', documentId: 'd-3', documentName: 'stale.csv', sheetName: '', assetKind: 'csv', fieldMappings: [], identityFields: [] },
 ] as ConceptSourceMapping[];
 
-function renderPanel(canEdit = true) {
-  return render(<QueryClientProvider client={new QueryClient()}><PopulationRefreshPanel modelId='model-1' mappings={mappings} canEdit={canEdit} /></QueryClientProvider>);
+function renderPanel(canEdit = true, onAccepted?: (jobId: string) => void) {
+  return render(<QueryClientProvider client={new QueryClient()}><PopulationRefreshPanel modelId='model-1' mappings={mappings} canEdit={canEdit} onAccepted={onAccepted} /></QueryClientProvider>);
 }
 
 describe('PopulationRefreshPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.requestPopulationRefresh.mockResolvedValue({ jobId: 'j-1', status: 'queued', progressUrl: '/jobs/j-1', reused: false, skipped: [] });
+    api.getPopulationJob.mockResolvedValue({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed', result: {}, errorCode: null });
   });
 
   it('prepares the whole model by default', async () => {
@@ -35,40 +35,49 @@ describe('PopulationRefreshPanel', () => {
       purpose: 'build',
       scope: { kind: 'model' },
     }));
-    expect(await screen.findByText(/populationRefresh.accepted/)).toBeInTheDocument();
+    await waitFor(() => expect(api.getPopulationJob).toHaveBeenCalledWith('model-1', 'j-1'));
+    expect(await screen.findByText(/populationRefresh.state.completed/)).toBeInTheDocument();
   });
 
-  it('refreshes a single structured mapping', async () => {
-    const user = userEvent.setup();
+  it('reports accepted jobs to the persistent editor observer', async () => {
+    const onAccepted = vi.fn();
+    renderPanel(true, onAccepted);
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    await waitFor(() => expect(onAccepted).toHaveBeenCalledWith('j-1'));
+  });
+
+  it('stops polling and exposes a terminal failure', async () => {
+    api.getPopulationJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'failed', result: null, errorCode: 'parser_timeout' });
     renderPanel();
-    const scopeSelect = screen.getAllByRole('combobox')[0];
-    await user.click(scopeSelect);
-    await user.click(await screen.findByText('populationRefresh.singleMapping'));
-    const mappingSelect = screen.getAllByRole('combobox')[1];
-    await user.click(mappingSelect);
-    await user.click(await screen.findByText('customers.csv'));
-    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.refreshAction' }));
-    await waitFor(() => expect(api.requestPopulationRefresh).toHaveBeenCalledWith('model-1', {
-      purpose: 'refresh',
-      scope: { kind: 'mapping', mappingId: 'm-1' },
-    }));
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText(/populationRefresh.errorCode.parser_timeout/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
+    expect(api.getPopulationJob).toHaveBeenCalledTimes(1);
   });
 
-  it('lists only structured mappings as single-mapping candidates', async () => {
-    const user = userEvent.setup();
+  it('explains unknown runtime error codes generically', async () => {
+    api.getPopulationJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'failed', result: null, errorCode: 'projection_failed' });
     renderPanel();
-    await user.click(screen.getAllByRole('combobox')[0]);
-    await user.click(await screen.findByText('populationRefresh.singleMapping'));
-    await user.click(screen.getAllByRole('combobox')[1]);
-    const listbox = await screen.findByRole('listbox');
-    expect(within(listbox).queryByText('notes.pdf')).not.toBeInTheDocument();
-    expect(within(listbox).queryByText('stale.csv')).not.toBeInTheDocument();
-    expect(within(listbox).getByText('customers.csv')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText(/populationRefresh.errorCode.unknown/)).toBeInTheDocument();
+    expect(screen.queryByText(/projection_failed/)).not.toBeInTheDocument();
   });
 
-  it('disables actions for viewers and without a selected mapping', () => {
+  it('recovers from a polling request failure', async () => {
+    api.getPopulationJob.mockRejectedValueOnce(new Error('network unavailable'));
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText('network unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'action.retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
+  });
+
+  it('disables actions for viewers', () => {
     renderPanel(false);
     expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'populationRefresh.refreshAction' })).toBeDisabled();
   });
 });

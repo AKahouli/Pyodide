@@ -2,10 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { LoggerService } from '../logger';
-import {
-  BROWSER_ENGINE, URL_SAFETY, BrowserEngine, EngineSession,
-  InputEvent, NavAction, UrlSafetyFn,
+import { URL_SAFETY,   EngineSession,  
+  InputEvent,   NavAction,   UrlSafetyFn,  
 } from './browser-session.types';
+import { PlaywrightBrowserEngine } from './/playwright-browser-engine';
 
 interface ManagedSession {
   id: string;
@@ -28,13 +28,13 @@ export class BrowserSessionService {
   private readonly cfg: BrowserSessionConfig;
 
   constructor(
-    @Inject(BROWSER_ENGINE) private readonly engine: BrowserEngine,
+    private readonly engine: PlaywrightBrowserEngine,
     @Inject(URL_SAFETY) private readonly assertSafe: UrlSafetyFn,
     config: ConfigService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(BrowserSessionService.name);
-    this.cfg = config.get('browserSession') as BrowserSessionConfig;
+    this.cfg = config.get('browserSession')!;
   }
 
   count(): number {
@@ -68,8 +68,8 @@ export class BrowserSessionService {
     });
     engineSession.onNavigated((nav) => {
       void this.assertSafe(nav.url).then(
-        () => emit('navigated', nav),
-        () => emit('blocked', { url: nav.url, reason: 'private/internal address blocked' }),
+        () => { emit('navigated', nav); },
+        () => { emit('blocked', { url: nav.url, reason: 'private/internal address blocked' }); },
       );
     });
     engineSession.onLoading((loading) => {

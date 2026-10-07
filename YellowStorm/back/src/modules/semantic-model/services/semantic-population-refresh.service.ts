@@ -1,3 +1,4 @@
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -5,25 +6,38 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import type { SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
+import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
-import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticDerivedSourceService } from './semantic-derived-source.service';
+import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
+import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
+import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
-export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
+/** A concept refresh reads one concept's sources again; the runtime keeps every other concept's data in use. */
+/** Bumped when a fix makes earlier concept-refresh requests worth sending again (they were refused). */
+const CONCEPT_REFRESH_VERSION = 2;
+
+export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string };
 
 export interface RequestPopulationRefreshInput {
   purpose: 'build' | 'refresh';
-  scope: { kind: 'model' | 'mapping'; mappingId?: string };
+  scope: { kind: 'model' | 'mapping' | 'concept'; mappingId?: string; conceptId?: string };
+  /** Read every document again with AI instead of reusing earlier readings; the data in use stays until the run ends. */
+  rereadDocuments?: boolean;
 }
 
 interface NodeTypeRow {
   id: string;
   key: string;
   label: string;
+  aliases?: string[];
   attributes: AttributeDefinition[];
 }
 
@@ -43,18 +57,39 @@ interface MappingRow {
   sheetName: string;
   assetKind: string;
   fieldMappings: SourceFieldMapping[];
+  /** This mapping's own AI reading limits, over the admin defaults. */
+  aiSettings?: Record<string, unknown> | null;
+  /** Several records per row (sheets only): the column split into items. */
+  expand?: Record<string, unknown> | null;
   status: string;
   identityFields: string[] | null;
   sourceEnabled: boolean;
   validatedSourceVersion: string | null;
   updatedAt: Date;
+  scope?: 'document' | 'workspace';
+  folderId?: string | null;
+  selection?: WorkspaceSelection | null;
 }
 
-type RelationRuleRow = Pick<RelationResolutionRule,
+interface RecordSource {
+  mappingId: string;
+  workspaceId: string;
+  documentId: string;
+  documentName: string;
+  documentPath?: string;
+  mimeType?: string;
+  sheetName?: string;
+  kind: string;
+}
+
+type RelationRuleRow =Pick<RelationResolutionRule,
   'relationId' | 'sourceAttribute' | 'targetAttribute' | 'strategy'>;
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
+/** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
+const MANUAL_BATCH_SIZE = 500;
+const POPULATION_ENGINE_VERSION = 'r1-mvp-8';
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -66,17 +101,493 @@ export class SemanticPopulationRefreshService {
     private readonly documents: WorkspaceDocumentService,
     private readonly specifications: ModelSpecificationService,
     private readonly runtime: SemanticRuntimeClientService,
+    private readonly aiExtractionAgent: SemanticAttributeExtractionService,
+    private readonly extractionSettings?: SemanticExtractionSettingsService,
+    private readonly derivedSources?: SemanticDerivedSourceService,
   ) {}
 
-  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
+  private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
+  private runLimitsCache?: { at: number; value: Promise<Partial<RunLimits>> };
+
+  /** The run limits an admin set (only those), read at most every few seconds. */
+  private adminRunLimits(): Promise<Partial<RunLimits>> {
+    if (!this.extractionSettings) return Promise.resolve({});
+    if (!this.runLimitsCache || Date.now() - this.runLimitsCache.at > 10_000) {
+      this.runLimitsCache = { at: Date.now(), value: this.extractionSettings.getRunLimits().then((limits) => limits.configured).catch(() => ({})) };
+    }
+    return this.runLimitsCache.value;
+  }
+
+  /** The admin's AI reading limits, read at most every few seconds: one run can cover thousands of files. */
+  private adminAiSettings(): Promise<Partial<AiExtractionSettings>> {
+    if (!this.extractionSettings) return Promise.resolve({});
+    if (!this.aiDefaults || Date.now() - this.aiDefaults.at > 10_000) {
+      this.aiDefaults = { at: Date.now(), value: this.extractionSettings.getDefaults().then((defaults) => defaults.configured).catch(() => ({})) };
+    }
+    return this.aiDefaults.value;
+  }
+
+  /**
+   * Identity of the AI extractor actually used, or null when no mapping needs
+   * it. Resolved from the admin-managed default agent so a model change there
+   * changes the revision identity.
+   */
+  private async aiExtractionIdentity(
+    sources: object[],
+    derivations: RuntimeDerivation[] = [],
+  ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
+    // A derived field read out of a source field's text by AI.
+    const usesAi = derivations.some((derivation) => derivation.aiSettings !== undefined)
+      || sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
+      // A sheet field read out of a cell by AI.
+      || Object.values((source as { fieldExtractions?: Record<string, { extractionStrategy?: string }> }).fieldExtractions ?? {})
+        .some((field) => field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
+    if (!usesAi) return null;
+    const agent = await this.aiExtractionAgent.resolveAgent();
+    return {
+      agentSlug: agent.slug,
+      model: agent.llmModel ?? null,
+      contractVersion: AI_EXTRACTION_CONTRACT_VERSION,
+    };
+  }
+
+  async getJob(userId: string, modelId: string, jobId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const job = await this.runtime.getJob(jobId, userId);
+    if (job.jobType !== 'population.run' || job.modelId !== modelId) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Population job not found');
+    }
+    return this.nameRemovedSources(job);
+  }
+
+  /** The runtime knows the files a run no longer read only by id: give them their names. */
+  private async nameRemovedSources<T extends { progress?: Record<string, unknown> }>(job: T): Promise<T> {
+    const changes = job.progress?.changes as { removedSources?: { assetId: string; name?: string }[] } | undefined;
+    const removed = changes?.removedSources ?? [];
+    if (!removed.length) return job;
+    const files = await this.documents.findByIds(removed.map((source) => source.assetId)).catch(() => []);
+    const names = new Map(files.map((file) => [file.id, file.originalName]));
+    return { ...job, progress: { ...job.progress, changes: { ...changes,
+      removedSources: removed.map((source) => ({ ...source, name: names.get(source.assetId) ?? source.name })) } } };
+  }
+
+  /** This person's latest data updates of the model, newest first: the run history. */
+  async listJobs(userId: string, modelId: string, limit = 20) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const jobs = await this.runtime.listJobs(modelId, userId, Math.min(Math.max(Math.trunc(limit) || 20, 1), 100));
+    return Promise.all(jobs.map((job) => this.nameRemovedSources(job)));
+  }
+
+  /** The data update of this model still running for this person, or null. */
+  async activeJob(userId: string, modelId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    return this.runtime.getActiveJob(modelId, userId);
+  }
+
+  /**
+   * Stop a data update. Nothing it read is kept: the data in use stays as it was before the run.
+   * A run that already ended is returned as it is.
+   */
+  async stopJob(userId: string, modelId: string, jobId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    const job = await this.getJob(userId, modelId, jobId);
+    if (['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded'].includes(job.state)) return job;
+    return this.runtime.cancelJob(jobId, userId);
+  }
+
+  /**
+   * One concept's records in the data in use, a page at a time and optionally searched, with where each
+   * value came from. Answers "nothing yet" rather than failing when no data has been generated.
+   */
+  async conceptRecords(userId: string, modelId: string, conceptId: string,
+    query: { q?: string; limit?: number; offset?: number; dataRevisionId?: string; filters?: string }) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const limit = query.limit ?? 50;
+    const offset = query.offset ?? 0;
+    let page;
+    try {
+      page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
+        { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId, filters: query.filters || undefined });
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
+      throw error;
+    }
+    const sources = await this.recordSources(model.id, page.entities.flatMap((entity) => Object.values(entity.origins ?? {})));
+    const correctors = await this.correctorNames(model.id, userId,
+      page.entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
+    return {
+      dataRevisionId: page.dataRevisionId,
+      total: page.total,
+      offset: page.offset,
+      limit: page.limit,
+      records: page.entities.map((entity) => ({
+        id: entity.entityId,
+        conceptId: entity.conceptId,
+        entityKey: entity.entityId,
+        label: entity.label,
+        values: entity.attributes,
+        identity: entity.identity ?? {},
+        provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+          .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
+        conflicts: [],
+      })),
+    };
+  }
+
+  async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
+    const entities = records.entities;
+    const [nodes, sources] = await Promise.all([
+      this.database.query<NodeTypeRow>(
+        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        [model.currentDraftVersionId],
+      ).then((result) => result.rows),
+      this.recordSources(model.id, [
+        ...entities.flatMap((entity) => Object.values(entity.origins ?? {})),
+        // The files behind gap examples are named like the files behind values.
+        ...(records.gaps?.rowSamples ?? []).map((sample): RuntimeValueOrigin => ({ kind: 'source', assetId: sample.asset?.assetId ?? null })),
+      ]),
+    ]);
+    const correctors = await this.correctorNames(model.id, userId,
+      entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
+    const attributeLabel = (concept: string, attribute: string) => nodes.find((node) => node.id === concept)
+      ?.attributes?.find((candidate) => candidate.key === attribute)?.label || attribute;
+    const entityIds = new Set(entities.map((entity) => entity.entityId));
+    const relationLabels = new Map(records.specification.relations.map((relation) => [relation.relationId, relation.label]));
+    const conceptLabels = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
+    const gaps = records.gaps ?? { missingValues: [], unresolvedLinks: [], other: [] };
+    return {
+      dataRevisionId: records.dataRevisionId,
+      concepts: records.specification.concepts
+        .filter((concept) => !conceptId || concept.conceptId === conceptId)
+        .map((concept) => ({
+          id: concept.conceptId,
+          label: concept.label,
+          total: records.conceptCounts?.[concept.conceptId],
+          entities: entities.filter((entity) => entity.conceptId === concept.conceptId).map((entity) => ({
+            id: entity.entityId,
+            conceptId: entity.conceptId,
+            entityKey: entity.entityId,
+            label: entity.label,
+            values: entity.attributes,
+            provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+              .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
+            conflicts: [],
+          })),
+        })),
+      relations: records.relationships
+        .filter((relation) => entityIds.has(relation.sourceEntityId) && entityIds.has(relation.targetEntityId))
+        .map((relation) => ({
+          relationId: relation.relationId,
+          relationLabel: relationLabels.get(relation.relationId) ?? relation.relationId,
+          sourceEntityId: relation.sourceEntityId,
+          targetEntityIds: [relation.targetEntityId],
+          status: 'resolved' as const,
+          sourceValue: null,
+          sourceAttribute: '',
+          targetAttribute: '',
+          targetValues: [],
+          strategy: relation.matchingStrategy ?? 'normalized',
+          partial: false,
+        })),
+      sourceIssues: [],
+      gaps: {
+        missingValues: gaps.missingValues.map((gap) => ({
+          ...gap,
+          conceptLabel: conceptLabels.get(gap.conceptId) ?? gap.conceptId,
+          attributeLabel: attributeLabel(gap.conceptId, gap.attribute),
+        })),
+        unresolvedLinks: gaps.unresolvedLinks.map((gap) => ({
+          ...gap,
+          relationLabel: relationLabels.get(gap.relationId) ?? gap.relationId,
+        })),
+        other: gaps.other.map((gap) => ({
+          ...gap,
+          conceptLabel: gap.conceptId ? conceptLabels.get(gap.conceptId) ?? null : null,
+        })),
+        rowSamples: (gaps.rowSamples ?? []).map((sample) => {
+          const source = sample.asset?.assetId ? sources.get(sample.asset.assetId) : undefined;
+          return {
+            conceptId: sample.conceptId,
+            kind: sample.kind,
+            ...(sample.field ? { field: sample.field, fieldLabel: sample.conceptId ? attributeLabel(sample.conceptId, sample.field) : sample.field } : {}),
+            ...(sample.rowNumber != null ? { rowNumber: sample.rowNumber } : {}),
+            ...(source ? { source: { mappingId: source.mappingId, workspaceId: source.workspaceId, documentId: source.documentId,
+              documentName: source.documentName, documentPath: source.documentPath, mimeType: source.mimeType, sheetName: source.sheetName, kind: source.kind } } : {}),
+            values: sample.values ?? {},
+          };
+        }),
+        linkSamples: (gaps.linkSamples ?? []).map((sample) => ({
+          ...sample,
+          relationLabel: relationLabels.get(sample.relationId) ?? sample.relationId,
+        })),
+      },
+      summary: {
+        entities: records.counts.entities,
+        resolvedRelations: records.counts.relationships,
+        unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
+        ambiguousRelations: 0,
+        conflicts: 0,
+      },
+    };
+  }
+
+  /** Fixes people made on the data, still in force, newest first, with who made them. */
+  async listCorrections(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const names = await this.correctorNames(model.id, userId, listed.corrections.map((correction) => correction.actorUserId));
+    return {
+      corrections: [...listed.corrections].reverse().map((correction) => {
+        const who = correction.actorUserId ? names.get(correction.actorUserId) : undefined;
+        return {
+          sequence: correction.sequence,
+          action: correction.action,
+          targetIdentity: correction.targetIdentity,
+          payload: correction.payload,
+          reason: correction.reason,
+          createdAt: correction.createdAt,
+          correctedBy: who?.name ?? '',
+          correctedByYou: who?.self ?? false,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Records a fix on the data (value, hidden record or link, added link) and rebuilds the draft so it
+   * shows at once. The fix is replayed on every later rebuild, so new source data never undoes it.
+   */
+  async recordCorrection(userId: string, modelId: string, input: RecordCorrectionDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const target = input.targetIdentity ?? {};
+    const text = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 300;
+    const valid = input.action === 'edit_entity' || input.action === 'remove_entity'
+      ? text(target.entityId)
+      : text(target.relationId) && text(target.sourceEntityId) && text(target.targetEntityId);
+    if (!valid || (input.action === 'edit_entity' && !text(input.payload?.attribute))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This fix does not point to a record or link');
+    }
+    const { correctionSequence } = await this.runtime.listCorrections(model.id, userId);
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: input.action,
+      targetIdentity: target,
+      payload: input.action === 'edit_entity'
+        ? { attribute: input.payload?.attribute, value: input.payload?.value ?? null }
+        : {},
+      reason: input.reason ?? '',
+      expectedCorrectionSequence: correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  /** Undoing is itself recorded, so the history stays complete and rebuilds replay the same result. */
+  async undoCorrection(userId: string, modelId: string, sequence: number) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const correction = listed.corrections.find((candidate) => candidate.sequence === sequence);
+    if (!correction) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This fix no longer exists');
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: 'revert',
+      targetIdentity: correction.targetIdentity,
+      payload: { sequence },
+      expectedCorrectionSequence: listed.correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  private async rebuildAfterCorrection(userId: string, modelId: string) {
+    try {
+      // Only a whole-model build becomes the draft people explore, so a fix must rebuild, not refresh.
+      const accepted = await this.requestRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } });
+      return { jobId: String(accepted.jobId), status: String(accepted.status) };
+    } catch (error) {
+      // The fix is kept; it applies on the next successful build.
+      this.logger.warn(`Rebuild after a data fix was not started: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Display names of the people behind corrections; the viewer is flagged so the UI can say "you". */
+  private async correctorNames(modelId: string, viewerId: string, userIds: (string | null | undefined)[]) {
+    const ids = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const names = new Map<string, { name: string; self: boolean }>();
+    if (!ids.length) return names;
+    const rows = await this.database.query<{ userId: string; email: string | null; firstName: string | null; lastName: string | null }>(
+      `SELECT user_id AS "userId", email, first_name AS "firstName", last_name AS "lastName"
+       FROM semantic_model.memberships WHERE model_id=$1 AND user_id = ANY($2::text[])`,
+      [modelId, ids],
+    ).then((result) => result.rows).catch(() => []);
+    for (const id of ids) {
+      const row = rows.find((candidate) => candidate.userId === id);
+      const name = [row?.firstName, row?.lastName].filter(Boolean).join(' ') || row?.email || '';
+      names.set(id, { name, self: id === viewerId });
+    }
+    return names;
+  }
+
+  private withCorrection<T extends object>(provenance: T, origin: RuntimeValueOrigin,
+    correctors: Map<string, { name: string; self: boolean }>) {
+    if (origin.kind !== 'human' || origin.correctionSequence == null) return provenance;
+    const who = origin.correctedBy ? correctors.get(origin.correctedBy) : undefined;
+    return {
+      ...provenance,
+      correction: {
+        sequence: origin.correctionSequence,
+        correctedBy: who?.name ?? '',
+        correctedByYou: who?.self ?? false,
+        originalValue: origin.originalValue ?? null,
+      },
+    };
+  }
+
+  /** Files behind record values; typed-by-hand values (manual snapshot) have no file. */
+  private async recordSources(modelId: string, origins: RuntimeValueOrigin[]) {
+    const assetIds = [...new Set(origins.map((origin) => origin.assetId)
+      .filter((assetId): assetId is string => typeof assetId === 'string' && !assetId.startsWith('manual:')))];
+    const sources = new Map<string, RecordSource>();
+    if (!assetIds.length) return sources;
+    const mappings = await this.database.query<Pick<MappingRow, 'id' | 'workspaceId' | 'documentId' | 'sheetName' | 'assetKind'>>(
+      `SELECT id, workspace_id AS "workspaceId", document_id AS "documentId", sheet_name AS "sheetName",
+              asset_kind AS "assetKind"
+       FROM semantic_model.source_mappings WHERE model_id=$1 AND document_id = ANY($2::text[])
+       ORDER BY id`,
+      [modelId, assetIds],
+    );
+    for (const mapping of mappings.rows) {
+      if (sources.has(mapping.documentId)) continue;
+      const document = await this.documents.findById(mapping.workspaceId, mapping.documentId).catch(() => null);
+      sources.set(mapping.documentId, {
+        mappingId: mapping.id,
+        workspaceId: mapping.workspaceId,
+        documentId: mapping.documentId,
+        documentName: document?.originalName ?? '',
+        documentPath: document?.path,
+        mimeType: document?.mimeType,
+        sheetName: mapping.assetKind === 'excel_sheet' ? mapping.sheetName || undefined : undefined,
+        kind: mapping.assetKind,
+      });
+    }
+    // Files read through a workspace mapping have no mapping row of their own: name them from the file.
+    const unmatched = assetIds.filter((assetId) => !sources.has(assetId));
+    if (unmatched.length) {
+      const workspaceMappings = await this.database.query<{ id: string; workspaceId: string }>(
+        `SELECT id, workspace_id AS "workspaceId" FROM semantic_model.source_mappings
+         WHERE model_id=$1 AND scope='workspace' ORDER BY id`,
+        [modelId],
+      ).then((result) => result.rows).catch(() => [] as { id: string; workspaceId: string }[]);
+      if (workspaceMappings.length) {
+        const files = await this.documents.findByIds(unmatched).catch(() => []);
+        for (const file of files) {
+          const mapping = workspaceMappings.find((candidate) => candidate.workspaceId === file.workspaceId);
+          if (!mapping) continue;
+          sources.set(file.id, {
+            mappingId: mapping.id,
+            workspaceId: file.workspaceId,
+            documentId: file.id,
+            documentName: file.originalName,
+            documentPath: file.path,
+            mimeType: file.mimeType,
+            kind: 'document',
+          });
+        }
+      }
+    }
+    return sources;
+  }
+
+  private valueProvenance(origin: RuntimeValueOrigin, sources: Map<string, RecordSource>) {
+    const manual = typeof origin.assetId === 'string' && origin.assetId.startsWith('manual:');
+    const source = origin.assetId && !manual ? sources.get(origin.assetId) : undefined;
+    if (manual || !source) return { mappingId: '', source: { kind: 'manual' as const, documentName: '' } };
+    const method = origin.kind === 'metadata' ? 'document_metadata' as const
+      : origin.kind === 'ai' ? 'semantic_extraction' as const
+        : origin.kind === 'human' ? 'fixed_value' as const : 'direct_mapping' as const;
+    return {
+      mappingId: source.mappingId,
+      source: {
+        kind: source.kind,
+        workspaceId: source.workspaceId,
+        documentId: source.documentId,
+        documentName: source.documentName,
+        documentPath: source.documentPath,
+        mimeType: source.mimeType,
+        sheetName: origin.sheet ?? source.sheetName,
+      },
+      ...(typeof origin.rowNumber === 'number' ? { rowNumber: origin.rowNumber } : {}),
+      field: {
+        method,
+        ...(origin.column && method === 'direct_mapping' ? { reference: origin.column } : {}),
+        ...(origin.pageNumber != null ? { page: String(origin.pageNumber) } : {}),
+        ...(origin.recipeSources?.length ? { sources: origin.recipeSources.map(String) } : {}),
+        ...(origin.derivedFrom ? { derivedFrom: derivedProvenance(origin.derivedFrom) } : {}),
+      },
+    };
+  }
+
+  async boundGraph(userId: string, modelId: string, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId);
+    const conceptById = new Map(graph.specification.concepts.map((concept) => [concept.conceptId, concept]));
+    const relationLabels = new Map(graph.specification.relations.map((relation) => [relation.relationId, relation.label]));
+    return {
+      dataRevisionId: graph.dataRevisionId,
+      nodes: graph.nodes.map((node) => {
+        const concept = conceptById.get(String(node.properties.concept_id ?? node.label));
+        return {
+          ...node,
+          label: concept?.label ?? node.label,
+          properties: {
+            ...node.properties,
+            _meta: {
+              nodeTypeLabel: concept?.label ?? node.label,
+              attributes: (concept?.allowedFields ?? []).map((field) => ({
+                key: field,
+                label: field,
+                value: node.properties[field] ?? node.properties[graphPropertyKey(field)] ?? null,
+              })),
+            },
+          },
+        };
+      }),
+      edges: graph.edges.map((edge) => ({
+        ...edge,
+        label: relationLabels.get(edge.label) ?? edge.label,
+      })),
+    };
+  }
+
+  /**
+   * Everything a run would read, without starting it: the specification and the fingerprint that decides
+   * whether a run is new. A viewer may plan (to learn whether the data is current); only editors may run.
+   */
+  private async planRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput, access: 'run' | 'read') {
+    const model = access === 'run'
+      ? await this.models.requireActiveRole(userId, modelId, ['owner', 'editor'])
+      : await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
-      : { kind: 'model' };
-    const [nodes, relationRows, identityRules, relationRules, links] = await Promise.all([
+      : input.scope.kind === 'concept' ? { kind: 'concept', conceptId: input.scope.conceptId ?? '' } : { kind: 'model' };
+    // A concept refresh is planned as a whole build (every concept, link and derivation), then sends only
+    // that concept's sources: the runtime keeps the rest from the data in use and matches every link again.
+    const wholeModel = scope.kind !== 'mapping';
+    const inRun = (source: { conceptId: string }) => scope.kind !== 'concept' || source.conceptId === scope.conceptId;
+    const [nodes, relationRows, identityRules, relationRules, links, labelFields] = await Promise.all([
       this.database.query<NodeTypeRow>(
-        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
       ).then((result) => result.rows),
       this.database.query<RelationTypeRow>(
@@ -99,15 +610,23 @@ export class SemanticPopulationRefreshService {
         'SELECT workspace_id AS "workspaceId", role FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled',
         [model.id],
       ).then((result) => result.rows),
+      this.database.query<{ conceptId: string; field: string }>(
+        'SELECT concept_id AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1',
+        [model.id],
+      ).then((result) => new Map(result.rows.map((row) => [row.conceptId, row.field]))),
     ]);
     const homeWorkspaceId = links.find((link) => link.role === 'origin')?.workspaceId;
     if (!homeWorkspaceId) {
       throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID, 'The model has no origin workspace');
     }
-    const mappings = await this.loadScopeMappings(model.id, scope);
+    if (scope.kind === 'concept' && !nodes.some((node) => node.id === scope.conceptId)) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found');
+    }
+    const mappings = await this.loadScopeMappings(model.id, scope.kind === 'concept' ? { kind: 'model' } : scope);
     const sources = [];
     const usableMappings: MappingRow[] = [];
-    const skipped: Array<{ mappingId: string; reason: string }> = [];
+    const skipped: { mappingId: string; reason: string }[] = [];
+    let waitingFiles = 0;
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -117,23 +636,66 @@ export class SemanticPopulationRefreshService {
             'The mapped concept is not present in the current draft',
           );
         }
-        sources.push(await this.populationSource(mapping, node));
+        if (mapping.scope === 'workspace') {
+          // One source per readable file, resolved now: files added since the last run are included.
+          const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
+          if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
+          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
+          waitingFiles += files.waiting.length;
+        } else {
+          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
+        }
         usableMappings.push(mapping);
       } catch (error) {
         if (scope.kind === 'mapping') throw error;
-        skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
+        if (inRun(mapping)) skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
       }
     }
-    if (!sources.length) {
+    const manual = wholeModel
+      ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
+      : null;
+    if (manual) sources.push(...manual.sources);
+    // Concepts made from another concept's records, when that concept is read by this run.
+    const derivations = wholeModel && this.derivedSources
+      ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
+        new Set(sources.map((source) => source.conceptId)), identityRules,
+        effectiveAiSettings(await this.adminAiSettings()), labelFields)
+      : [];
+    const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
+    // Every concept a run fills needs the field that names its records, chosen by a person.
+    for (const conceptId of new Set([...usableMappings.map((mapping) => mapping.conceptId), ...derivedConceptIds])) {
+      const node = nodes.find((candidate) => candidate.id === conceptId);
+      const field = labelFields.get(conceptId);
+      if (node && (!field || !(node.attributes ?? []).some((attribute) => attribute.key === field))) {
+        throw new BadRequestException(
+          ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `Choose the field that names each ${node.label} record (its label). Open Review to choose it.`,
+        );
+      }
+    }
+    // A concept made from another one alone is refreshed from that concept's records in use.
+    const madeFromAnother = scope.kind === 'concept' && derivations.some((derivation) => derivation.conceptId === scope.conceptId);
+    if (!sources.filter(inRun).length && !madeFromAnother) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
+    const limits = await this.adminRunLimits();
+    const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
+    if (sources.filter(inRun).length > maxRunSources) {
+      throw new BadRequestException(
+        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `A run can read at most ${maxRunSources} files; map a folder instead of the whole workspace, or raise the limit in Admin > Semantic models`,
+      );
+    }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
+    const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId)
+      .filter((id) => !scopedConceptIds.has(id) && !derivedConceptIds.has(id)));
     const concepts = nodes
-      .filter((node) => scopedConceptIds.has(node.id))
-      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? []));
+      .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id) || derivedConceptIds.has(node.id))
+      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
-    const relationBindings: Array<{ relationId: string; referenceField: string }> = [];
+    const relationBindings: { relationId: string; referenceField: string; targetField: string }[] = [];
     for (const relation of relationRows.filter(
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {
@@ -148,23 +710,54 @@ export class SemanticPopulationRefreshService {
         matchingStrategy: rule?.strategy ?? 'normalized',
       });
       if (rule) {
-        const sourceFieldMapped = sources.some((source) => {
+        const derivedField = (conceptId: string, attribute: string) => derivations.some((derivation) =>
+          derivation.conceptId === conceptId && derivation.fieldMappings.some((field) => field.targetAttribute === attribute));
+        const sourceFieldMapped = derivedField(relation.sourceNodeTypeId, rule.sourceAttribute) || sources.some((source) => {
           if (source.conceptId !== relation.sourceNodeTypeId) return false;
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.sourceAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.sourceAttribute);
         });
-        const targetIdentity = identityRules.get(relation.targetNodeTypeId) ?? [];
-        if (!sourceFieldMapped || targetIdentity.length !== 1 || targetIdentity[0] !== rule.targetAttribute) {
+        const targetFieldMapped = derivedField(relation.targetNodeTypeId, rule.targetAttribute) || sources.some((source) => {
+          if (source.conceptId !== relation.targetNodeTypeId) return false;
+          if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.targetAttribute);
+          return source.fieldMappings.some((field) => field.targetAttribute === rule.targetAttribute);
+        });
+        const sourceType = nodes.find((node) => node.id === relation.sourceNodeTypeId)
+          ?.attributes.find((attribute) => attribute.key === rule.sourceAttribute)?.type;
+        const targetType = nodes.find((node) => node.id === relation.targetNodeTypeId)
+          ?.attributes.find((attribute) => attribute.key === rule.targetAttribute)?.type;
+        if (!sourceFieldMapped || !targetFieldMapped || !sourceType || sourceType !== targetType) {
+          // Say which side is wrong, in the words of the model; Review lists it with a way to fix it.
+          const node = (id: string) => nodes.find((candidate) => candidate.id === id);
+          const fieldName = (id: string, key: string) => node(id)?.attributes.find((attribute) => attribute.key === key)?.label || key;
+          const side = !sourceType ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is no longer a field of'] as const
+            : !targetType ? [relation.targetNodeTypeId, rule.targetAttribute, 'is no longer a field of'] as const
+              : !sourceFieldMapped ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is not filled by any source of'] as const
+                : !targetFieldMapped ? [relation.targetNodeTypeId, rule.targetAttribute, 'is not filled by any source of'] as const
+                  : null;
           throw new BadRequestException(
             ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-            `Relation "${relation.key}" cannot be populated by the selected mappings`,
+            side
+              ? `Link "${relation.key}" matches records on "${fieldName(side[0], side[1])}", which ${side[2]} ${node(side[0])?.label ?? ''}. Open Review to fix it.`
+              : `Link "${relation.key}" matches a ${sourceType} field with a ${targetType} field. Open Review to fix it.`,
           );
         }
-        relationBindings.push({ relationId: relation.id, referenceField: rule.sourceAttribute });
+        relationBindings.push({
+          relationId: relation.id,
+          referenceField: rule.sourceAttribute,
+          targetField: rule.targetAttribute,
+        });
       }
     }
     if (!concepts.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected scope has no mapped concepts');
+    }
+    // A relationship an expanding derived source links its records by, removed since, links nothing.
+    for (const derivation of derivations) {
+      if (derivation.expand?.relationId && !relations.some((relation) => relation.relationId === derivation.expand?.relationId)) {
+        const { relationId: _removed, ...rest } = derivation.expand;
+        derivation.expand = rest;
+      }
     }
     const draft = {
       modelId: model.id,
@@ -174,7 +767,7 @@ export class SemanticPopulationRefreshService {
       relations,
       sourceScope: [...new Map(
         usableMappings.map((mapping) => [`${mapping.workspaceId}:${mapping.documentId}`, { workspaceId: mapping.workspaceId, assetId: mapping.documentId }]),
-      ).values()],
+      ).values(), ...(manual ? [{ workspaceId: homeWorkspaceId, assetId: manual.assetId }] : [])],
     };
     const issues = this.specifications.validate(draft);
     if (issues.length) {
@@ -185,23 +778,81 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The population specification could not be hashed');
     }
     const { specHash, ...specification } = snapshot;
+    const scopeKey = scope.kind === 'model' ? 'model' : scope.kind === 'concept' ? `concept:${scope.conceptId}` : `mapping:${scope.mappingId}`;
+    relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
+    const runtimeSources = JSON.parse(JSON.stringify(sources.filter(inRun))) as typeof sources;
+    // The AI agent's effective model is part of revision identity, so an admin
+    // changing it produces a new revision instead of reusing persisted rows.
+    const aiExtraction = await this.aiExtractionIdentity(runtimeSources, derivations);
+    const populationExecutionFingerprint = this.specifications.hashCanonical({
+      specHash,
+      sources: runtimeSources.map((source) => ({
+        conceptId: source.conceptId,
+        sourceKind: source.sourceKind,
+        source: source.source,
+        mappingVersion: source.mappingVersion,
+        columnMapping: 'columnMapping' in source ? source.columnMapping : null,
+        constantMapping: 'constantMapping' in source ? source.constantMapping : null,
+        fieldMappings: 'fieldMappings' in source ? source.fieldMappings : null,
+        options: 'options' in source ? source.options : {},
+        labelField: 'labelField' in source ? source.labelField ?? null : null,
+        // Only present when a sheet field is transformed, so other sources keep their fingerprint.
+        ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
+        // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
+        ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
+      })),
+      relationBindings,
+      aiExtraction,
+      populationEngineVersion: POPULATION_ENGINE_VERSION,
+      // Only present when a concept is made from another, so other models keep their fingerprint.
+      ...(derivations.length ? { derivations } : {}),
+      ...(Object.keys(limits).length ? { limits } : {}),
+    });
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
+  }
+
+  /**
+   * What a full build of the model would run with now (specification, hash, execution fingerprint),
+   * without running it. A clone that copies data stamps its revision with these so it reads as current.
+   */
+  async plannedExecution(userId: string, modelId: string) {
+    const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+    return { homeWorkspaceId: plan.homeWorkspaceId, specHash: plan.specHash, specification: plan.specification, executionFingerprint: plan.populationExecutionFingerprint };
+  }
+
+  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles }
+      = await this.planRefresh(userId, modelId, input, 'run');
+    // Forgotten only once the run is known to start, so a refused run keeps the readings.
+    const rereadAt = input.rereadDocuments
+      ? (await this.runtime.forgetDocumentReadings(model.id, userId), new Date().toISOString())
+      : undefined;
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
       modelId: model.id,
-      modelVersionId: model.currentDraftVersionId,
+      modelVersionId: model.currentDraftVersionId!,
       specHash,
       specification,
     });
-    const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
-    relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
+    // A new data fix must rebuild even when every source is unchanged.
+    const correctionSequence = scope.kind !== 'mapping' && typeof this.runtime.listCorrections === 'function'
+      ? await this.runtime.listCorrections(model.id, userId).then((listed) => listed.correctionSequence).catch(() => 0)
+      : 0;
     const idempotencyKey = createHash('sha256')
       .update(JSON.stringify({
+        ...(correctionSequence ? { correctionSequence } : {}),
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
+        populationExecutionFingerprint,
         purpose: input.purpose,
         scope: scopeKey,
-        sources,
+        // A concept refresh builds on the data in use, which this key cannot see: never reuse a failed one.
+        ...(scope.kind === 'concept' ? { concept: CONCEPT_REFRESH_VERSION } : {}),
+        sources: runtimeSources,
         relationBindings,
+        ...(derivations.length ? { derivations } : {}),
+        // The same run again must not be taken for the one already done: its readings are gone.
+        ...(rereadAt ? { rereadAt } : {}),
       }))
       .digest('hex');
     const accepted = await this.runtime.requestPopulationRun({
@@ -211,18 +862,68 @@ export class SemanticPopulationRefreshService {
       payload: {
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
+        populationExecutionFingerprint,
         purpose: input.purpose,
+        scope,
         specification: snapshot,
-        sources,
+        sources: runtimeSources,
         relationBindings,
+        ...(derivations.length ? { derivations } : {}),
+        aiExtraction,
+        ...(Object.keys(limits).length ? { limits } : {}),
       },
     }, idempotencyKey);
-    return { ...accepted, skipped };
+    return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };
   }
 
-  private conceptSpec(node: NodeTypeRow, identityFields: string[]): ConceptSpec {
+  /**
+   * Repopulate from scratch: clear every record, link and review item earlier builds produced, then build
+   * again. The model stays as it is (concepts, sources, rules, fixes, typed records), and published data
+   * stays in use until the next publish.
+   */
+  async rebuildFromScratch(userId: string, modelId: string, options: { forgetDocumentReading?: boolean } = {}) {
+    const build: RequestPopulationRefreshInput = { purpose: 'build', scope: { kind: 'model' } };
+    // Check that a build can start before clearing anything, so a refused run never leaves the model empty.
+    await this.planRefresh(userId, modelId, build, 'run');
+    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading) });
+    return { ...await this.requestRefresh(userId, modelId, build), cleared };
+  }
+
+  /** Which graph the draft and the published data use, and whether it holds every stored record and link. */
+  async graphStatus(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    return this.runtime.getGraphStatus(model.id, userId);
+  }
+
+  /** Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made. */
+  async reprojectGraphs(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    return this.runtime.reprojectModelGraphs(model.id, userId);
+  }
+
+  /**
+   * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
+   * have today (design, mappings and source file versions) with the one of the active data.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+    let fingerprint: string;
+    try {
+      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
+      throw error;
+    }
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
+    if (!active) return { state: 'never_run' };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
+  }
+
+  private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {
     const knownKeys = new Set((node.attributes ?? []).map((attribute) => attribute.key));
     const keyComponents = identityFields.filter((field) => knownKeys.has(field));
+    // Records typed by hand need no key: the runtime falls back to each record's own id.
+    if (!keyComponents.length && manualOnly && node.attributes?.length) keyComponents.push(node.attributes[0].key);
     if (!keyComponents.length) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -236,7 +937,74 @@ export class SemanticPopulationRefreshService {
       identity: { namespace: node.key, keyComponents },
       populationMode: 'materialized',
       allowedFields: (node.attributes ?? []).map((attribute) => attribute.key),
+      ...this.conceptAliases(node),
     };
+  }
+
+  /** Synonyms go into the spec only when present, so a model without any keeps its specification hash. */
+  private conceptAliases(node: NodeTypeRow): Pick<ConceptSpec, 'aliases' | 'fieldAliases'> {
+    const clean = (values: string[] | undefined) => [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+    const aliases = clean(node.aliases);
+    const fieldAliases = Object.fromEntries((node.attributes ?? [])
+      .map((attribute) => [attribute.key, clean(attribute.aliases)] as const)
+      .filter(([, values]) => values.length));
+    return {
+      ...(aliases.length ? { aliases } : {}),
+      ...(Object.keys(fieldAliases).length ? { fieldAliases } : {}),
+    };
+  }
+
+  /**
+   * Records entered by hand on the draft (including records migrated from the legacy pipeline) as one
+   * immutable runtime snapshot. The snapshot id hashes its content, so unchanged records reuse it.
+   */
+  private async manualSource(modelId: string, versionId: string, workspaceId: string, nodes: NodeTypeRow[]) {
+    const withFields = new Map(nodes.filter((node) => node.attributes?.length).map((node) => [node.id, node]));
+    const [records, recordRelations] = await Promise.all([
+      this.database.query<{ id: string; nodeTypeId: string; label: string; values: Record<string, unknown> }>(
+        `SELECT id, node_type_id AS "nodeTypeId", label, values FROM semantic_model.records
+         WHERE model_id=$1 AND version_id=$2 AND status='active' ORDER BY id`,
+        [modelId, versionId],
+      ).then((result) => result.rows.filter((row) => withFields.has(row.nodeTypeId))),
+      this.database.query<{ relationTypeId: string; sourceRecordId: string; targetRecordId: string }>(
+        `SELECT relation_type_id AS "relationTypeId", source_record_id AS "sourceRecordId", target_record_id AS "targetRecordId"
+         FROM semantic_model.record_relations WHERE model_id=$1 AND version_id=$2
+         ORDER BY relation_type_id, source_record_id, target_record_id`,
+        [modelId, versionId],
+      ).then((result) => result.rows),
+    ]);
+    if (!records.length) return null;
+    const known = new Set(records.map((record) => record.id));
+    const rows = records.map((record) => ({
+      conceptId: record.nodeTypeId,
+      rowKey: record.id,
+      label: record.label ?? '',
+      values: Object.fromEntries(Object.entries(record.values ?? {}).filter(([key]) => !key.startsWith('_'))),
+    }));
+    const links = recordRelations
+      .filter((link) => known.has(link.sourceRecordId) && known.has(link.targetRecordId))
+      .map((link) => ({ relationId: link.relationTypeId, sourceRowKey: link.sourceRecordId, targetRowKey: link.targetRecordId }));
+    const snapshotId = `m${this.specifications.hashCanonical({ modelId, rows, links }).replace(/^sha256:/, '').slice(0, 40)}`;
+    for (let index = 0; index < Math.max(rows.length, links.length); index += MANUAL_BATCH_SIZE) {
+      await this.runtime.appendManualRows(modelId, snapshotId, {
+        rows: rows.slice(index, index + MANUAL_BATCH_SIZE),
+        links: links.slice(index, index + MANUAL_BATCH_SIZE),
+      });
+    }
+    await this.runtime.commitManualSnapshot(modelId, snapshotId, { rowCount: rows.length, linkCount: links.length });
+    const assetId = `manual:${snapshotId}`;
+    const sources = [...new Set(rows.map((row) => row.conceptId))].map((conceptId) => {
+      const keys = withFields.get(conceptId)!.attributes.map((attribute) => attribute.key);
+      return {
+        sourceKind: 'manual' as const,
+        conceptId,
+        source: { workspaceId, assetId, snapshotId },
+        options: {},
+        columnMapping: Object.fromEntries(keys.map((key) => [key, key])),
+        mappingVersion: snapshotId,
+      };
+    });
+    return { assetId, sources };
   }
 
   private async loadScopeMappings(modelId: string, scope: PopulationRefreshScope): Promise<MappingRow[]> {
@@ -247,10 +1015,11 @@ export class SemanticPopulationRefreshService {
       const result = await this.database.query<MappingRow>(
         `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
                 m.document_id AS "documentId", m.sheet_name AS "sheetName",
-                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
+                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
-                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+                m.scope, m.folder_id AS "folderId", m.selection
          FROM semantic_model.source_mappings m
          LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
          LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -265,10 +1034,11 @@ export class SemanticPopulationRefreshService {
     const result = await this.database.query<MappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
               m.document_id AS "documentId", m.sheet_name AS "sheetName",
-              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
+              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
-              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+              m.scope, m.folder_id AS "folderId", m.selection
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
        LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -297,14 +1067,24 @@ export class SemanticPopulationRefreshService {
     }
   }
 
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow) {
+  /** Readable files of a workspace mapping, listed at run time. */
+  private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
+    const all = await this.documents.listAllInWorkspace(workspaceId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+  }
+
+  /**
+   * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
+   * listed a moment ago, so they are read as they are now rather than checked against a saved version.
+   */
+  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
     this.assertUsable(mapping);
-    const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
+    const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))
       ? document.mimeType.includes('csv') ? 'csv' : 'excel_sheet'
       : DOCUMENT_MIME_TYPES.has(document.mimeType) ? 'document' : null;
-    if (currentSourceVersion !== mapping.validatedSourceVersion || currentKind !== mapping.assetKind) {
+    if ((!file && currentSourceVersion !== mapping.validatedSourceVersion) || currentKind !== mapping.assetKind) {
       throw new ConflictException(
         ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
         'The mapped source changed since this mapping was validated',
@@ -319,8 +1099,8 @@ export class SemanticPopulationRefreshService {
       );
     }
     const allowedModes = mapping.assetKind === 'document'
-      ? new Set(['extract', 'metadata', 'constant'])
-      : new Set(['direct']);
+      ? new Set(['extract', 'metadata', 'constant', 'computed'])
+      : new Set(['direct', 'extract', 'constant', 'computed']);
     if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -343,8 +1123,8 @@ export class SemanticPopulationRefreshService {
     }
     const source = {
       workspaceId: mapping.workspaceId,
-      assetId: mapping.documentId,
-      assetVersionId: mapping.validatedSourceVersion ?? undefined,
+      assetId: file ? file.id : mapping.documentId,
+      assetVersionId: file ? currentSourceVersion : mapping.validatedSourceVersion ?? undefined,
       originalName: document.originalName,
       uploaderUserId: document.createdBy,
       mimeType: document.mimeType,
@@ -355,35 +1135,108 @@ export class SemanticPopulationRefreshService {
     };
     const mappingVersion = mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt);
     if (mapping.assetKind === 'document') {
+      const attributes = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute]));
       return {
         sourceKind: 'document' as const,
         conceptId: mapping.conceptId,
         source,
-        fieldMappings: activeMappings,
+        fieldMappings: activeMappings.map((field) => {
+          if (field.mode !== 'extract') return field;
+          const attribute = attributes.get(field.targetAttribute);
+          return {
+            ...field,
+            ...(!field.sourceField ? { sourceField: attribute?.label || field.targetAttribute } : {}),
+            // What the AI is told about the field: its meaning, kind of value and allowed values.
+            ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute
+              ? aiFieldHints(attribute, field) : {}),
+          };
+        }),
+        // How much of the document the AI reads; only sent when a field is read by AI, so a change
+        // to these limits never reruns documents read by rules alone.
+        ...documentReadOptions(usesAiExtraction(activeMappings),
+          usesAiExtraction(activeMappings) ? await this.adminAiSettings() : {}, mapping.aiSettings),
+        ...(labelField ? { labelField } : {}),
         mappingVersion,
       };
     }
     const columnMapping: Record<string, string> = {};
+    const constantMapping: Record<string, unknown> = {};
+    // A field read from a column and then transformed: the runtime applies the same recipe as documents.
+    const fieldRecipes: Record<string, ComputedFieldSpec> = {};
+    // A field read out of a cell's text, as a document field is read: the runtime applies the same rules and AI.
+    const fieldExtractions: Record<string, Record<string, unknown>> = {};
+    const attributes = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute]));
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
+      if ((field.mode === 'direct' && field.sourceField && field.computed) || (field.mode === 'computed' && field.computed)) {
+        fieldRecipes[field.targetAttribute] = field.computed!;
+      }
+      if (field.mode === 'extract' && field.sourceField) fieldExtractions[field.targetAttribute] = cellExtraction(field, attributes.get(field.targetAttribute));
+      if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
-    if (!Object.keys(columnMapping).length || [...identityFields].some((field) => !mappedAttributes.has(field))) {
+    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length
+        && !Object.keys(fieldExtractions).length && !Object.keys(fieldRecipes).length)
+      || [...identityFields].some((field) => !mappedAttributes.has(field))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         'The mapping must directly map every identity field',
       );
     }
-    const labelField = (mapping.fieldMappings ?? []).find(
-      (field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute),
-    )?.targetAttribute;
+    const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
       source,
-      options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
+      // How much of a cell the AI reads; only sent when a cell is read by AI, so other sheets keep their options.
+      options: {
+        ...(mapping.sheetName ? { sheetName: mapping.sheetName } : {}),
+        ...(usesCellAi ? { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } : {}),
+        // Only sent when the sheet expands a column, so other sheets keep their options (and fingerprint).
+        ...(mapping.expand ? { expand: mapping.expand } : {}),
+      },
       columnMapping,
+      ...(Object.keys(constantMapping).length ? { constantMapping } : {}),
+      ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
+      ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
       mappingVersion,
     };
   }
+}
+
+/** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
+export function graphPropertyKey(field: string): string {
+  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
+  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
+}
+
+/** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
+export { aiFieldHints };
+
+/**
+ * How the runtime reads a sheet field out of its column's cell: the column, the field's label (the label its
+ * rules look for by default), the strategy, the rules and, for AI, what the agent is told. Absent parts are left out.
+ */
+export function cellExtraction(field: SourceFieldMapping, attribute?: AttributeDefinition): Record<string, unknown> {
+  const strategy = field.extractionStrategy ?? 'deterministic';
+  return {
+    column: field.sourceField,
+    label: attribute?.label || field.targetAttribute,
+    extractionStrategy: strategy,
+    ...(field.rules ? { rules: field.rules } : {}),
+    ...(strategy !== 'deterministic' && field.agentId ? { agentId: field.agentId } : {}),
+    ...(strategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+  };
+}
+
+/** What the records table says about a value taken from another concept's record. */
+function derivedProvenance(derived: NonNullable<RuntimeValueOrigin['derivedFrom']>) {
+  return {
+    ...(derived.conceptId ? { conceptId: derived.conceptId } : {}),
+    ...(derived.label ? { label: String(derived.label) } : {}),
+    ...(derived.attribute ? { attribute: derived.attribute } : {}),
+    ...(derived.attributes?.length ? { attributes: derived.attributes.map(String) } : {}),
+    ...(derived.method ? { method: derived.method } : {}),
+    ...(typeof derived.records === 'number' ? { records: derived.records } : {}),
+  };
 }

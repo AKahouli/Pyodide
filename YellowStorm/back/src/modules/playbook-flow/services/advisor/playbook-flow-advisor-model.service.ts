@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { AdvisorScoringMode } from '../../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode } from '../../models/playbook-flow.model';
 import {
   PlaybookFlowSettingsService,
   type ResolvedEvaluationModelConfig,
