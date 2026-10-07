@@ -172,7 +172,7 @@ export class PlaybookFlowReplayService {
 
     const taskTitle = this.resolveTaskTitle(referenceNodeSnapshot, taskId);
     const taskDescription = this.resolveTaskDescription(referenceNodeSnapshot);
-    const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution as unknown as Record<string, unknown>);
+    const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution);
     const toolTrace = (taskResult.toolTrace ?? []) as unknown as NonNullable<BaselineTaskResult['toolTrace']>;
     const reasoningChain = (taskResult.reasoningChain ?? []) as unknown as NonNullable<BaselineTaskResult['reasoningChain']>;
     const baseline = this.replayBaselineService.buildValidatedReplayBaseline({
@@ -190,7 +190,7 @@ export class PlaybookFlowReplayService {
         output: taskResult.output,
         toolTrace,
         reasoningChain,
-        judgeResult: (taskResult.judgeResult ?? null) as BaselineTaskResult['judgeResult'],
+        judgeResult: (taskResult.judgeResult ?? null),
       },
       hitlEvents: execution.hitlEvents ?? [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
@@ -227,8 +227,8 @@ export class PlaybookFlowReplayService {
       hitlMemorySnapshots: baseline.hitlMemorySnapshots,
       driftPolicy: baseline.driftPolicy,
       acceptedExamples: baseline.acceptedExamples,
-      referenceUsage: (taskResult.usage ?? null) as NewValidatedReplay['referenceUsage'],
-      referenceSemanticMatch: (taskResult.semanticMatch ?? null) as NewValidatedReplay['referenceSemanticMatch'],
+      referenceUsage: (taskResult.usage ?? null),
+      referenceSemanticMatch: (taskResult.semanticMatch ?? null),
       traceMetadata: taskResult.traceMetadata ?? {},
       referenceFlowRevision: execution.schemaVersion,
       referenceNodeSnapshot,

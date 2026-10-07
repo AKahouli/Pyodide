@@ -37,6 +37,12 @@ from src.smart_rag.core import AgentTeamService
 from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1, InvocationLifecycleState, ExecutionEventV1
+from src.root_runtime.cancellation import (
+    RootWorkCancelled,
+    check_admission_barrier,
+    get_root_cancellation_registry,
+)
 from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
@@ -128,7 +134,16 @@ class ChatbotServicer(
         self.agent_team_service = agent_team_service
         self.conversation_session_seed = ConversationSessionSeedService()
         self._background_tasks: set[asyncio.Task] = set()
+        from src.grpc_server.background_rpc import BackgroundRpc
+        self.background_rpc = BackgroundRpc(agent_team_service, self._dict_to_stream_chunk)
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def GetRootWorkCapabilities(self, request, context):
+        return await self.background_rpc.capabilities()
+
+    async def RunBackgroundInvocation(self, request, context):
+        async for update in self.background_rpc.run(request, context):
+            yield update
 
     async def SeedConversationSession(self, request, context):
         role_names = {
@@ -475,8 +490,11 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            root_ids = [node.agent_id for node in request.team_definition.nodes if not node.parent_agent_id]
+            producer = next(agent for agent in request.agents if
+                            (root_ids and agent.id == root_ids[0]) or
+                            (not root_ids and agent.agent_type == "manager"))
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, producer.id, producer.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -659,6 +677,8 @@ class ChatbotServicer(
         """
         # Latency boundary: must precede request serialization/logging below.
         latency_trace_token = self._begin_conversation_latency_trace(request)
+        abort_watcher: Optional[asyncio.Task] = None
+        root_handle = None
         try:
             request_payload = _message_to_dict(request)
         except BaseException:
@@ -696,6 +716,8 @@ class ChatbotServicer(
         bg_task: Optional[asyncio.Task] = None
         get_task: Optional[asyncio.Task] = None
 
+        abort_watcher = None
+        root_handle = None
         try:
             internal_request = await self._convert_single_agent_request(request)
             _mark_latency_stage("mark_internal_request_ready")
@@ -705,8 +727,7 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, request.agent.id, request.agent.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -718,9 +739,33 @@ class ChatbotServicer(
                 self._background_tasks.add(index_task)
                 index_task.add_done_callback(self._background_tasks.discard)
 
+            # WP03 native abort wiring: scoped root runs are admitted BEFORE
+            # the workflow task exists — a barrier rejection must never leave
+            # an executing turn running into a queue nobody consumes. Legacy
+            # requests register nothing and keep the exact prior path.
+            root_scope = getattr(internal_request, "execution_scope", None)
+            abort_watcher = None
+            root_handle = None
+            if root_scope is not None and root_scope.is_set:
+                registry = get_root_cancellation_registry()
+                # Plan §11.3: the barrier applies before model invocation too.
+                check_admission_barrier(root_scope, request.conversation_id, registry)
+                root_handle = registry.register(request.conversation_id, root_scope)
+                internal_request.abort_signal = root_handle.abort_event
+
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
+
+            if root_handle is not None:
+
+                async def _abort_on_stop(handle, workflow_task):
+                    await handle.abort_event.wait()
+                    # Let ROOT consume native abort events and seal pending calls.
+                    if handle.scope.role is not ExecutionRole.ROOT:
+                        workflow_task.cancel()
+
+                abort_watcher = asyncio.create_task(_abort_on_stop(root_handle, bg_task))
 
             while True:
                 if get_task is None:
@@ -802,6 +847,12 @@ class ChatbotServicer(
             )
             return
         finally:
+            if abort_watcher is not None:
+                abort_watcher.cancel()
+            if root_handle is not None:
+                get_root_cancellation_registry().unregister(
+                    request.conversation_id, root_handle.scope.execution_id
+                )
             self._reset_latency_trace(latency_trace_token)
             try:
                 user_ctx.reset(user_token)
@@ -810,16 +861,16 @@ class ChatbotServicer(
 
     # ========== CONVERSION HELPERS ==========
 
-    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+    def _build_initial_agent_activity_chunk(self, message_id: str, agent_id: str = "", agent_name: str = "") -> "chatbot_pb2.StreamChunk":
         """Emit the initial progress row before model reasoning is available."""
         return self._dict_to_stream_chunk({
             "action": "add",
             "component": {
                 "id": f"activity-{uuid.uuid4()}",
                 "type": "agent_activity",
-                "data": {"summary": "", "status": "completed"},
+                "data": {"summary": "", "status": "completed", "actor_id": agent_id, "actor_name": agent_name},
             },
-            "metadata": {"message_id": message_id},
+            "metadata": {"message_id": message_id, "agent_id": agent_id},
         })
 
     @staticmethod
@@ -894,7 +945,8 @@ class ChatbotServicer(
             ),
         }
 
-    def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
+    @staticmethod
+    def _convert_agent(pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
 
         V2 changes:
@@ -1038,7 +1090,7 @@ class ChatbotServicer(
             brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
-            chatbot_name=self._convert_chatbot(pb_agent.chatbot)
+            chatbot_name=ChatbotServicer._convert_chatbot(pb_agent.chatbot)
             if pb_agent.HasField("chatbot")
             else None,
             agent_params=raw_agent_params if raw_agent_params else None,
@@ -1297,6 +1349,7 @@ class ChatbotServicer(
         agent, ``agent_mode='mono'`` (routes to the no-manager workflow), and the
         LLM/prompt are taken from the single agent itself instead of a manager.
         """
+        self._reject_background_scope(pb_request)
         ctx = await self._build_brain_and_file_context(pb_request)
         attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
 
@@ -1310,10 +1363,41 @@ class ChatbotServicer(
             )
             raise ValueError("No chatbot model was provided for the single agent")
 
+        # Trusted execution scope (WP03): parsed typed object; unset keeps
+        # exact legacy semantics. External callers cannot grant themselves a
+        # privileged role here — fence/epoch validation happens at dispatch.
+        execution_scope = (
+            ExecutionScopeV1.from_proto(pb_request.execution_scope)
+            if pb_request.HasField("execution_scope")
+            else None
+        )
+
+        # WP04 root delegation payload: compact authorized catalog + frozen
+        # candidate definitions. Both unset = legacy request. The catalog rides
+        # as a plain dict (trusted backend-generated metadata).
+        root_context = (
+            _message_to_dict(pb_request.root_context)
+            if pb_request.HasField("root_context")
+            else None
+        )
+        delegate_candidates = (
+            [self._convert_agent(candidate) for candidate in pb_request.delegate_candidates]
+            if pb_request.delegate_candidates
+            else None
+        )
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,
             session_id=pb_request.conversation_id,
             message=pb_request.query,
+            execution_scope=execution_scope,
+            root_context=root_context,
+            native_input_responses=[{
+                "input_id": response.input_id,
+                "function_name": response.function_name,
+                "response": _message_to_dict(response.response),
+            } for response in pb_request.native_input_responses],
+            delegate_candidates=delegate_candidates,
             task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
             attached_files=ctx["attached_documents"] or None,
@@ -1360,6 +1444,7 @@ class ChatbotServicer(
         Returns:
             RunAgentTeamRequest: Internal V1 Pydantic model
         """
+        self._reject_background_scope(pb_request)
         has_team_definition = pb_request.HasField("team_definition")
         if (pb_request.agent_mode == "hierarchical") != has_team_definition:
             raise ValueError("Hierarchical mode and team definition must be provided together")
@@ -1663,6 +1748,11 @@ class ChatbotServicer(
             validate_hierarchical_request(converted)
         return converted
 
+    @staticmethod
+    def _reject_background_scope(pb_request):
+        if pb_request.HasField('execution_scope') and pb_request.execution_scope.native_session_id.startswith('background_'):
+            raise ValueError('Owned background sessions require the dedicated background invocation RPC')
+
     def _build_correction_replay_context(self, pb_request):
         if not pb_request.HasField("correction_replay_context"):
             return None
@@ -1903,6 +1993,30 @@ class ChatbotServicer(
         except (TypeError, ValueError):
             return []
 
+    @staticmethod
+    def _build_execution_trace(
+        trace_dict: Optional[Dict[str, Any]],
+    ) -> Optional["chatbot_pb2.ExecutionTrace"]:
+        """Map a producer lineage dict (WP03) to the proto ExecutionTrace.
+
+        Absent/empty input returns None so legacy chunks stay byte-identical.
+        """
+        if not trace_dict or not trace_dict.get("execution_id"):
+            return None
+        return chatbot_pb2.ExecutionTrace(
+            work_group_id=str(trace_dict.get("work_group_id", "") or ""),
+            execution_id=str(trace_dict.get("execution_id", "") or ""),
+            parent_execution_id=str(trace_dict.get("parent_execution_id", "") or ""),
+            native_invocation_id=str(trace_dict.get("native_invocation_id", "") or ""),
+            native_session_id=str(trace_dict.get("native_session_id", "") or ""),
+            pending_inputs=[chatbot_pb2.NativePendingInput(**item)
+                            for item in trace_dict.get("pending_inputs", [])],
+            source_event_id=str(trace_dict.get("source_event_id", "") or ""),
+            producer_agent_id=str(trace_dict.get("producer_agent_id", "") or ""),
+            producer_role=int(trace_dict.get("producer_role", 0) or 0),
+            lifecycle=int(trace_dict.get("lifecycle", 0) or 0),
+        )
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -1916,6 +2030,20 @@ class ChatbotServicer(
         Returns:
             StreamChunk: Protobuf message
         """
+        trace_pb = self._build_execution_trace(chunk_dict.get("execution_trace"))
+
+        # WP04 lifecycle-only chunk (producer lineage without UI content)
+        if trace_pb is not None and "component" not in chunk_dict and "usage" not in chunk_dict:
+            metadata = chunk_dict.get("metadata", {})
+            return chatbot_pb2.StreamChunk(
+                action=str(chunk_dict.get("action", "update")),
+                metadata=chatbot_pb2.Metadata(
+                    message_id=metadata.get("message_id", ""),
+                    agent_id=metadata.get("agent_id", ""),
+                ),
+                execution_trace=trace_pb,
+            )
+
         # Check if this is a usage-only chunk (no component)
         if "usage" in chunk_dict and "component" not in chunk_dict:
             usage_data = chunk_dict["usage"]
@@ -1936,6 +2064,7 @@ class ChatbotServicer(
                     cached_input_tokens=usage_data.get("cached_input_tokens", 0),
                     reasoning_tokens=usage_data.get("reasoning_tokens", 0),
                 ),
+                execution_trace=trace_pb,
             )
 
         # Check if this is the new component-based format
@@ -1963,6 +2092,7 @@ class ChatbotServicer(
                     agent_id=metadata.get("agent_id", ""),
                     guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
+                execution_trace=trace_pb,
             )
         else:
             # Old format (backward compatibility) - convert to new format
@@ -3339,5 +3469,3 @@ class ChatbotServicer(
             await context.abort(
                 grpc.StatusCode.INTERNAL, f"Semantic evaluation failed: {str(e)}"
             )
-
-

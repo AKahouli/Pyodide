@@ -13,6 +13,7 @@ import type {
   SessionPointer,
 } from './interfaces';
 import type { RuntimeTicketResponse } from './runtime/runtime.types';
+import { deployError, deployLog } from './utils/deploy-log';
 
 export interface AppDataOwnerStatus {
   enabled: boolean;
@@ -52,10 +53,18 @@ function envelopeToAgentEvent(env: PersistedEventEnvelope): AgentEvent {
 }
 
 export const conversationV2Api = {
-  async createSession(workspaceIds: string[] = []): Promise<CreateSessionResponse> {
+  async createSession(
+    workspaceIds: string[] = [],
+    templateId?: string,
+    capability: 'web_app' | 'database_design' = 'web_app',
+  ): Promise<CreateSessionResponse> {
     const res = await apiClient.post<ApiResponse<CreateSessionResponse>>(
       '/conversation-v2/sessions',
-      { workspaceIds },
+      {
+        workspaceIds,
+        ...(templateId ? { templateId } : {}),
+        capability,
+      },
     );
     return res.data.data;
   },
@@ -159,15 +168,38 @@ export const conversationV2Api = {
     sessionId: string,
     options?: { title?: string; revisionId?: string },
   ): Promise<DeployState> {
-    const res = await apiClient.post<ApiResponse<DeployState>>(
-      `/conversation-v2/sessions/${sessionId}/deploy`,
-      {
-        title: options?.title || undefined,
-        revisionId: options?.revisionId || undefined,
-      },
-      { timeout: 630_000 },
-    );
-    return res.data.data;
+    const startedAt = Date.now();
+    deployLog('api:request', {
+      sessionId,
+      title: options?.title ?? null,
+      revisionId: options?.revisionId ?? null,
+      timeoutMs: 630_000,
+    });
+    try {
+      const res = await apiClient.post<ApiResponse<DeployState>>(
+        `/conversation-v2/sessions/${sessionId}/deploy`,
+        {
+          title: options?.title || undefined,
+          revisionId: options?.revisionId || undefined,
+        },
+        { timeout: 630_000 },
+      );
+      deployLog('api:response', {
+        sessionId,
+        elapsedMs: Date.now() - startedAt,
+        deployStatus: res.data.data.deployStatus,
+        deployedUrl: res.data.data.deployedUrl,
+        lastDeployedAt: res.data.data.lastDeployedAt,
+      });
+      return res.data.data;
+    } catch (err) {
+      deployError('api:error', err, {
+        sessionId,
+        revisionId: options?.revisionId ?? null,
+        elapsedMs: Date.now() - startedAt,
+      });
+      throw err;
+    }
   },
   async searchUsers(query: string, limit = 8): Promise<UserSearchResult[]> {
     const res = await apiClient.get<ApiResponse<UserSearchResult[]>>('/users/search', {
@@ -288,7 +320,8 @@ export const conversationV2Api = {
     body: {
       revisionId: string;
       parentRevisionId: string | null;
-      files: Array<{ path: string; content: string }>;
+      files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
+      presentPaths?: string[];
       toolCallId?: string | null;
     },
   ): Promise<{

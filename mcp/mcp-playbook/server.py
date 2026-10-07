@@ -39,6 +39,10 @@ and its inputs. cancel_playbook_execution stops a running execution when the use
 delete_playbook_execution. Never answer runtime human-in-the-loop requests: send the user to the canvas."""
 
 settings = Settings.from_env()
+# Unified logging: stderr JSON lines only (MCP protocol owns stdout).
+from yellowmind_observability import setup_observability
+
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "mcp-playbook")
 mcp = FastMCP("Playbook MCP", instructions=INSTRUCTIONS)
 # MCP hints for clients that ask before acting: reads change nothing; these remove, stop or undo.
 READ_ONLY = {"readOnlyHint": True}

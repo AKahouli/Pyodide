@@ -2,12 +2,12 @@ import { ConversationRecoveryService } from './conversation-recovery.service';
 
 describe('ConversationRecoveryService (WP06.5)', () => {
   const build = (
-    expired: Array<{
+    expired: {
       id: string;
       conversationId: string;
       executionAttemptId: string | null;
       leaseExpiresAt: Date | null;
-    }>,
+    }[],
     overrides: { settledIds?: Set<string>; findError?: Error } = {},
   ) => {
     const messageService = {
@@ -88,7 +88,7 @@ describe('ConversationRecoveryService (WP06.5)', () => {
     );
     let release!: () => void;
     (messageService.findExpiredStreamExecutions as jest.Mock).mockImplementation(
-      () => new Promise((resolve) => { release = () => resolve([]); }),
+      () => new Promise((resolve) => { release = () => { resolve([]); }; }),
     );
 
     const first = service.runRecoveryPass();

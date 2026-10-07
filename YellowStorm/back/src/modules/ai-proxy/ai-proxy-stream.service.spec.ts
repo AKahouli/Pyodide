@@ -43,7 +43,7 @@ describe('AiProxyStreamService', () => {
     recordChatCompletionUsage: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiProxyUsageService;
   const body: ChatCompletionDto = {
-    model: 'gpt-4o',
+    model: 'catalog-chat-model',
     messages: [{ role: ChatMessageRole.USER, content: 'Hello' }],
     stream: true,
   };
@@ -203,7 +203,7 @@ describe('AiProxyStreamService', () => {
 });
 
 function onceFinish(stream: PassThrough): Promise<void> {
-  return new Promise((resolve) => stream.once('finish', () => resolve()));
+  return new Promise((resolve) => stream.once('finish', () => { resolve(); }));
 }
 
 function flushPromises(): Promise<void> {

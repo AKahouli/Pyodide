@@ -106,6 +106,7 @@ export interface ConversationClientContextV1 {
 }
 
 export interface MessageReplayContext {
+  rootContinuation?: RootContinuationRequest;
   requestFingerprint?: string;
   content: string;
   taskSummary?: string;
@@ -129,6 +130,7 @@ export interface MessageReplayContext {
   clientContext?: ConversationClientContextV1;
   playbookHandoffId?: string;
   governanceOverride?: {
+    rootBound?: boolean;
     runtimeMode: 'governed';
     primaryAgentId: string;
     allowedAgentIds: string[];
@@ -136,6 +138,11 @@ export interface MessageReplayContext {
     revisionId: string;
     scopeId: string;
   };
+}
+
+export interface RootContinuationRequest {
+  executionId: string;
+  inputResponses: Array<{ inputId: string; inputVersion?: number; response: Record<string, unknown> }>;
 }
 
 export interface CorrectionReplayFinding {

@@ -47,7 +47,7 @@ export class SemanticDerivedSourceService {
     @Optional() private readonly runtime?: SemanticRuntimeClientService,
     @Optional() private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
     @Optional() private readonly extractionSettings?: SemanticExtractionSettingsService,
-  ) {}
+  ) { }
 
   async list(userId: string, modelId: string): Promise<DerivedSource[]> {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -95,7 +95,7 @@ export class SemanticDerivedSourceService {
                      field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
                      ai_settings AS "aiSettings", expand, updated_at AS "updatedAt"`,
           [model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, userId, aiSettings,
-            expand ? JSON.stringify(expand) : null],
+          expand ? JSON.stringify(expand) : null],
         );
       // The key fields are the derived concept's identity, shared with every other source it has.
       await client.query(

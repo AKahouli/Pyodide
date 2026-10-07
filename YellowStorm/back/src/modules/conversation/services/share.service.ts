@@ -166,7 +166,7 @@ export class ShareService {
     const invalid: string[] = [];
     const existingMemberIds = new Set(conversation.memberIds);
     const selectedRecipientIds = new Set<string>();
-    const accepted: Array<{ email: string; userId: string }> = [];
+    const accepted: { email: string; userId: string }[] = [];
     for (const { email, user } of recipients) {
       if (!user) {
         notFound.push(email);
@@ -286,7 +286,7 @@ export class ShareService {
   private async shareReferencedWorkspaces(
     ownerId: string,
     workspaceIds: string[],
-    recipients: Array<{ email: string; userId: string }>,
+    recipients: { email: string; userId: string }[],
   ): Promise<number> {
     let sharedCount = 0;
     for (const workspaceId of workspaceIds) {

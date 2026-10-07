@@ -29,7 +29,7 @@ export class PlaybookFlowAdvisorScriptReplacementService {
     dto: PreviewAdvisorScriptReplacementDto,
   ): Promise<AdvisorScriptReplacementPreviewResponse> {
     const { flow, taskResult } = await this.loadContext(flowId, ownerId, dto.executionId, dto.targetTaskId);
-    const node = this.findNode(flow.nodes as FlowNode[], dto.targetTaskId);
+    const node = this.findNode(flow.nodes, dto.targetTaskId);
     const script = this.buildScriptCandidate(node);
     const warnings = [
       'Historical task inputs are not persisted yet, so validation uses static sandbox checks and a deterministic smoke run.',
@@ -60,7 +60,7 @@ export class PlaybookFlowAdvisorScriptReplacementService {
 
   async apply(flowId: string, ownerId: string, dto: ApplyAdvisorScriptReplacementDto): Promise<{ targetTaskId: string; scriptHash: string; definitionRevision: number }> {
     const { flow, execution, taskResult } = await this.loadContext(flowId, ownerId, dto.executionId, dto.targetTaskId);
-    const node = this.findNode(flow.nodes as FlowNode[], dto.targetTaskId);
+    const node = this.findNode(flow.nodes, dto.targetTaskId);
     const generatedScript = this.buildScriptCandidate(node);
     if (dto.script !== generatedScript) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Only the server-generated script candidate can be applied.');
@@ -70,13 +70,13 @@ export class PlaybookFlowAdvisorScriptReplacementService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Script replacement requires passed validation.');
     }
 
-    const nodeIndex = (flow.nodes as FlowNode[]).findIndex((node) => node.id === dto.targetTaskId);
+    const nodeIndex = (flow.nodes).findIndex((node) => node.id === dto.targetTaskId);
     if (nodeIndex < 0) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Playbook task not found');
     }
 
     const scriptHash = `sha256:${createHash('sha256').update(dto.script).digest('hex')}`;
-    const nodes = [...(flow.nodes as FlowNode[])];
+    const nodes = [...(flow.nodes)];
     const current = nodes[nodeIndex];
     nodes[nodeIndex] = {
       ...current,

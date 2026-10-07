@@ -52,7 +52,7 @@ export class ConnectorMcpRuntimeService {
     }
 
     const configuredAction = connector.actions.find((action) => action.key === input.toolName);
-    if (!configuredAction || configuredAction.isEnabled === false || configuredAction.safety !== 'read') {
+    if (!configuredAction || !configuredAction.isEnabled || configuredAction.safety !== 'read') {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector does not allow this read operation.');
     }
 

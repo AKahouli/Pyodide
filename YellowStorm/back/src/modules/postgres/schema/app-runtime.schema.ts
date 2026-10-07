@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 // Relative (not @common/*): pulled in by ts-node migration scripts without path aliases.
 import { objectId, timestamps } from '../../../common/postgres/columns';
+import { DEFAULT_STARTER_REVISION_ID } from '../../app-runtime/constants/starter-revisions';
 
 /** P8 app-runtime tables (Mongo cutover). */
 export const appRuntimeSchema = pgSchema('app_runtime');
@@ -25,7 +26,7 @@ export const appRuntimeBindings = appRuntimeSchema.table(
     conversationSessionId: varchar('conversation_session_id', { length: 128 }).notNull(),
     userId: varchar('user_id', { length: 24 }).notNull(),
     status: varchar('status', { length: 32 }).notNull().default('created'),
-    latestRevisionId: text('latest_revision_id').notNull().default('starter_react_vite_v6'),
+    latestRevisionId: text('latest_revision_id').notNull().default(DEFAULT_STARTER_REVISION_ID),
     mcpTokenHash: text('mcp_token_hash').notNull(),
     browserRuntimeId: text('browser_runtime_id'),
     browserCapabilities: jsonb('browser_capabilities').$type<Record<string, unknown> | null>(),
@@ -100,7 +101,7 @@ export const appRuntimeSourceRevisions = appRuntimeSchema.table(
     parentRevisionId: text('parent_revision_id'),
     manifestHash: text('manifest_hash').notNull(),
     manifestObjectKey: text('manifest_object_key').notNull(),
-    files: jsonb('files').$type<Array<{ path: string; sha256: string; objectKey: string; size: number }>>().notNull().default([]),
+    files: jsonb('files').$type<{ path: string; sha256: string; objectKey: string; size: number }[]>().notNull().default([]),
     createdByToolCallId: text('created_by_tool_call_id'),
     ...timestamps(),
   },

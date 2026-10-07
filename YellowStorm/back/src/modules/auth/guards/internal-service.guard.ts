@@ -1,24 +1,36 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 
+/** First value that is set and not blank; blank counts as unset so a stray
+ * whitespace-only `APP_RUNTIME_BIND_TOKEN` still falls through to the legacy
+ * name instead of locking out every internal caller. */
+function firstNonBlank(...values: (string | undefined)[]): string {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
 /**
  * Guard for internal service-to-service authentication.
- * Validates the X-Internal-Token header against INTERNAL_SERVICE_SECRET.
- * Used for brain (gRPC service) -> NestJS calls where no user JWT is available.
+ * Validates the `X-Internal-Token` header against the configured secret.
+ *
+ * Secret resolution (first non-empty wins):
+ * 1. `APP_RUNTIME_BIND_TOKEN` — shared name with APImanus OpenCode bind
+ * 2. `INTERNAL_SERVICE_SECRET` — legacy / other internal callers
  */
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
   private readonly secret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = this.configService.get<string>('INTERNAL_SERVICE_SECRET', '');
+    this.secret = firstNonBlank(
+      this.configService.get<string>('APP_RUNTIME_BIND_TOKEN'),
+      this.configService.get<string>('INTERNAL_SERVICE_SECRET'),
+    );
   }
 
   canActivate(context: ExecutionContext): boolean {

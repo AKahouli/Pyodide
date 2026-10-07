@@ -124,4 +124,5 @@ def create_request_owner_validation_tool(runtime_context: Dict[str, Any] | None 
             }
 
 
-    return request_owner_validation
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    return register_tool_execution_kind(request_owner_validation, "leaf")

@@ -4,6 +4,8 @@ import { useConversationStore, useCurrentConversation, useConversationLoading } 
 import { ConversationHeader } from './components/ConversationHeader';
 import { ConversationContent } from './components/ConversationContent';
 import { ConversationInput } from './components/ConversationInput';
+import { RootInputPanel } from './components/RootInputPanel';
+import { RootWorkPanel } from './components/RootWorkPanel';
 import { ConversationOutlineRail } from './components/outline/ConversationOutlineRail';
 import { StreamErrorDialog } from './components/StreamErrorDialog';
 import { NotFound } from './components/NotFound';
@@ -164,6 +166,8 @@ export function ConversationPage() {
         <div className='flex min-w-0 flex-1 flex-col'>
           <ConversationHeader />
           <ConversationContent />
+          <RootInputPanel key={id} conversationId={id!} creatorId={currentConversation.createdBy} />
+          <RootWorkPanel key={id} conversationId={id!} creatorId={currentConversation.createdBy} />
           <ConversationInput conversationId={id!} />
           <StreamErrorDialog />
         </div>

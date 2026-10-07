@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { ConnectorWorkerSettings } from './ConnectorWorkerSettings';
 import {
   Dialog,
   DialogContent,
@@ -243,6 +244,8 @@ function mapInspectToolsToActions(
     parameterSchema: tool.inputSchema ?? {},
     outputSchema: {},
     safety: tool.safety ?? 'read',
+    workerAccess: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.workerAccess ?? 'inherit',
+    executionKind: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.executionKind ?? 'inherit',
     supportsBatch: false,
     supportsIteration: false,
     isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.isEnabled ?? true,
@@ -346,6 +349,7 @@ export function CreateEditConnectorDialog({
           githubPatToken: parsedServerConfig.githubPatToken,
           mcpServerConfig: parsedServerConfig.serverConfigText,
           dynamicHeaders: dynamicHeadersToRows(connector.dynamicHeaders),
+          workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
           actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
           referencedSkillIds: connector.referencedSkillIds || [],
@@ -1033,6 +1037,8 @@ export function CreateEditConnectorDialog({
               ))
             )}
           </div>
+
+          <ConnectorWorkerSettings policy={form.workerPolicy} actions={form.actions ?? []} onPolicyChange={(workerPolicy) => setForm({ ...form, workerPolicy })} onActionsChange={(actions) => setForm({ ...form, actions, actionsJson: JSON.stringify(actions, null, 2) })} />
 
           <div className='min-w-0 space-y-3'>
             <div>

@@ -63,7 +63,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         classifySessionStoreError(error);
         throw error;
       }
-      if (!found || !found.valid) {
+      if (!found?.valid) {
         throw new UnauthorizedException(ErrorCode.AUTH_SESSION_REVOKED, 'Session has been revoked');
       }
       if (found.user.id !== payload.sub) {

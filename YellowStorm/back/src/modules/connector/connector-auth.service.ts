@@ -32,7 +32,7 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
 
     let user: { _id: { toString(): string }; email?: string; profile?: { firstName?: string; lastName?: string } } | null = null;
     try {
-      user = (await this.userService.findById(userId)) as any;
+      user = (await this.userService.findById(userId));
     } catch (error) {
       this.logger.warn('Failed to load user for dynamic header resolution', {
         userId,

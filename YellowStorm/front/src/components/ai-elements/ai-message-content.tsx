@@ -51,6 +51,8 @@ const ChartPartRenderer = lazy(() => import('./chart-part-renderer').then((m) =>
 export type CitationBBox = [number, number, number, number];
 
 export interface CitationData {
+  evidenceId?: string;
+  executionId?: string;
   parentId: string;
   sourceType: 'text' | 'image' | 'web' | 'record';
   sourceKind?: 'document' | 'image' | 'web' | 'record';
@@ -484,6 +486,24 @@ export async function openCitationSource(
     openRecordCitation(citation.record);
     return;
   }
+  if (citation.evidenceId !== undefined || citation.executionId !== undefined) {
+    if (typeof citation.evidenceId !== 'string' || !citation.evidenceId.trim()
+      || typeof citation.executionId !== 'string' || !citation.executionId.trim() || !citationScope?.conversationId) {
+      throw new Error('Incomplete evidence identity');
+    }
+    const { fetchRootEvidence } = await import('@/modules/conversation/api');
+    const load = () => fetchRootEvidence(citationScope.conversationId, citation.executionId!, citation.evidenceId!);
+    const location = await load();
+    let initial: typeof location | undefined = location;
+    const key = JSON.stringify([citationScope.conversationId, citation.executionId, citation.evidenceId]);
+    await openFileViewerFromUrlLoader(key, location.fileName || defaultLabel,
+      location.mimeType || getMimeTypeFromFilename(location.fileName) || 'application/octet-stream',
+      async () => {
+        if (initial) { const result = initial; initial = undefined; return result; }
+        return load();
+      }, { displayMode, closeOnOutsideClick: displayMode === 'floating', page: location.page });
+    return;
+  }
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
 
@@ -882,6 +902,8 @@ const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationP
     citations={[
       {
         parentId: citation.parentId,
+        evidenceId: citation.evidenceId,
+        executionId: citation.executionId,
         sourceType: citation.sourceType,
         source: citation.source,
         fileName: citation.fileName,
@@ -1246,9 +1268,9 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
     const themedHtml = hasOwnScheme
       ? content
       : content.replace(
-          /<head([^>]*)>/i,
-          '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
-        );
+        /<head([^>]*)>/i,
+        '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
+      );
     const previewHtml = isolateGeneratedPreviewHtml(themedHtml);
 
     const blob = new Blob([previewHtml], { type: 'text/html' });

@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
-import { LogBufferService, LogLevelEnum, LogQueryResult, LogEntry } from '@modules/logger';
+import { OpsLogsService, LogLevelEnum, LogQueryResult, LogEntry } from '@modules/logger';
 import { RequirePermissions } from '../decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { Permissions } from '../constants/permissions';
@@ -11,7 +12,10 @@ import { LogQueryDto } from '../dto';
 @Controller('admin/logs')
 @UseGuards(PermissionsGuard)
 export class AdminLogsController {
-  constructor(private readonly logBuffer: LogBufferService) {}
+  constructor(
+    private readonly opsLogs: OpsLogsService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Get()
   @RequirePermissions(Permissions.ADMIN_LOGS_READ)
@@ -37,7 +41,7 @@ export class AdminLogsController {
     if (query.from) options.from = query.from;
     if (query.to) options.to = query.to;
 
-    return this.logBuffer.findLogs(options);
+    return this.opsLogs.findLogs(options);
   }
 
   @Get('levels')
@@ -45,7 +49,7 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get distinct log levels' })
   @ApiResponse({ status: 200, description: 'Log levels retrieved' })
   async getLevels(): Promise<string[]> {
-    return this.logBuffer.getDistinctValues('level');
+    return this.opsLogs.getDistinctValues('level');
   }
 
   @Get('contexts')
@@ -53,7 +57,7 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get distinct log contexts' })
   @ApiResponse({ status: 200, description: 'Log contexts retrieved' })
   async getContexts(): Promise<string[]> {
-    return this.logBuffer.getDistinctValues('context');
+    return this.opsLogs.getDistinctValues('context');
   }
 
   @Get('counts')
@@ -61,6 +65,32 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get log counts by level' })
   @ApiResponse({ status: 200, description: 'Log counts retrieved' })
   async getCounts(): Promise<Record<string, number>> {
-    return this.logBuffer.getCountsByLevel();
+    return this.opsLogs.getCountsByLevel();
+  }
+
+  /**
+   * Read-side cutover status (P07): this API serves HISTORIC rows only; live events are in
+   * Grafana. Never present an empty historic query as evidence about recent failures.
+   */
+  @Get('capabilities')
+  @RequirePermissions(Permissions.ADMIN_LOGS_READ)
+  @ApiOperation({ summary: 'Read-side cutover status and live-log navigation' })
+  async getCapabilities(): Promise<{
+    historicOnly: boolean;
+    historicCutoverAt: string | null;
+    liveLogsUrl: string | null;
+    note: string;
+  }> {
+    const cutoverAt = this.configService.get<string | null>('logging.historicCutoverAt') ?? null;
+    const baseUrl = this.configService.get<string | null>('logging.grafanaBaseUrl') ?? null;
+    const uid = this.configService.get<string | null>('logging.grafanaDashboardUid') ?? null;
+    // URL is built only from allowlisted configured values (never user input): no open redirect.
+    const liveLogsUrl = baseUrl && uid ? `${baseUrl.replace(/\/+$/, '')}/d/${encodeURIComponent(uid)}` : null;
+    return {
+      historicOnly: true,
+      historicCutoverAt: cutoverAt,
+      liveLogsUrl,
+      note: 'Events after the cutover timestamp are served by Grafana, not this API. An empty historic result does not mean no recent failures occurred.',
+    };
   }
 }

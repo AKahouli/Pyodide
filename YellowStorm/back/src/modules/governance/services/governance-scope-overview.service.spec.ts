@@ -6,15 +6,15 @@ const checkKey = (check: { key: string }) => check.key;
 describe('GovernanceScopeOverviewService', () => {
   const buildService = (stores: {
     scope?: Record<string, unknown>;
-    bindings?: Array<Record<string, unknown>>;
+    bindings?: Record<string, unknown>[];
     bindingStore?: { listEnabled: jest.Mock };
     deployment?: Record<string, unknown> | null;
     revision?: Record<string, unknown> | null;
     revisionStore?: object;
     dryRun?: Record<string, unknown> | null;
-    memberships?: Array<Record<string, unknown>>;
-    metrics?: Array<Record<string, unknown>>;
-    agents?: Array<unknown>;
+    memberships?: Record<string, unknown>[];
+    metrics?: Record<string, unknown>[];
+    agents?: unknown[];
   }) => {
     const scopeStore = { findByProgramAndId: jest.fn().mockResolvedValue(stores.scope), listByProgram: jest.fn().mockResolvedValue([]) };
     const documentStore = { listForProgramWorkspaces: jest.fn().mockResolvedValue([]) };

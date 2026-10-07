@@ -2,7 +2,7 @@ import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
 import { extractToolUiTargets } from './tool-ui-targets';
 
-const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
+const ONEOF_FIELD_TYPES: readonly { field: string; type: ComponentType }[] = [
   { field: 'text', type: 'text' },
   { field: 'agent_activity', type: 'agentActivity' },
   { field: 'code', type: 'code' },
@@ -183,6 +183,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
           content: comp.text?.content || '',
           outputPortId: comp.text?.output_port_id || '',
           output_port_id: comp.text?.output_port_id || '',
+          ...(agentId ? { actorId: agentId } : {}),
         },
       };
     case 'code':
@@ -383,7 +384,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
         sourceData.blockBBox = citation.image_source.block_bbox || [];
       }
 
-      return { type: 'citation' as ComponentType, data: sourceData };
+      return { type: 'citation', data: sourceData };
     }
     case 'toolActivity': {
       const toolActivity = comp.tool_activity;
@@ -443,7 +444,7 @@ export function mapTaskStatus(status: string | undefined): string {
 
 /** Merges answer content from streamed components for plain-text consumers (widget, telegram). */
 export function aggregateTextFromComponents(
-  components: Array<{ type: ComponentType | string; data: Record<string, unknown> }>,
+  components: { type: ComponentType | string; data: Record<string, unknown> }[],
 ): string {
   let replyText = '';
   for (const component of components) {

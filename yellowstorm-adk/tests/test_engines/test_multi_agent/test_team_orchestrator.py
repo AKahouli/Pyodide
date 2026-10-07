@@ -172,7 +172,8 @@ class TestAutoAgentGenerationTeam:
         assert error_events == []
 
     @pytest.mark.asyncio
-    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self):
+    @pytest.mark.parametrize("role", [None, "ROOT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
+    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role):
         """Mono conversation parents should evaluate child results, not use child tools directly."""
         mock_config = MagicMock()
         mock_config.user_id = "user123"
@@ -198,6 +199,9 @@ class TestAutoAgentGenerationTeam:
         mock_agent = MagicMock()
         mock_agent.instruction = "Parent instruction"
         mock_agent.tools = [{"name": "search"}]
+        if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
+            from google.adk.agents import LlmAgent
+            mock_agent = LlmAgent(name='searchagent', model='test-model', instruction='Worker instruction')
         mock_toolkit = MagicMock()
         mock_citation_manager = MagicMock()
         mock_citation_manager.global_manager._save_state = AsyncMock()
@@ -224,9 +228,34 @@ class TestAutoAgentGenerationTeam:
             new_callable=AsyncMock,
         ) as mock_session_factory:
             mock_session_factory.return_value = MagicMock()
-            result = await orchestrator.run_single_agent("parent task", "sess-1", queue)
+            from types import SimpleNamespace
+            from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+
+            scope = SimpleNamespace(role=ExecutionRole[role]) if role else None
+            worker = role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER')
+            if worker:
+                scope = ExecutionScopeV1(role=ExecutionRole[role], execution_id='worker', parent_execution_id='root', depth=1)
+            injected_session = MagicMock() if worker else None
+            result = await orchestrator.run_single_agent(
+                "parent task", "sess-1", queue, execution_scope=scope, session_service=injected_session
+            )
+            if worker:
+                mock_session_factory.assert_not_awaited()
 
         assert result == "parent answer"
+        if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
+            assert mock_agent.tools == [] and mock_agent.sub_agents == []
+            assert mock_agent.disallow_transfer_to_parent and mock_agent.disallow_transfer_to_peers
+            orchestrator.delegation_factory._execute_agent_with_error_handling.assert_not_awaited()
+            assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs['session_helper'] is injected_session
+            assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs['message'] == 'parent task'
+            return
+        if role == "ROOT":
+            assert mock_agent.tools == [{"name": "search"}]
+            assert mock_agent.instruction == "Parent instruction"
+            orchestrator.delegation_factory._execute_agent_with_error_handling.assert_not_awaited()
+            assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs["message"] == "parent task"
+            return
         assert len(mock_agent.tools) == 1
         assert mock_agent.tools[0].__name__ == "create_temporary_child_agent"
         assert orchestrator.delegation_factory._execute_agent_with_error_handling.await_count == 1

@@ -77,12 +77,12 @@ export class PlaybookAssistantOperationRepository {
   }
 
   private byKey(key: PlaybookAssistantOperationKey): SQL {
-    return and(eq(o.operationId, key.operationId), eq(o.playbookId, key.playbookId), eq(o.ownerId, key.ownerId), this.live()) as SQL;
+    return and(eq(o.operationId, key.operationId), eq(o.playbookId, key.playbookId), eq(o.ownerId, key.ownerId), this.live())!;
   }
 
   /** Lease ran out (or was never set) at `cutoff`. */
   private leaseLapsed(cutoff: Date): SQL {
-    return or(lte(o.leaseExpiresAt, cutoff), isNull(o.leaseExpiresAt)) as SQL;
+    return or(lte(o.leaseExpiresAt, cutoff), isNull(o.leaseExpiresAt))!;
   }
 
   async insert(input: NewPlaybookAssistantOperation): Promise<PlaybookAssistantOperationRecord> {
@@ -179,7 +179,7 @@ export class PlaybookAssistantOperationRepository {
     return rows.length > 0;
   }
 
-  private async transition(key: PlaybookAssistantOperationKey, guard: Array<SQL | undefined>, set: PgUpdateSetSource<typeof o>): Promise<boolean> {
+  private async transition(key: PlaybookAssistantOperationKey, guard: (SQL | undefined)[], set: PgUpdateSetSource<typeof o>): Promise<boolean> {
     const rows = await this.q
       .update(o)
       .set({ ...set, updatedAt: new Date() })

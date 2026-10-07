@@ -133,7 +133,7 @@ describe('TelegramValidationService', () => {
       expiresAt: new Date(Date.now() + 60_000),
     });
 
-    const result = await service.resolveCallback('cb-1', 'integration-1', '999', `hv:${created.id}:${'refuse'}`);
+    const result = await service.resolveCallback('cb-1', 'integration-1', '999', `hv:${created.id}:refuse`);
 
     expect(result).toBeNull();
     expect((await validationStore.findById(created.id))!.status).toBe('pending');

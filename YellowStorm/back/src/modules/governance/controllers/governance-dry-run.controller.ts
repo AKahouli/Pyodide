@@ -35,7 +35,7 @@ export class GovernanceDryRunController {
 
   @Get('governance/dry-runs/:dryRunId/messages')
   @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
-  async messages(@CurrentUser() user: AuthUser, @Param('dryRunId') dryRunId: string): Promise<Array<Record<string, unknown>>> {
+  async messages(@CurrentUser() user: AuthUser, @Param('dryRunId') dryRunId: string): Promise<Record<string, unknown>[]> {
     return this.dryRunService.messages(user._id.toString(), dryRunId);
   }
 

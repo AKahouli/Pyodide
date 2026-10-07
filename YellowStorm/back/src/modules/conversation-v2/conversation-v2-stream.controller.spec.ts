@@ -30,7 +30,7 @@ class FakeRes {
     this.handlers[evt] = cb;
   });
   fireClose() {
-    this.handlers['close']?.();
+    this.handlers.close?.();
   }
 }
 

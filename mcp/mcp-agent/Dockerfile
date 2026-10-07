@@ -6,6 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt ./
+# Staged unified-logging SDK wheel (created by scripts/observability/build-sdks.mjs before build)
+COPY .generated/observability/ .generated/observability/
 RUN pip install --no-cache-dir -r requirements.txt \
     && addgroup --system agentmcp \
     && adduser --system --ingroup agentmcp agentmcp

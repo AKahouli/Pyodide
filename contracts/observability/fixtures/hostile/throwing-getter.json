@@ -1,0 +1,7 @@
+{
+  "name": "throwing-getter",
+  "description": "Attribute object property getter throws when read. SDK must not propagate the exception to the caller.",
+  "input": null,
+  "input_note": "Object.defineProperty(obj, 'x', { get() { throw new Error('boom'); } }).",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192 }
+}

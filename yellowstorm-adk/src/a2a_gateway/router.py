@@ -83,8 +83,15 @@ async def a2a_rpc(agent_id: str, request: Request):
     if not verify_api_key(provided or "", agent.api_key_hash):
         raise HTTPException(status_code=401, detail="invalid or missing API key")
 
+    # Forward only the caller's X-MCP-* headers to the connectors (never the
+    # gateway API key, Host, Cookie, etc.). Routed per connector slug downstream.
+    mcp_headers = {k: v for k, v in request.headers.items() if k.lower().startswith("x-mcp-")}
+    if mcp_headers:
+        # Names only — never log token values.
+        logger.info("a2a_mcp_headers_received agent=%s names=%s", agent_id, sorted(mcp_headers.keys()))
     a2a_app = build_a2a_app(
-        agent.definition, _public_url(request, agent_id), _grpc_target(), _api_key_header()
+        agent.definition, _public_url(request, agent_id), _grpc_target(),
+        _api_key_header(), caller_mcp_headers=mcp_headers,
     )
     # Delegate JSON-RPC parsing/dispatch/serialization to the SDK app.
     return await a2a_app._handle_requests(request)

@@ -1,4 +1,4 @@
-export { useProjectStore, useProjects, useSharedProjects, useProjectsLoading, useExpandedProjectIds } from './store';
+export { useProjectStore, useProjects, useSharedProjects, useProjectsLoading } from './store';
 export { CreateProjectDialog } from './components/CreateProjectDialog';
 export { RenameProjectDialog } from './components/RenameProjectDialog';
 export { DeleteProjectDialog } from './components/DeleteProjectDialog';

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -125,7 +125,7 @@ export class PgDeploymentStore implements DeploymentStore {
         and(
           eq(DEPLOYMENTS.id, deploymentId),
           eq(DEPLOYMENTS.currentDraftRevisionId, draftRevisionId),
-          ne(DEPLOYMENTS.currentPublishedRevisionId, revisionId),
+          or(isNull(DEPLOYMENTS.currentPublishedRevisionId), ne(DEPLOYMENTS.currentPublishedRevisionId, revisionId)),
         ),
       )
       .returning();

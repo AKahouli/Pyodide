@@ -115,7 +115,7 @@ export class PgRoleStore implements RoleStore {
     });
   }
 
-  async ensureDefaults(roles: Array<{ name: string; description: string; permissions: string[]; isSystem?: boolean; priority?: number }>): Promise<void> {
+  async ensureDefaults(roles: { name: string; description: string; permissions: string[]; isSystem?: boolean; priority?: number }[]): Promise<void> {
     if (roles.length === 0) return;
     await this.q
       .insert(schema.authzRoles)

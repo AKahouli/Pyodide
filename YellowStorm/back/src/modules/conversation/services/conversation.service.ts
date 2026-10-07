@@ -20,6 +20,7 @@ import {
 } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
+import { AgentService } from '../../agent/agent.service';
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
@@ -56,6 +57,8 @@ export class ConversationService {
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
+    @Inject(forwardRef(() => AgentService))
+    private readonly agentService: AgentService,
     private readonly featureVisibility: FeatureVisibilityService,
     @Inject(forwardRef(() => ProjectShareService))
     private readonly projectShareService: ProjectShareService,
@@ -81,10 +84,17 @@ export class ConversationService {
     const emails =
       data.participants?.map((participant) => participant.email) ?? data.participantEmails;
     const group = await this.buildGroupMetadata(emails, userId, data.participants, data.ownerJob);
+    // Bind the root at creation (plan §4.2): explicit selection wins, then the
+    // actor's personal default, then the administrator default; null when the
+    // deployment has no root yet. Copilot/governed routes never read this.
+    const rootAgent = data.runtimePurpose
+      ? null
+      : await this.agentService.resolveRootForConversation(userId, data.rootAgentId);
     const record = await this.conversationStore.create({
       id: newOwnedId(),
       title: data.title || (group ? 'New Group Conversation' : 'New Conversation'),
       createdBy: userId,
+      rootAgentId: rootAgent?._id,
       workspaces: data.workspaces ?? [],
       projectId: data.projectId,
       isGroup: Boolean(group),
@@ -196,6 +206,7 @@ export class ConversationService {
       revisionId: string;
       revisionNumber: number;
       primaryAgentId: string;
+      rootAgentId?: string;
       allowedAgentIds: string[];
       workspaceIds: string[];
     },
@@ -211,6 +222,7 @@ export class ConversationService {
         title: data.title || 'New Conversation',
         createdBy: userId,
         runtimeMode: 'governed',
+        ...(data.rootAgentId ? { rootAgentId: data.rootAgentId } : {}),
         governedCreationRequestId: data.requestId,
         governanceContext: {
           programId: data.programId,
@@ -570,7 +582,7 @@ export class ConversationService {
           'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
           ['conversation:orphan-cleanup:v1'],
         );
-        lockHeld = lockResult.rows[0]?.acquired === true;
+        lockHeld = lockResult.rows[0]?.acquired;
         if (!lockHeld) return;
       }
       const hours = this.configService.get<number>(
@@ -676,7 +688,7 @@ export class ConversationService {
           : [record.createdBy],
       ));
     const owner = resolvedUsers.get(record.createdBy);
-    const governance = record.governanceContext as ConversationResponse['governanceContext'];
+    const governance = record.governanceContext;
     const provenance = record.branchProvenance
       ? {
           sourceConversationId: record.branchProvenance.sourceConversationId,
@@ -693,6 +705,7 @@ export class ConversationService {
       selectedSkills: record.selectedSkills,
       taggedAgentIds: record.taggedAgentIds,
       systemWorkspaceId: record.systemWorkspaceId,
+      rootAgentId: record.rootAgentId,
       lastMessageAt: record.lastMessageAt?.toISOString(),
       messageCount: record.messageCount,
       isArchived: record.isArchived,

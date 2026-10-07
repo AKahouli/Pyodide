@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { GovernanceRootPublicationService } from './governance-root-publication.service';
+import { assertNoClientRootWork } from './governance-root-snapshot';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -38,6 +40,7 @@ export class GovernanceDeploymentService {
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparationService: GovernanceDraftPreparationService,
     private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
+    @Optional() private readonly rootPublication?: GovernanceRootPublicationService,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
@@ -74,6 +77,7 @@ export class GovernanceDeploymentService {
   }
 
   async createRevision(actorId: string, actorEmail: string, deploymentId: string, dto: CreateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
+    assertNoClientRootWork(dto.agentSnapshot);
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
     const allowedAgentIds = this.normalizeAllowedAgentIds(dto.agentId, dto.allowedAgentIds);
@@ -109,6 +113,7 @@ export class GovernanceDeploymentService {
   }
 
   async updateRevision(actorId: string, deploymentId: string, revisionId: string, dto: UpdateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
+    assertNoClientRootWork(dto.agentSnapshot);
     await this.findOwnedDeployment(actorId, deploymentId);
     const revision = await this.revisionStore.findByDeploymentAndId(deploymentId, revisionId);
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
@@ -162,10 +167,18 @@ export class GovernanceDeploymentService {
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
       if (revision.status === 'published' || revision.status === 'rejected') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
       if (!revision.agentId || !revision.allowedAgentIds?.length) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      await this.assertAgentsBelongToScope(actorId, deployment.programId, deployment.scopeId, revision.allowedAgentIds);
+      await this.assertWorkspacesBelongToScope(deployment.programId, deployment.scopeId, revision.workspaceIds);
+      if (!this.rootPublication) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      const rootWork = await this.rootPublication.capture(actorId, revision);
+      const { rootWork: _untrustedRootWork, ...agentSnapshot } = revision.agentSnapshot ?? {};
       // Revision status and the deployment's published pointer commit together; a lost
       // publish race throws and rolls the revision status back.
       const publishDeployment = await this.tx.run(async () => {
-        await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date() });
+        await this.rootPublication!.assertUnchanged(rootWork, revision, actorId);
+        const committed = await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date(),
+          agentSnapshot: { ...agentSnapshot, ...(rootWork ? { rootWork } : {}) } }, revision);
+        if (!committed) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
         const published = await this.deploymentStore.publishGuarded(deployment.id, revisionId, revision.id);
         if (published) return published;
         const observedDeployment = await this.deploymentStore.findById(deployment.id);

@@ -4,7 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { resolveQueryable } from '@common/postgres/transaction';
-import type { IndexingStatePatch } from '../../ports/workspace-document-write.port';
+import type { IndexingStatePatch } from '../../ports';
 
 const DOCUMENTS = schema.workspaceDocuments;
 

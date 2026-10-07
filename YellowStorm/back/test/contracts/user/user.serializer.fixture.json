@@ -1,8 +1,7 @@
 {
+  "id": "64b000000000000000000001",
   "email": "jane.doe@example.com",
   "emailVerified": true,
-  "emailVerificationExpiry": "<volatile>",
-  "passwordResetExpiry": "<volatile>",
   "profile": {
     "firstName": "Jane",
     "lastName": "Doe",
@@ -20,18 +19,19 @@
     "dataSharing": false
   },
   "profileComplete": true,
-  "planId": "64b000000000000000000002",
-  "planSlug": "unlimited",
-  "planStartedAt": "<volatile>",
   "roles": [
     "64b000000000000000000003"
   ],
   "permissionsVersion": 1,
   "status": "active",
-  "registrationApproval": "approved",
   "createdAt": "<volatile>",
   "updatedAt": "<volatile>",
+  "emailVerificationExpiry": "<volatile>",
+  "passwordResetExpiry": "<volatile>",
+  "planId": "64b000000000000000000002",
+  "planSlug": "unlimited",
+  "planStartedAt": "<volatile>",
+  "registrationApproval": "approved",
   "lastLoginAt": "<volatile>",
-  "fullName": "Jane Doe",
-  "id": "64b000000000000000000001"
+  "fullName": "Jane Doe"
 }

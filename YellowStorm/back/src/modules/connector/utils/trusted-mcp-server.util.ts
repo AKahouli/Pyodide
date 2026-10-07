@@ -20,8 +20,8 @@ export function normalizeMcpServerUrl(value: unknown): string {
 
 export function trustedMcpServerUrls(config: ConfigReader | undefined): Set<string> {
   const configured = [
-    ...TRUSTED_MCP_SERVER_URL_KEYS.map((key) => config?.get<string>(key, '') ?? ''),
-    ...(config?.get<string>('TRUSTED_MCP_SERVER_URLS', '') ?? '').split(','),
+    ...TRUSTED_MCP_SERVER_URL_KEYS.map((key) => config?.get(key, '') ?? ''),
+    ...(config?.get('TRUSTED_MCP_SERVER_URLS', '') ?? '').split(','),
   ];
   return new Set(configured.map(normalizeMcpServerUrl).filter(Boolean));
 }

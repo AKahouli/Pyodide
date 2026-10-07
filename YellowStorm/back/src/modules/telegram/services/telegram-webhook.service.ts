@@ -208,7 +208,7 @@ export class TelegramWebhookService {
     const botToken = this.integrationService.getDecryptedToken(integration);
 
     const binding = await this.bindingStore.findByChat(integration.id, result.guestChatId);
-    if (!binding || !binding.conversationId) {
+    if (!binding?.conversationId) {
       await this.telegramApiService.sendMessage(
         botToken,
         result.guestChatId,
@@ -435,7 +435,7 @@ export class TelegramWebhookService {
     // external-channel redaction that the conversation view no longer applies.
     const reply = this.truncateReply(sanitizeSerializedToolValue(
       this.extractReplyText(completedMessage.components),
-      { redactSensitiveText: this.conversationSettings.shouldRedactSensitiveText() !== false },
+      { redactSensitiveText: this.conversationSettings.shouldRedactSensitiveText() },
     ));
     const isOwnerDecisionTurn = messageText.startsWith('Your owner just answered the validation question');
     const needsOwnerValidation = binding.bindingType === BINDING_GUEST
@@ -513,7 +513,7 @@ export class TelegramWebhookService {
     return created.id;
   }
 
-  private extractReplyText(components?: Array<{ type?: string; data?: Record<string, unknown> }>): string {
+  private extractReplyText(components?: { type?: string; data?: Record<string, unknown> }[]): string {
     if (!components?.length) return '';
     const textBlocks = components
       .filter((component) => component.type === 'text')

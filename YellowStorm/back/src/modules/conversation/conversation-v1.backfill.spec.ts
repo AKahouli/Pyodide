@@ -283,7 +283,7 @@ describe('conversation v1 backfill mapping', () => {
 });
 
 /** Just enough of a Mongo collection for the harness: filter ($or, $ne null, $exists, dotted paths), _id order, count. */
-function fakeMongo(collections: Record<string, Array<Record<string, unknown>>>): MongoSource {
+function fakeMongo(collections: Record<string, Record<string, unknown>[]>): MongoSource {
   const valuesAt = (value: unknown, parts: string[]): unknown[] => {
     if (!parts.length) return [value];
     if (value === null || value === undefined || typeof value !== 'object') return [];
@@ -293,8 +293,8 @@ function fakeMongo(collections: Record<string, Array<Record<string, unknown>>>):
   };
   const matches = (doc: Record<string, unknown>, filter: Record<string, unknown>): boolean =>
     Object.entries(filter).every(([key, condition]) => {
-      if (key === '$or') return (condition as Array<Record<string, unknown>>).some((f) => matches(doc, f));
-      if (key === '$and') return (condition as Array<Record<string, unknown>>).every((f) => matches(doc, f));
+      if (key === '$or') return (condition as Record<string, unknown>[]).some((f) => matches(doc, f));
+      if (key === '$and') return (condition as Record<string, unknown>[]).every((f) => matches(doc, f));
       const values = valuesAt(doc, key.split('.')).filter((v) => v !== undefined);
       const c = condition as Record<string, unknown>;
       if ('$exists' in c) return values.length > 0 === c.$exists;

@@ -93,6 +93,25 @@ export function getGrpcApiKey(
 }
 
 /**
+ * Per-call correlation headers attached to every outgoing gRPC call. Produced by
+ * RequestContextService (W3C traceparent + request/correlation ids) and injected
+ * here via `setGrpcCorrelationProvider` so each of the many call sites propagates
+ * context without per-site plumbing (plan P05).
+ */
+export interface GrpcCorrelation {
+  traceparent?: string;
+  requestId?: string;
+  correlationId?: string;
+}
+
+let grpcCorrelationProvider: () => GrpcCorrelation | undefined = () => undefined;
+
+/** Called once by RequestContextService to make ALS context flow into gRPC metadata. */
+export function setGrpcCorrelationProvider(provider: () => GrpcCorrelation | undefined): void {
+  grpcCorrelationProvider = provider;
+}
+
+/**
  * Attach the `x-api-key` header required by the server interceptor. No-op until
  * the key is configured, so it's safe to call before the server enforces auth.
  */
@@ -109,7 +128,9 @@ export function attachGrpcApiKey(
 }
 
 /**
- * Create a fresh Metadata pre-loaded with the API key for `namespace`.
+ * Create a fresh Metadata pre-loaded with the API key for `namespace` and the
+ * current request's correlation headers (traceparent / x-request-id /
+ * correlation-id) when the ALS provider is registered.
  *
  * IMPORTANT: pass the returned Metadata to a gRPC call as the *positional*
  * metadata argument — `client.Method(request, createGrpcMetadata(cfg), ...)`.
@@ -120,5 +141,19 @@ export function createGrpcMetadata(
   config: ConfigService,
   namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
 ): grpc.Metadata {
-  return attachGrpcApiKey(config, new grpc.Metadata(), namespace);
+  const metadata = attachGrpcApiKey(config, new grpc.Metadata(), namespace);
+  const correlation = grpcCorrelationProvider();
+  if (correlation) {
+    // gRPC metadata values must be printable ASCII; echo-able inbound ids could
+    // otherwise carry control chars and make grpc-js reject the outgoing call.
+    const safe = (value: string | undefined) =>
+      value && /^[\x20-\x7E]{1,200}$/.test(value) ? value : undefined;
+    const traceparent = safe(correlation.traceparent);
+    const requestId = safe(correlation.requestId);
+    const correlationId = safe(correlation.correlationId);
+    if (traceparent) metadata.set('traceparent', traceparent);
+    if (requestId) metadata.set('x-request-id', requestId);
+    if (correlationId) metadata.set('correlation-id', correlationId);
+  }
+  return metadata;
 }

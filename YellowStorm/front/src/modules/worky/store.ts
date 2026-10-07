@@ -187,15 +187,6 @@ export const useWorkyStore = create<WorkyState>()(
   ),
 );
 
-export function useWorkyStreams(): WorkyStream[] {
-  return useWorkyStore((s) => s.streams);
-}
-export function useWorkyStreamsLoading(): boolean {
-  return useWorkyStore((s) => s.streamsLoading);
-}
-export function useWorkySelectedStreamId(): string | null {
-  return useWorkyStore((s) => s.selectedStreamId);
-}
 export function useWorkyBoard(): Record<WorkyBoardLane, WorkyTask[]> | null {
   return useWorkyStore((s) => s.board);
 }
@@ -207,15 +198,6 @@ export function useWorkyBoardError(): string | null {
 }
 export function useWorkyMessages(): WorkyMessage[] {
   return useWorkyStore((s) => s.messages);
-}
-export function useWorkyAssistantText(): string {
-  return useWorkyStore((s) => s.assistantText);
-}
-export function useWorkyStreaming(): boolean {
-  return useWorkyStore((s) => s.streaming);
-}
-export function useWorkyPendingClarifications(): WorkyBoardResponse['pendingClarifications'] {
-  return useWorkyStore((s) => s.pendingClarifications);
 }
 export function useWorkyLastDeltaToast(): { summary: string; at: number } | null {
   return useWorkyStore((s) => s.lastDeltaToast);

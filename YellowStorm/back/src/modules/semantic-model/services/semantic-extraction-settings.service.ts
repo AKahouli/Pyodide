@@ -34,7 +34,7 @@ export function documentReadOptions(usesAi: boolean, defaults: Partial<AiExtract
 export function pickRunLimits(input: unknown): Partial<RunLimits> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const picked: Partial<RunLimits> = {};
-  for (const key of Object.keys(RUN_LIMIT_RANGES) as Array<keyof RunLimits>) {
+  for (const key of Object.keys(RUN_LIMIT_RANGES) as (keyof RunLimits)[]) {
     const value = (input as Record<string, unknown>)[key];
     const [low, high] = RUN_LIMIT_RANGES[key];
     if (typeof value === 'number' && Number.isInteger(value) && value >= low && value <= high) picked[key] = value;
@@ -55,7 +55,7 @@ export function effectiveAiSettings(defaults: Partial<AiExtractionSettings>, ove
  */
 @Injectable()
 export class SemanticExtractionSettingsService {
-  constructor(private readonly database: SemanticModelDatabaseService) {}
+  constructor(private readonly database: SemanticModelDatabaseService) { }
 
   /** The admin's defaults with every limit filled in, and which ones the admin set. */
   async getDefaults(): Promise<{ aiSettings: AiExtractionSettings; configured: Partial<AiExtractionSettings> }> {

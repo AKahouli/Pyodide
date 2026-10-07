@@ -1358,6 +1358,9 @@ export interface AgentResponse {
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
   isDefault: boolean;
@@ -1400,6 +1403,9 @@ export interface CreateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -1424,6 +1430,9 @@ export interface UpdateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface AgentQueryParams {
@@ -1640,7 +1649,15 @@ export interface SkillQueryParams {
 
 // === Connector ===
 
+export interface ConnectorWorkerPolicy {
+  enabled: boolean;
+  defaultExecutionKind: 'leaf' | 'unknown';
+  agentLaunchEnabled: boolean;
+}
+
 export interface ConnectorActionResponse {
+  workerAccess?: 'inherit' | 'allow' | 'block';
+  executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
   key: string;
   label: string;
   description: string;
@@ -1694,6 +1711,7 @@ export interface ConnectorResponse {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorActionResponse[];
   referencedSkillIds: string[];
@@ -1731,10 +1749,13 @@ export interface CreateConnectorRequest {
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;
+  workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders?: ConnectorDynamicHeader[];
   actions?: Array<{
     key: string;
     label: string;
+    workerAccess?: 'inherit' | 'allow' | 'block';
+    executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
     description?: string;
     parameterSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;

@@ -92,7 +92,7 @@ export class SemanticModelVersionService {
     if (versions.rowCount !== 2) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
     const left = await this.graphRepository.getGraph(modelId,leftId,versions.rows.find((item) => item.id === leftId)?.revision ?? 0);
     const right = await this.graphRepository.getGraph(modelId,rightId,versions.rows.find((item) => item.id === rightId)?.revision ?? 0);
-    const keys = (items: Array<{ key: string }>) => new Set(items.map((item) => item.key));
+    const keys = (items: { key: string }[]) => new Set(items.map((item) => item.key));
     const leftNodes = keys(left.nodes); const rightNodes = keys(right.nodes);
     const leftRelations = keys(left.relations); const rightRelations = keys(right.relations);
     return {

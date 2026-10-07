@@ -10,7 +10,7 @@ export class WorkyGovernanceCategoryRuleDto {
   category!: string;
 
   @ApiProperty({ enum: WORKY_GOVERNANCE_LEVELS })
-  @IsIn(WORKY_GOVERNANCE_LEVELS as unknown as string[])
+  @IsIn(WORKY_GOVERNANCE_LEVELS)
   level!: string;
 }
 
@@ -20,7 +20,7 @@ export class UpsertWorkyGovernancePolicyDto {
   workspaceId!: string;
 
   @ApiProperty({ enum: WORKY_GOVERNANCE_LEVELS })
-  @IsIn(WORKY_GOVERNANCE_LEVELS as unknown as string[])
+  @IsIn(WORKY_GOVERNANCE_LEVELS)
   defaultLevel!: string;
 
   @ApiProperty({ type: [WorkyGovernanceCategoryRuleDto] })
@@ -34,6 +34,6 @@ export class UpsertWorkyGovernancePolicyDto {
   allowStreamOwnerOverride?: boolean;
 
   @ApiPropertyOptional({ enum: WORKY_GOVERNANCE_LEVELS, default: 'notify' })
-  @IsIn(WORKY_GOVERNANCE_LEVELS as unknown as string[])
+  @IsIn(WORKY_GOVERNANCE_LEVELS)
   maxOwnerRelaxLevel?: string;
 }

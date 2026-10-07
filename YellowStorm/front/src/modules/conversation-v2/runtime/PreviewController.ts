@@ -10,7 +10,14 @@ import {
 import { DOM_SUMMARY_MAX_DEPTH, DOM_SUMMARY_MAX_NODES } from './limits';
 
 const LOG = '[PreviewController]';
-export const PREVIEW_PORTS = [5173, 3000, 8080] as const;
+export const PREVIEW_PORTS = [5173, 5174, 3000, 3030, 4173, 8080] as const;
+
+export type DevServerPromotePolicy = 'full' | 'direct';
+
+export interface ProbeAndPromoteOptions {
+  /** When `direct`, promote after the in-pod HTTP probe succeeds (skip SW wait). */
+  promotePolicy?: DevServerPromotePolicy;
+}
 /** Reuse a recent healthy DOM inspect during finalize to avoid duplicate work. */
 export const PREVIEW_INSPECT_CACHE_MS = 30_000;
 
@@ -74,7 +81,14 @@ export function resolvePreviewPort(args: {
 }
 
 export function looksLikeDevServerReady(text: string): boolean {
-  return /ready in /i.test(text) || /Local:\s+https?:\/\//i.test(text) || /VITE\s+v?\d/i.test(text);
+  return (
+    /ready in /i.test(text) ||
+    /Local:\s+https?:\/\//i.test(text) ||
+    /Network:\s+https?:\/\//i.test(text) ||
+    /VITE\s+v?\d/i.test(text) ||
+    /compiled successfully/i.test(text) ||
+    /webpack compiled/i.test(text)
+  );
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -189,8 +203,9 @@ export async function waitUntilDirectServerReady(
   pod: PodLike,
   port: number,
   isStale: () => boolean,
+  maxAttempts = 120,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (isStale()) return false;
     try {
       const res = await pod.proxy.handleRequest(pod.instanceId, port, 'GET', '/', { accept: 'text/html,*/*' });
@@ -296,14 +311,23 @@ export class PreviewController {
     url: string,
     port: number,
     isStale: () => boolean,
+    options?: ProbeAndPromoteOptions,
   ): Promise<{ ok: boolean; error?: string }> {
+    const promotePolicy = options?.promotePolicy ?? 'full';
     const probePort = resolvePreviewPort({ previewUrl: url, reportedPort: port }) ?? port;
-    log('probe:start', { url, port: probePort });
+    log('probe:start', { url, port: probePort, promotePolicy });
 
     const directOk = await waitUntilDirectServerReady(pod, probePort, isStale);
     if (isStale()) return { ok: false };
     if (!directOk) {
       return { ok: false, error: 'Dev server started but did not answer HTTP requests inside Nodepod.' };
+    }
+
+    this._previewUrl = url;
+    this._port = probePort;
+    if (promotePolicy === 'direct') {
+      log('probe:ready-direct', { previewUrl: url });
+      return { ok: true };
     }
 
     const sw = await waitUntilPreviewReachable(url, isStale);

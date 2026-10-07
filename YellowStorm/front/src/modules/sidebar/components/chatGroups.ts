@@ -99,7 +99,7 @@ export function buildHistoryRows(conversations: V1ConversationLike[], pointers: 
     kind: 'v2',
     id: ptr.sessionId,
     title: ptr.title || untitled,
-    to: `/conversation-v2/${ptr.sessionId}`,
+    to: `/studio/${ptr.sessionId}`,
     sortTime: new Date(ptr.lastEventAt).getTime(),
     ptr,
   }));

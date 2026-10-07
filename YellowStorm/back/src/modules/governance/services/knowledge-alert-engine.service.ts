@@ -6,7 +6,7 @@ import type { KnowledgeAlertInput } from '@modules/knowledge-intelligence/servic
 @Injectable()
 export class KnowledgeAlertEngineService {
   build(context: KnowledgeAssessmentContext, dimensions: KnowledgeAssessmentDimensions): KnowledgeAlertInput[] {
-    const mappings: Array<{ key: keyof KnowledgeAssessmentDimensions; category: KnowledgeAlertCategory }> = [
+    const mappings: { key: keyof KnowledgeAssessmentDimensions; category: KnowledgeAlertCategory }[] = [
       { key: 'businessValidity', category: 'validity' },
       { key: 'freshness', category: 'freshness' },
       { key: 'availability', category: 'availability' },

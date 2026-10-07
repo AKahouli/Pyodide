@@ -14,6 +14,11 @@ The App Builder runtime lives in the sibling module
 [`../app-runtime/`](../app-runtime/README.md); conversation-v2 is the
 **session & streaming** layer that consumes its services.
 
+**Product UI** for this module is **App Builder Studio** (`/studio` on the
+frontend). REST paths stay `/conversation-v2/…`. See frontend
+[`../../../front/src/modules/conversation-v2/README.md`](../../../front/src/modules/conversation-v2/README.md)
+and the commit plan [`../../../front/src/modules/app-builder/COMMITS.md`](../../../front/src/modules/app-builder/COMMITS.md).
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -32,6 +37,7 @@ The App Builder runtime lives in the sibling module
   - [Capabilities](#capabilities)
   - [Consistency guarantees](#consistency-guarantees)
 - [Source revisions](#source-revisions)
+- [Template catalog](#template-catalog)
 - [Deploy](#deploy)
 - [App sharing / Marketplace](#app-sharing--marketplace)
 - [RBAC / guards](#rbac--guards)
@@ -56,6 +62,7 @@ The App Builder runtime lives in the sibling module
 | **App sharing** | **Email-based share with notification, App Marketplace with owned + shared apps** |
 | **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, files.read, workspace_documents.read, session.write, session.delete, stream.write, deploy.write, share.write)** |
 | **App Builder AI** | Session flag `hasAiFeatures` (set after successful AI usage, not merely on ticket issue); preview ticket `aiprev_…`; deploy rejects loopback `BACKEND_URL` when AI apps need a public Nest URL |
+| **Template catalog** | Admin categories + ZIP templates published to Ceph (`template_<id>`); `platform_report` at publish; Ceph cleanup on replace/delete (`template-ceph-cleanup.util`); errors `ERR_3800`–`ERR_3807` |
 
 ## Architecture
 
@@ -396,6 +403,25 @@ Content-Type: application/json
 
 Deprecated — prefer revision-based `…/revisions/:revisionId/presign`.
 
+## Template catalog
+
+Admin-managed categories + React/Vite ZIP templates for App Market **Clone App**.
+
+| Piece | Role |
+|---|---|
+| `admin-template.controller.ts` | Super-admin CRUD for categories / templates / cover / source |
+| `conversation-v2-template*.service.ts` | Catalog + publish pipeline |
+| `conversation-v2-template.store` / PG store | `conversation_v2.templates`, `template_categories`, `template_revisions` |
+| `platform_report` (JSONB) | Platform Kit analysis at publish (`ERR_3807` if incompatible) |
+| `utils/template-ceph-cleanup.util.ts` | Collect cover / manifest / blob keys before cascade delete |
+| `utils/template-zip.util.ts` | ZIP extract + validation helpers |
+
+Session create accepts `templateId` → seeds `starter_revision_id = template_<id>`
+(resolved by RuntimeRevisionService from the system manifest in Ceph).
+
+Public catalog (non-admin): `GET /conversation-v2/template-catalog/…`.
+Errors: `ERR_3800`–`ERR_3807` (see `BACKEND_GUIDELINES.md` + frontend `errors.json`).
+
 ## Deploy
 
 ```http
@@ -641,9 +667,15 @@ for that session.
 
 | Path | Role |
 |---|---|
-| `conversation-v2.controller.ts` | REST endpoints: sessions, deploy, revisions, share, VNC |
+| `conversation-v2.controller.ts` | REST endpoints: sessions, deploy, revisions, share, VNC, template catalog |
+| `admin-template.controller.ts` | Super-admin template / category CRUD |
 | `conversation-v2-stream.controller.ts` | SSE endpoints: global pipe, per-session live-tail, send message |
 | `conversation-v2.module.ts` | NestJS module definition |
+| `services/conversation-v2-template.service.ts` | Template CRUD + catalog |
+| `services/conversation-v2-template-publish.service.ts` | ZIP → Ceph publish + platform report |
+| `services/conversation-v2-template-category.service.ts` | Category CRUD |
+| `utils/template-ceph-cleanup.util.ts` | Collect Ceph keys before template delete |
+| `utils/template-zip.util.ts` | ZIP helpers for publish |
 | `services/conversation-v2-session.service.ts` | CRUD for session pointers in PostgreSQL |
 | `services/conversation-v2-session-access.service.ts` | RBAC resolution (owner/viewer, permissions) |
 | `services/conversation-v2-stream.service.ts` | Background gRPC consumption, persist + SSE push |

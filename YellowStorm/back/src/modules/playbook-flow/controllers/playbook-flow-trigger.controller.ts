@@ -35,11 +35,11 @@ export class PlaybookFlowTriggerController {
     body: Record<string, unknown>,
   ) {
     const flow = await this.flowService.findOneForWrite(flowId, userId);
-    const currentParams = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
+    const currentParams = (flow.triggerConfig?.params ?? {});
 
     return this.flowService.update(flowId, userId, {
       triggerConfig: { kind, params: { ...currentParams, ...body } },
-    } as any);
+    });
   }
 
   private async disableTrigger(
@@ -55,14 +55,14 @@ export class PlaybookFlowTriggerController {
       return flow;
     }
 
-    const currentParams = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
+    const currentParams = (flow.triggerConfig?.params ?? {});
 
     return this.flowService.update(flowId, userId, {
       triggerConfig: {
         kind: currentKind === 'mail' ? 'mail' : kind,
         params: { ...currentParams, enabled: false },
       },
-    } as any);
+    });
   }
 
   @Patch(':id/trigger/schedule')
@@ -138,8 +138,8 @@ export class PlaybookFlowTriggerController {
     @Body() body: { notificationUrl: string; autoRenewUntil?: string | null },
   ) {
     const flow = await this.flowService.findOneForWrite(flowId, userId);
-    const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-    const mailboxAppKey = (params['mailboxAppKey'] as string) || '';
+    const params = (flow.triggerConfig?.params ?? {});
+    const mailboxAppKey = (params.mailboxAppKey as string) || '';
     const clientState = flowId;
 
     const { subscription, resolvedAppKey } = await this.graphClient.createInboxSubscription(
@@ -163,7 +163,7 @@ export class PlaybookFlowTriggerController {
           subscriptionExpiresAt: subscription.expirationDateTime,
         },
       },
-    } as any);
+    });
   }
 
   @Post(':id/triggers/mail/sync-subscription')

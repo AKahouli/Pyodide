@@ -181,17 +181,36 @@ Request timeout for proxy calls is `AI_PROXY_REQUEST_TIMEOUT_MS` (300s), indepen
 
 ## Client Example
 
+Prefer the platform client (`@/lib/yellowmind-ai`) so the Studio-selected catalog
+model (`VITE_YM_AI_DEFAULT_MODEL`) is used — never hardcode a model id:
+
+```typescript
+import { chatCompletion, resolveDefaultAiModel } from '@/lib/yellowmind-ai';
+
+// Omit `model` — resolveDefaultAiModel() / host injection picks the studio stream model.
+const completion = await chatCompletion([
+  { role: 'user', content: 'Hello' },
+]);
+
+// Or inspect the resolved catalog id:
+const model = await resolveDefaultAiModel();
+```
+
+Raw OpenAI SDK (deployed / end-user JWT only) — still pass a catalog id from
+`GET /api/v1/models` or `resolveDefaultAiModel()`, never a literal like `gpt-4o`:
+
 ```typescript
 import OpenAI from 'openai';
+import { resolveAiApiBaseUrl, resolveDefaultAiModel } from '@/lib/yellowmind-ai';
 
 const ai = new OpenAI({
-  baseURL: `${backendUrl}/api/v1`,
+  baseURL: resolveAiApiBaseUrl(),
   apiKey: sessionJwt, // App JWT — not a LiteLLM key
   dangerouslyAllowBrowser: true,
 });
 
 const stream = await ai.chat.completions.create({
-  model: 'gpt-4o',
+  model: await resolveDefaultAiModel(sessionJwt),
   messages: [{ role: 'user', content: 'Hello' }],
   stream: true,
 });

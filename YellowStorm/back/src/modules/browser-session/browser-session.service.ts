@@ -34,7 +34,7 @@ export class BrowserSessionService {
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(BrowserSessionService.name);
-    this.cfg = config.get('browserSession') as BrowserSessionConfig;
+    this.cfg = config.get('browserSession')!;
   }
 
   count(): number {
@@ -68,8 +68,8 @@ export class BrowserSessionService {
     });
     engineSession.onNavigated((nav) => {
       void this.assertSafe(nav.url).then(
-        () => emit('navigated', nav),
-        () => emit('blocked', { url: nav.url, reason: 'private/internal address blocked' }),
+        () => { emit('navigated', nav); },
+        () => { emit('blocked', { url: nav.url, reason: 'private/internal address blocked' }); },
       );
     });
     engineSession.onLoading((loading) => {

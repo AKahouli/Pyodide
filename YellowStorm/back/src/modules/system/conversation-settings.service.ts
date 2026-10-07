@@ -65,7 +65,7 @@ export class ConversationSettingsService implements OnModuleInit {
         ...DEFAULT_CONVERSATION_SETTINGS.attachmentIntelligence,
         ...(stored?.attachmentIntelligence ?? {}),
       },
-      updatedAt: setting?.updatedAt as Date | undefined,
+      updatedAt: setting?.updatedAt,
     };
     if (version === this.cacheVersion) {
       this.cache = { settings, expiresAt: Date.now() + CACHE_MS };
@@ -87,7 +87,7 @@ export class ConversationSettingsService implements OnModuleInit {
           if (version === this.cacheVersion) this.cache = null;
         });
       }
-      return this.cache.settings.redactSensitiveText !== false
+      return this.cache.settings.redactSensitiveText
         || now > this.cache.expiresAt + MAX_STALE_MS;
     }
     void this.getSettings().catch(() => undefined);
@@ -96,7 +96,7 @@ export class ConversationSettingsService implements OnModuleInit {
 
   /** Whether classic Conversation turns carry the end-to-end latency trace context. */
   async isLatencyInstrumentationEnabled(): Promise<boolean> {
-    return (await this.getSettings()).latencyInstrumentationEnabled !== false;
+    return (await this.getSettings()).latencyInstrumentationEnabled;
   }
 
   async getAttachmentIntelligenceSettings(): Promise<AttachmentIntelligenceSettings> {
@@ -104,7 +104,7 @@ export class ConversationSettingsService implements OnModuleInit {
   }
 
   async isAttachmentIntelligenceEnabled(): Promise<boolean> {
-    return (await this.getSettings()).attachmentIntelligence.enabled === true;
+    return (await this.getSettings()).attachmentIntelligence.enabled;
   }
 
   /** Synchronous cached read for request-entry gates; falls back to default (disabled). */
@@ -118,7 +118,7 @@ export class ConversationSettingsService implements OnModuleInit {
         });
       }
       if (now <= this.cache.expiresAt + MAX_STALE_MS) {
-        return this.cache.settings.attachmentIntelligence.enabled === true;
+        return this.cache.settings.attachmentIntelligence.enabled;
       }
     }
     void this.getSettings().catch(() => undefined);
@@ -140,7 +140,7 @@ export class ConversationSettingsService implements OnModuleInit {
           if (version === this.cacheVersion) this.cache = null;
         });
       }
-      return this.cache.settings.latencyInstrumentationEnabled !== false
+      return this.cache.settings.latencyInstrumentationEnabled
         || now > this.cache.expiresAt + MAX_STALE_MS;
     }
     void this.getSettings().catch(() => undefined);

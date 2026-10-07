@@ -80,11 +80,16 @@ class SessionCitationManager:
         async with self.lock:
             # Check if we already have this citation
             if citation_tag in self.citation_cache:
+                from src.root_runtime.evidence_capture import capture_citation
+                number = self.citation_cache[citation_tag]
+                capture_citation(citation_tag, number, getattr(self.global_manager, 'sources', {}).get(number, source_info))
                 return self.citation_cache[citation_tag]
 
             # Register with the global manager
             number = await self.global_manager.add_citation(citation_tag, source_info)
             self.citation_cache[citation_tag] = number
+            from src.root_runtime.evidence_capture import capture_citation
+            capture_citation(citation_tag, number, getattr(self.global_manager, 'sources', {}).get(number, source_info))
 
             logger.debug(f"[SessionCitationManager] Registered citation: {citation_tag} -> [{number}]")
             return number

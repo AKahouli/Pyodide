@@ -226,7 +226,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
       ...(change.sourceOutputPortId ? { sourceOutputPortId: change.sourceOutputPortId } : {}),
       ...(change.targetInputPortId ? { targetInputPortId: change.targetInputPortId } : {}),
       ...(change.priority != null ? { priority: change.priority } : {}),
-    } as ControlEdge;
+    };
   }
 
   private toDataBinding(
@@ -236,13 +236,13 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     const targetNode = this.resolveNodeId(change.targetTaskId, change.targetNodeRef, nodeRefToId);
     if (!targetNode) return null;
     if (change.sourceKind === 'constant') {
-      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'constant', constantValue: change.constantValue } as DataBinding;
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'constant', constantValue: change.constantValue };
     }
     if (change.sourceKind === 'state') {
-      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'state', statePath: change.statePath } as DataBinding;
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'state', statePath: change.statePath };
     }
     if (change.sourceKind === 'trigger') {
-      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'trigger', triggerPath: change.triggerPath } as DataBinding;
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'trigger', triggerPath: change.triggerPath };
     }
     const sourceNode = this.resolveNodeId(change.sourceTaskId, change.sourceNodeRef, nodeRefToId);
     if (!sourceNode || !change.sourcePort) return null;
@@ -254,7 +254,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
       sourceNode,
       sourcePort: change.sourcePort,
       iteration: change.iteration || 'current',
-    } as DataBinding;
+    };
   }
 
   private resolveNodeId(taskId: string | null | undefined, nodeRef: string | null | undefined, nodeRefToId: Map<string, string>): string | null {

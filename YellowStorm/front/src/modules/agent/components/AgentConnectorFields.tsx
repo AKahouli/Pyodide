@@ -96,6 +96,13 @@ export function AgentConnectorFields({
               <div className="text-xs text-muted-foreground">
                 {copy.toolAccessDescription}
               </div>
+              <p className="text-xs text-muted-foreground">
+                {t('createEdit.fields.workerConnectorSummary', { count: enabledActions.filter((action) => {
+                  const allowed = action.workerAccess === 'allow' || (action.workerAccess !== 'block' && connector.workerPolicy?.enabled !== false);
+                  const kind = !action.executionKind || action.executionKind === 'inherit' ? connector.workerPolicy?.defaultExecutionKind ?? 'leaf' : action.executionKind;
+                  return allowed && kind === 'leaf' && (!selection || selection.actionKeys.includes(action.key));
+                }).length })}
+              </p>
             </div>
 
             <RadioGroup

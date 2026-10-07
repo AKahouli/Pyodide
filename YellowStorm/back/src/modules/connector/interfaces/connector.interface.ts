@@ -5,6 +5,8 @@ export interface IConnectorActionResponse {
   parameterSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   safety: string;
+  executionKind?: string;
+  workerAccess?: 'inherit' | 'allow' | 'block';
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;
@@ -62,6 +64,7 @@ export interface IConnectorResponse {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: IConnectorDynamicHeader[];
   actions: IConnectorActionResponse[];
   referencedSkillIds: string[];

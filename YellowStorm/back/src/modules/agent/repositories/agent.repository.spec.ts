@@ -303,11 +303,11 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     created.push(input.id); await createAgent(repo, db, input);
     // The dimension is a property of the migrated column (3072 since 0004, 2560 on older
     // databases): read it instead of hard-coding one.
-    const dim = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ dim: number }> }> })
+    const dim = await (db as never as { execute: (q: unknown) => Promise<{ rows: { dim: number }[] }> })
       .execute(sqlTag`SELECT atttypmod AS dim FROM pg_attribute WHERE attrelid = 'public.agents'::regclass AND attname = 'role_embedding'`);
     const vec = Array.from({ length: dim.rows[0].dim }, (_, i) => (i % 7) / 10);
     await repo.setRoleEmbedding(input.id, vec);
-    const rows = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ has: boolean }> }> })
+    const rows = await (db as never as { execute: (q: unknown) => Promise<{ rows: { has: boolean }[] }> })
       .execute(sqlTag`SELECT role_embedding IS NOT NULL AS has FROM agents WHERE id = ${input.id}`);
     expect(rows.rows[0].has).toBe(true);
   });

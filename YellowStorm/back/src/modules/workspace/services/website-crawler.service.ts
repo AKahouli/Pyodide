@@ -45,7 +45,7 @@ export class WebsiteCrawlerService {
 
     // 1. Sitemap-first discovery.
     const { sitemaps: robotsSitemaps, disallow } = await this.fetchRobots(seed.origin, deadline);
-    let urls = await this.discoverViaSitemap(seed.origin, host, robotsSitemaps, deadline);
+    const urls = await this.discoverViaSitemap(seed.origin, host, robotsSitemaps, deadline);
 
     let pages: DiscoveredPage[];
     let fallbackTruncated = false;

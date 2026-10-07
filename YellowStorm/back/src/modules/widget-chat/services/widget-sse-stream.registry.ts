@@ -2,7 +2,7 @@ import { Subject, Observable, merge, interval } from 'rxjs';
 import { map, takeUntil } from 'rxjs/operators';
 import { MessageComponent } from '@modules/conversation/interfaces/message.interface';
 
-export type WidgetStreamEvent = { type: string; data: Record<string, unknown> };
+export interface WidgetStreamEvent { type: string; data: Record<string, unknown> }
 
 interface ActiveStream {
   subject: Subject<WidgetStreamEvent>;

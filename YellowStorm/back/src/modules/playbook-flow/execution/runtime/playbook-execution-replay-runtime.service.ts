@@ -106,7 +106,7 @@ export class PlaybookExecutionReplayRuntimeService {
   }): Promise<void> {
     try {
       let traceMetadata = params.traceMetadata ?? {};
-      if (params.replayArtifacts.intentKey && !traceMetadata['observed_intent_key']) {
+      if (params.replayArtifacts.intentKey && !traceMetadata.observed_intent_key) {
         const hasExecutionEvidence = params.toolTrace.length > 0
           || params.semanticMatch != null
           || (params.output != null && String(params.output).length > 0);
@@ -144,7 +144,7 @@ export class PlaybookExecutionReplayRuntimeService {
     if (!replayModes.has(replayArtifacts.mode)) return;
 
     const report = await this.replayReportService.findLatestReportForExecutionTask(executionId, taskId, iteration);
-    if (!report || !report.replayId) return;
+    if (!report?.replayId) return;
 
     const taskNode = await this.executionRepository.findById(executionId, { withSnapshot: true });
     let taskTitle = taskId;

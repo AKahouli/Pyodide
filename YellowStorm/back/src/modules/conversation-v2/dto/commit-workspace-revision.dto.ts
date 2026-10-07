@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -17,9 +18,19 @@ export class CommitWorkspaceRevisionFileDto {
   @MaxLength(512)
   path!: string;
 
-  @ApiProperty({ description: 'UTF-8 text file content' })
+  @ApiProperty({
+    description: 'File body: UTF-8 text by default, or base64 when encoding=base64',
+  })
   @IsString()
   content!: string;
+
+  @ApiPropertyOptional({
+    enum: ['utf8', 'base64'],
+    description: 'Content encoding. Defaults to utf8.',
+  })
+  @IsOptional()
+  @IsIn(['utf8', 'base64'])
+  encoding?: 'utf8' | 'base64';
 }
 
 export class CommitWorkspaceRevisionDto {
@@ -41,6 +52,18 @@ export class CommitWorkspaceRevisionDto {
   @ValidateNested({ each: true })
   @Type(() => CommitWorkspaceRevisionFileDto)
   files!: CommitWorkspaceRevisionFileDto[];
+
+  /**
+   * Complete set of paths present in the workspace VFS. When set, the new
+   * revision is parent ∩ presentPaths ⊕ uploaded bodies — so template binaries
+   * survive text-only commits, and deletions (path absent here) stick.
+   */
+  @ApiPropertyOptional({ type: [String], example: ['package.json', 'src/assets/hero.png'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(512, { each: true })
+  presentPaths?: string[];
 
   @ApiPropertyOptional({ description: 'Originating runtime tool call id' })
   @IsOptional()

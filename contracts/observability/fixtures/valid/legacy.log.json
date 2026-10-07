@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:30.000Z",
+  "event_id": "boot-demo-03:77",
+  "event_name": "legacy.log",
+  "message": "Legacy log call",
+  "severity_text": "DEBUG",
+  "severity_number": 5,
+  "service_name": "yellowstorm-back",
+  "service_version": "35741c2d",
+  "environment": "rec",
+  "event_origin": "logger",
+  "service_instance_id": "boot-demo-03",
+  "request_id": "req-demo-02",
+  "attributes": {
+    "logger_name": "WorkspaceService",
+    "level": "debug",
+    "detail": "cache miss for key workspace:settings"
+  }
+}

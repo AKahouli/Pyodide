@@ -121,6 +121,6 @@ export class SemanticAttributeExtractionInternalController {
   @Post('attribute-extraction')
   @ApiOperation({ summary: 'Extract mapped attribute values from one document through the ADK extraction agent' })
   async extract(@Body() dto: AttributeExtractionRequestDto) {
-    return this.extraction.extract(dto as AttributeExtractionRequest);
+    return this.extraction.extract(dto);
   }
 }

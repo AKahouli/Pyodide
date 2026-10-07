@@ -88,7 +88,7 @@ export interface DocumentStore {
   listFolders(workspaceId: string): Promise<WorkspaceDocumentRecord[]>;
   listFolderContents(workspaceId: string, folderId: string, params: DocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }>;
   /** URL-type documents for link re-checks (id, sourceUrl, status, indexingStatus). */
-  findUrlSources(workspaceId: string): Promise<Array<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>>>;
+  findUrlSources(workspaceId: string): Promise<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>[]>;
   /** findByIdAndUpdate $set semantics; returns the updated record or null. */
   updateById(id: string, patch: DocumentUpdatePatch): Promise<WorkspaceDocumentRecord | null>;
   /** Dotted metadata merge ($set: { 'metadata.<key>': value }), workspace-scoped. */

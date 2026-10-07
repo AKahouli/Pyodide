@@ -6,7 +6,7 @@ import { BadRequestException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PgUserProviderLinkStore } from '../persistence/pg-auth-provider.stores';
 
-type UserProviderLinkLean = { id: string; userId: string; providerKey: string; providerUserId: string; providerEmail: string; linkedAt: Date };
+interface UserProviderLinkLean { id: string; userId: string; providerKey: string; providerUserId: string; providerEmail: string; linkedAt: Date }
 
 @Injectable()
 export class ProviderLinkService {

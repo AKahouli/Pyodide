@@ -96,7 +96,7 @@ describe('WebsiteCrawlerService', () => {
       const maxRedirects = config?.maxRedirects ?? 5;
       let currentUrl = url;
       let hops = 0;
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         const res = pageMap[currentUrl] ?? { status: 404, data: '', headers: {} };
         if (res.status >= 300 && res.status < 400 && hops < maxRedirects) {

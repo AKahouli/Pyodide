@@ -169,7 +169,7 @@ export class TelegramIntegrationService implements OnModuleInit {
           webhookSecret,
           enabled: dto.enabled,
           status: TelegramIntegrationStatus.PENDING,
-        }))!;
+        }));
 
     this.logger.log('Telegram integration saved, syncing webhook state', {
       userId,

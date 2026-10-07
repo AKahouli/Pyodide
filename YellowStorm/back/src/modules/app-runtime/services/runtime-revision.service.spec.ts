@@ -7,6 +7,10 @@ import {
   STARTER_REACT_VITE_V1_REVISION_ID,
 } from '../constants/starter-react-vite-v1';
 import { type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
+import {
+  SYSTEM_REVISION_SOURCE,
+  type SystemRevisionSource,
+} from '../ports/system-revision-source.port';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
@@ -27,6 +31,10 @@ describe('RuntimeRevisionService', () => {
     createIfNotExists,
     listRevisionIds,
   };
+
+  const findByRevisionId = jest.fn();
+  const findRevision = jest.fn();
+  const systemRevisions: SystemRevisionSource = { findByRevisionId, findRevision };
 
   const config = {
     get: jest.fn((key: string) => {
@@ -52,6 +60,8 @@ describe('RuntimeRevisionService', () => {
     download.mockRejectedValue(new Error('ceph offline'));
     exists.mockResolvedValue(true);
     upload.mockResolvedValue({});
+    findByRevisionId.mockResolvedValue(null);
+    findRevision.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +72,7 @@ describe('RuntimeRevisionService', () => {
         },
         { provide: DocumentService, useValue: { download, exists, upload } },
         { provide: ConfigService, useValue: config },
+        { provide: SYSTEM_REVISION_SOURCE, useValue: systemRevisions },
       ],
     }).compile();
 
@@ -162,6 +173,31 @@ describe('RuntimeRevisionService', () => {
     expect(second.workspaceId).toBe('sess_1');
   });
 
+  it('seeds the workspace with the bound template manifest instead of the starter', async () => {
+    const files = [
+      { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/template', size: 5 },
+    ];
+    findRevision.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      manifestHash: 'template-hash',
+      files,
+    });
+
+    const revision = await svc.ensureWorkspaceRevision('sess_1', 'template_tpl_1');
+
+    expect(revision.revisionId).toBe('template_tpl_1');
+    expect(createIfNotExists).toHaveBeenCalledWith({
+      revisionId: 'template_tpl_1',
+      workspaceId: 'sess_1',
+      parentRevisionId: null,
+      manifestHash: 'template-hash',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      files,
+      createdByToolCallId: null,
+    });
+  });
+
   it('branchRevision mints an id above every persisted revision and copies the manifest', async () => {
     const rev2Doc = {
       id: 'some_id',
@@ -206,5 +242,291 @@ describe('RuntimeRevisionService', () => {
     await expect(svc.branchRevision('sess_1', 'rev_missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('commitWorkspaceRevision inherits non-text parent assets when presentPaths lists them', async () => {
+    const parentFiles = [
+      {
+        path: 'package.json',
+        sha256: 'a'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/aa/aaa',
+        size: 2,
+      },
+      {
+        path: 'src/assets/hero.png',
+        sha256: 'b'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/bb/bbb',
+        size: 4,
+      },
+    ];
+    findByWorkspaceAndRevision.mockImplementation(async (_ws: string, revisionId: string) => {
+      if (revisionId === 'rev_1') {
+        return {
+          id: 'parent_id',
+          workspaceId: 'ws_1',
+          revisionId: 'rev_1',
+          parentRevisionId: null,
+          manifestHash: 'hash_1',
+          manifestObjectKey: 'appbuilder/manifests/ws_1/rev_1.json',
+          files: parentFiles,
+          createdByToolCallId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      }
+      return null;
+    });
+    existsByWorkspaceAndRevision.mockResolvedValue(true);
+
+    const committed = await svc.commitWorkspaceRevision({
+      workspaceId: 'ws_1',
+      revisionId: 'rev_2',
+      parentRevisionId: 'rev_1',
+      files: [{ path: 'package.json', content: '{"name":"app"}', encoding: 'utf8' }],
+      presentPaths: ['package.json', 'src/assets/hero.png'],
+    });
+
+    expect(committed.files.map((f) => f.path).sort()).toEqual([
+      'package.json',
+      'src/assets/hero.png',
+    ]);
+    expect(committed.files.find((f) => f.path === 'src/assets/hero.png')?.objectKey).toBe(
+      'appbuilder/blobs/sha256/bb/bbb',
+    );
+    expect(committed.files.find((f) => f.path === 'package.json')?.size).toBe(
+      Buffer.byteLength('{"name":"app"}', 'utf8'),
+    );
+  });
+
+  it('commitWorkspaceRevision inherits non-text parent files without presentPaths (legacy clients)', async () => {
+    const parentFiles = [
+      {
+        path: 'src/App.jsx',
+        sha256: 'a'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/aa/aaa',
+        size: 10,
+      },
+      {
+        path: 'src/assets/hero.png',
+        sha256: 'b'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/bb/bbb',
+        size: 4,
+      },
+    ];
+    findByWorkspaceAndRevision.mockImplementation(async (_ws: string, revisionId: string) => {
+      if (revisionId === 'rev_1') {
+        return {
+          id: 'parent_id',
+          workspaceId: 'ws_1',
+          revisionId: 'rev_1',
+          parentRevisionId: null,
+          manifestHash: 'hash_1',
+          manifestObjectKey: 'appbuilder/manifests/ws_1/rev_1.json',
+          files: parentFiles,
+          createdByToolCallId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      }
+      return null;
+    });
+    existsByWorkspaceAndRevision.mockResolvedValue(true);
+
+    const committed = await svc.commitWorkspaceRevision({
+      workspaceId: 'ws_1',
+      revisionId: 'rev_2',
+      parentRevisionId: 'rev_1',
+      files: [{ path: 'src/App.jsx', content: 'export default null;\n' }],
+    });
+
+    expect(committed.files.map((f) => f.path).sort()).toEqual([
+      'src/App.jsx',
+      'src/assets/hero.png',
+    ]);
+  });
+
+  it('commitWorkspaceRevision uploads base64 binaries', async () => {
+    findByWorkspaceAndRevision.mockResolvedValue(null);
+    exists.mockResolvedValue(false);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const committed = await svc.commitWorkspaceRevision({
+      workspaceId: 'ws_1',
+      revisionId: 'rev_1',
+      parentRevisionId: null,
+      files: [
+        { path: 'package.json', content: '{}', encoding: 'utf8' },
+        {
+          path: 'src/assets/hero.png',
+          content: png.toString('base64'),
+          encoding: 'base64',
+        },
+      ],
+      presentPaths: ['package.json', 'src/assets/hero.png'],
+    });
+
+    expect(committed.files.find((f) => f.path === 'src/assets/hero.png')?.size).toBe(4);
+    expect(upload).toHaveBeenCalledWith(
+      png,
+      'hero.png',
+      'application/octet-stream',
+      expect.objectContaining({
+        generateUniqueName: false,
+        skipMimeValidation: true,
+      }),
+    );
+  });
+
+  it('commitWorkspaceRevision drops parent files absent from presentPaths', async () => {
+    const parentFiles = [
+      {
+        path: 'package.json',
+        sha256: 'a'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/aa/aaa',
+        size: 2,
+      },
+      {
+        path: 'src/assets/gone.png',
+        sha256: 'b'.repeat(64),
+        objectKey: 'appbuilder/blobs/sha256/bb/bbb',
+        size: 4,
+      },
+    ];
+    findByWorkspaceAndRevision.mockImplementation(async (_ws: string, revisionId: string) => {
+      if (revisionId === 'rev_1') {
+        return {
+          id: 'parent_id',
+          workspaceId: 'ws_1',
+          revisionId: 'rev_1',
+          parentRevisionId: null,
+          manifestHash: 'hash_1',
+          manifestObjectKey: 'appbuilder/manifests/ws_1/rev_1.json',
+          files: parentFiles,
+          createdByToolCallId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      }
+      return null;
+    });
+    existsByWorkspaceAndRevision.mockResolvedValue(true);
+
+    const committed = await svc.commitWorkspaceRevision({
+      workspaceId: 'ws_1',
+      revisionId: 'rev_2',
+      parentRevisionId: 'rev_1',
+      files: [{ path: 'package.json', content: '{}' }],
+      presentPaths: ['package.json'],
+    });
+
+    expect(committed.files.map((f) => f.path)).toEqual(['package.json']);
+  });
+
+  it('resolves a published template revision from its Ceph manifest', async () => {
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'published',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+    });
+    download.mockResolvedValueOnce(
+      Buffer.from(
+        JSON.stringify({
+          revisionId: 'template_tpl_1',
+          parentRevisionId: null,
+          files: [
+            { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/aaa', size: 3 },
+            { path: 'src/App.jsx', sha256: 'b'.repeat(64), objectKey: 'blobs/bbb', size: 4 },
+          ],
+        }),
+        'utf8',
+      ),
+    );
+
+    const revision = await svc.getAuthorizedRevision('sess_1', 'template_tpl_1');
+
+    expect(findByRevisionId).toHaveBeenCalledWith('template_tpl_1');
+    expect(download).toHaveBeenCalledWith('appbuilder/manifests/_system/template_tpl_1.json');
+    expect(revision.revisionId).toBe('template_tpl_1');
+    expect(revision.workspaceId).toBe('_system');
+    expect(revision.files.map((f) => f.path)).toEqual(['package.json', 'src/App.jsx']);
+  });
+
+  it('resolves a template revision from the database without downloading Ceph', async () => {
+    const files = [
+      { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/db', size: 3 },
+    ];
+    findRevision.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      manifestHash: 'db-hash',
+      files,
+    });
+
+    const revision = await svc.getAuthorizedRevision('sess_1', 'template_tpl_1');
+
+    expect(revision.manifestHash).toBe('db-hash');
+    expect(revision.files).toEqual(files);
+    expect(download).not.toHaveBeenCalled();
+    expect(findByRevisionId).not.toHaveBeenCalled();
+  });
+
+  it('resolves a staging template revision from Ceph when there is no catalog row', async () => {
+    const stagingId = '2db1f54802d17404cc212246';
+    const revisionId = `template_${stagingId}`;
+    exists.mockResolvedValueOnce(true);
+    download.mockResolvedValueOnce(
+      Buffer.from(
+        JSON.stringify({
+          revisionId,
+          parentRevisionId: null,
+          files: [
+            { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/aaa', size: 3 },
+          ],
+        }),
+        'utf8',
+      ),
+    );
+
+    const revision = await svc.getAuthorizedRevision('sess_1', revisionId);
+
+    expect(findByRevisionId).toHaveBeenCalledWith(revisionId);
+    expect(exists).toHaveBeenCalledWith(`appbuilder/manifests/_system/${revisionId}.json`);
+    expect(revision.revisionId).toBe(revisionId);
+    expect(revision.files.map((f) => f.path)).toEqual(['package.json']);
+  });
+
+  it('rejects an unpublished or unknown template revision', async () => {
+    exists.mockResolvedValueOnce(false);
+    await expect(
+      svc.getAuthorizedRevision('sess_1', 'template_missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'draft',
+      manifestObjectKey: null,
+    });
+    await expect(
+      svc.getAuthorizedRevision('sess_1', 'template_tpl_1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('revisionExists accepts only a published template revision', async () => {
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'published',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+    });
+    expect(await svc.revisionExists('sess_1', 'template_tpl_1')).toBe(true);
+
+    findByRevisionId.mockResolvedValueOnce(null);
+    exists.mockResolvedValueOnce(false);
+    expect(await svc.revisionExists('sess_1', 'template_unknown')).toBe(false);
+
+    findByRevisionId.mockResolvedValueOnce(null);
+    exists.mockResolvedValueOnce(true);
+    expect(await svc.revisionExists('sess_1', 'template_stagingonly')).toBe(true);
   });
 });

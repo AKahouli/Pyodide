@@ -28,7 +28,7 @@ export function sessionRecord(overrides: Partial<SessionRecord> = {}): SessionRe
 
 export interface SessionStoreFake extends SessionStore {
   records: SessionRecord[];
-  rotations: Array<{ predecessorId: string; newSession: NewSession; bookkeeping: RotationBookkeeping }>;
+  rotations: { predecessorId: string; newSession: NewSession; bookkeeping: RotationBookkeeping }[];
   familyInvalidations: string[];
   /** When set, rotateAtomic throws this (e.g. RotationConflictError) instead of committing. */
   rotateError?: Error;
@@ -104,7 +104,7 @@ export function makeSessionStoreFake(seed: SessionRecord[] = []): SessionStoreFa
       fake.rotations.push(params);
       if (fake.rotateError) throw fake.rotateError;
       const predecessor = records.find((r) => r.id === params.predecessorId);
-      if (!predecessor || !predecessor.isValid) throw new RotationConflictError();
+      if (!predecessor?.isValid) throw new RotationConflictError();
       predecessor.isValid = false;
       predecessor.rotatedAt = params.bookkeeping.rotatedAt;
       predecessor.rotatedToSessionId = params.bookkeeping.rotatedToSessionId;

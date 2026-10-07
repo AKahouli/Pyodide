@@ -26,9 +26,7 @@ if _version_not_supported:
 
 
 class ChatbotServiceStub:
-    """===== SERVICES =====
-
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -36,6 +34,16 @@ class ChatbotServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.GetRootWorkCapabilities = channel.unary_unary(
+                '/chatbot.ChatbotService/GetRootWorkCapabilities',
+                request_serializer=chatbot__pb2.RootWorkCapabilitiesRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.RootWorkCapabilitiesResponse.FromString,
+                _registered_method=True)
+        self.RunBackgroundInvocation = channel.unary_stream(
+                '/chatbot.ChatbotService/RunBackgroundInvocation',
+                request_serializer=chatbot__pb2.RootBackgroundInvocationRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.RootBackgroundInvocationUpdate.FromString,
+                _registered_method=True)
         self.RunAgentTeam = channel.unary_stream(
                 '/chatbot.ChatbotService/RunAgentTeam',
                 request_serializer=chatbot__pb2.RunAgentTeamRequest.SerializeToString,
@@ -84,9 +92,19 @@ class ChatbotServiceStub:
 
 
 class ChatbotServiceServicer:
-    """===== SERVICES =====
+    """Missing associated documentation comment in .proto file."""
 
-    """
+    def GetRootWorkCapabilities(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunBackgroundInvocation(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def RunAgentTeam(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -145,6 +163,16 @@ class ChatbotServiceServicer:
 
 def add_ChatbotServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'GetRootWorkCapabilities': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRootWorkCapabilities,
+                    request_deserializer=chatbot__pb2.RootWorkCapabilitiesRequest.FromString,
+                    response_serializer=chatbot__pb2.RootWorkCapabilitiesResponse.SerializeToString,
+            ),
+            'RunBackgroundInvocation': grpc.unary_stream_rpc_method_handler(
+                    servicer.RunBackgroundInvocation,
+                    request_deserializer=chatbot__pb2.RootBackgroundInvocationRequest.FromString,
+                    response_serializer=chatbot__pb2.RootBackgroundInvocationUpdate.SerializeToString,
+            ),
             'RunAgentTeam': grpc.unary_stream_rpc_method_handler(
                     servicer.RunAgentTeam,
                     request_deserializer=chatbot__pb2.RunAgentTeamRequest.FromString,
@@ -199,9 +227,61 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class ChatbotService:
-    """===== SERVICES =====
+    """Missing associated documentation comment in .proto file."""
 
-    """
+    @staticmethod
+    def GetRootWorkCapabilities(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chatbot.ChatbotService/GetRootWorkCapabilities',
+            chatbot__pb2.RootWorkCapabilitiesRequest.SerializeToString,
+            chatbot__pb2.RootWorkCapabilitiesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunBackgroundInvocation(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/chatbot.ChatbotService/RunBackgroundInvocation',
+            chatbot__pb2.RootBackgroundInvocationRequest.SerializeToString,
+            chatbot__pb2.RootBackgroundInvocationUpdate.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def RunAgentTeam(request,

@@ -82,7 +82,7 @@ export class AiProxyStreamService {
         user,
         abortController.signal,
       );
-      upstreamStream = upstreamResponse.data as Readable;
+      upstreamStream = upstreamResponse.data;
 
       if (clientClosed || response.destroyed || response.writableEnded) {
         closeUpstream();
@@ -148,7 +148,7 @@ export class AiProxyStreamService {
         }
       });
 
-      upstreamStream.pipe(response as unknown as NodeJS.WritableStream);
+      upstreamStream.pipe(response);
     } catch (error) {
       cleanup();
       closeUpstream();

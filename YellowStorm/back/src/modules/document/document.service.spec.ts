@@ -285,6 +285,32 @@ describe('DocumentService', () => {
       );
     });
 
+    it('should allow non-whitelisted MIME when skipMimeValidation is set', async () => {
+      const result = await service.upload(
+        testFile,
+        'hero.png',
+        'application/octet-stream',
+        {
+          generateUniqueName: false,
+          customFileName: 'appbuilder/blobs/sha256/ab/abcdef',
+          skipMimeValidation: true,
+        },
+      );
+
+      expect(result.mimeType).toBe('application/octet-stream');
+      expect(result.blobPath).toBe('appbuilder/blobs/sha256/ab/abcdef');
+    });
+
+    it('should still enforce size limits when skipMimeValidation is set', async () => {
+      const largeFile = Buffer.alloc(60 * 1024 * 1024);
+
+      await expect(
+        service.upload(largeFile, 'hero.png', 'application/octet-stream', {
+          skipMimeValidation: true,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it('should throw BadRequestException for file exceeding size limit', async () => {
       const largeFile = Buffer.alloc(60 * 1024 * 1024); // 60MB
 

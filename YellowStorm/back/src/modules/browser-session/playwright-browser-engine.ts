@@ -190,10 +190,7 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(PlaywrightBrowserEngine.name);
-    const c = config.get('browserSession') as {
-      viewportWidth: number; viewportHeight: number; screencastQuality: number;
-      chromiumExecutablePath: string; clickLabelTtlMs: number;
-    };
+    const c = config.get('browserSession')!;
     this.width = c.viewportWidth;
     this.height = c.viewportHeight;
     this.quality = c.screencastQuality;

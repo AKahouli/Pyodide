@@ -638,12 +638,12 @@ export class PostgresMessageStore implements MessageStore {
     cutoff: Date,
     limit: number,
   ): Promise<
-    Array<{
+    {
       id: string;
       conversationId: string;
       executionAttemptId: string | null;
       leaseExpiresAt: Date | null;
-    }>
+    }[]
   > {
     const rows = await this.db
       .select({

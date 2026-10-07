@@ -7,6 +7,8 @@ import {
   agentConnectors,
   agentKnowledgeBases,
   agentConnectorActions,
+  agentRootDelegateAgents,
+  agentRootDelegateTeams,
 } from './agents.schema';
 
 describe('agents drizzle schema', () => {
@@ -24,6 +26,16 @@ describe('agents drizzle schema', () => {
     expect(cols.agentTypeSlug.name).toBe('agent_type_slug');
     expect(cols.llmModel.name).toBe('llm_model');
     expect(cols.reasoningEffort.name).toBe('reasoning_effort');
+  });
+
+  it('exposes the root policy column and the two delegate junctions (WP01)', () => {
+    const cols = getTableColumns(agents) as Record<string, { name: string }>;
+    expect(cols.rootExecutionPolicy.name).toBe('root_execution_policy');
+    expect(getTableName(agentRootDelegateAgents)).toBe('agent_root_delegate_agents');
+    expect(getTableName(agentRootDelegateTeams)).toBe('agent_root_delegate_teams');
+    const jcols = getTableColumns(agentRootDelegateAgents) as Record<string, { name: string }>;
+    expect(jcols.rootAgentId.name).toBe('root_agent_id');
+    expect(jcols.delegateAgentId.name).toBe('delegate_agent_id');
   });
 
   it('defines the six junction tables', () => {

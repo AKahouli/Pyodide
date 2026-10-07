@@ -4,9 +4,18 @@ import { ConfigService } from '@nestjs/config';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import {
-  AppDataErrorCode,
-  AppDataException,
-} from '@modules/app-data/constants/app-data.errors';
+  PlatformBaselineService,
+  type BaselineFile,
+} from '@modules/app-runtime/platform-kit/platform-baseline.service';
+import {
+  checkAiUsage,
+  stripInventedAiModelLiterals,
+} from '@modules/app-runtime/platform-kit/platform-conformance';
+import { ModelsService } from '@modules/models/models.service';
+import {
+  detectRevisionUsesAi,
+  isScannableAppSourcePath,
+} from '../utils/conversation-v2-revision-ai-usage';
 
 const DEFAULT_DEPLOY_BASE_URL = 'https://app-deployer.yellowsys.org/';
 
@@ -64,65 +73,110 @@ export class ConversationV2DeployService {
   constructor(
     private readonly config: ConfigService,
     private readonly revisions: RuntimeRevisionService,
+    private readonly baseline: PlatformBaselineService,
+    private readonly modelsService: ModelsService,
     @Optional() private readonly appDataDeployment?: AppDataDeploymentService,
   ) {}
 
-  async deploy(aiSessionId: string, revisionId: string): Promise<DeployResponse> {
+  async deploy(
+    aiSessionId: string,
+    revisionId: string,
+    ownerUserId?: string,
+  ): Promise<DeployResponse> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[deploy] start session=${aiSessionId} revision=${revisionId} owner=${ownerUserId ?? 'none'}`,
+    );
+
     const productionEnv: Record<string, string> = {
       VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
     };
 
-    const backendUrl = this.resolveDeployBackendUrl();
-    if (backendUrl) {
-      productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
+    // Re-verify the platform baseline the workspace was seeded with. Missing
+    // files are re-added deterministically; a platform file the agent rewrote
+    // into something that cannot run in production is refused.
+    this.logger.log(
+      `[deploy] platform baseline plan mode=deploy session=${aiSessionId} revision=${revisionId}`,
+    );
+    const baselinePlan = await this.baseline.planBaseline({
+      workspaceId: aiSessionId,
+      revisionId,
+      mode: 'deploy',
+    });
+    this.logger.log(
+      `[deploy] platform baseline result session=${aiSessionId} revision=${revisionId} ` +
+        `files=${String(baselinePlan.files.length)} violations=${String(baselinePlan.violations.length)}` +
+        (baselinePlan.violations.length
+          ? ` detail=${baselinePlan.violations.join(' | ')}`
+          : ''),
+    );
+    if (baselinePlan.violations.length) {
+      throw new ServiceUnavailableException(
+        `This app does not meet the YellowStorm platform contract. ${baselinePlan.violations.join(
+          ' ',
+        )} Fix it in OpenCode, finalize again, then deploy.`,
+      );
     }
 
-    if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
-      try {
-        const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);
-        Object.assign(productionEnv, {
-          VITE_YM_APP_DATA_URL: env.publicUrl,
-          VITE_YM_APP_DATA_ID: env.appDataId,
-          VITE_YM_APP_DATA_ENV: env.environment,
-        });
-        this.logger.log(
-          `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
-        );
-      } catch (err) {
-        if (
-          err instanceof AppDataException &&
-          err.appDataCode === AppDataErrorCode.NOT_PROVISIONED
-        ) {
-          this.logger.warn(
-            `App Data NOT_PROVISIONED for session=${aiSessionId} rev=${revisionId} — deploying without App Data env vars`,
-          );
-        } else if (await this.appDataDeployment.getRuntimeEnvForWorkspace(aiSessionId, 'dev')) {
-          throw err;
-        } else {
-          this.logger.warn(
-            `App Data prepareProduction failed for session=${aiSessionId} — deploying without App Data env vars: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
+    const usesAi = await detectRevisionUsesAi(this.revisions, aiSessionId, revisionId);
+    this.logger.log(
+      `[deploy] AI usage scan session=${aiSessionId} revision=${revisionId} usesAi=${String(usesAi)}`,
+    );
+    const backendUrl = this.resolveDeployBackendUrl();
+    if (backendUrl && usesAi) {
+      productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
+      const defaultAiModelId = await this.resolveDeployDefaultAiModelId();
+      if (defaultAiModelId) {
+        productionEnv.VITE_YM_AI_DEFAULT_MODEL = defaultAiModelId;
       }
     }
 
+    if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
+      this.logger.log(`[deploy] App Data PROD merge session=${aiSessionId} revision=${revisionId}`);
+      await this.mergeAppDataProductionEnv(aiSessionId, revisionId, ownerUserId, productionEnv);
+    }
+    if (usesAi) {
+      this.logger.log(
+        `[deploy] AI proxy enabled session=${aiSessionId} revision=${revisionId} ` +
+          `apiBaseConfigured=${String(Boolean(productionEnv.VITE_YM_API_BASE_URL))}`,
+      );
+    }
+
     let deployRevisionId = revisionId;
-    await this.assertRevisionSupportsSubpath(aiSessionId, revisionId);
-    await this.assertRevisionSupportsAuth(aiSessionId, revisionId);
+    this.logger.log(
+      `[deploy] assert production env keys=[${Object.keys(productionEnv).sort().join(',')}]`,
+    );
+    const aiSourceFixes = await this.assertProductionEnv(
+      aiSessionId,
+      revisionId,
+      productionEnv,
+      usesAi,
+    );
     try {
-      deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
+      deployRevisionId = await this.injectEnvProduction(
+        aiSessionId,
+        revisionId,
+        productionEnv,
+        baselinePlan.files,
+        aiSourceFixes,
+      );
+      this.logger.log(
+        `[deploy] patched revision ready base=${revisionId} deployRevision=${deployRevisionId}`,
+      );
     } catch (err) {
       this.logger.error(
-        `Failed to inject .env.production into revision ${revisionId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[deploy] .env.production injection failed revision=${revisionId} error=${describeError(err)}`,
       );
       throw new ServiceUnavailableException('Failed to prepare deployment environment');
     }
 
     const runtime = this.getDeployRuntimeConfig();
+    this.logger.log(
+      `[deploy] launch app-builder baseUrl=${runtime.baseUrl} ` +
+        `timeoutMs=${String(runtime.deployTimeoutMs)} pollMs=${String(runtime.statusPollIntervalMs)} ` +
+        `tokenConfigured=${String(Boolean(runtime.token))} session=${aiSessionId} ` +
+        `deployRevision=${deployRevisionId}`,
+    );
     const deadline = Date.now() + runtime.deployTimeoutMs;
     const launchBody: Record<string, string> = {
       aiSessionId,
@@ -138,17 +192,34 @@ export class ConversationV2DeployService {
     });
     const launchStatus = this.extractString(launch, 'status');
     const launchAppId = this.extractString(launch, 'app_id') ?? aiSessionId;
+    this.logger.log(
+      `[deploy] launch response session=${aiSessionId} appId=${launchAppId} status=${launchStatus ?? 'none'}`,
+    );
 
     if (this.isReady(launchStatus)) {
-      return { ...this.extractDeployment(launch, launchAppId), runtimeEnv: productionEnv };
+      const ready = {
+        ...this.extractDeployment(launch, launchAppId),
+        runtimeEnv: productionEnv,
+      };
+      this.logger.log(
+        `[deploy] ready immediately session=${aiSessionId} appId=${ready.appId} ` +
+          `url=${ready.url} elapsedMs=${String(Date.now() - startedAt)}`,
+      );
+      return ready;
     }
     if (launchStatus !== 'deploying') {
-      this.logger.warn('App-builder deploy response did not confirm a deploying app');
+      this.logger.warn(
+        `[deploy] App-builder launch did not confirm deploying status=${launchStatus ?? 'none'}`,
+      );
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
 
+    this.logger.log(
+      `[deploy] polling status session=${aiSessionId} appId=${launchAppId} ` +
+        `initialDelayMs=${String(runtime.initialStatusDelayMs)}`,
+    );
     await this.waitForNextPoll(runtime.initialStatusDelayMs, deadline);
-    return this.pollUntilReady({
+    const polled = await this.pollUntilReady({
       baseUrl: runtime.baseUrl,
       token: runtime.token,
       aiSessionId,
@@ -158,6 +229,11 @@ export class ConversationV2DeployService {
       deployTimeoutMs: runtime.deployTimeoutMs,
       runtimeEnv: productionEnv,
     });
+    this.logger.log(
+      `[deploy] ready after poll session=${aiSessionId} appId=${polled.appId} ` +
+        `url=${polled.url} elapsedMs=${String(Date.now() - startedAt)}`,
+    );
+    return polled;
   }
 
   /** Public URL path prefix for deployed apps, e.g. `/apps/{sessionId}/`. */
@@ -190,7 +266,14 @@ export class ConversationV2DeployService {
   private async pollUntilReady(context: DeploymentContext): Promise<DeployResponse> {
     const { baseUrl, token, aiSessionId, launchAppId, deadline, statusPollIntervalMs } =
       context;
+    let lastStatus: string | null = null;
+    let pollCount = 0;
     while (Date.now() < deadline) {
+      pollCount += 1;
+      const remainingMs = deadline - Date.now();
+      this.logger.log(
+        `[deploy] status poll #${String(pollCount)} session=${aiSessionId} appId=${launchAppId} remainingMs=${String(remainingMs)}`,
+      );
       const statusBody = await this.requestAppBuilder({
         baseUrl,
         path: 'app/deploy/status',
@@ -199,16 +282,29 @@ export class ConversationV2DeployService {
         deadline,
       });
       const status = this.extractString(statusBody, 'status');
+      lastStatus = status;
+      this.logger.log(
+        `[deploy] status poll #${String(pollCount)} result session=${aiSessionId} status=${status ?? 'none'}`,
+      );
       if (this.isReady(status)) {
         return { ...this.extractDeployment(statusBody, launchAppId), runtimeEnv: context.runtimeEnv };
       }
       if (status !== 'deploying') {
-        this.logger.warn(`App-builder returned unsupported deployment status: ${status ?? 'none'}`);
+        this.logger.warn(
+          `[deploy] App-builder returned unsupported deployment status: ${status ?? 'none'}`,
+        );
         throw new ServiceUnavailableException('Deployment failed with an invalid status');
       }
-      await this.waitForNextPoll(statusPollIntervalMs, deadline);
+      await this.waitForNextPoll(
+        statusPollIntervalMs,
+        deadline,
+        `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'}`,
+      );
     }
-    return this.throwTimeout(context.deployTimeoutMs);
+    return this.throwTimeout(
+      context.deployTimeoutMs,
+      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'} polls=${String(pollCount)}`,
+    );
   }
 
   private async requestAppBuilder(request: AppBuilderRequest): Promise<unknown> {
@@ -222,6 +318,10 @@ export class ConversationV2DeployService {
       headers.Authorization = `Bearer ${token}`;
     }
 
+    this.logger.log(
+      `[deploy] POST ${endpoint.toString()} remainingMs=${String(remainingMs)} ` +
+        `bodyKeys=[${Object.keys(body).sort().join(',')}]`,
+    );
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -230,18 +330,22 @@ export class ConversationV2DeployService {
         signal: AbortSignal.timeout(remainingMs),
       });
       const rawBody = await response.text();
-      this.logger.debug(
-        `App-builder ${path} response: status=${response.status} bodyChars=${rawBody.length}`,
+      this.logger.log(
+        `[deploy] App-builder ${path} response status=${String(response.status)} bodyChars=${String(rawBody.length)}`,
       );
       if (!response.ok) {
-        this.logger.warn(`App-builder ${path} failed with status ${response.status}`);
+        this.logger.warn(
+          `[deploy] App-builder ${path} failed status=${String(response.status)} bodyPreview=${rawBody.slice(0, 300)}`,
+        );
         throw new ServiceUnavailableException('Deployment service rejected the request');
       }
       return this.parseResponse(rawBody);
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
-      if ((error as Error).name === 'TimeoutError') return this.throwTimeout();
-      this.logger.error(`App-builder ${path} request failed: ${(error as Error).message}`);
+      if (errorName(error) === 'TimeoutError') return this.throwTimeout();
+      this.logger.error(
+        `[deploy] App-builder ${path} request failed: ${describeError(error)}`,
+      );
       throw new ServiceUnavailableException('Deployment service is unavailable');
     }
   }
@@ -251,12 +355,12 @@ export class ConversationV2DeployService {
     try {
       body = JSON.parse(rawBody) as unknown;
     } catch {
-      this.logger.warn('App-builder returned malformed JSON');
+      this.logger.warn('[deploy] App-builder returned malformed JSON');
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
     const upstreamError = this.extractString(body, 'error');
     if (upstreamError) {
-      this.logger.warn(`App-builder deployment failed: ${upstreamError}`);
+      this.logger.warn(`[deploy] App-builder returned error upstreamError=${upstreamError}`);
       throw new ServiceUnavailableException(`Deployment failed: ${upstreamError}`);
     }
     return body;
@@ -267,7 +371,7 @@ export class ConversationV2DeployService {
     const previewUrl = this.extractString(body, 'preview_url');
     const url = previewUrl ?? this.extractString(body, 'url');
     if (!appId || !url) {
-      this.logger.warn('App-builder ready response did not include app_id and url');
+      this.logger.warn('[deploy] App-builder ready response missing app_id or url');
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
     return {
@@ -288,48 +392,45 @@ export class ConversationV2DeployService {
     return typeof value === 'string' && value.trim() ? value : null;
   }
 
-  private async waitForNextPoll(delayMs: number, deadline: number): Promise<void> {
+  private async waitForNextPoll(
+    delayMs: number,
+    deadline: number,
+    timeoutDetails?: string,
+  ): Promise<void> {
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return this.throwTimeout();
+    if (remainingMs <= 0) return this.throwTimeout(undefined, timeoutDetails);
     await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remainingMs)));
-    if (Date.now() >= deadline) return this.throwTimeout();
+    if (Date.now() >= deadline) return this.throwTimeout(undefined, timeoutDetails);
   }
 
-  private throwTimeout(deployTimeoutMs?: number): never {
+  private throwTimeout(deployTimeoutMs?: number, details?: string): never {
     const timeoutMs =
       deployTimeoutMs ?? this.config.get<number>('conversationV2.appBuilderDeployTimeoutMs') ?? 0;
-    this.logger.error(`App-builder deployment timed out after ${timeoutMs / 1000}s`);
-    throw new ServiceUnavailableException('Deployment service timed out');
+    this.logger.error(
+      `[deploy] App-builder deployment timed out timeoutMs=${String(timeoutMs)}${
+        details ? ` detail=${details}` : ''
+      }`,
+    );
+    throw new ServiceUnavailableException(
+      details ? `Deployment service timed out (${details})` : 'Deployment service timed out',
+    );
   }
 
   /**
    * Public API origin baked into deployed apps as VITE_YM_API_BASE_URL.
    * Loopback defaults are unreachable from apps.yellowsys.org browsers.
-   * Allowed in non-production (local POC) with a warning; production must set
-   * a public BACKEND_URL (or ALLOW_LOCALHOST_DEPLOY_API=true as escape hatch).
+   * Prefer BACKEND_URL, then the existing public runtime base URL.
    */
   private resolveDeployBackendUrl(): string {
-    const raw = (this.config.get<string>('app.backendUrl') || '').trim().replace(/\/$/, '');
-    if (!raw) return '';
-    if (this.isLoopbackUrl(raw)) {
-      const nodeEnv = (this.config.get<string>('app.nodeEnv') || process.env.NODE_ENV || '').toLowerCase();
-      const allowLocalhost =
-        process.env.ALLOW_LOCALHOST_DEPLOY_API === 'true'
-        || nodeEnv === 'development'
-        || nodeEnv === 'test';
-      if (!allowLocalhost) {
-        this.logger.error(
-          `Refusing to deploy with loopback BACKEND_URL=${raw}. Set BACKEND_URL to a browser-reachable public API origin.`,
-        );
-        throw new ServiceUnavailableException(
-          'BACKEND_URL must be a public URL reachable from the browser (not localhost). Set BACKEND_URL and redeploy.',
-        );
-      }
-      this.logger.warn(
-        `Deploying with loopback BACKEND_URL=${raw} (${nodeEnv || 'dev'}). Deployed apps on remote hosts cannot call this API — set BACKEND_URL to a public origin for real deploys.`,
-      );
+    const candidates = [
+      this.config.get<string>('app.backendUrl'),
+      this.config.get<string>('appRuntime.publicBaseUrl'),
+    ];
+    for (const candidate of candidates) {
+      const url = candidate?.trim().replace(/\/$/, '');
+      if (url && !this.isLoopbackUrl(url)) return url;
     }
-    return raw;
+    return '';
   }
 
   private isLoopbackUrl(url: string): boolean {
@@ -350,6 +451,8 @@ export class ConversationV2DeployService {
     workspaceId: string,
     baseRevisionId: string,
     env: Record<string, string>,
+    baselineFiles: BaselineFile[],
+    aiSourceFixes: Array<{ path: string; content: string }> = [],
   ): Promise<string> {
     const lines = Object.entries(env)
       .map(([k, v]) => `${k}=${quoteDotenvValue(v)}`)
@@ -361,55 +464,155 @@ export class ConversationV2DeployService {
       workspaceId,
       baseRevisionId,
       newRevisionId: patchedRevisionId,
-      additionalFiles: [{ path: '.env.production', content: lines + '\n' }],
+      additionalFiles: [
+        ...baselineFiles,
+        ...aiSourceFixes,
+        { path: '.env.production', content: lines + '\n' },
+      ],
     });
 
     this.logger.log(
-      `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId})`,
+      `[deploy] .env.production injected revision=${patchedRevisionId} base=${baseRevisionId} ` +
+        `platformFiles=${String(baselineFiles.length)} aiSanitized=${String(aiSourceFixes.length)} envKeys=[${Object.keys(env)
+          .sort()
+          .join(',')}]`,
     );
     return patchedRevisionId;
   }
 
-  private async assertRevisionSupportsSubpath(
-    workspaceId: string,
+  /**
+   * Deployed apps always enforce App Data auth, so App Data is provisioned
+   * systematically — there is no "app without auth" path.
+   */
+  private async mergeAppDataProductionEnv(
+    aiSessionId: string,
     revisionId: string,
+    ownerUserId: string | undefined,
+    productionEnv: Record<string, string>,
   ): Promise<void> {
-    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
-    const hasAppBase = revision.files.some(
-      (file) => file.path === 'src/lib/app-base.ts' || file.path.endsWith('/app-base.ts'),
-    );
-    if (!hasAppBase) {
+    if (ownerUserId) {
+      try {
+        await this.appDataDeployment!.ensureDevProvisioned(aiSessionId, ownerUserId);
+      } catch (err) {
+        this.logger.error(
+          `[deploy] App Data DEV ensure failed session=${aiSessionId} error=${describeError(err)}`,
+        );
+        throw new ServiceUnavailableException(
+          'App Data could not be provisioned for this workspace. Check App Data service connectivity, then deploy again.',
+        );
+      }
+    }
+
+    try {
+      const env = await this.appDataDeployment!.prepareProduction(aiSessionId, revisionId);
+      Object.assign(productionEnv, {
+        VITE_YM_APP_DATA_URL: env.publicUrl,
+        VITE_YM_APP_DATA_ID: env.appDataId,
+        VITE_YM_APP_DATA_ENV: env.environment,
+      });
+      this.logger.log(
+        `[deploy] App Data PROD env prepared session=${aiSessionId} url=${env.publicUrl} appDataId=${env.appDataId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `[deploy] App Data prepareProduction failed session=${aiSessionId} revision=${revisionId} error=${describeError(err)}`,
+      );
       throw new ServiceUnavailableException(
-        'This app cannot be deployed under /apps/{sessionId}/. Regenerate it with the current starter, then deploy again.',
+        'App Data could not be prepared for production. Provision App Data (OpenCode MCP yellowappdata_provision or deploy with owner context), then deploy again.',
       );
     }
   }
 
-  /** Deployed apps must mount AppRouter so /login and /register stay reachable. */
-  private async assertRevisionSupportsAuth(
+  /**
+   * Catalog model id baked into deployed apps as VITE_YM_AI_DEFAULT_MODEL.
+   * Prefer conversation-v2 admin default, then platform default — same order as
+   * BrowserRuntimeHost preview injection when no composer selection is stored.
+   */
+  private async resolveDeployDefaultAiModelId(): Promise<string | null> {
+    try {
+      const conversationV2Default = await this.modelsService.getConversationV2DefaultModel();
+      if (conversationV2Default?.id) return conversationV2Default.id;
+      const platformDefault = await this.modelsService.getDefaultModel();
+      return platformDefault?.id ?? null;
+    } catch (err) {
+      this.logger.warn(
+        `[deploy] default AI model lookup failed: ${describeError(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * The baseline guarantees the app's structure; this guarantees the values it
+   * will read at runtime actually exist.
+   */
+  private async assertProductionEnv(
     workspaceId: string,
     revisionId: string,
-  ): Promise<void> {
-    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
-    const mainEntry = revision.files.find(
-      (file) => file.path === 'src/main.jsx' || file.path === 'src/main.tsx',
-    );
-    if (!mainEntry) return;
+    runtimeEnv: Record<string, string>,
+    usesAi: boolean,
+  ): Promise<Array<{ path: string; content: string }>> {
+    if (this.config.get<boolean>('appData.enabled', false)) {
+      if (!runtimeEnv.VITE_YM_APP_DATA_URL || !runtimeEnv.VITE_YM_APP_DATA_ID) {
+        throw new ServiceUnavailableException(
+          'App Data production env vars are missing after prepareProduction. Provision App Data for this workspace, then deploy again.',
+        );
+      }
+    }
 
-    const mainSource = await this.revisions.readRevisionFileText(
-      workspaceId,
-      revisionId,
-      mainEntry.path,
-    );
-    if (!mainSource?.includes('AppRouter')) {
+    const aiSourceFixes: Array<{ path: string; content: string }> = [];
+    if (!usesAi) return aiSourceFixes;
+
+    if (!runtimeEnv.VITE_YM_API_BASE_URL) {
       throw new ServiceUnavailableException(
-        'This app revision does not mount AppRouter in src/main.jsx. Restore the starter entry point (AppRouter with /login and /register), then deploy again.',
+        'This app calls the AI proxy but no browser-reachable YellowStorm API origin is configured. Set BACKEND_URL or APP_RUNTIME_PUBLIC_BASE_URL to a public origin (not localhost), then deploy again.',
       );
     }
+
+    const { files } = await this.revisions.listFiles(workspaceId, revisionId);
+    const candidates = files
+      .map((file) => file.path)
+      .filter(isScannableAppSourcePath)
+      .slice(0, 40);
+    for (const path of candidates) {
+      const raw = await this.revisions.readRevisionFileText(workspaceId, revisionId, path);
+      const source = raw ?? '';
+      let violations = checkAiUsage(source);
+      if (violations.length) {
+        const sanitized = stripInventedAiModelLiterals(source);
+        if (sanitized !== source) {
+          violations = checkAiUsage(sanitized);
+          if (!violations.length) {
+            this.logger.warn(
+              `[deploy] sanitized invented AI model literal path=${path} revision=${revisionId}`,
+            );
+            aiSourceFixes.push({ path, content: sanitized });
+            continue;
+          }
+        }
+        throw new ServiceUnavailableException(
+          `AI integration does not meet the YellowStorm platform contract. ${path}: ${violations.join(
+            ' ',
+          )} Fix it in OpenCode, finalize again, then deploy.`,
+        );
+      }
+    }
+    return aiSourceFixes;
   }
 }
 
 function quoteDotenvValue(value: string): string {
   if (/^[A-Za-z0-9_./:-]*$/.test(value)) return value;
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
+}
+
+/** Anything can be thrown or rejected, so fall back to its string form. */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorName(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'name' in error
+    ? String(error.name)
+    : undefined;
 }

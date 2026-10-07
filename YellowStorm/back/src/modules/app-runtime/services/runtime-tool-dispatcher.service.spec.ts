@@ -12,6 +12,8 @@ const CONFIG = {
   'appRuntime.heartbeatTimeoutMs': 45_000,
   'appRuntime.mutationWaitMs': 30_000,
   'appRuntime.toolTimeoutMs': 5_000,
+  // Immediate fail in unit tests unless a case overrides the wait.
+  'appRuntime.browserWaitMs': 0,
 } as Record<string, number>;
 
 const BINDING = {
@@ -60,8 +62,7 @@ describe('RuntimeToolDispatcherService', () => {
   ): void => {
     socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
       if (event !== 'tool.invoke') return;
-      setImmediate(() =>
-        outcome.ok
+      setImmediate(() => { outcome.ok
           ? dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: outcome.result,
@@ -69,7 +70,7 @@ describe('RuntimeToolDispatcherService', () => {
           : dispatcher.handleFailed('sess_1', {
               toolCallId: payload.toolCallId,
               error: outcome.error,
-            }),
+            }); },
       );
     });
   };
@@ -159,6 +160,33 @@ describe('RuntimeToolDispatcherService', () => {
       expect(socket.emit).not.toHaveBeenCalled();
     });
 
+    it('waits for runtime.register before dispatching when the browser is still booting', async () => {
+      (config.get as jest.Mock).mockImplementation(
+        (key: string, fallback?: number) =>
+          key === 'appRuntime.browserWaitMs' ? 2_000 : (CONFIG[key] ?? fallback),
+      );
+      browserAnswers({ ok: true, result: { content: 'ok' } });
+
+      const invokePromise = dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_wait',
+        tool: 'read',
+        arguments: { path: 'a.ts' },
+      });
+
+      await new Promise((r) => setTimeout(r, 30));
+      expect(markWaitingForBrowser).toHaveBeenCalledWith('sess_1');
+      expect(socket.emit).not.toHaveBeenCalled();
+
+      connect();
+      const envelope = await invokePromise;
+      expect(envelope.ok).toBe(true);
+      expect(socket.emit).toHaveBeenCalledWith(
+        'tool.invoke',
+        expect.objectContaining({ toolCallId: 'tc_wait' }),
+      );
+    });
+
     it('fails with RUNTIME_OFFLINE when the heartbeat has timed out', async () => {
       connect();
       registry.get('sess_1')!.lastHeartbeatAt = Date.now() - 60_000;
@@ -177,8 +205,7 @@ describe('RuntimeToolDispatcherService', () => {
       connect();
       socket.emit.mockImplementation((event: string) => {
         if (event !== 'tool.invoke') return;
-        setImmediate(() =>
-          dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'),
+        setImmediate(() => { dispatcher.failPendingForWorkspace('sess_1', 'Browser runtime disconnected'); },
         );
       });
 
@@ -334,11 +361,10 @@ describe('RuntimeToolDispatcherService', () => {
           if (event !== 'tool.invoke') return;
           inFlight.push(payload.toolCallId);
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: {},
-              }),
+              }); },
             10,
           );
         },
@@ -384,11 +410,10 @@ describe('RuntimeToolDispatcherService', () => {
         if (event !== 'tool.invoke') return;
         next += 1;
         const revisionId = `rev_${next}`;
-        setImmediate(() =>
-          dispatcher.handleCompleted('sess_1', {
+        setImmediate(() => { dispatcher.handleCompleted('sess_1', {
             toolCallId: payload.toolCallId,
             result: { revisionId },
-          }),
+          }); },
         );
       });
 
@@ -430,11 +455,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         if (payload.toolCallId === 'tc_hold') {
-          void hold.then(() =>
-            dispatcher.handleCompleted('sess_1', {
+          void hold.then(() => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: {},
-            }),
+            }); },
           );
           return;
         }
@@ -537,11 +561,10 @@ describe('RuntimeToolDispatcherService', () => {
       socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
         if (event !== 'tool.invoke') return;
         setTimeout(
-          () =>
-            dispatcher.handleCompleted('sess_1', {
+          () => { dispatcher.handleCompleted('sess_1', {
               toolCallId: payload.toolCallId,
               result: { path: 'a.ts' },
-            }),
+            }); },
           30,
         );
       });
@@ -641,17 +664,15 @@ describe('RuntimeToolDispatcherService', () => {
           const ticks = [15, 30, 45];
           ticks.forEach((delay) =>
             setTimeout(
-              () =>
-                dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }),
+              () => { dispatcher.handleProgress('sess_1', { toolCallId: payload.toolCallId }); },
               delay,
             ),
           );
           setTimeout(
-            () =>
-              dispatcher.handleCompleted('sess_1', {
+            () => { dispatcher.handleCompleted('sess_1', {
                 toolCallId: payload.toolCallId,
                 result: { done: true },
-              }),
+              }); },
             55,
           );
         },

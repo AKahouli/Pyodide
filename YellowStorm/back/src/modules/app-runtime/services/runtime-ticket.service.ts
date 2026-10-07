@@ -1,6 +1,6 @@
 import { Injectable,  Logger,  Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import type { RuntimeTicketResult } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTokenService } from './runtime-token.service';
@@ -62,7 +62,7 @@ export class RuntimeTicketService {
     );
 
     const appDataRuntimeEnv = this.appDataDeployment
-      ? await this.appDataDeployment.getRuntimeEnvForWorkspace(binding.workspaceId, 'dev')
+      ? await this.appDataDeployment.ensureDevRuntimeEnv(binding.workspaceId, binding.userId)
       : null;
 
     return {
