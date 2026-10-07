@@ -96,6 +96,14 @@ describe('SemanticModelCanvas', () => {
     expect(screen.getByText(/editor.recordCount/)).toBeInTheDocument();
   });
 
+  it('rings only the concepts a run is refreshing', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const { rerender } = render(<SemanticModelCanvas canEdit knowledge={knowledge} refreshingConcepts={[contractGraph.nodes[0].id]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.getAllByRole('status', { name: /editor.refreshing/ })).toHaveLength(1);
+    rerender(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.queryByRole('status', { name: /editor.refreshing/ })).not.toBeInTheDocument();
+  });
+
   it('brings data into a concept from the + on its left', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onOpenKnowledge = vi.fn();

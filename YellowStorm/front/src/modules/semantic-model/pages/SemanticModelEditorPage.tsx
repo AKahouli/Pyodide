@@ -178,6 +178,8 @@ export function SemanticModelEditorPage() {
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
   const [boundDataRevisionId, setBoundDataRevisionId] = useState<string>();
   const [populationJobId, setPopulationJobId] = useState<string>();
+  // The concepts the running job refreshes; null when it covers the whole model or its scope is unknown.
+  const [runConceptIds, setRunConceptIds] = useState<string[] | null>(null);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [trustOpen, setTrustOpen] = useState(false);
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
@@ -304,6 +306,7 @@ export function SemanticModelEditorPage() {
   useEffect(() => {
     if (!activeRun || adoptedRunsRef.current.has(activeRun.jobId) || populationJobId === activeRun.jobId) return;
     adoptedRunsRef.current.add(activeRun.jobId);
+    setRunConceptIds(null);
     setPopulationJobId(activeRun.jobId);
     setTrustOpen(false);
     setSuggestionsOpen(false);
@@ -640,6 +643,7 @@ export function SemanticModelEditorPage() {
       const run = await semanticModelApi.requestPopulationRefresh(modelId, {
         purpose: 'build', scope: { kind: 'concept', conceptId }, ...(rereadDocuments ? { rereadDocuments } : {}),
       });
+      setRunConceptIds([conceptId]);
       setPopulationJobId(run.jobId);
       setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
     } catch (error) {
@@ -652,6 +656,8 @@ export function SemanticModelEditorPage() {
       const run = await semanticModelApi.requestPopulationRefresh(modelId, {
         purpose: 'refresh', scope: mappingIds.length === 1 ? { kind: 'mapping', mappingId: mappingIds[0] } : { kind: 'model' },
       });
+      const mappedConcept = mappingIds.length === 1 ? sourceMappings.data?.find((mapping) => mapping.id === mappingIds[0])?.conceptId : undefined;
+      setRunConceptIds(mappedConcept ? [mappedConcept] : null);
       setPopulationJobId(run.jobId);
     } catch (error) {
       showError(t('mapping.switch.readError'), { description: parseApiError(error).message });
@@ -869,6 +875,7 @@ export function SemanticModelEditorPage() {
             sourcePositions={sourcePositions}
             onMoveSource={canEdit ? moveSource : undefined}
             onBrowseRecords={browseRecords}
+            refreshingConcepts={populationJobId ? runConceptIds ?? 'all' : undefined}
           />
           </div>}
           {onCanvas && modelId && recordsConceptId && graph.nodes.some((node) => node.id === recordsConceptId) && <ConceptRecordsPanel
@@ -918,7 +925,7 @@ export function SemanticModelEditorPage() {
           dataRevisionId={populationJob.data?.jobId === population.jobId && typeof populationJob.data?.result?.dataRevisionId === 'string' ? populationJob.data.result.dataRevisionId : undefined}
         />}
         {runHistoryOpen && modelId && !population && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
-          onOpenRun={(job) => { setRunHistoryOpen(false); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}
+          onOpenRun={(job) => { setRunHistoryOpen(false); setRunConceptIds(null); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
         {suggestionsOpen && modelId && !population && !trustOpen && <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl' aria-label={t('assistantSources.panelTitle')}>
@@ -980,7 +987,7 @@ export function SemanticModelEditorPage() {
           open={validateOpen}
           onOpenChange={setValidateOpen}
           modelId={modelId}
-          onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); if (outcome.cleared) setBoundDataRevisionId(undefined); }}
+          onPopulationStarted={(outcome) => { setPopulation(outcome); setRunConceptIds(null); setPopulationJobId(outcome.jobId); setTrustOpen(false); if (outcome.cleared) setBoundDataRevisionId(undefined); }}
           // What stops the run is in Review, each item opening where it is fixed.
           onRefused={() => { void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) }); void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }); openReview(); }}
         />
