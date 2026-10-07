@@ -1,0 +1,36 @@
+# The build only needs requirements.txt, .generated/observability/, src/, main.py and grpc/.
+# Keep dev artifacts and secrets out of the context so the daemon does not ship them on every build.
+.venv/
+venv/
+venv.bak/
+venvt/
+exp_venv/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+
+tests/
+docs/
+tmp/
+scripts/
+
+.env
+.env.*
+*.log
+importtime.log
+tmp_check_*.py
+docker-compose.yaml
+
+.git/
+.gitignore
+.dockerignore
+Dockerfile
