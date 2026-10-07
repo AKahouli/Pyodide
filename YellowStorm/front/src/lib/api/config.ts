@@ -206,6 +206,7 @@ export const API_ENDPOINTS = {
   adminSemanticModelSettings: {
     base: '/admin/semantic-model-settings',
     runLimits: '/admin/semantic-model-settings/run-limits',
+    assistantAccess: '/admin/semantic-model-settings/assistant-access',
   },
   semanticModelSettings: {
     extraction: '/semantic-model-settings/extraction',

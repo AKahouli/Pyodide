@@ -92,6 +92,8 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   updateAdminExtractionSettings: 'command',
   getAdminRunLimits: 'curated-read',
   updateAdminRunLimits: 'command',
+  getAdminAssistantAccess: 'curated-read',
+  updateAdminAssistantAccess: 'command',
   previewSourceMapping: 'evidence-read',
   getDocumentLabels: 'evidence-read',
   previewComputedField: 'evidence-read',
