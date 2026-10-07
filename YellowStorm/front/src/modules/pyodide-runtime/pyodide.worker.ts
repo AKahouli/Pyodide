@@ -91,7 +91,16 @@ function mountInputs(py: PyodideApi, files: PyodideWorkspaceFile[]): void {
   }
 }
 
-function captureOutputs(py: PyodideApi, names: string[]): PyodideWorkspaceFile[] {
+function captureOutputs(py: PyodideApi, requested: string[]): PyodideWorkspaceFile[] {
+  // §27: capture whatever the code wrote under /workspace/output; `requested` only narrows the set.
+  let names = requested;
+  if (names.length === 0) {
+    try {
+      names = py.FS.readdir(WORKSPACE_OUTPUT).filter((name: string) => name !== '.' && name !== '..');
+    } catch {
+      names = [];
+    }
+  }
   const captured: PyodideWorkspaceFile[] = [];
   let total = 0;
   for (const name of names) {

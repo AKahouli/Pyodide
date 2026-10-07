@@ -114,6 +114,12 @@ export class PyodideFileResolver {
       if (total > maxTotal) {
         throw new PyodideFileError('PYODIDE_RESULT_TOO_LARGE', 'The output files exceeded the configured limit.');
       }
+      // Overwrite semantics: re-running a conversion replaces the same-named document.
+      const existing = (await this.documents.findAllByWorkspace(workspaceId, { search: file.name, limit: 20 }))
+        .documents.find((doc) => !doc.isFolder && doc.originalName.toLowerCase() === file.name.toLowerCase());
+      if (existing) {
+        await this.documents.delete(workspaceId, userId, existing.id, false);
+      }
       const document = await this.documents.uploadSmallFile(
         workspaceId,
         userId,
