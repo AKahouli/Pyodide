@@ -17,7 +17,7 @@ const apiClientMock = vi.hoisted(() => {
 const reconnectConversationMock = vi.hoisted(() => vi.fn());
 const ensureConversationPipeMock = vi.hoisted(() => vi.fn());
 const reconnectNotificationsMock = vi.hoisted(() => vi.fn());
-const reconnectConversationV2Mock = vi.hoisted(() => vi.fn());
+const reconnectAppBuilderStudioMock = vi.hoisted(() => vi.fn());
 
 vi.mock('axios', () => ({
   default: { create: vi.fn(() => apiClientMock) },
@@ -48,8 +48,8 @@ vi.mock('@/modules/conversation/stream', () => ({
   },
 }));
 
-vi.mock('@/modules/conversation-v2/conversationV2Stream', () => ({
-  conversationV2StreamService: { reconnectWithNewToken: reconnectConversationV2Mock },
+vi.mock('@/modules/app-builder-studio/appBuilderStudioStream', () => ({
+  appBuilderStudioStreamService: { reconnectWithNewToken: reconnectAppBuilderStudioMock },
 }));
 
 import { clearAuthData, scheduleProactiveRefresh } from './client';

@@ -16,8 +16,8 @@ vi.mock('@/modules/models', () => ({
 vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
   useConversationStream: vi.fn(),
 }));
-vi.mock('@/modules/conversation-v2/useStream', () => ({
-  useConversationV2StreamConnection: vi.fn(),
+vi.mock('@/modules/app-builder-studio/useStream', () => ({
+  useAppBuilderStudioStreamConnection: vi.fn(),
 }));
 vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
   usePlaybookStreamGlobal: vi.fn(),

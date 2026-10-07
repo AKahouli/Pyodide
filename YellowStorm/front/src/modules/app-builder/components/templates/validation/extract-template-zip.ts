@@ -1,6 +1,6 @@
 import { unzip } from 'fflate';
-import type { VfsFiles } from '@/modules/conversation-v2/runtime/RevisionHydrator';
-import { isTextSourcePath } from '@/modules/conversation-v2/utils/app-source';
+import type { VfsFiles } from '@/modules/app-builder-studio/runtime/RevisionHydrator';
+import { isTextSourcePath } from '@/modules/app-builder-studio/utils/app-source';
 
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.git']);
 const EXCLUDED_BASENAMES = new Set(['manifest.json', 'README.md', 'package-lock.json']);

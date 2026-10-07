@@ -535,8 +535,8 @@ export async function openCitationSource(
         { source: objectKey, fileName: citation.fileName, reference },
       );
     }
-    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
-    const { url } = await conversationV2Api.getFileSignedUrl(objectKey);
+    const { appBuilderStudioApi } = await import('@/modules/app-builder-studio/api');
+    const { url } = await appBuilderStudioApi.getFileSignedUrl(objectKey);
     return { url, fileName: displayName, mimeType };
   }, {
     displayMode,

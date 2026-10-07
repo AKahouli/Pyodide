@@ -57,8 +57,8 @@ import {
   updateModel,
   setDefaultModel,
   clearDefaultModel,
-  setConversationV2DefaultModel,
-  clearConversationV2DefaultModel,
+  setAppBuilderDefaultModel,
+  clearAppBuilderDefaultModel,
   syncModels,
 } from '../api';
 import { useModelsStore } from '@/modules/models';
@@ -238,41 +238,41 @@ export function ModelsPage() {
     }
   };
 
-  const handleToggleConversationV2Default = async (model: AdminModelResponse) => {
+  const handleToggleAppBuilderDefault = async (model: AdminModelResponse) => {
     try {
-      if (model.isConversationV2Default) {
+      if (model.__WIRE__isConversationV2Default__) {
         // Clear conversation-v2 default
-        const updated = await clearConversationV2DefaultModel(model.id);
+        const updated = await clearAppBuilderDefaultModel(model.id);
         setModels((prev) =>
           sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
         );
-        useModelsStore.getState().syncConversationV2Default(null);
-        toast.success(t('models.toasts.conversationV2DefaultCleared.title'), {
-          description: t('models.toasts.conversationV2DefaultCleared.description', {
+        useModelsStore.getState().syncAppBuilderDefault(null);
+        toast.success(t('models.toasts.appBuilderDefaultCleared.title'), {
+          description: t('models.toasts.appBuilderDefaultCleared.description', {
             name: updated.name,
           }),
         });
       } else {
         // Set as conversation-v2 default
-        const updated = await setConversationV2DefaultModel(model.id);
+        const updated = await setAppBuilderDefaultModel(model.id);
         // Update all models - clear previous conversation-v2 default and set new one
         setModels((prev) =>
           sortModels(
             prev.map((m) => ({
               ...m,
-              isConversationV2Default: m.id === updated.id,
+              __WIRE__isConversationV2Default__: m.id === updated.id,
             }))
           )
         );
-        useModelsStore.getState().syncConversationV2Default(updated.id);
-        toast.success(t('models.toasts.conversationV2DefaultSet.title'), {
-          description: t('models.toasts.conversationV2DefaultSet.description', {
+        useModelsStore.getState().syncAppBuilderDefault(updated.id);
+        toast.success(t('models.toasts.appBuilderDefaultSet.title'), {
+          description: t('models.toasts.appBuilderDefaultSet.description', {
             name: updated.name,
           }),
         });
       }
     } catch (err) {
-      toast.error(t('models.toasts.conversationV2DefaultError.title'), {
+      toast.error(t('models.toasts.appBuilderDefaultError.title'), {
         description: err instanceof Error ? err.message : tCommon('errorUnknown'),
       });
     }
@@ -443,10 +443,10 @@ export function ModelsPage() {
                                 {t('models.table.defaultBadge')}
                               </Badge>
                             )}
-                            {model.isConversationV2Default && (
+                            {model.__WIRE__isConversationV2Default__ && (
                               <Badge variant="secondary" className="text-xs">
                                 <MessagesSquare className="mr-1 h-3 w-3" />
-                                {t('models.table.conversationV2DefaultBadge')}
+                                {t('models.table.appBuilderDefaultBadge')}
                               </Badge>
                             )}
                           </div>
@@ -519,12 +519,12 @@ export function ModelsPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => handleToggleConversationV2Default(model)}
+                                onClick={() => handleToggleAppBuilderDefault(model)}
                                 disabled={!model.isActive}
                               >
                                 <Bot
                                   className={`h-4 w-4 ${
-                                    model.isConversationV2Default
+                                    model.__WIRE__isConversationV2Default__
                                       ? 'fill-yellow-400 text-yellow-400'
                                       : 'text-muted-foreground'
                                   }`}
@@ -532,9 +532,9 @@ export function ModelsPage() {
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {model.isConversationV2Default
-                                ? t('models.table.actions.clearConversationV2Default')
-                                : t('models.table.actions.setConversationV2Default')}
+                              {model.__WIRE__isConversationV2Default__
+                                ? t('models.table.actions.clearAppBuilderDefault')
+                                : t('models.table.actions.setAppBuilderDefault')}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>

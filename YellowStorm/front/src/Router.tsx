@@ -1,8 +1,8 @@
 import React, { Suspense } from 'react';
 import { createHashRouter, Navigate, useParams, useSearchParams } from 'react-router-dom';
 
-/** Preserve query string when rewriting legacy `/conversation-v2/:id` → `/studio/:id`. */
-function ConversationV2LegacyRedirect() {
+/** Preserve query string when rewriting legacy `/app-builder/:id` → `/studio/:id`. */
+function AppBuilderStudioLegacyRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [searchParams] = useSearchParams();
   const qs = searchParams.toString();
@@ -35,17 +35,17 @@ const ConversationPage = React.lazy(() =>
 const NewConversationPage = React.lazy(() =>
   import('./modules/conversation/NewConversationPage').then((m) => ({ default: m.NewConversationPage }))
 );
-const ConversationV2Page = React.lazy(() =>
-  import('./modules/conversation-v2/ConversationV2Page')
+const AppBuilderStudioPage = React.lazy(() =>
+  import('./modules/app-builder-studio/AppBuilderStudioPage')
 );
-const ConversationV2SessionPage = React.lazy(() =>
-  import('./modules/conversation-v2/ConversationV2SessionPage')
+const AppBuilderStudioSessionPage = React.lazy(() =>
+  import('./modules/app-builder-studio/AppBuilderStudioSessionPage')
 );
 const SharedConversationPage = React.lazy(() =>
   import('./pages/SharedConversationPage').then((m) => ({ default: m.SharedConversationPage }))
 );
-const SharedConversationV2Page = React.lazy(() =>
-  import('./modules/conversation-v2/SharedConversationV2Page')
+const SharedAppBuilderStudioPage = React.lazy(() =>
+  import('./modules/app-builder-studio/SharedAppBuilderStudioPage')
 );
 const AllChatsPage = React.lazy(() =>
   import('./modules/sidebar').then((m) => ({ default: m.AllChatsPage }))
@@ -254,11 +254,11 @@ export const router = createHashRouter([
       },
       {
         path: 'studio',
-        element: lazyPage(<ConversationV2Page />),
+        element: lazyPage(<AppBuilderStudioPage />),
       },
       {
         path: 'studio/:sessionId',
-        element: lazyPage(<ConversationV2SessionPage />),
+        element: lazyPage(<AppBuilderStudioSessionPage />),
       },
       {
         path: 'conversation-v2',
@@ -266,7 +266,7 @@ export const router = createHashRouter([
       },
       {
         path: 'conversation-v2/:sessionId',
-        element: <ConversationV2LegacyRedirect />,
+        element: <AppBuilderStudioLegacyRedirect />,
       },
       {
         path: 'chats',
@@ -704,7 +704,7 @@ export const router = createHashRouter([
   // Public v2 share view - accessible by anyone (no auth required)
   {
     path: '/share/v2/:token',
-    element: lazyPage(<SharedConversationV2Page />),
+    element: lazyPage(<SharedAppBuilderStudioPage />),
   },
 
   // Catch-all for 404

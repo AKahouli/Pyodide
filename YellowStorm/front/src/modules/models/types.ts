@@ -16,7 +16,7 @@ export interface Model {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
-  isConversationV2Default: boolean;
+  __WIRE__isConversationV2Default__: boolean;
   omitTemperature: boolean;
   inputModalities: Array<'text' | 'image'>;
   maxInputTokens: number | null;
@@ -68,7 +68,7 @@ export interface ModelsActions {
   refreshModels: () => Promise<void>;
 
   /** Push Conversation V2 default change to all consumers (chat, composer) without refetch. */
-  syncConversationV2Default: (modelId: string | null) => void;
+  syncAppBuilderDefault: (modelId: string | null) => void;
 
   /** Push the global default model change (star on /admin/models) to all consumers without refetch. */
   syncDefaultModel: (modelId: string | null) => void;

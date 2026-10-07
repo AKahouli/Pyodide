@@ -59,7 +59,7 @@ describe('adminTemplateApi source uploads', () => {
     });
 
     expect(postMock).toHaveBeenCalledWith(
-      '/admin/conversation-v2/templates',
+      '/admin/app-builder/templates',
       expect.any(FormData),
       { timeout: 300_000 },
     );
@@ -69,7 +69,7 @@ describe('adminTemplateApi source uploads', () => {
     await adminTemplateApi.replaceSource('tpl_1', zip);
 
     expect(putMock).toHaveBeenCalledWith(
-      '/admin/conversation-v2/templates/tpl_1/source',
+      '/admin/app-builder/templates/tpl_1/source',
       expect.any(FormData),
       { timeout: 300_000 },
     );
@@ -83,7 +83,7 @@ describe('adminTemplateApi.listAllTemplates', () => {
     getMock.mockResolvedValue({ data: { data: [template] } });
 
     await expect(adminTemplateApi.listAllTemplates()).resolves.toEqual([template]);
-    expect(getMock).toHaveBeenCalledWith('/admin/conversation-v2/templates');
+    expect(getMock).toHaveBeenCalledWith('/admin/app-builder/templates');
   });
 });
 
@@ -104,7 +104,7 @@ describe('templateCatalogApi preview DTOs', () => {
       payload,
     );
     expect(getMock).toHaveBeenCalledWith(
-      '/conversation-v2/template-catalog/templates/tpl_1/preview/files',
+      '/app-builder/template-catalog/templates/tpl_1/preview/files',
     );
   });
 
@@ -116,7 +116,7 @@ describe('templateCatalogApi preview DTOs', () => {
       templateCatalogApi.presignTemplatePreviewFiles('tpl_1', ['src/App.jsx']),
     ).resolves.toEqual(payload);
     expect(postMock).toHaveBeenCalledWith(
-      '/conversation-v2/template-catalog/templates/tpl_1/preview/presign',
+      '/app-builder/template-catalog/templates/tpl_1/preview/presign',
       { paths: ['src/App.jsx'] },
     );
   });

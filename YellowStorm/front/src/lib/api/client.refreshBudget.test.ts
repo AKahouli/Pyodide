@@ -30,8 +30,8 @@ vi.mock('@/modules/notifications', () => ({
 vi.mock('@/modules/conversation/stream', () => ({
   conversationStreamService: { reconnectWithNewToken: vi.fn(), ensureConnected: vi.fn() },
 }));
-vi.mock('@/modules/conversation-v2/conversationV2Stream', () => ({
-  conversationV2StreamService: { reconnectWithNewToken: vi.fn() },
+vi.mock('@/modules/app-builder-studio/appBuilderStudioStream', () => ({
+  appBuilderStudioStreamService: { reconnectWithNewToken: vi.fn() },
 }));
 
 function makeAxiosError(status?: number, code?: string): Record<string, unknown> {

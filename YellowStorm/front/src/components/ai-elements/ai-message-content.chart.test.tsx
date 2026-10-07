@@ -25,8 +25,8 @@ vi.mock('@/modules/file-viewer', () => ({
   useFileViewerDisplayMode: () => 'sidebar',
 }));
 
-vi.mock('@/modules/conversation-v2/api', () => ({
-  conversationV2Api: { getFileSignedUrl: getFileSignedUrlMock },
+vi.mock('@/modules/app-builder-studio/api', () => ({
+  appBuilderStudioApi: { getFileSignedUrl: getFileSignedUrlMock },
 }));
 
 vi.mock('@/modules/conversation/api', () => ({ getCitationViewUrl: getCitationViewUrlMock }));

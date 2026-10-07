@@ -9,34 +9,34 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ModelsStore, ModelsState, Model } from './types';
 import * as api from './api';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
-import { clearSelectedModelIdFromAllSessions } from '@/modules/conversation-v2/selectedModelStorage';
+import { clearSelectedModelIdFromAllSessions } from '@/modules/app-builder-studio/selectedModelStorage';
 
 const MODELS_SYNC_CHANNEL = 'ym-models-sync';
 
 type ModelsSyncMessage = {
-  type: 'conversation-v2-default';
+  type: 'app-builder-default';
   modelId: string | null;
   previousDefaultId: string | null;
 };
 
 export const CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT =
-  'conversation-v2:default-model-changed';
+  'app-builder:default-model-changed';
 
 export const DEFAULT_MODEL_CHANGED_EVENT = 'models:default-model-changed';
 
-function applyConversationV2Default(
+function applyAppBuilderDefault(
   modelId: string | null,
   previousDefaultIdOverride?: string | null,
 ): string | null {
   const previousDefaultId =
     previousDefaultIdOverride !== undefined
       ? previousDefaultIdOverride
-      : (useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ?? null);
+      : (useModelsStore.getState().models.find((m) => m.__WIRE__isConversationV2Default__)?.id ?? null);
 
   useModelsStore.setState((state) => ({
     models: state.models.map((m) => ({
       ...m,
-      isConversationV2Default: modelId !== null && m.id === modelId,
+      __WIRE__isConversationV2Default__: modelId !== null && m.id === modelId,
     })),
   }));
 
@@ -55,7 +55,7 @@ function applyConversationV2Default(
   return previousDefaultId;
 }
 
-function broadcastConversationV2DefaultSync(
+function broadcastAppBuilderDefaultSync(
   modelId: string | null,
   previousDefaultId: string | null,
 ): void {
@@ -63,7 +63,7 @@ function broadcastConversationV2DefaultSync(
   try {
     const channel = new BroadcastChannel(MODELS_SYNC_CHANNEL);
     channel.postMessage({
-      type: 'conversation-v2-default',
+      type: 'app-builder-default',
       modelId,
       previousDefaultId,
     } satisfies ModelsSyncMessage);
@@ -174,9 +174,9 @@ export const useModelsStore = create<ModelsStore>()(
         await get().fetchModels();
       },
 
-      syncConversationV2Default: (modelId) => {
-        const previousDefaultId = applyConversationV2Default(modelId);
-        broadcastConversationV2DefaultSync(modelId, previousDefaultId);
+      syncAppBuilderDefault: (modelId) => {
+        const previousDefaultId = applyAppBuilderDefault(modelId);
+        broadcastAppBuilderDefaultSync(modelId, previousDefaultId);
       },
 
       syncDefaultModel: (modelId: string | null) => {
@@ -272,17 +272,17 @@ export const useDefaultModel = () =>
   useModelsStore(useShallow((state) => state.models.find((m) => m.isDefault)));
 
 /**
- * Get the conversation-v2 default model (the one with isConversationV2Default: true)
+ * Get the conversation-v2 default model (the one with __WIRE__isConversationV2Default__: true)
  */
-export const useConversationV2DefaultModel = () =>
-  useModelsStore(useShallow((state) => state.models.find((m) => m.isConversationV2Default)));
+export const useAppBuilderDefaultModel = () =>
+  useModelsStore(useShallow((state) => state.models.find((m) => m.__WIRE__isConversationV2Default__)));
 
 if (typeof window !== 'undefined') {
   try {
     const channel = new BroadcastChannel(MODELS_SYNC_CHANNEL);
     channel.onmessage = (event: MessageEvent<ModelsSyncMessage>) => {
-      if (event.data?.type !== 'conversation-v2-default') return;
-      applyConversationV2Default(event.data.modelId, event.data.previousDefaultId);
+      if (event.data?.type !== 'app-builder-default') return;
+      applyAppBuilderDefault(event.data.modelId, event.data.previousDefaultId);
     };
   } catch {
     // BroadcastChannel unavailable.

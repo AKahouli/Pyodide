@@ -3,7 +3,7 @@ import {
   getOrCreateHost,
   removeHost,
   type BrowserRuntimeHost,
-} from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
+} from '@/modules/app-builder-studio/runtime/BrowserRuntimeHost';
 import type { ValidationStep } from './pipeline';
 import { extractTemplateZipFromFile } from './extract-template-zip';
 
