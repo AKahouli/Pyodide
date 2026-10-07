@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import require_actor_context, workspace_id
+from auth import input_file_names, require_actor_context, workspace_id
 
 
 class PyodideBackendError(RuntimeError):
@@ -82,6 +82,9 @@ class YellowStormPyodideClient:
         workspace = workspace_id.get()
         if workspace:
             headers["X-YellowStorm-Workspace-Id"] = workspace
+        names = input_file_names.get()
+        if names:
+            headers["X-YellowStorm-Input-Files"] = ",".join(names)
         return headers
 
     @staticmethod

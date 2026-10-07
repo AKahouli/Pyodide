@@ -18,8 +18,16 @@ except Exception:  # pragma: no cover - optional dependency in bare test install
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 _OBJECT_ID = re.compile(r"^[0-9a-fA-F]{24}$")
+_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,254}$")
 _LEGACY_HEADER = b"x-pyodide-mcp-token"
 _HEALTH_PATHS = ("/health/live", "/health/ready")
+
+
+def _input_file_names(value: str) -> tuple[str, ...]:
+    """The trusted workspace file names (logical references) carried on the connector binding."""
+    names = [item.strip() for item in value.split(",") if item.strip()]
+    valid = [name for name in names if _FILE_NAME.fullmatch(name) and ".." not in name]
+    return tuple(dict.fromkeys(valid))
 
 
 def _first_workspace_id(value: str) -> str | None:
@@ -46,6 +54,7 @@ class PlatformActorContext:
 actor_context: ContextVar[PlatformActorContext | None] = ContextVar("pyodide_actor_context", default=None)
 acting_user_id: ContextVar[str | None] = ContextVar("pyodide_acting_user_id", default=None)
 workspace_id: ContextVar[str | None] = ContextVar("pyodide_workspace_id", default=None)
+input_file_names: ContextVar[tuple[str, ...]] = ContextVar("pyodide_input_file_names", default=())
 
 
 def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: str) -> bool:
@@ -116,9 +125,11 @@ class TrustedIdentityMiddleware:
             correlation_id=values["correlation_id"],
         ) if values["user_id"] else None
         workspace_raw = headers.get(b"workspace_id", b"").decode("utf-8", errors="replace").strip()
+        files_raw = headers.get(b"x-yellowstorm-input-files", b"").decode("utf-8", errors="replace").strip()
         user_token = acting_user_id.set(values["user_id"] or None)
         actor_token = actor_context.set(context)
         workspace_token = workspace_id.set(_first_workspace_id(workspace_raw))
+        files_token = input_file_names.set(_input_file_names(files_raw))
         bound = bind_contextvars(
             username=values["user_id"] or "",
             agent_id=values["agent_id"] or "",
@@ -129,6 +140,7 @@ class TrustedIdentityMiddleware:
             await self.app(scope, receive, send)
         finally:
             unbind_contextvars(*bound)
+            input_file_names.reset(files_token)
             workspace_id.reset(workspace_token)
             actor_context.reset(actor_token)
             acting_user_id.reset(user_token)

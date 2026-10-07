@@ -88,4 +88,50 @@ describe('PyodideRuntimeInternalController', () => {
     expect(response.artifacts).toEqual([{ name: 'out.csv', sizeBytes: 3, documentId: 'doc-1' }]);
     expect(response.outputFiles).toBeUndefined();
   });
+
+  it('defaults inputs from the trusted header when the model provides none', async () => {
+    const resolver = resolverStub();
+    const dispatcher = { execute: jest.fn().mockResolvedValue(result) } as unknown as PyodideRuntimeDispatcher;
+    const controller = new PyodideRuntimeInternalController(dispatcher, resolver, configWith(true));
+    const req = {
+      headers: {
+        'x-yellowstorm-user-id': USER_ID,
+        'x-yellowstorm-workspace-id': WORKSPACE_ID,
+        'x-yellowstorm-input-files': 'test_2.txt, other.csv',
+      },
+    };
+
+    await controller.execute(req, { code: '1' });
+
+    expect(resolver.resolveInputs).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, ['test_2.txt', 'other.csv']);
+    expect(dispatcher.execute).toHaveBeenCalledWith(USER_ID, expect.objectContaining({ inputs: ['test_2.txt', 'other.csv'] }));
+  });
+
+  it('prefers the model inputs over the trusted header', async () => {
+    const resolver = resolverStub();
+    const dispatcher = { execute: jest.fn().mockResolvedValue(result) } as unknown as PyodideRuntimeDispatcher;
+    const controller = new PyodideRuntimeInternalController(dispatcher, resolver, configWith(true));
+    const req = {
+      headers: {
+        'x-yellowstorm-user-id': USER_ID,
+        'x-yellowstorm-workspace-id': WORKSPACE_ID,
+        'x-yellowstorm-input-files': 'test_2.txt',
+      },
+    };
+
+    await controller.execute(req, { code: '1', inputs: ['explicit.txt'] });
+
+    expect(resolver.resolveInputs).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, ['explicit.txt']);
+  });
+
+  it('refuses trusted header inputs without a workspace context', async () => {
+    const dispatcher = { execute: jest.fn() } as unknown as PyodideRuntimeDispatcher;
+    const controller = new PyodideRuntimeInternalController(dispatcher, resolverStub(), configWith(true));
+    const req = { headers: { 'x-yellowstorm-user-id': USER_ID, 'x-yellowstorm-input-files': 'test_2.txt' } };
+
+    const response = await controller.execute(req, { code: '1' });
+
+    expect(response.error?.code).toBe('PYODIDE_EXECUTION_ERROR');
+    expect(dispatcher.execute).not.toHaveBeenCalled();
+  });
 });

@@ -50,14 +50,16 @@ export class PyodideRuntimeInternalController {
     }
     const userId = pyodideActingUserIdFrom(request.headers);
     const workspaceId = this.workspaceIdFrom(request.headers);
-    const wantsFiles = Boolean(dto.inputs?.length) || Boolean(dto.outputs?.length);
+    // The model's explicit inputs win; otherwise fall back to the node's trusted input files (§27).
+    const requestedInputs = dto.inputs?.length ? dto.inputs : this.inputFileNamesFrom(request.headers);
+    const wantsFiles = Boolean(requestedInputs?.length) || Boolean(dto.outputs?.length);
     if (wantsFiles && !workspaceId) {
       return this.failure('PYODIDE_EXECUTION_ERROR', 'A trusted workspace context is required for file operations.');
     }
 
     let inputFiles;
     try {
-      inputFiles = await this.resolver.resolveInputs(userId, workspaceId ?? '', dto.inputs ?? []);
+      inputFiles = await this.resolver.resolveInputs(userId, workspaceId ?? '', requestedInputs ?? []);
     } catch (error) {
       if (error instanceof PyodideFileError) return this.failure(error.code, error.message);
       throw error;
@@ -67,7 +69,7 @@ export class PyodideRuntimeInternalController {
       code: dto.code,
       input: dto.input ?? null,
       timeoutMs: dto.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      inputs: dto.inputs,
+      inputs: requestedInputs,
       outputs: dto.outputs,
       inputFiles,
     });
@@ -88,6 +90,14 @@ export class PyodideRuntimeInternalController {
     const raw = headers[WORKSPACE_HEADER];
     const value = (Array.isArray(raw) ? raw[0] : raw)?.trim().toLowerCase();
     return value && isObjectId(value) ? value : undefined;
+  }
+
+  private inputFileNamesFrom(headers: Record<string, string | string[] | undefined>): string[] | undefined {
+    const raw = headers['x-yellowstorm-input-files'];
+    const value = (Array.isArray(raw) ? raw[0] : raw)?.trim();
+    if (!value) return undefined;
+    const names = value.split(',').map((name) => name.trim()).filter(Boolean);
+    return names.length ? names : undefined;
   }
 
   private failure(code: string, message: string): PyodideExecutionResult {

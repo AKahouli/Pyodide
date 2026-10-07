@@ -1,6 +1,6 @@
 import pytest
 
-from auth import TrustedIdentityMiddleware, acting_user_id, actor_context, require_acting_user_id, workspace_id
+from auth import TrustedIdentityMiddleware, acting_user_id, actor_context, input_file_names, require_acting_user_id, workspace_id
 
 
 async def app(_scope, _receive, send):
@@ -170,6 +170,30 @@ async def test_extracts_the_first_workspace_object_id_from_a_json_array():
 
     assert messages[0]["status"] == 200
     assert seen[0] == "65f0000000000000000000aa"
+
+
+@pytest.mark.asyncio
+async def test_extracts_trusted_input_file_names_and_drops_paths():
+    seen = []
+
+    async def context_app(_scope, _receive, send):
+        seen.append(input_file_names.get())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+    async def send(message):
+        messages.append(message)
+
+    middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-user-id", b"user-1"),
+        (b"x-yellowstorm-input-files", b"test_2.txt, other.csv, ../evil, test_2.txt"),
+    ]}, lambda: None, send)
+
+    assert messages[0]["status"] == 200
+    assert seen[0] == ("test_2.txt", "other.csv")
 
 
 @pytest.mark.asyncio

@@ -958,7 +958,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private getNodeAgentMetadataService(): PlaybookExecutionNodeAgentMetadataService {
-    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService);
+    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService, this.configService);
   }
 
   private requireInputContractService(): PlaybookInputContractService {

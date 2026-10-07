@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from auth import PlatformActorContext, actor_context, workspace_id
+from auth import PlatformActorContext, actor_context, input_file_names, workspace_id
 from clients.yellowstorm_pyodide_client import PyodideBackendError, YellowStormPyodideClient
 
 
@@ -53,6 +53,27 @@ async def test_forwards_the_trusted_workspace_header():
         actor_context.reset(token)
 
     assert seen["workspace"] == "65f0000000000000000000aa"
+
+
+@pytest.mark.asyncio
+async def test_forwards_trusted_input_file_names():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["files"] = request.headers.get("X-YellowStorm-Input-Files")
+        return httpx.Response(200, json={"ok": True})
+
+    token = actor_context.set(PlatformActorContext("user-1", "", "", ""))
+    files_token = input_file_names.set(("test_2.txt", "other.csv"))
+    try:
+        client = YellowStormPyodideClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        await client.execute({"code": "1", "input": None, "timeoutMs": 1000})
+        await client.close()
+    finally:
+        input_file_names.reset(files_token)
+        actor_context.reset(token)
+
+    assert seen["files"] == "test_2.txt,other.csv"
 
 
 @pytest.mark.asyncio

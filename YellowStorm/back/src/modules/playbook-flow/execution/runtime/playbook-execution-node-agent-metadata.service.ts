@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
+import { isTrustedMcpServerUrl } from '@modules/connector/utils/trusted-mcp-server.util';
+
+interface NodeInputFile {
+  name?: unknown;
+}
 
 function getConnectorIdsFromRuntimeBindings(bindings: unknown): Set<string> {
   if (!Array.isArray(bindings)) {
@@ -36,9 +42,65 @@ function getSkillIdsFromRuntimeSkills(skills: unknown): Set<string> {
 export class PlaybookExecutionNodeAgentMetadataService {
   private readonly logger = new Logger(PlaybookExecutionNodeAgentMetadataService.name);
 
-  constructor(private readonly agentService: AgentService) {}
+  constructor(
+    private readonly agentService: AgentService,
+    private readonly config: ConfigService,
+  ) {}
 
+  /**
+   * The node's input files are logical references (names) already known to YellowStorm. For trusted MCP
+   * connectors we stamp them as a trusted header so the relay can mount them under /workspace/input when
+   * the model does not list them itself (§27: MCP → YellowStorm authorization → browser).
+   */
   async buildNodeRuntimeAgentMetadata(
+    ownerId: string,
+    nodeId: string,
+    baseMetadata: Record<string, unknown>,
+    resolvedAgent?: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
+    const result = await this.buildNodeRuntimeAgentMetadataInner(ownerId, nodeId, baseMetadata, resolvedAgent);
+    this.injectTrustedInputFiles(result, this.nodeInputFileNames(baseMetadata));
+    return result;
+  }
+
+  private nodeInputFileNames(baseMetadata: Record<string, unknown>): string[] {
+    const files = Array.isArray(baseMetadata.inputFiles) ? (baseMetadata.inputFiles as NodeInputFile[]) : [];
+    return [...new Set(files
+      .filter((file) => file && typeof file === 'object')
+      .map((file) => String(file.name || '').trim())
+      .filter(Boolean))];
+  }
+
+  private injectTrustedInputFiles(result: Record<string, unknown> | undefined, names: string[]): void {
+    if (!result || names.length === 0) return;
+    const bindings = Array.isArray(result.connector_bindings) ? result.connector_bindings : [];
+    let changed = false;
+    for (const binding of bindings) {
+      if (!binding || typeof binding !== 'object' || Array.isArray(binding)) continue;
+      const record = binding as Record<string, unknown>;
+      if (!isTrustedMcpServerUrl(this.config, record.mcp_server_url)) continue;
+      record.auth_headers = {
+        ...((record.auth_headers as Record<string, unknown>) ?? {}),
+        'X-YellowStorm-Input-Files': names.join(','),
+      };
+      changed = true;
+    }
+    if (!changed) return;
+
+    // parse_connector_bindings prefers metadata.connector_bindings, but keep the JSON mirrors consistent.
+    const serialized = JSON.stringify(bindings);
+    if (typeof result.connector_bindings_json === 'string') result.connector_bindings_json = serialized;
+    const agentParams = result.agent_params as Record<string, unknown> | undefined;
+    if (agentParams && typeof agentParams === 'object') {
+      if (typeof agentParams.connector_bindings_json === 'string') agentParams.connector_bindings_json = serialized;
+      const params = agentParams.params as Record<string, unknown> | undefined;
+      if (params && typeof params === 'object' && typeof params.connector_bindings_json === 'string') {
+        params.connector_bindings_json = serialized;
+      }
+    }
+  }
+
+  private async buildNodeRuntimeAgentMetadataInner(
     ownerId: string,
     nodeId: string,
     baseMetadata: Record<string, unknown>,
