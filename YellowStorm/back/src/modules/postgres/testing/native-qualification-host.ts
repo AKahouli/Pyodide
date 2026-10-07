@@ -87,7 +87,10 @@ export async function startNativeQualificationHost(apiUrl: string, internalToken
       REDIS_PORT: '6379',
       ADK_API_KEY: 'qualification-placeholder',
       VECTORSTORE_API_KEY: 'qualification-placeholder',
-      EMBEDDING_MODEL: 'text-embedding-3-small' } });
+      EMBEDDING_MODEL: 'text-embedding-3-small',
+      // llm_factory assigns these Optional settings into os.environ at import without a guard.
+      OLLAMA_API_BASE_URL: 'http://127.0.0.1:11434',
+      OLLAMA_API_KEY: 'qualification-placeholder' } });
   // Native logs are not echoed while it runs: settings/provider diagnostics may contain credentials.
   // The tail is kept, redacted, for the startup-failure rejection below so the real reason is visible.
   let stderrTail = '';
