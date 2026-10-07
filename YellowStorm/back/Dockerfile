@@ -8,6 +8,7 @@ COPY package.json package-lock.json ./
 # integrity hash in sync with the staged SDK tarball, so npm ci stays exact.
 RUN npm ci
 COPY src ./src
+COPY scripts ./scripts
 COPY nest-cli.json tsconfig.json tsconfig.build.json ./
 
 RUN npm run build
