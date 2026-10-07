@@ -1,4 +1,4 @@
-name: CI/CD MCP images
+name: CI/CD MCP (playbook agent semantic)
 
 on:
   pull_request:
@@ -47,6 +47,15 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       # requirements.txt references the wheel as file:./.generated/observability/*.whl;
       # without this step the image build fails at pip install and the container
       # would crash on `import yellowmind_observability`.
@@ -55,15 +64,40 @@ jobs:
 
       - name: Build and push Docker images
         run: |
-          # --network=host: the runner's bridge network has no outbound access
-          # (apt-get inside build containers times out), while the host does.
+          docker buildx create --name yellowstorm-mcp-builder --use 2>/dev/null || docker buildx use yellowstorm-mcp-builder
           for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
-            IMAGE="${ACR_LOGIN_SERVER}/yellowstorm-${mcp}-poc"
-            docker build --network=host -t "${IMAGE}:${VERSION}" "mcp/${mcp}"
-            docker push "${IMAGE}:${VERSION}"
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            docker buildx build \
+              --network=host \
+              --cache-from=type=registry,ref=${IMAGE}:buildcache \
+              --cache-to=type=registry,ref=${IMAGE}:buildcache,mode=max \
+              --tag "${IMAGE}:${VERSION}" \
+              --push \
+              "mcp/${mcp}"
           done
 
-  # Deploy wiring: no MCP compose/service path is defined in this repo yet.
-  # Mirror deploy-adk.yml's "Update Compose and deploy" job here once the target
-  # compose file is known (it must pass the three *_MCP_INGRESS_TOKEN values and
-  # YELLOWSTORM_INTERNAL_SERVICE_TOKEN from the deployment secret manager).
+  deploy:
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    needs: build
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Pull latest Docker images and deploy
+        run: |
+          export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            COMPOSE_FILE=~/yellowstorm/${ENV_NAME}/${mcp}/docker-compose.yaml
+            
+            # Pull the image explicitly
+            docker pull "${IMAGE}:${IMAGE_TAG}"
+            
+            # Update the image tag in docker-compose.yaml
+            sed -i "s|image: ${IMAGE}:.*$|image: ${IMAGE}:${IMAGE_TAG}|" $COMPOSE_FILE
+            
+            # Restart the service
+            docker compose -f $COMPOSE_FILE down
+            docker compose -f $COMPOSE_FILE up -d
+          done
