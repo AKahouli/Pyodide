@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bot, Loader2, RefreshCw, Rows, Search, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, Eye, KeyRound, ListChecks, Loader2, RefreshCw, Rows, Search, Sparkles, Table2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -17,7 +17,10 @@ import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AiExtractionSettings, DerivedExpand, DocumentFieldReading, MappingSettings, SheetFieldPreviewResponse, SourceFieldMapping } from '../../types';
 import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
-import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
+import { FormField, INPUT, ROW_LIST } from '../form/FormParts';
+import { SettingsPane } from '../settings/SettingsPane';
+import { isMailArchive } from '../../utils/data-sources';
+import { ArchiveIndexingPane } from './ArchiveIndexingPane';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
 import { FieldLiveStatus } from './DocumentPreviewPane';
 import { computedProblem, recipeColumns } from './FieldRecipeEditor';
@@ -34,6 +37,10 @@ const DEFAULT_ROWS = 5;
 const MAX_ROWS = 20;
 // The runtime's default bound on rows read with AI per source and run (SEMANTIC_MAX_AI_ROWS_PER_SOURCE).
 const MAX_AI_ROWS = 500;
+
+type Pane = 'samples' | 'expand' | 'fields' | 'key' | 'result' | 'preview' | 'archive';
+// Every part starts folded, as in "fill from another concept": its title says what it holds or what to fix.
+const FOLDED: Record<Pane, boolean> = { samples: false, expand: false, fields: false, key: false, result: false, preview: false, archive: false };
 
 type Span = { start: number; end: number };
 /** What is marked in a shown text: a searched label, or where values were found (a column's span). */
@@ -71,9 +78,19 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
   const [highlight, setHighlight] = useState<Highlight>(null);
   // Several records per row: one column split into items, each item read as a row of its own.
   const [expand, setExpand] = useState<DerivedExpand | null>(null);
+  const [panes, setPanes] = useState<Record<Pane, boolean>>(FOLDED);
+  const paneProps = (pane: Pane) => ({ id: `sheet-${pane}`, open: panes[pane],
+    onOpenChange: (open: boolean) => setPanes((current) => current[pane] === open ? current : { ...current, [pane]: open }) });
+  // Each field is one line until opened; the fields as last saved, to mark and revert a changed one.
+  const [openFields, setOpenFields] = useState<string[]>([]);
+  const toggleField = (field: string) => setOpenFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field]);
+  const savedRows = useMemo(() => target?.mapping
+    ? Object.fromEntries(target.mapping.fieldMappings.map((mapping) => [mapping.targetAttribute, mapping])) as Record<string, SourceFieldMapping> : null, [target?.mapping]);
 
   useEffect(() => {
     if (!target) return;
+    setPanes(FOLDED);
+    setOpenFields([]);
     setExpand(target.mapping?.expand ?? target.replaces?.expand ?? null);
     setConceptId(target.mapping?.conceptId ?? target.replaces?.conceptId ?? target.conceptId ?? '');
     setSheetName(target.mapping?.sheetName ?? target.sheetName ?? '');
@@ -227,6 +244,32 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
       if (liveKey.current === key) setLive((current) => ({ ...current, key, error: parseApiError(error).message, loading: false }));
     }
   }, [draftKey, modelId]);
+  // One field read now on the picked rows, its result merged into the last reading.
+  const [readingField, setReadingField] = useState<string | null>(null);
+  const readField = async (field: string) => {
+    if (!draftKey || !requestRef.current) return;
+    const request = requestRef.current();
+    const mapping = request.fieldMappings.find((item) => item.targetAttribute === field);
+    if (!mapping) return;
+    const key = draftKey;
+    setReadingField(field);
+    try {
+      // A recipe may read other fields, so they are read with it.
+      const result = await semanticModelApi.previewSheetFields(modelId, { ...request, fieldMappings: mapping.mode === 'computed' ? request.fieldMappings : [mapping] });
+      setLive((current) => {
+        if (!current.result || current.key !== key) return { key, result, loading: false };
+        const read = new Map(result.rows.map((row) => [`${row.rowNumber}#${row.item ?? 0}`, row]));
+        return { ...current, result: { ...current.result, rows: current.result.rows.map((row) => {
+          const fresh = read.get(`${row.rowNumber}#${row.item ?? 0}`)?.fields[field];
+          return fresh ? { ...row, fields: { ...row.fields, [field]: fresh } } : row;
+        }) } };
+      });
+    } catch (error) {
+      showError(t('mapping.previewError'), { description: parseApiError(error).message });
+    } finally {
+      setReadingField(null);
+    }
+  };
   // Rules and columns are read again as they change; AI only on request (it is slow and costly).
   useEffect(() => {
     if (!draftKey || usesAi) return;
@@ -276,6 +319,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
       fieldMappings: payload, identityFields: identityField ? [identityField] : [],
       ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
     }),
+    onSuccess: () => setPanes((current) => ({ ...current, preview: true })),
     onError: (error) => showError(t('mapping.previewError'), { description: error instanceof Error ? error.message : undefined }),
   });
   const save = useMutation({
@@ -316,8 +360,36 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     ? samples.filter((item) => usedColumns.some((column) => String(item.row[column] ?? '').toLocaleLowerCase().includes(rowFilter.trim().toLocaleLowerCase())))
     : samples;
 
+  // What each folded part says on its title: the values in force, or what to fix in it.
+  const aiFields = payload.filter((mapping) => mapping.mode === 'extract' && mapping.extractionStrategy !== undefined && mapping.extractionStrategy !== 'deterministic').length;
+  const fieldsAttention = !payload.length || problems.length > 0 || !limitsValid;
+  const problem = !conceptId ? t('mapping.chooseConcept') : !sheetName ? t('mapping.chooseSheet')
+    : !payload.length ? t('derived.problem.noField')
+    : problems.length ? t('mapping.cell.saveBlocked', { fields: problems.map(attributeLabel).join(', ') })
+    : !identityValid ? t('derived.problem.keyNotFilled', { field: attributeLabel(identityField) })
+    : !limitsValid ? t('derived.problem.aiLimits') : expandIssue;
+  const aiEstimate = t('mapping.cell.aiEstimate', { calls: Math.min(rowCount, MAX_AI_ROWS).toLocaleString(), rows: rowCount.toLocaleString(), max: MAX_AI_ROWS });
+  const liveSummary = !canRead ? t('mapping.cell.incomplete') : live.loading ? t('mapping.cell.readingRows', { count: pickedNumbers.length })
+    : live.result && !stale ? t('mapping.cell.readRows', { count: live.result.rows.length }) : usesAi ? t('mapping.live.aiManual') : t('mapping.cell.readingRows', { count: pickedNumbers.length });
+  // One line per folded field: where it reads, how, and what it found on the shown row.
+  const fieldSummary = (mapping: SourceFieldMapping) => {
+    const parts = [
+      (mapping.mode === 'direct' || mapping.mode === 'extract') && mapping.sourceField ? itemLabels[mapping.sourceField] ?? mapping.sourceField : '',
+      t(`mapping.method.${mapping.mode}`),
+      mapping.mode === 'extract' ? t(`mapping.strategy.${mapping.extractionStrategy ?? 'deterministic'}`) : '',
+      mapping.mode === 'constant' ? String(mapping.constantValue ?? '') : '',
+    ].filter(Boolean);
+    const found = mapping.mode !== 'ignore' ? shownReadings?.[mapping.targetAttribute] : undefined;
+    const value = found?.reason === 'found' && found.value != null ? String(found.value) : null;
+    return <>{parts.join(' · ')}{value !== null && <span className='text-foreground'>{` → ${value}`}</span>}</>;
+  };
+  const ready = Boolean(sheetName && concept);
+  // Side by side on a wide screen while the sample rows are open: the cells on the left, the settings on the right.
+  const sideBySide = panes.samples && ready;
+  const archive = isMailArchive(target?.mimeType ?? target?.mapping?.mimeType);
+
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
-    {target && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-3xl' onInteractOutside={(event) => event.preventDefault()}>
+    {target && <SheetContent side='right' className={cn('flex w-full flex-col gap-0 p-0 sm:max-w-3xl', sideBySide && 'xl:max-w-6xl')} onInteractOutside={(event) => event.preventDefault()}>
       <SheetHeader className='border-b p-5'>
         <SheetTitle>{target.mapping ? t('mapping.editTitle') : target.replaces ? t('mapping.switch.title', { name: target.documentName }) : t('mapping.title', { name: target.documentName })}</SheetTitle>
         <SheetDescription>{target.replaces ? t('mapping.switch.description', { name: target.replaces.documentName ?? target.replaces.documentId }) : t('mapping.description')}</SheetDescription>
@@ -325,8 +397,8 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
           onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}>
           <Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
       </SheetHeader>
-      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
-        <div className='grid gap-4 sm:grid-cols-2'>
+      <div className='min-h-0 flex-1 space-y-3 overflow-y-auto p-5'>
+        <div className='grid gap-4 pb-2 sm:grid-cols-2'>
           <FormField label={t('mapping.concept')}>
             <Select value={conceptId} disabled={Boolean(target.mapping || target.replaces)} onValueChange={(value) => {
               setConceptId(value); setMappings([]);
@@ -352,28 +424,29 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
             {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}</Button>
         </div>}
 
-        {sheetName && concept && <section className={FORM_SECTION} aria-label={t('mapping.cell.samplesTitle')}>
-          <SectionHeader title={t('mapping.cell.samplesTitle')} help={t('mapping.cell.samplesHelp', { max: MAX_ROWS })} icon={<Rows className='mr-0.5 h-4 w-4 text-muted-foreground' />}>
-            <span className='text-[11px] tabular-nums text-muted-foreground'>{t('mapping.cell.rowsPicked', { count: pickedNumbers.length, total: samples.length })}</span>
-          </SectionHeader>
+        <div className={cn('space-y-3', sideBySide && 'xl:grid xl:grid-cols-2 xl:items-start xl:gap-4 xl:space-y-0')}>
+        <div className={cn('space-y-3', sideBySide && 'xl:sticky xl:top-0')}>
+        {ready && <SettingsPane {...paneProps('samples')} title={t('mapping.cell.samplesTitle')} help={t('mapping.cell.samplesHelp', { max: MAX_ROWS })}
+          icon={<Rows className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={samples.length ? `${t('mapping.cell.rowsPicked', { count: pickedNumbers.length, total: samples.length })} · ${liveSummary}` : t('mapping.cell.noSamples')}>
           {profile.data && !profile.data.complete && <p className='text-xs text-amber-700 dark:text-amber-400'>{t('sourceAnalysis.boundedSample')}</p>}
           {!samples.length && <p className='text-xs text-muted-foreground'>{t('mapping.cell.noSamples')}</p>}
-          {samples.length > 0 && <div className='grid gap-3 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]'>
+          {samples.length > 0 && <div className='space-y-3'>
             <div className='space-y-1.5'>
               {samples.length > 8 && <Input className='h-7 text-xs' value={rowFilter} onChange={(event) => setRowFilter(event.target.value)}
                 placeholder={t('mapping.recipe.rowsFilter')} aria-label={t('mapping.recipe.rowsFilter')} />}
-              <ul className={cn(ROW_LIST, 'max-h-56 overflow-y-auto text-xs')}>
+              <ul className={cn(ROW_LIST, 'max-h-44 overflow-y-auto text-xs')}>
                 {listedSamples.map((item) => {
                   const checked = pickedNumbers.includes(item.number);
                   const summary = usedColumns.map((column) => String(item.row[column] ?? '')).find((text) => text.trim()) ?? '';
                   return <li key={item.number} className={cn('flex items-center gap-2 px-2 py-1', shown?.number === item.number && 'bg-muted/60')}>
                     <input type='checkbox' checked={checked} disabled={!checked && pickedNumbers.length >= MAX_ROWS}
                       aria-label={t('mapping.recipe.rowFor', { row: t('mapping.recipe.rowLabel', { row: item.number }) })} onChange={() => togglePicked(item.number)} />
-                    <button type='button' className='flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:opacity-60' disabled={!checked}
-                      aria-label={t('mapping.cell.showRow', { row: item.number })} onClick={() => { setShownRow(item.number); setHighlight(null); }}>
-                      <span className='shrink-0 tabular-nums text-muted-foreground'>{t('mapping.recipe.rowLabel', { row: item.number })}</span>
-                      <span className='min-w-0 truncate'>{summary || '—'}</span>
-                    </button>
+                    <span className='shrink-0 tabular-nums text-muted-foreground'>{t('mapping.recipe.rowLabel', { row: item.number })}</span>
+                    <span className='min-w-0 flex-1 truncate'>{summary || '—'}</span>
+                    <button type='button' className='flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40' disabled={!checked}
+                      aria-label={t('mapping.cell.showRow', { row: item.number })} title={t('mapping.cell.showRow', { row: item.number })} onClick={() => { setShownRow(item.number); setHighlight(null); }}>
+                      <Eye className='h-3.5 w-3.5' /></button>
                   </li>;
                 })}
               </ul>
@@ -381,8 +454,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
             <div className='min-w-0 space-y-2'>
               <div className='flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground' aria-live='polite'>
                 {live.loading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <Rows className='h-3.5 w-3.5 shrink-0' />}
-                <span className='min-w-0 flex-1 truncate'>{!canRead ? t('mapping.cell.incomplete') : live.loading ? t('mapping.cell.readingRows', { count: pickedNumbers.length })
-                  : live.result && !stale ? t('mapping.cell.readRows', { count: live.result.rows.length }) : usesAi ? t('mapping.live.aiManual') : t('mapping.cell.readingRows', { count: pickedNumbers.length })}</span>
+                <span className='min-w-0 flex-1 truncate'>{liveSummary}</span>
                 {canRead && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.loading} onClick={() => void readRows()}>
                   <RefreshCw className='mr-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('mapping.cell.readNow') : t('mapping.live.readAgain')}
                 </Button>}
@@ -404,25 +476,39 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
               </div>)}
             </div>
           </div>}
-        </section>}
+        </SettingsPane>}
+        </div>
 
-        {sheetName && concept && columns.length > 0 && <ExpandCard unit='row' value={expand} onChange={changeExpand} sourceLabel={sheetName}
-          sourceFields={columns.map((column) => ({ key: column, label: column }))} relations={[]}
-          items={expand && live.result && !stale ? { count: live.result.rows.length, records: new Set(live.result.rows.map((row) => row.rowNumber)).size,
-            truncated: live.result.itemsTruncated === true } : undefined} />}
+        <div className='min-w-0 space-y-3'>
+        {ready && columns.length > 0 && <SettingsPane {...paneProps('expand')} title={t('mapping.pane.expandTitle')} attention={Boolean(expandIssue)}
+          icon={<ListChecks className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={expandIssue ?? (expand ? t('derived.expand.summaryOn', { field: expand.field || '…' }) : t('derived.expand.row.off'))}>
+          <ExpandCard unit='row' value={expand} onChange={changeExpand} sourceLabel={sheetName}
+            sourceFields={columns.map((column) => ({ key: column, label: column }))} relations={[]}
+            items={expand && live.result && !stale ? { count: live.result.rows.length, records: new Set(live.result.rows.map((row) => row.rowNumber)).size,
+              truncated: live.result.itemsTruncated === true } : undefined} />
+        </SettingsPane>}
 
-        {sheetName && concept && attributes.length > 0 && <section className={FORM_SECTION}>
-          <SectionHeader title={t('mapping.cell.fieldsTitle')} help={t('mapping.cell.fieldsHelp')} count={payload.length || undefined} />
+        {ready && attributes.length > 0 && <SettingsPane {...paneProps('fields')} title={t('mapping.cell.fieldsTitle')} help={t('mapping.cell.fieldsHelp')} attention={fieldsAttention}
+          icon={<Table2 className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={problems.length ? t('mapping.cell.saveBlocked', { fields: problems.map(attributeLabel).join(', ') })
+            : !payload.length ? t('derived.problem.noField') : t('derived.fieldsSummary', { count: payload.length, ai: aiFields })}>
           <MappingPresetBar modelId={modelId} conceptId={conceptId} attributes={attributes}
             current={{ fieldMappings: payload, aiSettings, identityFields: identityField ? [identityField] : [] }} onApply={applySettings} autoStart={false} />
           <ReadAllFieldsBar direct mappings={mappings} onApply={(choice) => changeMappings(readAllWith(mappings, choice, 'sheet'))} />
-          {usesAi && <p className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'>
-            <Bot className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.cell.aiEstimate', { calls: Math.min(rowCount, MAX_AI_ROWS).toLocaleString(), rows: rowCount.toLocaleString(), max: MAX_AI_ROWS })}
-          </p>}
+          {usesAi && <AiLimitsEditor folded defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           <FieldMappingList kind='sheet' modelId={modelId} attributes={attributes} mappings={mappings} onChange={changeMappings}
             onIgnore={(field) => { if (identityField === field) setIdentityField(''); }}
             columns={[...itemFields, ...columns]} columnLabels={itemLabels}
             columnSamples={{ ...columnSamples, ...shownItem }}
+            folding={{
+              open: openFields, onToggle: toggleField, summary: fieldSummary,
+              isKey: (field) => identityField === field, onToggleKey: (field) => setIdentityField((current) => current === field ? '' : field),
+              changed: (mapping) => Boolean(savedRows) && JSON.stringify(savedRows?.[mapping.targetAttribute] ?? null) !== JSON.stringify(mapping),
+              onRevert: (field) => savedRows?.[field] && changeMappings(mappings.map((row) => row.targetAttribute === field ? savedRows[field] : row)),
+              onRead: (field) => void readField(field), readingField,
+              readBlocked: !canRead ? problem ?? t('mapping.cell.incomplete') : undefined,
+            }}
             recipeSource={{
               kind: 'sheet', columns: [...itemFields, ...columns], rows: expand && itemRows.length ? itemRows : profile.data?.sampleRows ?? [], fieldValues,
               fieldInputs: Object.fromEntries(payload.filter((mapping) => mapping.mode === 'direct' && mapping.sourceField)
@@ -439,13 +525,11 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
               suggestions: mapping.mode === 'extract' ? suggestionsFor(mapping.sourceField) : undefined,
               reading: canRead && shown ? { reading: shownReadings?.[mapping.targetAttribute], pending: live.loading, onRead: () => void readRows() } : undefined,
             })} />
-          {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
-          {problems.length > 0 && <p role='status' className='text-xs text-amber-700 dark:text-amber-400'>{t('mapping.cell.saveBlocked', { fields: problems.map(attributeLabel).join(', ') })}</p>}
-          {expandIssue && <p role='status' className='text-xs text-amber-700 dark:text-amber-400'>{expandIssue}</p>}
-        </section>}
+        </SettingsPane>}
 
-        {sheetName && concept && <section className={FORM_SECTION}>
-          <SectionHeader title={t('mapping.identity')} help={t('mapping.identityHelp')} />
+        {ready && <SettingsPane {...paneProps('key')} title={t('mapping.identity')} help={t('mapping.identityHelp')} attention={!identityValid}
+          icon={<KeyRound className='h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400' />}
+          summary={!identityValid ? t('derived.problem.keyNotFilled', { field: attributeLabel(identityField) }) : identityField ? attributeLabel(identityField) : t('mapping.identityNone')}>
           <Select value={identityField || '__none'} onValueChange={(value) => setIdentityField(value === '__none' ? '' : value)}>
             <SelectTrigger className={INPUT} aria-label={t('mapping.identity')}><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -456,11 +540,14 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
           {preview.data?.identityEvidence.map((evidence) => <p key={evidence.name} className='text-xs text-muted-foreground'>
             {t('mapping.identityEvidence', { name: evidence.name, unique: Math.round(evidence.uniqueRatio * 100), populated: Math.round(evidence.populatedRatio * 100) })}
           </p>)}
-        </section>}
+        </SettingsPane>}
 
-        {live.result && concept && <ReadingTextContext.Provider value='cell'><section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('mapping.cell.resultTitle')}>
-          <SectionHeader title={t('mapping.cell.resultTitle')} count={live.result.rows.length} />
-          {live.result.ai.aiCalls > 0 && <p className='text-[11px] text-muted-foreground'>{t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}</p>}
+        {archive && ready && <ArchiveIndexingPane modelId={modelId} workspaceId={target.workspaceId} documentId={target.documentId} canEdit
+          open={panes.archive} onOpenChange={paneProps('archive').onOpenChange} />}
+
+        {live.result && concept && <ReadingTextContext.Provider value='cell'><SettingsPane {...paneProps('result')} title={t('mapping.cell.resultTitle')} className={cn(stale && 'opacity-60')}
+          icon={<Eye className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={`${t('mapping.cell.readRows', { count: live.result.rows.length })}${live.result.ai.aiCalls > 0 ? ` · ${t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}` : ''}`}>
           {live.result.rows.map((row) => <div key={`${row.rowNumber}#${row.item ?? 0}`} className='space-y-1.5 rounded-lg border p-2'>
             <button type='button' className='text-xs font-medium hover:underline' onClick={() => { setShownRow(row.rowNumber); setHighlight(null); }}>
               {t('mapping.recipe.rowLabel', { row: row.rowNumber })}{row.item !== undefined ? ` · ${t('derived.expand.row.itemOf', { number: row.item, item: row.itemText ?? '' })}` : ''}</button>
@@ -471,10 +558,11 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
               </Fragment>)}
             </div>
           </div>)}
-        </section></ReadingTextContext.Provider>}
+        </SettingsPane></ReadingTextContext.Provider>}
 
-        {preview.data && <section className={FORM_SECTION}>
-          <SectionHeader title={t('mapping.preview', { count: preview.data.stats.resolvedEntities })} />
+        {preview.data && <SettingsPane {...paneProps('preview')} title={t('mapping.preview', { count: preview.data.stats.resolvedEntities })} attention={preview.data.warnings.length > 0}
+          icon={<Rows className='h-4 w-4 shrink-0 text-muted-foreground' />}
+          summary={preview.data.warnings[0] ?? t('mapping.pane.previewSummary', { count: preview.data.entities.length })}>
           {preview.data.warnings.map((warning) => <p key={warning} className='flex items-start gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />{warning}</p>)}
           <ScrollArea className='max-h-56 rounded-lg border'>
             <div className='divide-y'>
@@ -487,10 +575,19 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
               {!preview.data.entities.length && <p className='p-3 text-xs text-muted-foreground'>{t('mapping.noEntities')}</p>}
             </div>
           </ScrollArea>
-        </section>}
+        </SettingsPane>}
+        </div>
+        </div>
       </div>
       <Separator />
-      <div className='flex items-center justify-end gap-2 p-4'>
+      <div className='flex items-center gap-2 p-4'>
+        <div className='min-w-0 flex-1 space-y-0.5'>
+          {problem && ready && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
+            <AlertTriangle className='h-3.5 w-3.5 shrink-0' /><span className='line-clamp-2'>{problem}</span></p>}
+          {/* What a run costs in AI, in sight when saving. */}
+          {usesAi && <p className='flex items-center gap-1.5 text-[11px] text-muted-foreground' title={aiEstimate}>
+            <Bot className='h-3.5 w-3.5 shrink-0' /><span className='truncate'>{t('derived.aiFooter', { calls: Math.min(rowCount, MAX_AI_ROWS).toLocaleString() })}</span></p>}
+        </div>
         <Button variant='outline' onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant='outline' disabled={!canSave || preview.isPending} onClick={() => preview.mutate()}>
           {preview.isPending ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}{t('mapping.previewButton')}
