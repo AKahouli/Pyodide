@@ -17,7 +17,7 @@ const SCOPES = [
   { name: 'yellowstorm-back', root: 'YellowStorm/back/src', lang: 'ts', exclude: [/\.spec\.ts$/, /node_modules/, /\/dist\//] },
   { name: 'yellowstorm-code-runtime', root: 'yellowstorm-code-runtime/src', lang: 'ts', exclude: [/\.spec\.ts$/, /\.test\.ts$/, /node_modules/, /\/dist\//, /telemetry/] },
   { name: 'yellowstorm-adk', root: 'yellowstorm-adk/src', lang: 'py', exclude: [/__pycache__/, /grpc_generated/] },
-  { name: 'mcp', root: 'mcp', lang: 'py', exclude: [/__pycache__/] },
+  { name: 'mcp', root: 'mcp', lang: 'py', exclude: [/__pycache__/, /\.venv\//, /site-packages/] },
 ];
 
 const registry = JSON.parse(readFileSync(path.join(repoRoot, 'contracts', 'observability', 'log-events.v1.json'), 'utf8'));

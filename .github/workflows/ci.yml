@@ -54,6 +54,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: yellowstorm-code-runtime/package-lock.json
+      # npm ci resolves @yellowmind/observability from .generated/ (gitignored): stage it first.
+      - uses: ./.github/actions/stage-observability
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
@@ -129,6 +131,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: YellowStorm/back/package-lock.json
+      # npm ci resolves @yellowmind/observability from .generated/ (gitignored): stage it first.
+      - uses: ./.github/actions/stage-observability
       - run: npm ci
         # NOTE: 'npm run build' is intentionally skipped — ts-jest handles
         # TypeScript compilation at test time; the build step is only for deployment.
@@ -192,7 +196,21 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: YellowStorm/back/package-lock.json
+      # npm ci resolves @yellowmind/observability from .generated/ (gitignored): stage it first.
+      - uses: ./.github/actions/stage-observability
       - run: npm ci
+      # The native qualification spec spawns the ADK gRPC host: the runner ships conda without the
+      # `meta` env, so the host falls back to this Python and needs the ADK dependencies installed.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: yellowstorm-adk/requirements.txt
+      - name: Install the ADK runtime for the native qualification host
+        working-directory: yellowstorm-adk
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
       - name: Apply migrations to the test database
         # The runner targets POSTGRES_DB, so point it at the test database explicitly.
         run: POSTGRES_DB=agentstore_test npx ts-node scripts/migrate-postgres.ts
@@ -225,6 +243,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # requirements.txt resolves yellowmind_observability from .generated/ (gitignored):
+      # stage the wheel with the job's Python before pip install -r.
+      - uses: ./.github/actions/stage-observability
         with:
           python-version: '3.11'
       - name: Install system dependencies

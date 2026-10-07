@@ -70,6 +70,9 @@ if (!wheel) throw new Error('pip wheel produced no artifact');
 for (const dest of [
   path.join(repoRoot, 'yellowstorm-adk', '.generated', 'observability'),
   path.join(repoRoot, 'YellowStorm', 'semantic-model-runtime', '.generated', 'observability'),
+  path.join(repoRoot, 'mcp', 'mcp-agent', '.generated', 'observability'),
+  path.join(repoRoot, 'mcp', 'mcp-playbook', '.generated', 'observability'),
+  path.join(repoRoot, 'mcp', 'mcp-semantic-model', '.generated', 'observability'),
 ]) {
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
