@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { UserService } from '@modules/user';
+import { NotificationsService } from '@modules/notifications/notifications.service';
+import { NotificationType } from '@modules/notifications/notification.types';
 import { ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -23,14 +25,60 @@ export interface SemanticModelShareResult {
   alreadyShared: string[];
 }
 
+type ShareEvent = 'shared' | 'role_changed' | 'revoked';
+
 @Injectable()
 export class SemanticModelShareService {
+  private readonly logger = new Logger(SemanticModelShareService.name);
+
   constructor(
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
     private readonly users: UserService,
     private readonly grants: SemanticDataGrantService,
+    @Optional() @Inject(forwardRef(() => NotificationsService))
+    private readonly notifications?: NotificationsService,
   ) {}
+
+  /** Adds who owns each model the user does not own, so the catalog can say who shared it. */
+  async attachOwners<T extends { items: Array<{ ownerUserId: string; role?: string }> }>(page: T): Promise<T> {
+    const foreign = [...new Set(page.items.filter((item) => item.role !== 'owner').map((item) => item.ownerUserId))];
+    if (!foreign.length) return page;
+    const owners = new Map<string, { ownerName: string | null; ownerEmail: string | null }>();
+    await Promise.all(foreign.map(async (id) => {
+      const user = await this.users.findById(id).catch(() => null);
+      if (!user) return;
+      const name = [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ');
+      owners.set(id, { ownerName: name || null, ownerEmail: user.email ?? null });
+    }));
+    for (const item of page.items) Object.assign(item, owners.get(item.ownerUserId) ?? {});
+    return page;
+  }
+
+  /** A notification must never fail the share itself: errors are logged and swallowed. */
+  private async notify(event: ShareEvent, requesterId: string, recipientId: string, model: { id: string; name: string }, role?: string): Promise<void> {
+    if (!this.notifications) return;
+    try {
+      const requester = await this.users.findById(requesterId).catch(() => null);
+      const who = [requester?.profile?.firstName, requester?.profile?.lastName].filter(Boolean).join(' ') || requester?.email || 'Someone';
+      const roleLabel = role === 'editor' ? 'edit' : 'view';
+      const [title, message] = event === 'shared'
+        ? ['Business model shared', `${who} shared "${model.name}" with you (you can ${roleLabel} it).`]
+        : event === 'role_changed'
+          ? ['Business model access updated', `Your access to "${model.name}" changed: you can now ${roleLabel} it.`]
+          : ['Business model access revoked', `Your access to "${model.name}" was revoked.`];
+      await this.notifications.sendToUser(recipientId, {
+        type: NotificationType.INFO,
+        title,
+        message,
+        data: { eventType: `semantic_model_${event}`, modelId: model.id, modelName: model.name, role },
+        actions: event === 'revoked' ? undefined : [{ label: 'Open model', url: `/semantic-models/${model.id}` }],
+        metadata: { sourceModule: 'semantic-model-share' },
+      });
+    } catch (error) {
+      this.logger.warn(`Share notification failed (${event}): ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
 
   async list(requesterId: string, modelId: string): Promise<SemanticModelMemberRow[]> {
     await this.models.requireRole(requesterId, modelId, ['owner', 'editor', 'viewer']);
@@ -72,12 +120,13 @@ export class SemanticModelShareService {
       const wasInserted = upsert.rows[0]?.inserted;
       if (!wasInserted) result.alreadyShared.push(entry.email);
       result.shared.push({ userId, email: entry.email, role: entry.role });
+      await this.notify(wasInserted ? 'shared' : 'role_changed', requesterId, userId, model, entry.role);
     }
     return result;
   }
 
   async updateRole(requesterId: string, modelId: string, targetUserId: string, dto: UpdateSemanticModelShareDto): Promise<void> {
-    await this.models.requireRole(requesterId, modelId, ['owner']);
+    const model = await this.models.requireRole(requesterId, modelId, ['owner']);
     const update = await this.database.transaction(async (client) => {
       const changed = await client.query(
         `UPDATE semantic_model.memberships SET role = $3
@@ -88,6 +137,7 @@ export class SemanticModelShareService {
       return changed;
     });
     if (!update.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    await this.notify('role_changed', requesterId, targetUserId, model, dto.role);
   }
 
   async revoke(requesterId: string, modelId: string, targetUserId: string): Promise<void> {
@@ -100,5 +150,6 @@ export class SemanticModelShareService {
       );
       await this.grants.revokeModelGrants(client, modelId, targetUserId);
     });
+    await this.notify('revoked', requesterId, targetUserId, model);
   }
 }

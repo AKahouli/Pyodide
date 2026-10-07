@@ -45,8 +45,8 @@ function createService(execution: Record<string, unknown> | null = pausedExecuti
   const accessService = { assertExecutionAccess: jest.fn().mockResolvedValue(undefined) };
   const host: jest.Mocked<PlaybookExecutionHitlResumeHost> = {
     isRuntimeAvailable: jest.fn().mockReturnValue(true),
-    resumeApprovalRuntime: jest.fn((_request, callback) => callback(null, { resumed: true })),
-    resumeFromStepRuntime: jest.fn((_request, callback) => callback(null, { resumed: true })),
+    resumeApprovalRuntime: jest.fn((_request, callback) => { callback(null, { resumed: true }); }),
+    resumeFromStepRuntime: jest.fn((_request, callback) => { callback(null, { resumed: true }); }),
     scheduleDurableResume: jest.fn(),
   };
   const service = new PlaybookExecutionHitlResumeService(
@@ -128,7 +128,7 @@ describe('PlaybookExecutionHitlResumeService', () => {
 
     it('releases the claim when the runtime call fails', async () => {
       const { service, executionRepository, host } = createService();
-      host.resumeApprovalRuntime.mockImplementation((_request, callback) => callback(new Error('grpc down')));
+      host.resumeApprovalRuntime.mockImplementation((_request, callback) => { callback(new Error('grpc down')); });
 
       await expect(service.resumeApproval(EXECUTION_ID, OWNER_ID, { decision: 'approved' })).rejects.toThrow('grpc down');
 
@@ -156,7 +156,7 @@ describe('PlaybookExecutionHitlResumeService', () => {
 
     it('restarts a run the runtime forgot from its snapshot, as queued with the answer in its input', async () => {
       const { service, executionRepository, host } = createService();
-      host.resumeApprovalRuntime.mockImplementation((_request, callback) => callback(null, { resumed: false }));
+      host.resumeApprovalRuntime.mockImplementation((_request, callback) => { callback(null, { resumed: false }); });
 
       const response = await service.resumeApproval(EXECUTION_ID, OWNER_ID, { decision: 'approved', payload: { note: 'n' } });
 
@@ -177,7 +177,7 @@ describe('PlaybookExecutionHitlResumeService', () => {
 
     it('releases the claim and conflicts when neither the runtime nor a durable restart can resume', async () => {
       const { service, executionRepository, host } = createService(pausedExecution({ snapshot: null }));
-      host.resumeApprovalRuntime.mockImplementation((_request, callback) => callback(null, { resumed: false }));
+      host.resumeApprovalRuntime.mockImplementation((_request, callback) => { callback(null, { resumed: false }); });
 
       await expect(service.resumeApproval(EXECUTION_ID, OWNER_ID, { decision: 'approved' })).rejects.toBeInstanceOf(ConflictException);
 
@@ -267,7 +267,7 @@ describe('PlaybookExecutionHitlResumeService', () => {
 
     it('restarts a forgotten step interrupt durably, from the paused state', async () => {
       const { service, executionRepository, host } = createService();
-      host.resumeFromStepRuntime.mockImplementation((_request, callback) => callback(null, { resumed: false }));
+      host.resumeFromStepRuntime.mockImplementation((_request, callback) => { callback(null, { resumed: false }); });
 
       const response = await service.resumeFromStep(EXECUTION_ID, OWNER_ID, { taskId: 'review', action: 'reply', message: 'go' });
 

@@ -26,7 +26,7 @@ export class SemanticModelSourceEventHandler implements OnModuleInit {
     this.registry.register(this);
   }
 
-  async handle(event: IntegrationEventEnvelope<Record<string, unknown>>): Promise<void> {
+  async handle(event: IntegrationEventEnvelope): Promise<void> {
     if (!this.config.runtimeEnabled || !this.config.runtimeWritesEnabled) return;
     if (!this.config.runtimeUrl || !this.config.runtimeServiceKey) {
       throw new ServiceUnavailableException('Semantic model runtime relay is not configured');

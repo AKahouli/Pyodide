@@ -47,7 +47,7 @@ export class GovernanceAccessService {
       await this.programService.assertProgramOwner(userId, programId);
       return true;
     } catch (error) {
-      void error;
+      error;
       return false;
     }
   }

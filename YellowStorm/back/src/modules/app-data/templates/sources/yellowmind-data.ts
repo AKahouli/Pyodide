@@ -96,13 +96,13 @@ function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
     let cleanup: () => void;
 
     if (inIframe) {
-      const handler = (event: MessageEvent) => onResponse(event.data);
+      const handler = (event: MessageEvent) => { onResponse(event.data); };
       window.addEventListener('message', handler);
       cleanup = () => { clearTimeout(timeout); window.removeEventListener('message', handler); };
       window.parent.postMessage(payload, '*');
     } else {
       const bc = getBroadcastChannel();
-      const handler = (event: MessageEvent) => onResponse(event.data);
+      const handler = (event: MessageEvent) => { onResponse(event.data); };
       bc.addEventListener('message', handler);
       cleanup = () => { clearTimeout(timeout); bc.removeEventListener('message', handler); };
       bc.postMessage(payload);
@@ -136,7 +136,7 @@ async function request(
     typeof window !== 'undefined' && !import.meta.env.DEV
       ? sessionStorage.getItem('ym_app_auth_token')
       : null;
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   ymDiag.info('data', `${method} ${table}`, {
     table,

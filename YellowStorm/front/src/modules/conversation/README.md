@@ -220,12 +220,10 @@ The store exports optimized selector hooks to prevent unnecessary re-renders:
 
 ```typescript
 // Examples
-useConversations(); // Get conversation list
 useMessages(); // Get current messages
 useDisplayMessages(); // Get messages filtered by active branch
 useIsAwaitingFirstChunk(); // Check if waiting for first chunk
 useCriticalError(); // Get critical error state
-useSSEStatus(); // Get SSE connection status
 useBranchCache(); // Get branch cache map
 useActiveBranches(); // Get active branch selections
 ```

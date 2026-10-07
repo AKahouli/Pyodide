@@ -79,10 +79,10 @@ export class AdminSystemSettingsController {
   @ApiResponse({ status: 200, description: 'Settings imported' })
   @RequirePermissions(Permissions.SYSTEM_ALL)
   async importSettings(
-    @Body() body: { settings?: Array<{ key?: unknown; value?: unknown }> },
+    @Body() body: { settings?: { key?: unknown; value?: unknown }[] },
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
-  ): Promise<{ imported: string[]; skipped: Array<{ key: string; reason: string }> }> {
+  ): Promise<{ imported: string[]; skipped: { key: string; reason: string }[] }> {
     const rows = body?.settings;
     if (!Array.isArray(rows) || rows.length === 0) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Import payload must contain a non-empty "settings" array');
@@ -92,7 +92,7 @@ export class AdminSystemSettingsController {
     }
 
     const imported: string[] = [];
-    const skipped: Array<{ key: string; reason: string }> = [];
+    const skipped: { key: string; reason: string }[] = [];
     for (const row of rows) {
       const key = typeof row?.key === 'string' ? row.key : '';
       if (!IMPORTABLE_KEYS.has(key)) {

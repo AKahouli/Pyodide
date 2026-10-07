@@ -32,8 +32,8 @@ describe('runFkSpecs --keep-orphans', () => {
   let log: jest.SpyInstance;
   beforeEach(() => {
     queries.length = 0;
-    orphanCounts['fk_keep'] = 3;
-    orphanCounts['fk_clear'] = 2;
+    orphanCounts.fk_keep = 3;
+    orphanCounts.fk_clear = 2;
     process.exitCode = undefined;
     log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(require('fs'), 'writeFileSync').mockImplementation(() => undefined);

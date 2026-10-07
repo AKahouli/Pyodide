@@ -21,3 +21,4 @@ export * from './knowledge-intelligence.schema';
 export * from './classifier.schema';
 export * from './worky.schema';
 export * from './playbook.schema';
+export * from './root-work-jobs.schema';

@@ -16,13 +16,13 @@ import { AppBuilderAiOfferService } from './app-builder-ai-offer.service';
 import { AppBuilderAiUsageService } from './app-builder-ai-usage.service';
 import { PgConversationV2SessionStore } from '../../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 
-type AppUsageAgg = {
+interface AppUsageAgg {
   sessionId: string | null;
   title: string;
   totalTokens: number;
   requestCount: number;
-  models: Array<{ model: string; totalTokens: number; requestCount: number }>;
-};
+  models: { model: string; totalTokens: number; requestCount: number }[];
+}
 
 @Injectable()
 export class AppBuilderAiAdminService {
@@ -429,7 +429,7 @@ export class AppBuilderAiAdminService {
 
   /** Combine usage keyed by sessionId, workspaceId, and/or appDataId for one app. */
   private mergeUsageRows(
-    ...rows: Array<AppUsageAgg | undefined>
+    ...rows: (AppUsageAgg | undefined)[]
   ): AppUsageAgg | undefined {
     const present = rows.filter((r): r is AppUsageAgg => !!r);
     if (present.length === 0) return undefined;

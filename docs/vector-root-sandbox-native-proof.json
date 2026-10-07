@@ -1,0 +1,45 @@
+{
+  "conversationId": "fd564df4afcdd639124364e1",
+  "sessionFound": true,
+  "proof": [
+    {
+      "eventId": "9b1924c7-4a40-44e1-9f3b-488fa3516ae9",
+      "author": "root_sandbox_qualification_worker",
+      "invocationId": "e-13721db0-017d-476a-98a5-14436230a024",
+      "callId": "call_aktQCjGYKKwB9mWYMJ8hwhDX",
+      "tool": "run_code"
+    },
+    {
+      "eventId": "2d2eebeb-5eac-474f-b1e7-059c47cf0005",
+      "author": "root_sandbox_qualification_worker",
+      "invocationId": "e-13721db0-017d-476a-98a5-14436230a024",
+      "callId": "call_aktQCjGYKKwB9mWYMJ8hwhDX",
+      "response": {
+        "ok": true,
+        "logs": [],
+        "result": {
+          "path": "/workspace/run/root-qualification.txt",
+          "readBack": "ROOT_SANDBOX_QUALIFICATION\n",
+          "byteCount": 27,
+          "cleanupVerified": true
+        },
+        "mutations": [
+          {
+            "path": "/workspace/run/root-qualification.txt",
+            "operation": "created",
+            "sizeBytes": 27,
+            "contentType": "text/plain; charset=utf-8"
+          },
+          {
+            "path": "/workspace/run/root-qualification.txt",
+            "operation": "removed",
+            "sizeBytes": 27,
+            "contentType": "text/plain; charset=utf-8"
+          }
+        ],
+        "execution_ms": 1230,
+        "written_files": []
+      }
+    }
+  ]
+}

@@ -16,17 +16,11 @@ const store = vi.hoisted(() => ({
   hydrateActiveExecutions: vi.fn(),
 }));
 
-const features = vi.hoisted(() => ({
-  querySseEnabled: false,
-  querySseMirrorZustandEnabled: false,
-  xstateExecutionEnabled: false,
-}));
 
 vi.mock('../store', () => ({
   usePlaybookStore: { getState: () => store },
 }));
 
-vi.mock('../features', () => ({ playbookFeatures: features }));
 
 vi.mock('../api', () => ({
   getActiveExecutions: vi.fn().mockResolvedValue([]),
@@ -68,8 +62,6 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     vi.clearAllMocks();
     EventSourceMock.instances = [];
     BroadcastChannelMock.instances = [];
-    features.querySseEnabled = false;
-    features.querySseMirrorZustandEnabled = false;
     vi.stubGlobal('EventSource', EventSourceMock as unknown as typeof EventSource);
     vi.stubGlobal('BroadcastChannel', BroadcastChannelMock as unknown as typeof BroadcastChannel);
     localStorage.setItem('token-key', 'abc');
@@ -110,7 +102,6 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
   });
 
   it('notifies the open console when a playbook is shared with the user', () => {
-    features.querySseEnabled = true;
     const listener = vi.fn();
     window.addEventListener('yellowstorm:playbook-shared', listener);
     const { unmount } = renderHook(() => usePlaybookStreamGlobal());
@@ -127,7 +118,6 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
   });
 
   it('notifies a follower console when the leader relays a shared playbook', () => {
-    features.querySseEnabled = true;
     const listener = vi.fn();
     window.addEventListener('yellowstorm:playbook-shared', listener);
     const { unmount } = renderHook(() => usePlaybookStreamGlobal());

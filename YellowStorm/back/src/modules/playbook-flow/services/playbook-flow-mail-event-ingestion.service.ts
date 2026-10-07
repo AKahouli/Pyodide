@@ -74,7 +74,7 @@ export class PlaybookFlowMailEventIngestionService {
         from: entry.from,
         to: Array.isArray(entry.to) ? entry.to : [],
         cc: Array.isArray(entry.cc) ? entry.cc : [],
-        hasAttachments: entry.hasAttachments === true,
+        hasAttachments: entry.hasAttachments,
         attachments: Array.isArray(entry.attachments) ? entry.attachments : [],
       },
       error: entry.error ?? null,

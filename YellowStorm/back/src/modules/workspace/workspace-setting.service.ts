@@ -216,7 +216,7 @@ export class WorkspaceSettingService {
       userId,
     });
 
-    return this.mapToResponse({ ...setting, ...patch } as WorkspaceSettingRecord);
+    return this.mapToResponse({ ...setting, ...patch });
   }
 
   /**

@@ -172,4 +172,5 @@ def make_activate_skill_tool(skills: Optional[List[Any]]):
         )
 
     activate_skill.__name__ = "activate_skill"
-    return activate_skill
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    return register_tool_execution_kind(activate_skill, "leaf")

@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAgentStore } from '@/modules/agent/store';
 import type { Message, MessageComponent } from '../types';
 import { useConversationUiStore } from '../uiStore';
 import { ConversationContent } from './ConversationContent';
@@ -80,6 +81,9 @@ describe('ConversationContent', () => {
     storeState.awaitingConversationId = null;
     storeState.messages = [];
     useConversationUiStore.setState({ autoReliabilityEnabled: false });
+    // Shared Zustand agent directory — reset so parallel bubble/identity suites cannot
+    // leave a stale directory that blanks the answer-producer header.
+    useAgentStore.setState({ agents: [], isInitialized: true, isLoading: false, error: null });
   });
 
   it('renders empty state when there are no messages', () => {
@@ -243,12 +247,18 @@ describe('ConversationContent', () => {
   it('animates only the dedicated live assistant bubble', () => {
     displayMessages = [{
       id: 'ai-complete', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
-      components: [{ id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
+      components: [
+        { id: 'activity-complete', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-complete', actorName: 'Completed Agent' } },
+        { id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorId: 'agent-complete', actorName: 'Completed Agent' } },
+      ],
     }];
     storeState.isStreaming = true;
     storeState.streamingConversationId = 'conv-1';
     storeState.streamingMessageId = 'ai-live';
-    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
+    storeState.streamingComponents = [
+      { id: 'activity-live', type: 'agentActivity', data: { summary: '', status: 'running', actorId: 'agent-live', actorName: 'Live Agent' } },
+      { id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorId: 'agent-live', actorName: 'Live Agent' } },
+    ];
 
     const { container } = render(<ConversationContent />);
 

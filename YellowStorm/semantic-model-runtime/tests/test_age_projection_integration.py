@@ -140,7 +140,7 @@ def test_live_project_and_activate_routes(monkeypatch: pytest.MonkeyPatch) -> No
             assert projected.json()["vertices"] == 2
             assert projected.json()["edges"] == 1
 
-            projection_ref = f"age:v1:{graph}"
+            projection_ref = f"age:v2:{graph}"
             projected_revision = {**revision, "projection_ref": projection_ref}
             active = {"model_id": "smoke-model", "environment": "test",
                       "model_version_id": "v1", "data_revision_id": revision_id,
@@ -205,7 +205,7 @@ def test_live_route_rolls_back_and_compensates_failures(
     persistence_revision = {**mismatch_revision, "id": persistence_id}
     committed_id = f"dr_committed_{uuid.uuid4().hex[:16]}"
     committed_graph = f"pop_{committed_id}"
-    committed_ref = f"age:v1:{committed_graph}"
+    committed_ref = f"age:v2:{committed_graph}"
     committed_revision = {**mismatch_revision, "id": committed_id}
     try:
         app = create_app()

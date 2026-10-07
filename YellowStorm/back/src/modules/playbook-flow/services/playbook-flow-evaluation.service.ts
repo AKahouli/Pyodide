@@ -21,7 +21,7 @@ export interface PersistEvaluationParams {
   score?: number;
   verdict?: string;
   summary?: string;
-  findings?: Array<{ severity: string; category: string; message: string; sourceTaskId?: string }>;
+  findings?: { severity: string; category: string; message: string; sourceTaskId?: string }[];
 }
 
 @Injectable()

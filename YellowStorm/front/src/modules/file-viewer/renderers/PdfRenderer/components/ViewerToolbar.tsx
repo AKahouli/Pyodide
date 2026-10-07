@@ -9,9 +9,9 @@ import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 
-type ViewerToolbarProps = Readonly<{ documentId: string }>;
+type ViewerToolbarProps = Readonly<{ documentId: string; onPageCount?: (count: number) => void }>;
 
-export function ViewerToolbar({ documentId }: ViewerToolbarProps) {
+export function ViewerToolbar({ documentId, onPageCount }: ViewerToolbarProps) {
   const { provides: scroll, state } = useScroll(documentId);
   const [pageInput, setPageInput] = useState('1');
   const { state: zoomState, provides: zoom } = useZoom(documentId);
@@ -31,6 +31,9 @@ export function ViewerToolbar({ documentId }: ViewerToolbarProps) {
   useEffect(() => {
     updatePdfState(documentId, state.currentPage || 1, totalPages);
   }, [documentId, state.currentPage, totalPages, updatePdfState]);
+  useEffect(() => {
+    if (state.totalPages) onPageCount?.(state.totalPages);
+  }, [state.totalPages, onPageCount]);
   const zoomPercent = useMemo(() => {
     const currentZoom = zoomState.currentZoomLevel || 1;
     return `${Math.round(currentZoom * 100)}%`;

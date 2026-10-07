@@ -98,7 +98,7 @@ export class PgRevisionStore implements RevisionStore {
     return rows.map(revisionRowToRecord);
   }
 
-  async update(revisionId: string, patch: GovernanceRevisionPatch): Promise<GovernanceRevisionRecord | null> {
+  async update(revisionId: string, patch: GovernanceRevisionPatch, expected?: GovernanceRevisionRecord): Promise<GovernanceRevisionRecord | null> {
     const rows = await this.q
       .update(REVISIONS)
       .set({
@@ -110,7 +110,11 @@ export class PgRevisionStore implements RevisionStore {
         ...(patch.publishedBy !== undefined ? { publishedBy: patch.publishedBy } : {}),
         ...(patch.publishedAt !== undefined ? { publishedAt: patch.publishedAt } : {}),        updatedAt: new Date(),
       })
-      .where(eq(REVISIONS.id, revisionId))
+      .where(and(eq(REVISIONS.id, revisionId),
+        patch.status === 'published' ? undefined : ne(REVISIONS.status, 'published'),
+        ...(expected ? [eq(REVISIONS.status, expected.status), eq(REVISIONS.agentId, expected.agentId ?? ''),
+          eq(REVISIONS.allowedAgentIds, expected.allowedAgentIds), eq(REVISIONS.workspaceIds, expected.workspaceIds),
+          eq(REVISIONS.agentSnapshot, expected.agentSnapshot ?? {})] : [])))
       .returning();
     return rows[0] ? revisionRowToRecord(rows[0]) : null;
   }

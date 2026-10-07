@@ -75,6 +75,8 @@ RUN set -eux; \
     "${VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
 
 COPY --chown=azureuser:azureuser requirements.txt /build/requirements.txt
+# Staged unified-logging SDK wheel (created by scripts/observability/build-sdks.mjs before build)
+COPY --chown=azureuser:azureuser .generated/observability/ /build/.generated/observability/
 
 # Mount the pip cache and install dependencies with network resilience
 RUN --mount=type=cache,target=/root/.cache/pip \

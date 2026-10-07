@@ -14,8 +14,6 @@ from typing import Any, Awaitable, Callable
 class GraphCacheEntry:
     graph: Any
     created_at: float
-    last_accessed_at: float
-    snapshot_size_bytes: int
 
 
 RUNTIME_AGENT_PARAM_KEYS = {"session_id"}
@@ -89,7 +87,6 @@ class CompiledGraphCache:
         cached_entry = self._entries.get(key)
         if cached_entry and now - cached_entry.created_at <= self.ttl_seconds:
             self.hits += 1
-            cached_entry.last_accessed_at = now
             self._entries.move_to_end(key)
             return cached_entry.graph, snapshot_key, True
 
@@ -99,7 +96,6 @@ class CompiledGraphCache:
             cached_entry = self._entries.get(key)
             if cached_entry and now - cached_entry.created_at <= self.ttl_seconds:
                 self.hits += 1
-                cached_entry.last_accessed_at = now
                 self._entries.move_to_end(key)
                 return cached_entry.graph, snapshot_key, True
 
@@ -112,8 +108,6 @@ class CompiledGraphCache:
             self._entries[key] = GraphCacheEntry(
                 graph=graph,
                 created_at=now,
-                last_accessed_at=now,
-                snapshot_size_bytes=len(stable_json(snapshot)),
             )
             self._entries.move_to_end(key)
             self._evict(now)

@@ -1,29 +1,38 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, ListChecks, Plus, SlidersHorizontal, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Columns, ExternalLink, Heading, ListChecks, ListFilter, Plus, RefreshCw, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { AiExtractionSettings, DocumentFieldReading, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
+import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
+import { FormField, INPUT } from '../form/FormParts';
+import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
+import { useReadingText } from './readingText';
+import { ValueShaper, type ShaperAction } from './ValueShaper';
+import { CleanupSection, KeepSection, PATTERN_PRESETS, patternProblem, presetOf, takeProblem, useTakeSummary, ValuePatternSection } from './ValueShapeSections';
 
 export const STRATEGIES: SourceExtractionStrategy[] = ['deterministic', 'rules_then_ai', 'ai'];
-const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere'];
+const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'after_label', 'before_label', 'heading', 'pages', 'anywhere'];
+/** A cell's text has no tables, headings or pages: the places that read a line or a passage still apply. */
+export const CELL_LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'after_label', 'before_label', 'anywhere'];
+const TRANSFORMS = ['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso'] as const;
+const MAX_LABELS = 10;
+const MAX_PAGES = 2000;
+const MAX_PAGE_SPAN = 50;
+// Suggestions shown before "Show all".
+const SUGGESTIONS_SHOWN = 12;
+// Every step starts folded, its setting on its header line; afterwards, the ones the person left open.
+const DEFAULT_OPEN_SECTIONS: string[] = [];
 
-/** Ready-made patterns; each also reads in the runtime's regular expressions. */
-export const PATTERN_PRESETS = {
-  date: String.raw`\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{1,2}(?:er)? [A-Za-zéû]+ \d{4}`,
-  amount: String.raw`[-+]?\d[\d .,]*\d(?: ?(?:€|EUR|\$|USD|%))?`,
-  reference: String.raw`[A-Z]{2,}[-_/]?\d[\w-]*`,
-  number: String.raw`\d+(?:[.,]\d+)?`,
-  email: String.raw`[\w.+-]+@[\w-]+\.[\w.-]+`,
-} as const;
-type PatternPreset = keyof typeof PATTERN_PRESETS;
-
-function presetOf(pattern?: string): PatternPreset | undefined {
-  return (Object.keys(PATTERN_PRESETS) as PatternPreset[]).find((key) => PATTERN_PRESETS[key] === pattern);
+/** Locations reading a passage bounded by other labels. */
+function usesBoundary(location: ExtractionLocation) {
+  return location === 'after_label' || location === 'before_label';
 }
+
+export { PATTERN_PRESETS, patternProblem };
 
 export function usesRules(strategy?: SourceExtractionStrategy) {
   return (strategy ?? 'deterministic') !== 'ai';
@@ -64,29 +73,67 @@ export function withConceptFields(saved: SourceFieldMapping[], attributes: Reado
   return { mappings, added };
 }
 
-/** A pattern the browser cannot read is very likely wrong for the runtime too. */
-export function patternProblem(pattern?: string) {
-  if (!pattern?.trim()) return null;
-  try {
-    new RegExp(pattern);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
+
+/** Why the pages to read are not valid, as a translation key, or null. */
+export function pagesProblem(pages?: ExtractionRules['pages']) {
+  if (!pages || !Number.isInteger(pages.from) || pages.from < 1) return 'mapping.rules.pagesFromRequired';
+  if (pages.from > MAX_PAGES) return 'mapping.rules.pagesRange';
+  if (pages.to === undefined) return null;
+  if (!Number.isInteger(pages.to) || pages.to > MAX_PAGES) return 'mapping.rules.pagesRange';
+  if (pages.to < pages.from) return 'mapping.rules.pagesOrder';
+  if (pages.to - pages.from + 1 > MAX_PAGE_SPAN) return 'mapping.rules.pagesSpan';
+  return null;
 }
 
-/** One click to read every extracted field the same way; each field can still be changed alone. */
-export function ReadAllFieldsBar({ mappings, onApply }: Readonly<{ mappings: SourceFieldMapping[]; onApply: (strategy: SourceExtractionStrategy) => void }>) {
+/** True when the runtime would refuse these rules: a broken pattern, a missing one, or pages out of bounds. */
+export function rulesProblem(rules?: ExtractionRules) {
+  if (patternProblem(rules?.pattern)) return true;
+  if (rules?.location === 'anywhere' && !rules.pattern?.trim()) return true;
+  if (takeProblem(rules?.take)) return true;
+  return rules?.location === 'pages' && Boolean(pagesProblem(rules.pages));
+}
+
+/** What a live read of the shown document gives for the field, to shape its value on. */
+export interface FieldLiveReading {
+  reading?: DocumentFieldReading;
+  pending: boolean;
+  onRead?: () => void;
+}
+
+/** Labels found across a few documents of the source, offered as labels a value follows. */
+export interface LabelSuggestions {
+  status: 'loading' | 'error' | 'ready';
+  labels: DocumentLabelSuggestion[];
+  documentsRead: number;
+  onRetry?: () => void;
+  /** Hovering or focusing a suggestion shows where it is in the document. */
+  onPreview?: (suggestion: DocumentLabelSuggestion) => void;
+  /** What was read: documents, a sheet's cells, or the fields of another concept's records. */
+  unit?: 'documents' | 'cells' | 'records';
+}
+
+/**
+ * One click to read every extracted field the same way; each field can still be changed alone. With
+ * `direct` (sheets), a field read from its column as it is counts too, and can be read that way again.
+ */
+export function ReadAllFieldsBar({ mappings, onApply, direct }: Readonly<{
+  mappings: SourceFieldMapping[];
+  onApply: (choice: SourceExtractionStrategy | 'direct') => void;
+  direct?: boolean;
+}>) {
   const { t } = useModuleTranslation('semantic-model');
-  const extracted = mappings.filter((mapping) => mapping.mode === 'extract');
+  const extracted = mappings.filter((mapping) => mapping.mode === 'extract' || (direct && mapping.mode === 'direct'));
   if (!extracted.length) return null;
-  const strategies = new Set(extracted.map((mapping) => mapping.extractionStrategy ?? 'deterministic'));
+  const strategies = new Set(extracted.map((mapping) => mapping.mode === 'direct' ? 'direct' : mapping.extractionStrategy ?? 'deterministic'));
   const current = strategies.size === 1 ? [...strategies][0] : null;
-  return <div className='flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2' role='group' aria-label={t('mapping.readAll.label')}>
-    <span className='text-xs text-muted-foreground'>{t('mapping.readAll.label')}</span>
-    {STRATEGIES.map((strategy) => <Button key={strategy} type='button' size='sm' variant={current === strategy ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
-      aria-pressed={current === strategy} onClick={() => onApply(strategy)}>
-      <StrategyIcon strategy={strategy} />{t(`mapping.strategy.${strategy}`)}
+  const choices: Array<SourceExtractionStrategy | 'direct'> = [...(direct ? ['direct' as const] : []), ...STRATEGIES];
+  return <div className='flex flex-wrap items-center gap-2' role='group' aria-label={t('mapping.readAll.label')}>
+    <span className='text-xs font-medium text-muted-foreground'>{t('mapping.readAll.label')}</span>
+    {choices.map((choice) => <Button key={choice} type='button' size='sm' variant={current === choice ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
+      aria-pressed={current === choice} onClick={() => onApply(choice)}>
+      {choice === 'direct'
+        ? <><Columns className='mr-1 h-3.5 w-3.5' />{t('mapping.cell.readAllDirect')}</>
+        : <><StrategyIcon strategy={choice} />{t(`mapping.strategy.${choice}`)}</>}
     </Button>)}
     {!current && <span className='text-xs text-muted-foreground'>{t('mapping.readAll.mixed')}</span>}
   </div>;
@@ -102,33 +149,80 @@ function StrategyIcon({ strategy }: Readonly<{ strategy: SourceExtractionStrateg
  * The rules of one field: which labels the value follows, where it sits, what it looks like and
  * how it is cleaned up. Collapsed to a one-line summary until opened.
  */
-export function FieldRulesEditor({ fieldLabel, rules, onChange }: Readonly<{ fieldLabel: string; rules?: ExtractionRules; onChange: (rules: ExtractionRules | undefined) => void }>) {
+export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, live, pageCount, textKind = 'document' }: Readonly<{
+  fieldLabel: string;
+  /** What the rules read: a document, or (sheets) the text of a cell, which has no pages, headings or tables. */
+  textKind?: 'document' | 'cell';
+  rules?: ExtractionRules;
+  onChange: (rules: ExtractionRules | undefined) => void;
+  suggestions?: LabelSuggestions;
+  live?: FieldLiveReading;
+  /** Pages of the document shown beside the fields, when known. */
+  pageCount?: number;
+}>) {
   const { t } = useModuleTranslation('semantic-model');
   const [open, setOpen] = useState(false);
   const [draftLabel, setDraftLabel] = useState('');
+  const [draftBoundary, setDraftBoundary] = useState('');
+  // A section heading picked while the place is "auto": offer to read the whole section instead.
+  const [headingHint, setHeadingHint] = useState<string | null>(null);
+  const boundaryLabels = rules?.boundaryLabels ?? [];
   const labels = rules?.labels ?? [];
   const location = rules?.location ?? 'auto';
-  const preset: PatternPreset | 'custom' | 'none' = rules?.pattern ? presetOf(rules.pattern) ?? 'custom' : 'none';
+  const preset = rules?.pattern ? presetOf(rules.pattern) ?? 'custom' : 'none';
   // "After “Contract No.” · After the label, on the same line · matches A reference": the rules in one line.
   const summaryLabels = (labels.length ? labels : [fieldLabel]).map((label) => `“${label}”`).join(', ');
-  const summary = (location === 'heading' || location === 'anywhere' ? '' : `${t('mapping.rules.summaryLabels', { labels: summaryLabels })} · `)
-    + t(`mapping.rules.where.${location}`)
+  const withoutLabels = location === 'heading' || location === 'anywhere' || location === 'pages';
+  const summaryBoundary = usesBoundary(location) && boundaryLabels.length
+    ? ` · ${t(`mapping.rules.summaryBoundary.${location}`, { labels: boundaryLabels.map((label) => `“${label}”`).join(', ') })}` : '';
+  const summaryPages = location === 'pages' && rules?.pages && !pagesProblem(rules.pages)
+    ? ` · ${pageRange(t, rules.pages.from, rules.pages.to)}` : '';
+  const takeText = useTakeSummary(rules?.take);
+  const summaryTake = takeText ? ` · ${takeText}` : '';
+  const summary = (withoutLabels ? '' : `${t('mapping.rules.summaryLabels', { labels: summaryLabels })} · `)
+    + t(`mapping.rules.where.${location}`) + summaryBoundary + summaryPages + summaryTake
     + (rules?.pattern ? ` · ${t('mapping.rules.summaryPattern', { pattern: preset !== 'custom' && preset !== 'none' ? t(`mapping.rules.preset.${preset}`) : rules.pattern })}` : '');
   const problem = patternProblem(rules?.pattern);
   const needsPattern = location === 'anywhere' && !rules?.pattern?.trim();
+  const pagesError = location === 'pages' ? pagesProblem(rules?.pages) : null;
   const update = (patch: Partial<ExtractionRules>) => {
-    const next = { ...rules, ...patch };
+    const next: ExtractionRules = { ...rules, ...patch };
+    // Boundaries and pages only mean something for the places that use them.
+    if (!usesBoundary(next.location ?? 'auto') || !next.boundaryLabels?.length) delete next.boundaryLabels;
+    if (next.location === 'pages') next.pages ??= { from: 1 };
+    else delete next.pages;
     // Nothing set means the plain default reading: store no rules at all.
     const empty = !next.labels?.length && (next.location ?? 'auto') === 'auto' && !next.pattern
-      && (next.transform ?? 'none') === 'none' && (next.occurrence ?? 'unique') === 'unique' && !next.firstPageOnly;
+      && (next.transform ?? 'none') === 'none' && (next.occurrence ?? 'unique') === 'unique' && !next.firstPageOnly && !next.take;
     onChange(empty ? undefined : next);
   };
-  const addLabel = () => {
-    const label = draftLabel.trim();
-    if (label && !labels.includes(label) && labels.length < 10) update({ labels: [...labels, label] });
+  const addLabel = (value = draftLabel) => {
+    const label = value.trim();
+    if (label && !labels.includes(label) && labels.length < MAX_LABELS) update({ labels: [...labels, label] });
     setDraftLabel('');
   };
+  const addBoundary = (value = draftBoundary) => {
+    const label = value.trim().slice(0, 200);
+    if (label && !boundaryLabels.includes(label) && boundaryLabels.length < MAX_LABELS) update({ boundaryLabels: [...boundaryLabels, label] });
+    setDraftBoundary('');
+  };
+  // A selection in the text found becomes a label, or where the passage stops or starts.
+  const onShaperAction = (action: ShaperAction, text: string) => {
+    if (action === 'label') addLabel(text);
+    else addBoundary(text);
+  };
+  const addSuggestion = (suggestion: DocumentLabelSuggestion) => {
+    addLabel(suggestion.label);
+    setHeadingHint(suggestion.kind === 'heading' && location === 'auto' ? suggestion.label : null);
+  };
+  // An emptied box is kept as 0 (from) or no end (to), so the inline error says what is missing.
+  const setPages = (from: number | undefined, to: number | undefined) => update({ pages: to === undefined ? { from: from ?? 0 } : { from: from ?? 0, to } });
   const id = `rules-${fieldLabel.replaceAll(/\W+/g, '-')}`;
+
+  const sections = useOpenSections(DEFAULT_OPEN_SECTIONS);
+  const section = (key: string) => ({ id: `${id}-${key}`, open: sections.isOpen(key), onToggle: () => sections.toggle(key) });
+  const quoted = (items: string[]) => items.map((label) => `“${label}”`).join(', ');
+  const optionsSummary = t(`mapping.rules.occurrenceOption.${rules?.occurrence ?? 'unique'}`) + (rules?.firstPageOnly ? ` · ${t('mapping.rules.firstPageShort')}` : '');
 
   return <div className='rounded-lg border border-dashed'>
     <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
@@ -136,87 +230,169 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange }: Readonly<{ fie
       {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
       <span className='shrink-0 font-medium text-foreground'>{t('mapping.rules.title')}</span>
       <span className='min-w-0 truncate'>{summary}</span>
-      {(problem || needsPattern) && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
+      {(problem || needsPattern || pagesError) && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
     </button>
-    {open && <div id={id} className='grid gap-3 border-t p-3 sm:grid-cols-2'>
-      <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs' htmlFor={`${id}-label`}>{t('mapping.rules.labels')}</Label>
+    {open && <div id={id} className='border-t'>
+      {location !== 'pages' && <RuleSection {...section('labels')} title={t('mapping.rules.labels')} icon={<Tag className='h-3.5 w-3.5' />}
+        summary={labels.length ? quoted(labels) : t('mapping.rules.labelsDefault', { field: fieldLabel })} help={t('mapping.rules.labelsHelp', { field: fieldLabel })}>
         <div className='flex flex-wrap items-center gap-1.5'>
           {labels.map((label) => <span key={label} className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs'>
             {label}
             <button type='button' aria-label={t('mapping.rules.removeLabel', { label })} onClick={() => update({ labels: labels.filter((item) => item !== label) })}><X className='h-3 w-3' /></button>
           </span>)}
-          <Input id={`${id}-label`} className='h-7 w-44 text-xs' value={draftLabel} placeholder={labels.length ? t('mapping.rules.addLabel') : fieldLabel}
-            onChange={(event) => setDraftLabel(event.target.value)}
+          <Input className='h-7 w-44 text-xs' value={draftLabel} placeholder={labels.length ? t('mapping.rules.addLabel') : fieldLabel}
+            aria-label={t('mapping.rules.labels')} onChange={(event) => setDraftLabel(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addLabel(); } }} />
-          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftLabel.trim()} onClick={addLabel}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
+          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftLabel.trim() || labels.length >= MAX_LABELS} onClick={() => addLabel()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
         </div>
-        <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.labelsHelp', { field: fieldLabel })}</p>
-      </div>
+        {headingHint && location === 'auto' && <p role='status' className='flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-2 py-1.5 text-[11px] text-sky-800 dark:text-sky-300'>
+          <Heading className='h-3.5 w-3.5 shrink-0' />
+          <span className='min-w-0 flex-1'>{t('mapping.rules.headingHint', { label: headingHint })}</span>
+          <Button type='button' size='sm' variant='outline' className='h-6 px-2 text-[11px]' onClick={() => { update({ location: 'after_label' }); setHeadingHint(null); }}>{t('mapping.rules.headingHintUse')}</Button>
+          <button type='button' className='rounded p-0.5 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' aria-label={t('mapping.rules.headingHintDismiss')} onClick={() => setHeadingHint(null)}><X className='h-3 w-3' /></button>
+        </p>}
+        {suggestions && <LabelSuggestionChips suggestions={suggestions} added={labels} full={labels.length >= MAX_LABELS} onAdd={addSuggestion} />}
+      </RuleSection>}
 
-      <div className='space-y-1.5'>
-        <Label className='text-xs'>{t('mapping.rules.location')}</Label>
-        <Select value={location} onValueChange={(value: ExtractionLocation) => update({ location: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.locationFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{LOCATIONS.map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.where.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
-        <p className='text-[11px] text-muted-foreground'>{t(`mapping.rules.whereHelp.${location}`)}</p>
-      </div>
+      <RuleSection {...section('where')} title={t('mapping.rules.location')} icon={<LocationIcon location={location} className='h-3.5 w-5' />}
+        summary={t(`mapping.rules.tile.${location}`) + summaryBoundary + summaryPages} help={t(`mapping.rules.whereHelp.${location}`)} invalid={Boolean(pagesError)}>
+        <ChoiceGroup variant='tiles' label={t('mapping.rules.locationFor', { field: fieldLabel })} value={location} onChange={(value) => update({ location: value })}
+          options={(textKind === 'cell' ? CELL_LOCATIONS : LOCATIONS).map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), help: t(`mapping.rules.whereHelp.${item}`), icon: <LocationIcon location={item} className='h-5 w-7' /> }))} />
 
-      <div className='space-y-1.5'>
-        <Label className='text-xs'>{t('mapping.rules.pattern')}</Label>
-        <Select value={preset} onValueChange={(value) => update({ pattern: value === 'none' ? undefined : value === 'custom' ? rules?.pattern ?? '' : PATTERN_PRESETS[value as PatternPreset] })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.patternFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value='none'>{t('mapping.rules.preset.none')}</SelectItem>
-            {(Object.keys(PATTERN_PRESETS) as PatternPreset[]).map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.preset.${item}`)}</SelectItem>)}
-            <SelectItem value='custom'>{t('mapping.rules.preset.custom')}</SelectItem>
-          </SelectContent>
-        </Select>
-        {preset !== 'none' && <Input className='h-8 font-mono text-xs' value={rules?.pattern ?? ''} aria-label={t('mapping.rules.patternText', { field: fieldLabel })}
-          aria-invalid={Boolean(problem || needsPattern)} placeholder={String.raw`CNT-\d{4}-\d{4}`} maxLength={200}
-          onChange={(event) => update({ pattern: event.target.value })} />}
-        {problem && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternInvalid', { problem })}</p>}
-        {needsPattern && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternRequired')}</p>}
-        {!problem && !needsPattern && <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.patternHelp')}</p>}
-      </div>
+        {usesBoundary(location) && <div className='flex flex-wrap items-center gap-1.5 pt-1'>
+          <Label className='text-xs font-medium text-muted-foreground' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
+          <HelpTip text={t(`mapping.rules.boundaryHelp.${location}`)} />
+          {boundaryLabels.map((label) => <span key={label} className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs'>
+            {label}
+            <button type='button' aria-label={t('mapping.rules.removeBoundary', { label })} onClick={() => update({ boundaryLabels: boundaryLabels.filter((item) => item !== label) })}><X className='h-3 w-3' /></button>
+          </span>)}
+          <Input id={`${id}-boundary`} className='h-7 w-44 text-xs' value={draftBoundary} maxLength={200} placeholder={t('mapping.rules.boundaryPlaceholder')}
+            onChange={(event) => setDraftBoundary(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addBoundary(); } }} />
+          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={() => addBoundary()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
+        </div>}
 
-      <div className='space-y-1.5'>
-        <Label className='text-xs'>{t('mapping.rules.transform')}</Label>
-        <Select value={rules?.transform ?? 'none'} onValueChange={(value: NonNullable<ExtractionRules['transform']>) => update({ transform: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.transformFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{(['none', 'upper', 'lower', 'date_iso'] as const).map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.transformOption.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
-      </div>
+        {location === 'pages' && <div className='space-y-1.5 pt-1'>
+          <div className='flex items-center gap-1'>
+            <span className='text-xs font-medium text-muted-foreground'>{t('mapping.rules.pages')}</span>
+            <HelpTip text={t('mapping.rules.pagesHelp', { span: MAX_PAGE_SPAN })} />
+          </div>
+          <PageRangeControl fieldLabel={fieldLabel} from={rules?.pages?.from} to={rules?.pages?.to} pageCount={pageCount} onChange={setPages}
+            invalidFrom={pagesError === 'mapping.rules.pagesFromRequired'} invalidTo={Boolean(pagesError) && pagesError !== 'mapping.rules.pagesFromRequired'} />
+          {pagesError && <p role='alert' className='text-[11px] text-destructive'>{t(pagesError, { max: MAX_PAGES, span: MAX_PAGE_SPAN })}</p>}
+        </div>}
+      </RuleSection>
 
-      <div className='space-y-1.5'>
-        <Label className='text-xs'>{t('mapping.rules.occurrence')}</Label>
-        <Select value={rules?.occurrence ?? 'unique'} onValueChange={(value: NonNullable<ExtractionRules['occurrence']>) => update({ occurrence: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.occurrenceFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{(['unique', 'first'] as const).map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.occurrenceOption.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
-      </div>
+      <KeepSection section={section('keep')} fieldLabel={fieldLabel} take={rules?.take} onTake={(take) => update({ take })}
+        help={rules?.take ? t('mapping.rules.take.clickHint') : t('mapping.rules.take.selectHint')}>
+        <ValueShaper fieldLabel={fieldLabel} reading={live?.reading} pending={live?.pending} onRead={live?.onRead} location={location}
+          take={rules?.take} pattern={problem ? undefined : rules?.pattern} onTake={(take) => update({ take })} onAction={onShaperAction} />
+      </KeepSection>
 
-      <label className='flex items-center gap-2 text-xs sm:col-span-2'>
-        <input type='checkbox' checked={Boolean(rules?.firstPageOnly)} onChange={(event) => update({ firstPageOnly: event.target.checked })} />
-        {t('mapping.rules.firstPageOnly')}
-      </label>
+      <ValuePatternSection section={section('pattern')} fieldLabel={fieldLabel} pattern={rules?.pattern} required={location === 'anywhere'}
+        onPattern={(pattern) => update({ pattern })} />
+
+      <CleanupSection section={section('transform')} fieldLabel={fieldLabel} value={rules?.transform ?? 'none'} options={TRANSFORMS}
+        onChange={(value) => update({ transform: value })} />
+
+      <RuleSection {...section('options')} title={t('mapping.rules.options')} icon={<ListFilter className='h-3.5 w-3.5' />} summary={optionsSummary}>
+        <div className='flex flex-wrap items-center gap-x-3 gap-y-1.5'>
+          <span className='text-xs text-muted-foreground'>{t('mapping.rules.occurrence')}</span>
+          <ChoiceGroup variant='segmented' label={t('mapping.rules.occurrenceFor', { field: fieldLabel })} value={rules?.occurrence ?? 'unique'} onChange={(value) => update({ occurrence: value })}
+            options={(['unique', 'first'] as const).map((item) => ({ value: item, label: t(`mapping.rules.occurrenceOption.${item}`) }))} />
+        </div>
+        {textKind === 'document' && <label className='flex items-center gap-2 text-xs'>
+          <input type='checkbox' checked={Boolean(rules?.firstPageOnly)} onChange={(event) => update({ firstPageOnly: event.target.checked })} />
+          {t('mapping.rules.firstPageOnly')}
+        </label>}
+      </RuleSection>
     </div>}
   </div>;
 }
 
-const LIMIT_KEYS: Array<{ key: keyof AiExtractionSettings; min: number; max: number }> = [
+type Translate = (key: 'mapping.reading.page' | 'mapping.reading.pages', params: { page: number; pageEnd?: number }) => string;
+
+/** "Page 3", or "Pages 3–4" for a passage over several pages. */
+export function pageRange(t: Translate, page: number, pageEnd?: number | null) {
+  return pageEnd && pageEnd !== page ? t('mapping.reading.pages', { page, pageEnd }) : t('mapping.reading.page', { page });
+}
+
+/**
+ * "Found in your documents": labels and headings recurring across a few documents of the source,
+ * most shared first. A click adds one; hovering or focusing one shows it in the document.
+ */
+export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readonly<{
+  suggestions: LabelSuggestions;
+  added: string[];
+  full: boolean;
+  onAdd: (suggestion: DocumentLabelSuggestion) => void;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [showAll, setShowAll] = useState(false);
+  const [filter, setFilter] = useState('');
+  const taken = new Set(added.map((label) => label.toLocaleLowerCase()));
+  const available = suggestions.labels.filter((item) => !taken.has(item.label.toLocaleLowerCase()));
+  const query = filter.trim().toLocaleLowerCase();
+  const matching = query ? available.filter((item) => item.label.toLocaleLowerCase().includes(query)) : available;
+  const shown = showAll || query ? matching : matching.slice(0, SUGGESTIONS_SHOWN);
+
+  return <div className='space-y-1.5 rounded-lg bg-muted/30 p-2' role='group' aria-label={t('mapping.suggestions.title')}>
+    <div className='flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground'>
+      <Sparkles className='h-3 w-3' />{suggestions.unit === 'cells' ? t('mapping.cell.suggestionsTitle') : suggestions.unit === 'records' ? t('derived.suggestionsTitle') : t('mapping.suggestions.title')}
+      {suggestions.status === 'ready' && suggestions.documentsRead > 0 && <span className='font-normal'>· {suggestions.unit === 'cells'
+        ? t('mapping.cell.suggestionsRead', { count: suggestions.documentsRead })
+        : suggestions.unit === 'records' ? t('derived.suggestionsRead', { count: suggestions.documentsRead }) : t('mapping.suggestions.read', { count: suggestions.documentsRead })}</span>}
+    </div>
+    {suggestions.status === 'loading' && <div className='flex flex-wrap gap-1.5' aria-busy='true' aria-label={t('mapping.suggestions.loading')}>
+      {[64, 96, 80, 112, 72].map((width) => <Skeleton key={width} className='h-6 rounded-full' style={{ width }} />)}
+    </div>}
+    {suggestions.status === 'error' && <p role='alert' className='flex items-center gap-1.5 text-[11px] text-destructive'>
+      <AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.suggestions.error')}
+      {suggestions.onRetry && <Button type='button' size='sm' variant='ghost' className='h-6 px-1.5 text-[11px]' onClick={suggestions.onRetry}><RefreshCw className='mr-1 h-3 w-3' />{t('action.retry')}</Button>}
+    </p>}
+    {suggestions.status === 'ready' && !available.length && <p className='text-[11px] text-muted-foreground'>
+      {suggestions.labels.length ? t('mapping.suggestions.allAdded') : t('mapping.suggestions.empty')}
+    </p>}
+    {suggestions.status === 'ready' && available.length > 0 && <>
+      {available.length > SUGGESTIONS_SHOWN && <Input className='h-7 text-xs' value={filter} onChange={(event) => setFilter(event.target.value)}
+        placeholder={t('mapping.suggestions.filter')} aria-label={t('mapping.suggestions.filter')} />}
+      {full && <p className='text-[11px] text-muted-foreground'>{t('mapping.suggestions.full')}</p>}
+      <div className='flex flex-wrap gap-1.5'>
+        {shown.map((item) => <button key={`${item.kind}:${item.label}`} type='button' disabled={full}
+          className='inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-xs transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
+          title={item.example ? t('mapping.suggestions.example', { example: item.example }) : undefined}
+          aria-label={t('mapping.suggestions.add', { label: item.label, kind: t(`mapping.suggestions.kind.${item.kind}`), count: item.documents, total: suggestions.documentsRead })}
+          onMouseEnter={() => suggestions.onPreview?.(item)} onFocus={() => suggestions.onPreview?.(item)}
+          onClick={() => onAdd(item)}>
+          {item.kind === 'heading' ? <Heading className='h-3 w-3 shrink-0 text-sky-600 dark:text-sky-400' aria-hidden /> : <Tag className='h-3 w-3 shrink-0 text-muted-foreground' aria-hidden />}
+          <span className='truncate'>{item.label}</span>
+          <span className='shrink-0 text-[10px] tabular-nums text-muted-foreground'>{item.documents}/{suggestions.documentsRead}</span>
+        </button>)}
+        {query && !matching.length && <span className='text-[11px] text-muted-foreground'>{t('mapping.suggestions.noMatch')}</span>}
+      </div>
+      {!query && matching.length > SUGGESTIONS_SHOWN && <Button type='button' size='sm' variant='ghost' className='h-6 px-1.5 text-[11px]' aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+        {showAll ? t('mapping.suggestions.showLess') : t('mapping.suggestions.showAll', { count: matching.length })}
+      </Button>}
+    </>}
+  </div>;
+}
+
+/** The AI calls a run makes at once when nothing sets it (the runtime's own default). */
+export const DEFAULT_PARALLEL_CALLS = 4;
+
+const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords'>; min: number; max: number }> = [
   { key: 'maxBlocks', min: 10, max: 500 },
   { key: 'maxCharacters', min: 2000, max: 400000 },
   { key: 'longDocumentCharacters', min: 1000, max: 2000000 },
   { key: 'blocksPerField', min: 1, max: 50 },
+  { key: 'parallelCalls', min: 1, max: 32 },
 ];
 
 export function limitProblem(value: Partial<AiExtractionSettings>) {
   return LIMIT_KEYS.find(({ key, min, max }) => value[key] !== undefined && (!Number.isInteger(value[key]) || value[key]! < min || value[key]! > max));
 }
 
-/** Fields for the four AI reading limits; an empty field falls back to `placeholder`. */
+/** Fields for the AI reading limits and parallel calls; an empty field falls back to `placeholder`. */
 export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readonly<{
   value: Partial<AiExtractionSettings>;
   placeholder?: AiExtractionSettings;
@@ -228,20 +404,17 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
     {LIMIT_KEYS.map(({ key, min, max }) => {
       const current = value[key];
       const invalid = current !== undefined && (!Number.isInteger(current) || current < min || current > max);
-      return <div key={key} className='space-y-1'>
-        <Label htmlFor={`${idPrefix}-${key}`} className='text-xs'>{t(`mapping.ai.${key}`)}</Label>
-        <Input id={`${idPrefix}-${key}`} type='number' min={min} max={max} className='h-8 text-xs' aria-invalid={invalid}
-          value={current ?? ''} placeholder={placeholder ? String(placeholder[key]) : undefined}
+      return <FormField key={key} label={t(`mapping.ai.${key}`)} help={t(`mapping.ai.${key}Help`)} htmlFor={`${idPrefix}-${key}`}>
+        <Input id={`${idPrefix}-${key}`} type='number' min={min} max={max} className={cn(INPUT, 'tabular-nums')} aria-invalid={invalid}
+          value={current ?? ''} placeholder={placeholder ? String(placeholder[key] ?? (key === 'parallelCalls' ? DEFAULT_PARALLEL_CALLS : '')) : undefined}
           onChange={(event) => {
             const text = event.target.value;
             const next = { ...value };
             if (text === '') delete next[key]; else next[key] = Number(text);
             onChange(next);
           }} />
-        <p className={cn('text-[11px]', invalid ? 'text-destructive' : 'text-muted-foreground')}>
-          {invalid ? t('mapping.ai.range', { min: min.toLocaleString(), max: max.toLocaleString() }) : t(`mapping.ai.${key}Help`)}
-        </p>
-      </div>;
+        {invalid && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.ai.range', { min: min.toLocaleString(), max: max.toLocaleString() })}</p>}
+      </FormField>;
     })}
   </div>;
 }
@@ -253,26 +426,52 @@ export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
   onChange: (value: Partial<AiExtractionSettings>) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
-  const overridden = Object.keys(value).length > 0;
+  // "Several records per document" lives in the same settings but is not a reading limit.
+  const overridden = Object.keys(value).some((key) => key !== 'manyRecords');
   const [open, setOpen] = useState(overridden);
   const effective = defaults ? { ...defaults, ...value } : undefined;
-  return <div className='rounded-xl border'>
-    <button type='button' className='flex w-full items-center gap-2 p-3 text-left text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
-      <SlidersHorizontal className='h-4 w-4 shrink-0 text-muted-foreground' />
-      <span className='font-medium'>{t('mapping.ai.title')}</span>
-      <span className='min-w-0 flex-1 truncate text-muted-foreground'>
-        {effective ? t(overridden ? 'mapping.ai.summaryChanged' : 'mapping.ai.summaryDefault', {
-          blocks: effective.maxBlocks.toLocaleString(), characters: effective.maxCharacters.toLocaleString(),
-          long: effective.longDocumentCharacters.toLocaleString(), perField: effective.blocksPerField,
-        }) : ''}
-      </span>
-      {open ? <ChevronDown className='h-4 w-4 shrink-0' /> : <ChevronRight className='h-4 w-4 shrink-0' />}
-    </button>
-    {open && <div className='space-y-3 border-t p-3'>
-      <p className='text-[11px] text-muted-foreground'>{t('mapping.ai.help')}</p>
+  return <div className='rounded-lg border'>
+    <div className='flex items-center gap-1 pr-2'>
+      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown className='h-4 w-4 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' />}
+        <SlidersHorizontal className='h-4 w-4 shrink-0 text-muted-foreground' />
+        <span className='shrink-0 font-medium'>{t('mapping.ai.title')}</span>
+        <span className='min-w-0 flex-1 truncate text-muted-foreground'>
+          {effective ? t(overridden ? 'mapping.ai.summaryChanged' : 'mapping.ai.summaryDefault', {
+            blocks: effective.maxBlocks.toLocaleString(), characters: effective.maxCharacters.toLocaleString(),
+            long: effective.longDocumentCharacters.toLocaleString(), perField: effective.blocksPerField,
+            calls: effective.parallelCalls ?? DEFAULT_PARALLEL_CALLS,
+          }) : ''}
+        </span>
+      </button>
+      <HelpTip text={t('mapping.ai.help')} />
+    </div>
+    {open && <div className='space-y-4 border-t p-4'>
       <AiLimitFields idPrefix='mapping-ai' value={value} placeholder={defaults} onChange={onChange} />
-      {overridden && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={() => onChange({})}>{t('mapping.ai.reset')}</Button>}
+      {overridden && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={() => onChange(value.manyRecords ? { manyRecords: true } : {})}>{t('mapping.ai.reset')}</Button>}
     </div>}
+  </div>;
+}
+
+/** Whether one document gives one record or several (one per item the AI finds). */
+export function ManyRecordsSwitch({ value, onChange }: Readonly<{
+  value: Partial<AiExtractionSettings>;
+  onChange: (value: Partial<AiExtractionSettings>) => void;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  return <div className='flex items-start gap-3 rounded-lg border px-3 py-2.5'>
+    <Switch id='mapping-many-records' checked={value.manyRecords === true} className='mt-0.5'
+      onCheckedChange={(checked) => {
+        const { manyRecords: _previous, ...rest } = value;
+        onChange(checked ? { ...rest, manyRecords: true } : rest);
+      }} />
+    <div className='min-w-0 flex-1 space-y-0.5'>
+      <div className='flex items-center gap-1'>
+        <Label htmlFor='mapping-many-records' className='text-xs font-medium'>{t('mapping.manyRecords.label')}</Label>
+        <HelpTip text={t('mapping.manyRecords.tip')} />
+      </div>
+      <p className='text-[11px] text-muted-foreground'>{t(value.manyRecords ? 'mapping.manyRecords.on' : 'mapping.manyRecords.off')}</p>
+    </div>
   </div>;
 }
 
@@ -283,17 +482,19 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
   onOpenQuote?: (quote: string, page?: number | null) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const text = useReadingText();
   const found = reading.reason === 'found';
-  const method = t(`mapping.reading.method.${reading.method}`);
-  const values = (reading.values ?? []).map((value) => `“${value}”`).join(', ');
+  const computed = reading.method === 'computed';
+  const method = reading.method === 'direct' ? text.direct() : t(`mapping.reading.method.${reading.method}`);
   return <div className={cn('rounded-lg p-2 text-xs', found ? 'bg-muted/50' : 'border border-amber-500/40 bg-amber-500/5')}>
     <div className='flex items-start justify-between gap-2'>
       <div className='min-w-0'>
         <p className='font-medium'>{fieldLabel}</p>
         {found ? <p className='break-words'>{String(reading.value ?? '')}</p>
-          : <p className='text-amber-800 dark:text-amber-300'>{t(`mapping.reading.reason.${reading.reason}`, { values, detail: reading.detail ?? '' })}</p>}
-        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: t(`mapping.reading.reason.${reading.rules.reason}`, { values: (reading.rules.values ?? []).map((value) => `“${value}”`).join(', '), detail: '' }) })}</p>}
-        {!found && <p className='mt-0.5 text-muted-foreground'>{t(`mapping.reading.hint.${reading.reason}`)}</p>}
+          : <p className='text-amber-800 dark:text-amber-300'>{text.reason(reading)}</p>}
+        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: text.reason({ ...reading.rules, detail: '' }) })}</p>}
+        {!found && <p className='mt-0.5 text-muted-foreground'>{text.hint(reading)}</p>}
+        {computed && reading.input && <p className='mt-0.5 truncate text-muted-foreground'>{t('mapping.reading.computedFrom', { input: reading.input })}</p>}
       </div>
       <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]', found ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground')}>
         {found ? <CheckCircle2 className='h-3 w-3' /> : <AlertTriangle className='h-3 w-3' />}{method}
@@ -301,7 +502,7 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
     </div>
     {found && reading.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline'
       onClick={() => onOpenQuote?.(reading.quote!, reading.page)}>
-      <ExternalLink className='mt-0.5 h-3 w-3 shrink-0' /><span className='line-clamp-2'>{reading.page ? `${t('mapping.reading.page', { page: reading.page })} · ` : ''}{reading.quote}</span>
+      <ExternalLink className='mt-0.5 h-3 w-3 shrink-0' /><span className='line-clamp-2'>{reading.page ? `${pageRange(t, reading.page, reading.pageEnd)} · ` : ''}{reading.column ? `${reading.column} · ` : ''}{reading.quote}</span>
     </button>}
   </div>;
 }

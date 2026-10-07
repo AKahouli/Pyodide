@@ -12,8 +12,8 @@ import { semanticModelQueryKeys } from '../query/queryKeys';
 export function usePopulationRun(modelId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } = { kind: 'model' }) =>
-      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope }),
+    mutationFn: ({ scope = { kind: 'model' }, rereadDocuments = false }: { scope?: { kind: 'model' } | { kind: 'mapping'; mappingId: string }; rereadDocuments?: boolean } = {}) =>
+      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope, ...(rereadDocuments ? { rereadDocuments } : {}) }),
     onSuccess: () => {
       if (!modelId) return;
       // The run is asynchronous and there is no progress endpoint yet, so refresh what the
@@ -21,6 +21,42 @@ export function usePopulationRun(modelId: string | undefined) {
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) });
+    },
+  });
+}
+
+/**
+ * Rebuilds only the graph of the data in use, from the records and links already stored: no source is
+ * read again and no AI call is made. The records stay as they are.
+ */
+export function useReprojectGraph(modelId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => semanticModelApi.reprojectPopulationGraph(modelId ?? ''),
+    onSuccess: () => {
+      if (!modelId) return;
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graphStatus(modelId) });
+    },
+  });
+}
+
+/**
+ * Repopulates the model from scratch: the runtime clears every record, link and review item earlier runs
+ * made, then reads every source again. The model's settings are left as they are.
+ */
+export function useRebuildFromScratch(modelId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (options: { forgetDocumentReading: boolean }) => semanticModelApi.rebuildPopulation(modelId ?? '', options),
+    onSuccess: () => {
+      if (!modelId) return;
+      // Drop, not just invalidate: the data these were showing no longer exists.
+      queryClient.removeQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
+      queryClient.removeQueries({ queryKey: ['semantic-models', 'concept-records', modelId] });
+      for (const key of [semanticModelQueryKeys.readiness(modelId), semanticModelQueryKeys.reviewQueue(modelId), semanticModelQueryKeys.freshness(modelId)]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
     },
   });
 }

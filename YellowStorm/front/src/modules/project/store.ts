@@ -164,5 +164,3 @@ function safeParse(input: string | null): Record<string, boolean> | null {
 export const useProjects = () => useProjectStore(useShallow((s) => s.projects));
 export const useSharedProjects = () => useProjectStore(useShallow((s) => s.sharedProjects));
 export const useProjectsLoading = () => useProjectStore((s) => s.loading);
-export const useExpandedProjectIds = () =>
-  useProjectStore(useShallow((s) => s.expandedProjectIds));

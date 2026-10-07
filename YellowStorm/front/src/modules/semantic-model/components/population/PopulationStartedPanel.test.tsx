@@ -64,6 +64,13 @@ describe('PopulationStartedPanel', () => {
     expect(screen.getByText('population.reusedNotice')).toBeInTheDocument();
   });
 
+  it('says why a run failed when the runtime gave a reason', () => {
+    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'failed', skipped: [], reused: false, errorCode: 'no_data_in_use' }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+
+    expect(screen.getByText('runHistory.error.no_data_in_use')).toBeInTheDocument();
+    expect(screen.queryByText('population.failedHint')).not.toBeInTheDocument();
+  });
+
   it('hands the reader on to model health', () => {
     const onOpenHealth = vi.fn();
     render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'queued', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={onOpenHealth} />);

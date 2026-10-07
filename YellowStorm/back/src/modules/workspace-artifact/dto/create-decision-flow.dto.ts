@@ -12,7 +12,7 @@ class DecisionFlowAmbiguityPolicyDto {
 class DecisionFlowGenerationOptionsDto {
   @ApiProperty({ enum: ['eligibility', 'orientation', 'guided_diagnostic', 'procedure', 'other'] }) @IsIn(['eligibility', 'orientation', 'guided_diagnostic', 'procedure', 'other']) flowType!: 'eligibility' | 'orientation' | 'guided_diagnostic' | 'procedure' | 'other';
   @ApiPropertyOptional({ maxLength: 120 }) @ValidateIf((dto: DecisionFlowGenerationOptionsDto) => dto.flowType === 'other') @IsString() @Length(1, 120) customFlowType?: string;
-  @ApiProperty({ isArray: true, enum: ['business_creator', 'artisan', 'merchant', 'existing_business', 'infer_from_document'] }) @IsArray() @ArrayNotEmpty() @IsIn(['business_creator', 'artisan', 'merchant', 'existing_business', 'infer_from_document'], { each: true }) targetAudiences!: Array<'business_creator' | 'artisan' | 'merchant' | 'existing_business' | 'infer_from_document'>;
+  @ApiProperty({ isArray: true, enum: ['business_creator', 'artisan', 'merchant', 'existing_business', 'infer_from_document'] }) @IsArray() @ArrayNotEmpty() @IsIn(['business_creator', 'artisan', 'merchant', 'existing_business', 'infer_from_document'], { each: true }) targetAudiences!: ('business_creator' | 'artisan' | 'merchant' | 'existing_business' | 'infer_from_document')[];
   @ApiProperty({ enum: ['synthetic', 'standard', 'detailed'] }) @IsIn(['synthetic', 'standard', 'detailed']) detailLevel!: 'synthetic' | 'standard' | 'detailed';
   @ApiProperty({ type: DecisionFlowAmbiguityPolicyDto }) @ValidateNested() @Type(() => DecisionFlowAmbiguityPolicyDto) ambiguityPolicy!: DecisionFlowAmbiguityPolicyDto;
 }

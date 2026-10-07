@@ -25,7 +25,7 @@ function toRecord(row: Row): RuntimeBindingRecord {
     latestRevisionId: row.latestRevisionId,
     mcpTokenHash: row.mcpTokenHash,
     browserRuntimeId: row.browserRuntimeId ?? null,
-    browserCapabilities: (row.browserCapabilities as Record<string, unknown>) ?? null,
+    browserCapabilities: (row.browserCapabilities!) ?? null,
     lastHeartbeatAt: row.lastHeartbeatAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

@@ -14,6 +14,7 @@ import {
 import type {
   DataPreviewDto,
   SaveIdentityRuleDto,
+  SaveLabelFieldDto,
   SaveRelationResolutionRuleDto,
   SaveSourceResolutionPolicyDto,
 } from '../dto';
@@ -34,8 +35,8 @@ interface RelationDefinition {
   targetConceptId: string;
   sourceConceptLabel: string;
   targetConceptLabel: string;
-  sourceAttributes: Array<{ key: string }>;
-  targetAttributes: Array<{ key: string }>;
+  sourceAttributes: { key: string }[];
+  targetAttributes: { key: string }[];
 }
 
 interface ReviewDecision {
@@ -140,7 +141,7 @@ export class SemanticCrossSourceService {
   async saveIdentityRule(userId: string, modelId: string, conceptId: string, dto: SaveIdentityRuleDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const concept = await this.database.query<{ attributes: Array<{ key: string }> }>(
+    const concept = await this.database.query<{ attributes: { key: string }[] }>(
       'SELECT attributes FROM semantic_model.node_types WHERE version_id=$1 AND id=$2',
       [model.currentDraftVersionId, conceptId],
     );
@@ -167,6 +168,40 @@ export class SemanticCrossSourceService {
       return nextRevision;
     });
     return { revision, conceptId, fields };
+  }
+
+  async listLabelFields(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const result = await this.database.query<{ conceptId: string; field: string }>(
+      'SELECT concept_id AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1 ORDER BY concept_id',
+      [model.id],
+    );
+    return result.rows;
+  }
+
+  /** The field that names each record of a concept: its label on the canvas, in lists and in answers. */
+  async saveLabelField(userId: string, modelId: string, conceptId: string, dto: SaveLabelFieldDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const concept = await this.database.query<{ attributes: Array<{ key: string }> }>(
+      'SELECT attributes FROM semantic_model.node_types WHERE version_id=$1 AND id=$2',
+      [model.currentDraftVersionId, conceptId],
+    );
+    if (!concept.rows[0]) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found in the current draft');
+    if (!(concept.rows[0].attributes ?? []).some((attribute) => attribute.key === dto.field)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Choose a field that belongs to this concept');
+    }
+    const revision = await this.database.transaction(async (client) => {
+      const nextRevision = await this.models.advanceRevision(client, model.id, dto.expectedRevision);
+      await client.query(
+        `INSERT INTO semantic_model.label_fields (model_id,concept_id,field,updated_by) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (model_id,concept_id) DO UPDATE SET field=EXCLUDED.field,updated_by=EXCLUDED.updated_by,updated_at=now()`,
+        [model.id, conceptId, dto.field, userId],
+      );
+      await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'label_field.saved', { conceptId, field: dto.field });
+      return nextRevision;
+    });
+    return { revision, conceptId, field: dto.field };
   }
 
   async listPolicies(userId: string, modelId: string) {
@@ -313,7 +348,7 @@ export class SemanticCrossSourceService {
     }
   }
 
-  private assertPriorities(priorities: Array<{ mappingId: string; rank: number }>, mappingIds: string[]): void {
+  private assertPriorities(priorities: { mappingId: string; rank: number }[], mappingIds: string[]): void {
     const ids = priorities.map((priority) => priority.mappingId);
     const ranks = priorities.map((priority) => priority.rank).sort((a, b) => a - b);
     const expectedRanks = priorities.map((_, index) => index + 1);
@@ -361,7 +396,7 @@ export class SemanticCrossSourceService {
     return { concepts: concepts.rows, manualEntities, incompleteConceptIds: [...incompleteConceptIds] };
   }
 
-  private matchSummary(matches: Array<{ status: 'resolved' | 'ambiguous' | 'unresolved' }>) {
+  private matchSummary(matches: { status: 'resolved' | 'ambiguous' | 'unresolved' }[]) {
     return {
       resolved: matches.filter((match) => match.status === 'resolved').length,
       ambiguous: matches.filter((match) => match.status === 'ambiguous').length,
@@ -423,7 +458,7 @@ export class SemanticCrossSourceService {
     };
   }
 
-  private async persistReviewItems(modelId: string, items: Array<{ kind: 'ambiguous_relation' | 'source_conflict'; targetId: string; details: unknown }>) {
+  private async persistReviewItems(modelId: string, items: { kind: 'ambiguous_relation' | 'source_conflict'; targetId: string; details: unknown }[]) {
     for (const item of items.slice(0, 200)) {
       const details = item.details as Record<string, unknown>;
       const identity = item.kind === 'ambiguous_relation'

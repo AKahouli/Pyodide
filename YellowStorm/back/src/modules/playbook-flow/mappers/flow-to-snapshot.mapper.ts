@@ -16,7 +16,7 @@ export interface FlowSnapshot {
 }
 
 function filterRuntimeHitlBlockers(blockers: HitlBlockerRule[] | undefined): HitlBlockerRule[] {
-  return (blockers ?? []).filter((blocker) => blocker?.enabled !== false && blocker?.createdBy === 'user');
+  return (blockers ?? []).filter((blocker) => (blocker?.enabled) && blocker?.createdBy === 'user');
 }
 
 export type FlowSnapshotSource = Pick<FlowRecord, 'nodes' | 'controlEdges' | 'dataBindings' | 'settings' | 'hitlPolicy' | 'hitlBlockers' | 'workspaces'>;

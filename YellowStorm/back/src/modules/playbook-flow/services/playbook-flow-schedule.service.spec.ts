@@ -7,7 +7,7 @@ describe('PlaybookFlowScheduleService', () => {
   beforeEach(() => jest.useFakeTimers({ now: NOW }));
   afterEach(() => jest.useRealTimers());
 
-  const build = (flowList: Array<{ id: string; ownerId: string; triggerConfig: unknown }>, active: string[] = []) => {
+  const build = (flowList: { id: string; ownerId: string; triggerConfig: unknown }[], active: string[] = []) => {
     const flows = {
       listByTrigger: jest.fn().mockResolvedValue(flowList.map((flow) => ({ ...flow, workspaces: [] }))),
       setTriggerParam: jest.fn().mockResolvedValue(true),

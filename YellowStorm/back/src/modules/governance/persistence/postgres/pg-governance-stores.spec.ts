@@ -4,7 +4,7 @@ import { PgScopeStore } from './pg-scope.store';
 import { PgBindingStore } from './pg-binding.store';
 import { PgGovernanceDocumentStore, normalizeBusinessStatus } from './pg-document.store';
 
-type Call = { method: string; args: unknown[] };
+interface Call { method: string; args: unknown[] }
 
 /** Chainable drizzle stand-in: records every builder call and resolves to `rows`. */
 function fakeDb(rows: unknown[] = []) {
@@ -13,7 +13,7 @@ function fakeDb(rows: unknown[] = []) {
     {},
     {
       get(_target, prop: string) {
-        if (prop === 'then') return (resolve: (v: unknown) => void) => resolve(rows);
+        if (prop === 'then') return (resolve: (v: unknown) => void) => { resolve(rows); };
         return (...args: unknown[]) => {
           calls.push({ method: prop, args });
           return chain;

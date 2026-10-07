@@ -9,7 +9,7 @@ export class MetadataCandidateEngineService {
     const governanceMetadata = context.governance.metadata;
     const extracted = context.document.metadata;
     const candidates: MetadataCandidateInput[] = [];
-    const observed: Array<{ key: string; value: unknown; confidence: number }> = [
+    const observed: { key: string; value: unknown; confidence: number }[] = [
       { key: 'title', value: extracted.title, confidence: 0.9 },
       { key: 'language', value: extracted.language ?? extracted.detected_language, confidence: 0.95 },
       { key: 'publisher', value: extracted.publisher, confidence: 0.8 },

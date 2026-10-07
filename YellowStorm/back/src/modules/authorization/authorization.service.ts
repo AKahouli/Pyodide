@@ -19,8 +19,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 @Injectable()
 export class AuthorizationService implements OnApplicationBootstrap {
-  private rolePermissionsCache: Map<string, string[]> = new Map(); // roleId -> permissions
-  private roleNamesCache: Map<string, string> = new Map(); // roleId -> name
+  private rolePermissionsCache = new Map<string, string[]>(); // roleId -> permissions
+  private roleNamesCache = new Map<string, string>(); // roleId -> name
   private cacheLastUpdated: Date = new Date(0);
 
   constructor(
@@ -164,7 +164,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
 
   async assignRoleToUser(userId: string, roleId: string): Promise<void> {
     const role = await this.roleStore.findById(roleId);
-    if (!role || !role.isActive) {
+    if (!role?.isActive) {
       throw new NotFoundException(ErrorCode.ROLE_NOT_FOUND);
     }
 

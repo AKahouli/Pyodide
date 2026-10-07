@@ -92,6 +92,15 @@ export class PgDocumentStore implements DocumentStore {
     return rows.length > 0;
   }
 
+  async findFileByName(workspaceId: string, originalName: string): Promise<WorkspaceDocumentRecord | null> {
+    const rows = await this.q
+      .select()
+      .from(DOCUMENTS)
+      .where(and(eq(DOCUMENTS.workspaceId, workspaceId), eq(DOCUMENTS.originalName, originalName), eq(DOCUMENTS.isFolder, false)))
+      .limit(1);
+    return rows[0] ? documentRowToRecord(rows[0]) : null;
+  }
+
   async findFolderDuplicate(probe: FolderDuplicateProbe): Promise<WorkspaceDocumentRecord | null> {
     const conditions = [
       eq(DOCUMENTS.workspaceId, probe.workspaceId),
@@ -213,7 +222,7 @@ export class PgDocumentStore implements DocumentStore {
     return { items: rows.map(documentRowToRecord), total: countRows[0]?.n ?? 0 };
   }
 
-  async findUrlSources(workspaceId: string): Promise<Array<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>>> {
+  async findUrlSources(workspaceId: string): Promise<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>[]> {
     const rows = await this.q
       .select({ id: DOCUMENTS.id, sourceUrl: DOCUMENTS.sourceUrl, status: DOCUMENTS.status, indexingStatus: DOCUMENTS.indexingStatus })
       .from(DOCUMENTS)

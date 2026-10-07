@@ -1,0 +1,2 @@
+tests/integration/test_google_adk_28_contract.py
+tests/wp00/test_adk211_root_runtime_compat.py

@@ -1,0 +1,38 @@
+# Reusable preparation step for the shared observability SDK (plan §11.2 / P08).
+# package-lock.json (npm) and requirements.txt (pip) reference the artifacts as file:
+# dependencies inside each consumer's gitignored .generated/observability/ directory, so
+# every CI job that runs `npm ci` / `pip install -r` in a consumer MUST run this first.
+# The generation logic lives only in scripts/observability/build-sdks.mjs; this action
+# just provides the toolchain and invokes it, so no workflow re-implements it.
+name: Stage observability SDK artifacts
+description: >
+  Build the @yellowmind/observability tarball and the yellowmind_observability wheel with
+  scripts/observability/build-sdks.mjs and stage them into every consumer's gitignored
+  .generated/observability/ directory.
+
+inputs:
+  node-version:
+    description: Node.js version used to build the TypeScript SDK.
+    required: false
+    default: '20'
+  python-version:
+    description: Python version used to build the wheel (must match the calling job's
+      Python when it installs that wheel).
+    required: false
+    default: '3.12'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Stage SDK artifacts into consumers
+      shell: bash
+      # Explicit: callers set defaults.run.working-directory to their consumer dir,
+      # while build-sdks.mjs must run from the repository root.
+      working-directory: ${{ github.workspace }}
+      run: node scripts/observability/build-sdks.mjs

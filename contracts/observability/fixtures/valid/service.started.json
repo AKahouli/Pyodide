@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:10.100Z",
+  "event_id": "boot-demo-02:1",
+  "event_name": "service.started",
+  "message": "Service started",
+  "severity_text": "INFO",
+  "severity_number": 9,
+  "service_name": "mcp-agent",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "service_instance_id": "boot-demo-02",
+  "actor_type": "system",
+  "attributes": {
+    "launcher": "python main.py"
+  }
+}

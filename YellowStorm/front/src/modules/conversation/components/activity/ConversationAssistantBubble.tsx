@@ -400,6 +400,13 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const source = useOriginalAnswer
     ? props.components
     : [...props.components.filter((component) => ['agentActivity', 'toolActivity', 'artifact'].includes(component.type)), ...props.answerComponents!];
+  const producerActivity = props.components.find((component) => component.type === 'agentActivity'
+    && !component.data.summary && typeof component.data.actorName === 'string');
+  const textProducerId = source.filter((component) => component.type === 'text'
+    && typeof component.data.actorId === 'string').at(-1)?.data.actorId as string | undefined;
+  const producerId = textProducerId || (producerActivity?.data.actorId as string | undefined) || props.agentId;
+  const producerName = (!textProducerId || textProducerId === producerActivity?.data.actorId)
+    ? sanitizeActivityActorName(producerActivity?.data.actorName) : undefined;
   useEffect(() => {
     if (agentDirectoryInitialized) return;
     const unresolvedHierarchyId = source.some((component) => {
@@ -411,11 +418,11 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
         : undefined;
       return [actorId, delegatedId].some((id) => id && !agents.some((agent) => agent.id === id));
     });
-    if (!unresolvedHierarchyId) return;
+    if (!unresolvedHierarchyId && !(producerId && !producerName && !agents.some((agent) => agent.id === producerId))) return;
     void useAgentStore.getState().fetchAgents().catch((error) => {
       console.error('Failed to load agent names for conversation activity', error);
     });
-  }, [agentDirectoryInitialized, agents, source]);
+  }, [agentDirectoryInitialized, agents, source, producerId, producerName]);
   const activityNodes: ReactNode[] = [];
   const artifactNodes = source.flatMap((component, index) => component.type === 'artifact'
     ? [<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />]
@@ -494,11 +501,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   const uiTargets = props.showUiTargets ? collectUiTargets(source) : [];
   if (!activityNodes.length && !artifactNodes.length && !answerNodes.length && !uiTargets.length) return null;
-  const actorName = activityComponents.reduce<string>((name, component) => {
-    if (component.type !== 'toolActivity') return name;
-    const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
-    return safeName ? humanizeToolTitle(safeName) : name;
-  }, '') || t('stream.activity.assistant');
+  const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name || t('stream.activity.agentNameUnavailable');
   const openAgentEditor = props.agentId && props.onOpenAgentEditor
     ? () => props.onOpenAgentEditor!(props.agentId!)
     : null;

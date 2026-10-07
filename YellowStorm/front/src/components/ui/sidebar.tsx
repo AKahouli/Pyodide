@@ -43,6 +43,11 @@ function useSidebar() {
   return context;
 }
 
+/** The sidebar context when rendered inside a SidebarProvider, otherwise null. */
+function useOptionalSidebar() {
+  return React.useContext(SidebarContext);
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -481,4 +486,4 @@ function SidebarMenuSubButton({
   );
 }
 
-export { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupAction, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset, SidebarMenu, SidebarMenuAction, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem, SidebarProvider, SidebarRail, SidebarSeparator, SidebarTrigger, useSidebar, SidebarTriggerMobile };
+export { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupAction, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset, SidebarMenu, SidebarMenuAction, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem, SidebarProvider, SidebarRail, SidebarSeparator, SidebarTrigger, useSidebar, useOptionalSidebar, SidebarTriggerMobile };

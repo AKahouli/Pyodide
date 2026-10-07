@@ -13,7 +13,7 @@ export class PlaybookFlowHitlBlockerService {
 
   async listBlockers(flowId: string, ownerId: string): Promise<HitlBlockerRule[]> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
-    return (flow.hitlBlockers ?? []) as HitlBlockerRule[];
+    return (flow.hitlBlockers ?? []);
   }
 
   async createBlocker(flowId: string, ownerId: string, dto: CreateHitlBlockerDto): Promise<HitlBlockerRule> {

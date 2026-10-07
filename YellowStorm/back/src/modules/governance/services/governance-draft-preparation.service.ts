@@ -9,7 +9,7 @@ import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
 import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
 import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
-type AudienceSnapshot = { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[] };
+interface AudienceSnapshot { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[]; [key: string]: unknown }
 
 export interface PrepareGovernanceDraftOptions {
   previousAudience?: AudienceSnapshot;

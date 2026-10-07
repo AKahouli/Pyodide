@@ -72,3 +72,11 @@ docs/architecture/*.visual-check.*
 .codex/*/*.png
 docs/architecture/yellowstorm-architecture.json
 .understand-anything/
+
+# staged observability SDK artifacts (plan §11.2)
+.generated/
+YellowStorm/back/.generated/
+yellowstorm-code-runtime/.generated/
+
+# python packaging artifacts
+*.egg-info/

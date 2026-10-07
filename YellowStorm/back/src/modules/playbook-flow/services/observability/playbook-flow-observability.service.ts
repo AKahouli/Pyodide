@@ -36,7 +36,7 @@ export class PlaybookFlowObservabilityService {
   async shouldRedactSensitiveText(): Promise<boolean> {
     if (!this.conversationSettings) return true;
     try {
-      return (await this.conversationSettings.getSettings()).redactSensitiveText !== false;
+      return (await this.conversationSettings.getSettings()).redactSensitiveText;
     } catch (error) {
       this.logger.warn(`Failed to load sensitive-text redaction setting; defaulting to redaction: ${error instanceof Error ? error.message : String(error)}`);
       return true;
@@ -78,10 +78,10 @@ export class PlaybookFlowObservabilityService {
       ? outputText
       : this.sanitizeDisplayText(rawDisplayText, context);
     const artifacts = Array.isArray(payload.artifacts)
-      ? payload.artifacts as Array<Record<string, unknown>>
+      ? payload.artifacts as Record<string, unknown>[]
       : undefined;
     const rawComponents = Array.isArray(payload.components)
-      ? payload.components as Array<Record<string, unknown>>
+      ? payload.components as Record<string, unknown>[]
       : undefined;
     const components = normalizePlaybookComponents(
       rawComponents,
@@ -156,7 +156,7 @@ export class PlaybookFlowObservabilityService {
     };
   }
 
-  private normalizeIteratorIterations(payload: Record<string, unknown>): Array<Record<string, unknown>> | undefined {
+  private normalizeIteratorIterations(payload: Record<string, unknown>): Record<string, unknown>[] | undefined {
     const raw = payload.iterator_iterations ?? payload.iteratorIterations;
     if (!Array.isArray(raw)) return undefined;
     return raw.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));

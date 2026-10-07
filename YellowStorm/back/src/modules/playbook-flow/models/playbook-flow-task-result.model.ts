@@ -226,11 +226,11 @@ generatedNodeTitle?: string;
 
   outputs?: Record<string, unknown>;
 
-  artifacts?: Array<Record<string, unknown>>;
+  artifacts?: Record<string, unknown>[];
 
-  components?: Array<Record<string, unknown>>;
+  components?: Record<string, unknown>[];
 
-  iteratorIterations?: Array<Record<string, unknown>>;
+  iteratorIterations?: Record<string, unknown>[];
 
   error?: string;
 

@@ -146,7 +146,7 @@ export class ChatCompletionService {
   ): Promise<{ modelId: string; litellmModel: string }> {
     const model = await this.modelsService.findById(modelId);
 
-    if (!model || !model.litellmModel) {
+    if (!model?.litellmModel) {
       throw new BadRequestException(ErrorCode.CHAT_COMPLETION_MODEL_NOT_FOUND);
     }
     return { modelId: model.id, litellmModel: model.litellmModel };

@@ -179,7 +179,7 @@ export class PlaybookFlowRepeatabilityService {
     node: { metadata?: Record<string, unknown> },
     goldenBaseline: GoldenBaselineRecord | null,
   ): { value: string | null; source: FlowExpectedResultSource } {
-    const nodeValue = String(node.metadata?.['expectedResult'] || '').trim();
+    const nodeValue = String(node.metadata?.expectedResult || '').trim();
     if (nodeValue) return { value: nodeValue, source: 'node_metadata' };
     if (goldenBaseline?.referenceOutput) return { value: goldenBaseline.referenceOutput, source: 'golden_baseline' };
     return { value: null, source: 'none' };
@@ -187,7 +187,7 @@ export class PlaybookFlowRepeatabilityService {
 
   private async evaluateIteration(
     execution: { id: string; endedAt: Date | null },
-    nodes: Array<{ id: string; label?: string; metadata?: Record<string, unknown> }>,
+    nodes: { id: string; label?: string; metadata?: Record<string, unknown> }[],
     goldenBaselines: Map<string, GoldenBaselineRecord>,
   ): Promise<FlowRepeatabilityIterationSummary> {
     const taskSummaries = await Promise.all(
@@ -304,11 +304,11 @@ export class PlaybookFlowRepeatabilityService {
     };
   }
 
-  private extractStepNodes(flow: any): Array<{
+  private extractStepNodes(flow: any): {
     id: string;
     label?: string;
     metadata?: Record<string, unknown>;
-  }> {
+  }[] {
     const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
     return nodes
       .filter((n: any) => n.kind === 'step')
@@ -394,7 +394,7 @@ export class PlaybookFlowRepeatabilityService {
     return Math.max(0, Math.min(100, normalized));
   }
 
-  private computeOverallAverage(scores: Array<number | null>): number | null {
+  private computeOverallAverage(scores: (number | null)[]): number | null {
     const valid = scores.filter((s): s is number => s !== null);
     if (valid.length === 0) return null;
     return Math.round((valid.reduce((sum, s) => sum + s, 0) / valid.length) * 10) / 10;

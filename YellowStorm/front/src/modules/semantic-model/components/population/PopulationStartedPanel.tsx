@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConceptSourceMapping, PopulationProgress } from '../../types';
 import { RunProgress } from './RunProgress';
+import { SearchIndexProgress } from './SearchIndexProgress';
+import { errorText } from './RunHistoryPanel';
 
 export interface PopulationOutcome {
   jobId: string;
@@ -12,8 +14,14 @@ export interface PopulationOutcome {
   reused: boolean;
   /** Files the run reads (a workspace source counts each of its files). */
   sourceCount?: number;
+  /** The model's generated data was cleared before this run, which builds it again from scratch. */
+  cleared?: boolean;
   /** Last progress reported by the run, kept once it ends so the summary stays on screen. */
   progress?: Partial<PopulationProgress>;
+  /** Whether the result replaced the graph in use, kept once the run ends (the job is no longer followed then). */
+  serving?: PopulationServing;
+  /** Why the run failed, from the runtime, kept once the run ends. */
+  errorCode?: string | null;
 }
 
 type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';
@@ -42,7 +50,7 @@ export function populationServing(result: Record<string, unknown> | null | undef
 
 const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
 
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, serving }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, serving, modelId, dataRevisionId }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -54,6 +62,10 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   onStop?: () => void;
   stopping?: boolean;
   serving?: PopulationServing;
+  /** The model, to follow the search index of the new data once the run has saved it. */
+  modelId?: string;
+  /** The data the run saved (from its job result). */
+  dataRevisionId?: string | null;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
@@ -70,7 +82,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
 
   const detail = tone === 'stopped' ? t('runStop.stoppedHint')
     : tone === 'stopping' ? t('runStop.stoppingHint')
-    : tone === 'failed' ? t('population.failedHint')
+    : tone === 'failed' ? (outcome.errorCode ? errorText(outcome.errorCode, t as Parameters<typeof errorText>[1]) : t('population.failedHint'))
     : tone === 'gaps' ? t('population.gapsHint')
     : tone === 'done' ? t(outcome.reused ? 'population.finishedHint' : 'population.doneHint')
     : t('population.startedHint', { count: readCount });
@@ -97,6 +109,8 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
         {stopping ? t('runStop.stopping') : t('runStop.stop')}
       </Button>}
       {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {/* The new data becomes searchable once its index is built, after the run. */}
+      {modelId && (tone === 'done' || tone === 'gaps') && serving?.decision !== 'keep_previous' && <SearchIndexProgress modelId={modelId} dataRevisionId={dataRevisionId} />}
       {/* A result missing data never replaces the graph in use; the first graph of a model is shown anyway. */}
       {serving && serving.blocking.length > 0 && tone !== 'running' && <section role='status' className='rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300'>
         <p className='font-semibold'>{t(serving.decision === 'keep_previous' ? 'runServing.kept' : 'runServing.firstIncomplete')}</p>

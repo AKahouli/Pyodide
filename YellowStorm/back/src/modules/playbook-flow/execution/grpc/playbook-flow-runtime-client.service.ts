@@ -36,7 +36,7 @@ export class PlaybookFlowRuntimeClientService {
       const grpcUrl = this.configService.get<string>('playbook-flow.grpcUrl', 'localhost:50051');
       const { credentials, options } = buildGrpcChannelCredentials(
         this.configService,
-        (msg) => this.logger.warn(msg),
+        (msg) => { this.logger.warn(msg); },
       );
       // Execution traces carry raw tool outputs (exported untruncated by the
       // evaluation), so match the ADK server's 50MB message ceiling instead of

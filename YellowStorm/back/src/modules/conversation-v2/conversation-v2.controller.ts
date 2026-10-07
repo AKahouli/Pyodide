@@ -233,7 +233,7 @@ export class ConversationV2Controller {
           sessionId: app.sessionId,
           workspaceId: context?.aiSessionId ?? null,
           revisionId,
-          hasAiFeatures: context?.hasAiFeatures === true || app.hasAiFeatures === true,
+          hasAiFeatures: context?.hasAiFeatures === true || app.hasAiFeatures,
           aiFeaturesCheckedRevisionId: context?.aiFeaturesCheckedRevisionId ?? null,
         };
       }),
@@ -327,7 +327,7 @@ export class ConversationV2Controller {
     @Param('id') id: string,
     @Query() query: ListEventsDto,
   ): Promise<{
-    items: Array<{
+    items: {
       sessionId: string;
       sequence: number;
       eventId: string;
@@ -335,10 +335,10 @@ export class ConversationV2Controller {
       emittedAt: number;
       payload: Record<string, unknown>;
       modelId?: string | null;
-    }>;
+    }[];
     nextSince: number;
   }> {
-    void user;
+    user;
     const since = query.since ?? 0;
     const limit = query.limit ?? 200;
     const items = await this.eventStore.listSince(id, since, limit);
@@ -394,7 +394,7 @@ export class ConversationV2Controller {
     @Param('id') id: string,
     @Query() query: DocumentQueryDto,
   ) {
-    void user;
+    user;
     const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
     const systemWsId = pointer.systemWorkspaceId ?? null;
@@ -416,11 +416,11 @@ export class ConversationV2Controller {
     @Body() body: UpdateSessionDto,
   ): Promise<{ title?: string; isShared?: boolean; shareToken?: string | null }> {
     const { ownerId } = session;
-    let result: { title?: string; isShared?: boolean; shareToken?: string | null } = {};
+    const result: { title?: string; isShared?: boolean; shareToken?: string | null } = {};
 
     if (typeof body.title === 'string') {
       const r = await this.sessions.rename(ownerId, id, body.title);
-      result.title = r?.title as string | undefined;
+      result.title = r?.title;
     }
 
     if (typeof body.isShared === 'boolean') {
@@ -520,12 +520,12 @@ export class ConversationV2Controller {
     @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('id') sessionPointerId: string,
   ): Promise<{
-    items: Array<{
+    items: {
       revisionId: string;
       title: string;
       finalizedAt: string;
       fileCount?: number;
-    }>;
+    }[];
     latestRevisionId: string | null;
   }> {
     const workspaceId = this.requireWorkspaceId(session);
@@ -741,7 +741,7 @@ export class ConversationV2Controller {
     @Param('revisionId') revisionId: string,
   ): Promise<{
     revisionId: string;
-    files: Array<{ path: string; sha256: string; size: number }>;
+    files: { path: string; sha256: string; size: number }[];
   }> {
     const { revisionId: id, files } = await this.runtimeRevisions.listFiles(
       this.requireWorkspaceId(session),
@@ -765,13 +765,13 @@ export class ConversationV2Controller {
     @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('revisionId') revisionId: string,
     @Body() body: PresignRevisionDto,
-  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+  ): Promise<{ items: { path: string; url: string }[] }> {
     const revision = await this.runtimeRevisions.getAuthorizedRevision(
       this.requireWorkspaceId(session),
       revisionId,
     );
     const resolved = this.runtimeRevisions.resolveObjectKeys(revision, body.paths);
-    const items: Array<{ path: string; url: string }> = [];
+    const items: { path: string; url: string }[] = [];
 
     for (const file of resolved) {
       const url = await this.workspaceDocuments.generateReadUrl(file.objectKey, {
@@ -829,7 +829,7 @@ export class ConversationV2Controller {
   async getAppSourceUrls(
     @Param('id') _id: string,
     @Body() body: GetAppSourceUrlsDto,
-  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+  ): Promise<{ items: { path: string; url: string }[] }> {
     // Manus/Sandbox Manager may prefix ceph_path with the bucket name; strip it
     // so signed URLs are `{public}/{bucket}/{userId}/appbuilder/...` not
     // `{public}/{bucket}/{bucket}/{userId}/...`.
@@ -838,7 +838,7 @@ export class ConversationV2Controller {
     if (!prefix) {
       throw new BadRequestException('Invalid cephPath');
     }
-    const items: Array<{ path: string; url: string }> = [];
+    const items: { path: string; url: string }[] = [];
 
     for (const relative of body.paths) {
       const normalized = relative.replace(/^\/+/, '').replace(/\\/g, '/');
@@ -906,7 +906,7 @@ export class ConversationV2Controller {
   }
 
   private async buildRevisionCatalogBySessionId(
-    apps: Array<{ sessionId: string }>,
+    apps: { sessionId: string }[],
   ): Promise<{
     revisionBySession: Map<string, AppRevisionCatalogFields>;
     contexts: Map<string, SessionRevisionContext>;

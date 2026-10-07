@@ -505,3 +505,242 @@ async def test_a_failed_extraction_call_is_not_kept_for_the_next_run(monkeypatch
          "extractionStrategy": "ai"},
     ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1", cache=cache)
     assert cache.rows == {}
+
+
+LINES_BLOCK = {"blockPk": 9, "blockKey": "b9", "origin": "native_text",
+               "content": "Contract number CNT-7 | Amendment 1 on 2026-01-01 | Amendment 2 on 2026-02-01"}
+
+
+@pytest.mark.asyncio
+async def test_many_records_gives_one_entity_per_item_found(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [],
+                "values": [{"key": "amendment_number", "value": "1", "evidenceReferences": ["section:7/block:9"]}],
+                "records": [
+                    {"label": "1", "values": [
+                        {"key": "amendment_number", "value": "1", "evidenceReferences": ["section:7/block:9"]},
+                        {"key": "effective_date", "value": "2026-01-01", "evidenceReferences": ["section:7/block:9"]}]},
+                    {"label": "2", "values": [
+                        {"key": "amendment_number", "value": "2", "evidenceReferences": ["section:7/block:9"]},
+                        {"key": "effective_date", "value": "2026-02-01", "evidenceReferences": ["section:7/block:9"]}]},
+                    # Not in the block it cites: dropped, as for a single record.
+                    {"label": "9", "values": [
+                        {"key": "amendment_number", "value": "9", "evidenceReferences": ["section:7/block:9"]}]},
+                ]}
+
+    ai_stubs(monkeypatch, extraction)
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [LINES_BLOCK]}],
+                "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    mapping = entry(
+        {"sourceField": None, "targetAttribute": "contract_number", "mode": "constant", "constantValue": "CNT-7"},
+        {"sourceField": "amendment", "targetAttribute": "amendment_number", "mode": "extract", "extractionStrategy": "ai"},
+        {"sourceField": "date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai"},
+    )
+    mapping["options"] = {"aiSettings": {"manyRecords": True}}
+    result = await document.populate_document(object(), mapping, AMENDMENT_CONCEPT, "u1",
+                                              metadata_fetch=metadata, model_id="model-1")
+
+    assert asked["multiple"] is True
+    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2"]
+    dates = {a["entityId"]: (a["value"], a["evidence"]["rowNumber"]) for a in result["assertions"]
+             if a["attribute"] == "effective_date"}
+    assert sorted(dates.values()) == [("2026-01-01", 1), ("2026-02-01", 2)]
+    assert result["coverage"]["records"] == 2
+    assert result["coverage"]["status"] == "processed_complete"
+
+
+def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
+    reference = "section:7/block:9"
+    by_reference = {reference: (LINES_BLOCK, {"sectionPk": 7, "sectionKey": "s7"})}
+    keys = {"quote", "summary", "kind"}
+    entry_ = {"mappingVersion": "v1"}
+
+    def ground_with(summaries: set[str], items: list[dict]) -> tuple[dict, dict]:
+        values: dict = {}
+        evidence: dict = {}
+        document._ground_values(items, keys, by_reference, {}, entry_, {"assetId": "a"}, "v", None,
+                                values, evidence, None, {"kind": ["Amendment", "Renewal"]}, summaries)
+        return values, evidence
+
+    def ground(items: list[dict]) -> tuple[dict, dict]:
+        return ground_with({"summary"}, items)
+
+    def item(key: str, value: str) -> dict:
+        return {"key": key, "value": value, "evidenceReferences": [reference]}
+
+    # The summary comes before its quote; the picked kind is written as the allowed value.
+    values, evidence = ground([item("summary", "The contract was amended twice"), item("kind", "amendment"),
+                               item("quote", "Amendment 1 on 2026-01-01")])
+    assert values == {"summary": "The contract was amended twice", "kind": "Amendment",
+                      "quote": "Amendment 1 on 2026-01-01"}
+    assert evidence["summary"]["rephrased"] is True
+    # A date the text does not write that way is a rewrite too: kept only for a field allowed to rewrite.
+    keys.add("when")
+    values, _ = ground([item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
+    assert values == {"quote": "Amendment 2 on 2026-02-01"}
+    values, _ = ground_with({"summary", "when"}, [item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
+    assert values["when"] == "2026-02-01T00:00"
+    # With nothing quoted from the block, a summary is not proof the item is there; an unknown kind is dropped.
+    values, _ = ground([item("summary", "The contract was amended twice"), item("kind", "Termination")])
+    assert values == {}
+
+
+@pytest.mark.asyncio
+async def test_one_record_per_document_does_not_ask_for_several(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"}), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["multiple"] is False
+
+
+@pytest.mark.asyncio
+async def test_ai_is_told_what_each_field_means(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "Statut", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai",
+         "description": "Where the fact stands.", "valueType": "enum", "allowedValues": ["planned", "done"]},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["attributes"] == [{"key": "effective_date", "label": "Statut", "type": "string",
+                                    "description": "Where the fact stands. One of: planned, done."}]
+
+
+@pytest.mark.asyncio
+async def test_a_field_definition_wins_over_the_attribute_description(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "Date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai",
+         "description": "Attribute description.", "semanticDefinition": "  The day the amendment takes effect.  "},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["attributes"][0]["description"] == "The day the amendment takes effect."
+
+
+@pytest.mark.asyncio
+async def test_the_agent_chosen_for_a_field_is_recorded_with_its_evidence(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        return {"model": "gpt-test", "extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "2026-04-01",
+                            "evidenceReferences": ["section:7/block:9"]}],
+                "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai", "agentId": "agent-7"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assertion = next(item for item in result["assertions"] if item["attribute"] == "effective_date")
+    assert assertion["evidence"]["requestedAgentId"] == "agent-7"
+
+
+# --- Several records per document by rules: every match of a rule is a record ---------------------------
+
+def _amendment_blocks(*amendments: tuple[str, str | None]) -> list[dict]:
+    blocks = [{"blockPk": 8, "blockKey": "b8", "pageNumber": 1, "origin": "native_text", "content": "Contract number: CNT-7"}]
+    for index, (number, date) in enumerate(amendments, start=10):
+        text = f"Amendment number: {number}" + (f"\nEffective date: {date}" if date else "")
+        blocks.append({"blockPk": index, "blockKey": f"b{index}", "pageNumber": 2, "origin": "native_text", "content": text})
+    return blocks
+
+
+def _rules_entry(many: bool) -> dict:
+    mapping = entry(
+        {"sourceField": "Contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "Amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "Effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    )
+    mapping["options"] = {"manyRecords": True} if many else {}
+    return mapping
+
+
+@pytest.mark.asyncio
+async def test_rules_make_one_record_per_match_and_share_what_the_document_says_once(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    blocks = _amendment_blocks(("1", "2026-01-01"), ("2", "2026-02-01"))
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": blocks}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), _rules_entry(True), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert sorted((e["identity"]["contract_number"], e["identity"]["amendment_number"]) for e in result["entities"]) == [
+        ("cnt-7", "1"), ("cnt-7", "2")]
+    dates = sorted((a["value"], a["evidence"]["rowNumber"], a["evidence"]["blockKey"]) for a in result["assertions"]
+                   if a["attribute"] == "effective_date")
+    # Each value keeps the block it was found in, and its record's number.
+    assert dates == [("2026-01-01", 1, "b10"), ("2026-02-01", 2, "b11")]
+    assert not [gap for gap in result["gaps"] if gap["kind"] == "uneven_matches"]
+
+    # One record per document: the same rules find several values and keep none.
+    single = await document.populate_document(object(), _rules_entry(False), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert single["entities"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_field_matching_fewer_times_than_there_are_records_is_reported(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    blocks = _amendment_blocks(("1", "2026-01-01"), ("2", "2026-02-01"), ("3", None))
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": blocks}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), _rules_entry(True), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2", "3"]
+    uneven = [gap for gap in result["gaps"] if gap["kind"] == "uneven_matches"]
+    assert [gap["field"] for gap in uneven] == ["effective_date"]
+
+
+def test_rule_matches_are_paired_with_the_ai_records_by_their_order():
+    evidence = lambda key: {"blockKey": key}  # noqa: E731
+    records, uneven = document.pair_rule_matches(
+        [{"values": {"label": "first"}, "evidence": {"label": evidence("a")}}],
+        {"amount": [("10", evidence("b1"), "q"), ("20", evidence("b2"), "q")]})
+    assert [record["values"] for record in records] == [{"label": "first", "amount": "10"}, {"amount": "20"}]
+    assert uneven == []
+    # A value the AI found for a record wins over a rule match.
+    records, _ = document.pair_rule_matches([{"values": {"amount": "99"}, "evidence": {"amount": evidence("ai")}}],
+                                            {"amount": [("10", evidence("b1"), "q")]})
+    assert records[0]["values"] == {"amount": "99"}
+    assert document.pair_rule_matches([], {}) == ([], [])
+
+
+def test_the_same_match_found_twice_in_one_block_is_one_match():
+    block, other = {"blockPk": 1}, {"blockPk": 2}
+    matches = document.rule_matches([("A", block, {}, "A"), ("A", block, {}, "A"), ("A", other, {}, "A"), ("B", block, {}, "B")])
+    assert [(value, item["blockPk"]) for value, item, *_ in matches] == [("A", 1), ("A", 2), ("B", 1)]
+
+
+def test_several_records_may_be_set_without_ai_or_with_its_limits():
+    assert document.many_records({"options": {"manyRecords": True}})
+    assert document.many_records({"options": {"aiSettings": {"manyRecords": True}}})
+    assert not document.many_records({"options": {}}) and not document.many_records({})

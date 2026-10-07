@@ -211,7 +211,7 @@ export class HealthService {
 
     const delay = await new Promise<number>((resolve) => {
       const start = Date.now();
-      setImmediate(() => resolve(Date.now() - start));
+      setImmediate(() => { resolve(Date.now() - start); });
     });
 
     let status: 'up' | 'down' | 'degraded';

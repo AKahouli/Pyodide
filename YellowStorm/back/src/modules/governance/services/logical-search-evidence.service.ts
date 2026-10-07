@@ -47,6 +47,6 @@ export class LogicalSearchEvidenceService {
     const nested = nestedKeys.flatMap((key) => key in record ? this.collectObjects(record[key]) : []);
     return nested.length > 0 ? nested : [record];
   }
-  private readString(record: Record<string, unknown>, keys: string[]): string | undefined { for (const key of keys) if (typeof record[key] === 'string' && record[key]) return record[key] as string; return undefined; }
-  private readNumber(record: Record<string, unknown>, keys: string[]): number | undefined { for (const key of keys) if (typeof record[key] === 'number' && Number.isFinite(record[key])) return record[key] as number; return undefined; }
+  private readString(record: Record<string, unknown>, keys: string[]): string | undefined { for (const key of keys) if (typeof record[key] === 'string' && record[key]) return record[key]; return undefined; }
+  private readNumber(record: Record<string, unknown>, keys: string[]): number | undefined { for (const key of keys) if (typeof record[key] === 'number' && Number.isFinite(record[key])) return record[key]; return undefined; }
 }

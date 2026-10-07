@@ -140,7 +140,7 @@ export class InMemoryConnectionStore implements UserAppConnectionStore {
   async upsertOnCallback(userId: string, appKey: string, payload: UpsertConnectionPayload): Promise<UserAppConnectionRow> {
     let row = await this.findByUserAndApp(userId, appKey);
     if (!row) {
-      row = this.seed({ userId, appKey, ...payload } as Partial<UserAppConnectionRow>);
+      row = this.seed({ userId, appKey, ...payload });
     } else {
       Object.assign(row, payload, { lastRefreshedAt: new Date() });
     }
@@ -189,7 +189,7 @@ export class InMemoryConnectionStore implements UserAppConnectionStore {
 
 export class InMemoryOauthStateStore implements ConnectedAppOauthStateStore {
   readonly consumed: string[] = [];
-  private rows: Array<ConnectedAppOauthStateRow & { expired?: boolean }> = [];
+  private rows: (ConnectedAppOauthStateRow & { expired?: boolean })[] = [];
 
   seed(over: Partial<ConnectedAppOauthStateRow> & { expired?: boolean }): ConnectedAppOauthStateRow {
     const row = {

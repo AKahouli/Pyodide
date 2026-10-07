@@ -34,6 +34,7 @@ describe('SemanticTrustPanel', () => {
     expect(screen.getByText('trust.issue.sources')).toBeInTheDocument();
     expect(screen.getByText('reviewQueue.title')).toBeInTheDocument();
     expect(screen.getByText('reviewQueue.kind.ambiguous_link')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'reviewQueue.chooseRecord' }));
     expect(screen.getByRole('option', { name: 'Sony Europe' })).toBeInTheDocument();
   });
 
@@ -99,7 +100,8 @@ describe('SemanticTrustPanel', () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     render(<QueryClientProvider client={client}><SemanticTrustPanel modelId='model' canEdit onClose={vi.fn()} /></QueryClientProvider>);
-    fireEvent.change(screen.getByRole('combobox', { name: 'reviewQueue.chooseRecord' }), { target: { value: 'sony-fr' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'reviewQueue.chooseRecord' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Sony France' }));
     fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.choose_match' }));
     await waitFor(() => expect(api.resolveReviewItem).toHaveBeenCalledWith('model', 'review', { decision: 'accepted', selectedTargetId: 'sony-fr' }));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'review-queue', 'model'] });

@@ -55,7 +55,7 @@ export interface ReplayToolEnforcementAssessment {
   toolPolicyScore: number | null;
   toolSequenceMatch: number | null;
   argumentShapeMatch: number | null;
-  findings: Array<{ category: 'tool_sequence' | 'argument_shape'; severity: 'info' | 'warning' | 'fail'; reason: string }>;
+  findings: { category: 'tool_sequence' | 'argument_shape'; severity: 'info' | 'warning' | 'fail'; reason: string }[];
   blockedBy: string[];
   comparisons: ReplayToolCallComparison[];
 }

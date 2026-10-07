@@ -5,6 +5,19 @@ export enum ConnectorActionSafety {
   DELETE = 'delete',
 }
 
+export enum ConnectorActionExecutionKind {
+  INHERIT = 'inherit',
+  LEAF = 'leaf',
+  ORCHESTRATION = 'orchestration',
+  UNKNOWN = 'unknown',
+}
+
+export interface ConnectorWorkerPolicy {
+  enabled: boolean;
+  defaultExecutionKind: 'leaf' | 'unknown';
+  agentLaunchEnabled: boolean;
+}
+
 export enum ConnectorActionResultKind {
   GENERIC = 'generic',
   WEB_SEARCH = 'web_search',
@@ -79,6 +92,8 @@ export interface ConnectorAction {
   parameterSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   safety: ConnectorActionSafety;
+  executionKind?: ConnectorActionExecutionKind;
+  workerAccess?: 'inherit' | 'allow' | 'block';
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;

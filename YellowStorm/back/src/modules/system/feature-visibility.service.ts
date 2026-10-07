@@ -42,9 +42,9 @@ export class FeatureVisibilityService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     await this.getVisibility();
     this.refreshTimer = setInterval(() => {
-      void this.refresh().catch((error) => this.logger.warn(
+      void this.refresh().catch((error) => { this.logger.warn(
         `Failed to refresh feature visibility: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      ));
+      ); });
     }, CACHE_MS);
     this.refreshTimer.unref();
   }

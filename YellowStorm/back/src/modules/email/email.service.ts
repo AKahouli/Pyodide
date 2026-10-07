@@ -396,7 +396,7 @@ export class EmailService {
         .map((att) => {
           const contentBytes = Buffer.isBuffer(att.content)
             ? att.content.toString('base64')
-            : Buffer.from(att.content as string).toString('base64');
+            : Buffer.from(att.content).toString('base64');
 
           const graphAtt: GraphAttachment = {
             '@odata.type': '#microsoft.graph.fileAttachment',

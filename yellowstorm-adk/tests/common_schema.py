@@ -61,11 +61,6 @@ class MockSettings(BaseModel):
 
     # Embedding Configuration
     FAKE_EMBEDDINGS: bool = False
-    ENABLE_POSTGRESQL_LOGGING: bool = True
-    POSTGRESQL_LOG_BATCH_SIZE: int = 10
-    POSTGRESQL_LOG_FLUSH_INTERVAL: float = 5.0
-    POSTGRESQL_LOG_POOL_SIZE: int = 5
-    POSTGRESQL_LOG_MAX_OVERFLOW: int = 10
 
     # Database Connection Pool Settings
     DB_MAX_CONNECTIONS: int = 3000

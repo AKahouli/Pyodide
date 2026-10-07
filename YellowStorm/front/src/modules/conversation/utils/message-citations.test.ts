@@ -20,10 +20,11 @@ describe('collectMessageCitations', () => {
   it('collects citations from text parts and standalone citation parts', () => {
     const components: MessageComponent[] = [
       { type: 'text', data: { content: 'intro', citations: [citation({ source: 'a.pdf' })] } },
-      { type: 'citation', data: { source: 'b.pdf', page: '7' } },
+      { type: 'citation', data: { source: 'b.pdf', page: '7', evidenceId: 'evidence', executionId: 'worker' } },
     ];
     const result = collectMessageCitations(components);
     expect(result.map((c) => c.source)).toEqual(['a.pdf', 'b.pdf']);
+    expect(result[1]).toMatchObject({ evidenceId: 'evidence', executionId: 'worker' });
   });
 
   it('preserves persisted web citation selectors', () => {
@@ -33,6 +34,15 @@ describe('collectMessageCitations', () => {
     } } as never])).toEqual([expect.objectContaining({
       sourceKind: 'web', sourceType: 'web', exactText: 'Revenue rose.', prefix: 'Results', suffix: 'Outlook', evidenceOrigin: 'page_content',
     })]);
+  });
+  it('keeps owned source identities distinct from same-filename workers and legacy sources', () => {
+    const result = collectMessageCitations([
+      { type: 'citation', data: { source: 'report.pdf' } },
+      { type: 'citation', data: { source: 'report.pdf', executionId: 'worker-1', evidenceId: 'evidence-1' } },
+      { type: 'citation', data: { source: 'report.pdf', executionId: 'worker-2', evidenceId: 'evidence-2' } },
+    ]);
+    expect(result).toHaveLength(3);
+    expect(result.slice(1).map(item => item.executionId)).toEqual(['worker-1', 'worker-2']);
   });
 
   it('de-duplicates repeated citations across parts (same source/reference/page)', () => {

@@ -61,7 +61,7 @@ export class A2AAdminGrpcClientService
     const maxMsg = this.config.get<number>('a2aAdmin.grpcMaxMessageBytes')!;
     const { credentials, options: tlsOptions } = buildGrpcChannelCredentials(
       this.config,
-      (msg) => this.logger.warn(msg),
+      (msg) => { this.logger.warn(msg); },
     );
     this.client = new proto.a2a_admin.A2AAdminService(url, credentials, {
       ...tlsOptions,
@@ -196,7 +196,7 @@ export class A2AAdminGrpcClientService
             api_key_header: string;
           },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             agentId: response.agent_id,
             agentCardUrl: response.agent_card_url,
@@ -227,7 +227,7 @@ export class A2AAdminGrpcClientService
             api_key_header: string;
           },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             agentId: response.agent_id,
             agentCardUrl: response.agent_card_url,
@@ -253,7 +253,7 @@ export class A2AAdminGrpcClientService
           err: grpc.ServiceError | null,
           response: { agent_id: string; revoked: boolean },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({ agentId: response.agent_id, revoked: !!response.revoked });
         },
       );
@@ -274,7 +274,7 @@ export class A2AAdminGrpcClientService
           err: grpc.ServiceError | null,
           response: { agent_id: string; enabled: boolean },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({ agentId: response.agent_id, enabled: response.enabled });
         },
       );
@@ -300,7 +300,7 @@ export class A2AAdminGrpcClientService
             updated_at: string;
           },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             found: !!response.found,
             agentId: response.agent_id,

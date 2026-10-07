@@ -65,7 +65,7 @@ export class SemanticModelValidationService {
   }
 
   private findDuplicateKeys(
-    entities: Array<{ id: string; key: string }>,
+    entities: { id: string; key: string }[],
     kind: 'node_type' | 'relation_type',
     issues: ValidationIssue[],
   ): void {

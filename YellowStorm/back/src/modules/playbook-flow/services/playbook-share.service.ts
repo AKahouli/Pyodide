@@ -131,7 +131,7 @@ export class PlaybookShareService {
     if (recipients.length === 0) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'No matching users found');
     }
-    return recipients as unknown as PopulatedUser[];
+    return recipients;
   }
 
   private mapShare(share: SharedPlaybookRecord, user: PopulatedUser): IPlaybookShareEntry {

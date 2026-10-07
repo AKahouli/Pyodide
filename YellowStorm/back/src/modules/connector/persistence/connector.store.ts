@@ -19,6 +19,7 @@ export interface ConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   /** From connector_skills, ordered by position. */
@@ -47,6 +48,7 @@ export interface NewConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   skillIds: string[];
@@ -71,7 +73,7 @@ export interface ConnectorStore {
   list(query: ConnectorListQuery): Promise<{ rows: ConnectorRow[]; total: number }>;
   findAllActive(): Promise<ConnectorRow[]>;
   /** Active + (not hidden OR the exception slug) — public selector listing. */
-  findAllActiveVisible(exceptionSlug: string): Promise<ConnectorRow[]>;
+  findAllActiveVisible(): Promise<ConnectorRow[]>;
   /** Category-id → name map in one query (gRPC binding hydration). */
   findNamesByIds(ids: string[]): Promise<Map<string, string>>;
   /** Connector ids among `ids` sitting in any of `categoryIds` (case handled by caller). */
@@ -84,15 +86,6 @@ export interface ConnectorStore {
   update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null>;
   findBySlugExcludingOwner(slug: string, excludeId: string, createdBy: string): Promise<ConnectorRow | null>;
   delete(id: string): Promise<ConnectorRow | null>;
-  /**
-   * System MCP connector seed (plan 3.6): INSERT … ON CONFLICT (slug) WHERE
-   * is_system DO UPDATE SET actions/updated_at — insert-only otherwise.
-   */
-  upsertSystemActionsBySlug(
-    slug: string,
-    seed: NewConnectorRow,
-    actions: ConnectorAction[],
-  ): Promise<ConnectorRow>;
 }
 
 export interface ConnectorCategoryRow {

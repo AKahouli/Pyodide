@@ -7,6 +7,8 @@ export interface CreateConversationData {
   projectId?: string;
   runtimePurpose?: 'chat' | 'platform_copilot';
   creationRequestId?: string;
+  /** Explicit root selection at creation; resolved/bound server-side (plan §4.2). */
+  rootAgentId?: string;
 }
 
 export interface UpdateConversationData {
@@ -108,6 +110,8 @@ export interface ConversationResponse {
   runtimeMode: 'standard' | 'governed';
   runtimePurpose: 'chat' | 'platform_copilot';
   pinnedAgentId?: string | null;
+  /** Bound root for standard untagged turns; distinct from copilot pinning. */
+  rootAgentId?: string | null;
   governanceContext?: {
     programId: string;
     scopeId: string;
