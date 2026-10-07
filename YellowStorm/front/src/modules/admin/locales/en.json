@@ -291,6 +291,7 @@
   "roles.permissions.menus.appMarketplace": "App marketplace",
   "roles.permissions.menus.govern": "Govern",
   "roles.permissions.menus.governance": "Governance",
+  "roles.permissions.menus.evaluationLogicalSearch": "Logical search evaluation",
   "roles.permissions.menus.admin": "Administration",
   "roles.permissions.groups.users.label": "User Management",
   "roles.permissions.groups.users.description": "Manage user-related permissions",

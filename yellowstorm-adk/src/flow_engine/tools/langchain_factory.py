@@ -8,12 +8,12 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Type, Union, Annotated
 
 from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args as _last_mcp_actual_args
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, BeforeValidator, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
@@ -780,23 +780,101 @@ def create_langchain_tools(
 # ---------------------------------------------------------------------------
 
 
+def _json_schema_python_types(schema: Dict[str, Any]) -> List[Any]:
+    """Resolve the Python type(s) declared by a JSON schema property.
+
+    MCP servers built with Pydantic expose optional parameters as ``anyOf``
+    unions without a top-level ``type`` (for example ``string | null``). Ignoring
+    those branches produced an untyped ``Any`` field, so the tool schema sent to
+    the model declared no type at all and the model called the tool with empty
+    arguments. Keep every non-null branch so a parameter that accepts a string
+    or a list of strings is not narrowed to a single type.
+    """
+    names: List[str] = []
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list):
+            names.extend(
+                str(branch.get("type"))
+                for branch in branches
+                if isinstance(branch, dict)
+                and branch.get("type") not in (None, "null")
+            )
+            if names:
+                break
+    if not names:
+        declared = schema.get("type")
+        if isinstance(declared, str):
+            names = [declared]
+        elif isinstance(declared, list):
+            names = [item for item in declared if item != "null"]
+    if not names:
+        # Match the ADK/UI converter, which treats a missing type as a string
+        # rather than emitting an untyped parameter.
+        return [str]
+
+    mapping = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+        "array": List[Any],
+        "object": Dict[str, Any],
+    }
+    resolved: List[Any] = []
+    for name in names:
+        python_type = mapping.get(name, str)
+        if python_type not in resolved:
+            resolved.append(python_type)
+    return resolved
+
+
 def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
-    schema_type = schema.get("type")
-    if isinstance(schema_type, list):
-        schema_type = next((item for item in schema_type if item != "null"), "string")
-    if schema_type == "string":
-        return str
-    if schema_type == "integer":
-        return int
-    if schema_type == "number":
-        return float
-    if schema_type == "boolean":
-        return bool
-    if schema_type == "array":
-        return List[Any]
-    if schema_type == "object":
-        return Dict[str, Any]
-    return Any
+    types = _json_schema_python_types(schema)
+    if len(types) == 1:
+        return types[0]
+    return Union[tuple(types)]
+
+
+def _schema_declares_array(schema: Dict[str, Any]) -> bool:
+    """True when the property is (or can be) a JSON array."""
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list) and any(
+            isinstance(branch, dict) and branch.get("type") == "array"
+            for branch in branches
+        ):
+            return True
+    declared = schema.get("type")
+    if declared == "array":
+        return True
+    return isinstance(declared, list) and "array" in declared
+
+
+def _coerce_json_string_array(value: Any) -> Any:
+    """Decode an array that a model serialized as a JSON string.
+
+    GLM 5.2 sends connector array arguments (for example
+    ``locate_answer_citations.citations``) as an escaped JSON string, which then
+    fails Pydantic validation with "Input should be a valid list". Decode it
+    before validation so the connector receives a real list.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    for _ in range(2):
+        if not text.startswith("["):
+            return value
+        try:
+            decoded = json.loads(text)
+        except (ValueError, TypeError):
+            return value
+        if isinstance(decoded, list):
+            return decoded
+        if not isinstance(decoded, str):
+            return value
+        text = decoded.strip()
+    return value
 
 
 def _sanitize_mcp_params_for_send(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -848,6 +926,8 @@ def _build_args_schema_for_connector_tool(
     for prop_name, prop_schema in properties.items():
         prop_schema = prop_schema if isinstance(prop_schema, dict) else {}
         py_type = _json_schema_type_to_python(prop_schema)
+        if _schema_declares_array(prop_schema):
+            py_type = Annotated[py_type, BeforeValidator(_coerce_json_string_array)]
         description = prop_schema.get("description") or ""
         if prop_name in required:
             field_defs[prop_name] = (py_type, Field(..., description=description))
@@ -859,6 +939,25 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _connector_parameters_schema(
+    tool_name: str,
+    description: str,
+    parameter_schema: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the connector parameters schema with the ADK/UI converter.
+
+    The chat UI serializes connector tool parameters through
+    ``connector_tools._build_function_schema``. The evaluation runner must send
+    the exact same schema to the model, otherwise a model like GLM 5.2 sees a
+    different (or untyped) parameter set and can emit calls without arguments.
+    """
+    from src.smart_rag.tools.utilities.connector_tools import _build_function_schema
+
+    return _build_function_schema(tool_name, description, parameter_schema)[
+        "function"
+    ]["parameters"]
 
 
 _WORKSPACE_PARAMETER_NAMES = {
@@ -1845,6 +1944,12 @@ def _create_connector_mcp_tools(
                 tool_name,
                 action_parameter_schema,
             )
+            # Reuse the ADK/UI converter so the schema sent to the model is the
+            # same on both runtimes. Pydantic's ``model_json_schema()`` would
+            # otherwise rewrap optional fields as ``anyOf`` with titles/defaults.
+            parameters_schema = _connector_parameters_schema(
+                tool_name, action_description, action_parameter_schema
+            )
 
             def _make_mcp_tool(
                 cid: str = connector_id,
@@ -1854,6 +1959,7 @@ def _create_connector_mcp_tools(
                 ad: str = action_description,
                 safety: str = action_safety,
                 arg_schema: Any = args_schema,
+                params_schema: Dict[str, Any] = parameters_schema,
                 tt: str = transport_type,
                 su: str = server_url,
                 sc: Dict[str, Any] = server_config,
@@ -2090,6 +2196,7 @@ def _create_connector_mcp_tools(
                         "connector_name": cn,
                         "action_key": ak,
                         "safety": safety,
+                        "parameters_schema": params_schema,
                     },
                 )
 

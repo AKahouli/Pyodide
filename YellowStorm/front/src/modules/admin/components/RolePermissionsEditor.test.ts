@@ -19,7 +19,7 @@ describe('toggleScopedPermission', () => {
   });
 
   it('counts visible selections instead of internal restriction markers', () => {
-    expect(countSelectedRolePermissions(['users.read'])).toBe(31);
+    expect(countSelectedRolePermissions(['users.read'])).toBe(32);
     expect(countSelectedRolePermissions(['users.read', 'feature.workspace', 'menu.restricted'])).toBe(2);
     expect(isScopedPermissionSelected(['*', 'feature.restricted'], 'feature', 'feature.workspace')).toBe(true);
   });

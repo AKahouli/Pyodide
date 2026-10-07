@@ -120,6 +120,9 @@ const DecisionFlowEditorPage = React.lazy(() =>
 const GovernancePage = React.lazy(() =>
   import('./modules/governance').then((m) => ({ default: m.GovernancePage }))
 );
+const LogicalSearchEvaluationPage = React.lazy(() =>
+  import('./modules/evaluation-logical-search').then((m) => ({ default: m.LogicalSearchEvaluationPage }))
+);
 const SemanticModelCatalogPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelCatalogPage })));
 const SemanticModelEditorPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelEditorPage })));
 const WorkspaceSemanticModelPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.WorkspaceSemanticModelPage })));
@@ -366,6 +369,16 @@ export const router = createHashRouter([
           <PermissionGuard permissions={['governance.read', 'governance.*', '*']} fallbackPath='/'>
             <Suspense fallback={null}>
               <GovernancePage />
+            </Suspense>
+          </PermissionGuard>
+        ),
+      },
+      {
+        path: 'evaluation-logical-search',
+        element: (
+          <PermissionGuard permissions={['governance.read', 'governance.*', '*']} fallbackPath='/'>
+            <Suspense fallback={null}>
+              <LogicalSearchEvaluationPage />
             </Suspense>
           </PermissionGuard>
         ),

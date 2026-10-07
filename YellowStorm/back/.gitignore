@@ -4,7 +4,8 @@ node_modules/
 # Build
 dist/
 build/
-
+/uploads/
+/uploads_FF/
 # Environment
 .env.local
 
