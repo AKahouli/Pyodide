@@ -15,7 +15,27 @@ describe("runtime configuration", () => {
     const config = loadConfig(required);
     expect(config.port).toBe(8080);
     expect(config.limits.memoryBytes).toBe(64 * 1_048_576);
-    expect(config.ceph.forcePathStyle).toBe(true);
+    expect(config.storage).toMatchObject({ provider: "ceph", ceph: { forcePathStyle: true } });
+  });
+
+  it("switches storage backend on STORAGE_PROVIDER", () => {
+    expect(loadConfig(required).storage.provider).toBe("ceph");
+
+    // Azure needs its own vars and none of the CEPH_* ones.
+    expect(loadConfig({
+      CODE_RUNTIME_API_KEY: "test-secret",
+      STORAGE_PROVIDER: "azure",
+      AZURE_STORAGE_CONNECTION_STRING: "cs",
+      AZURE_STORAGE_CONTAINER_NAME: "container"
+    }).storage).toEqual({
+      provider: "azure",
+      azure: { connectionString: "cs", container: "container" }
+    });
+
+    expect(() => loadConfig({ ...required, STORAGE_PROVIDER: "azure" }))
+      .toThrow("AZURE_STORAGE_CONNECTION_STRING is required");
+    expect(() => loadConfig({ ...required, STORAGE_PROVIDER: "gcs" }))
+      .toThrow('must be "ceph" or "azure"');
   });
 
   it("rejects contradictory and malformed limits", () => {

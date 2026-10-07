@@ -122,6 +122,19 @@ export const configValidationSchema = Joi.object({
   // Express trust proxy: false|0|empty, hop count, true, or CIDR/name list
   TRUST_PROXY: Joi.string().allow('').default(''),
 
+  // Storage backend selection. A typo must fail at boot rather than silently
+  // falling back to Ceph and pointing at the wrong storage.
+  STORAGE_PROVIDER: Joi.string().valid('ceph', 'azure').default('ceph'),
+
+  // Azure Blob / Data Lake Gen2 — required when STORAGE_PROVIDER=azure.
+  // The connection string must carry an account key: SAS generation needs it.
+  AZURE_STORAGE_CONNECTION_STRING: Joi.string().when('STORAGE_PROVIDER', {
+    is: 'azure',
+    then: Joi.required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  AZURE_STORAGE_CONTAINER_NAME: Joi.string().default('documents'),
+
   // Ceph S3 Storage
   CEPH_S3_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
   CEPH_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),

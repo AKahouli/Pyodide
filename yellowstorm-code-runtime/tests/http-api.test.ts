@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ServiceConfig } from "../src/config.js";
 import { buildServer } from "../src/main.js";
 import { DEFAULT_LIMITS } from "../src/runtime/limits.js";
 import { QuickJsExecutor } from "../src/runtime/quickjs-executor.js";
@@ -27,11 +28,14 @@ const config = {
   maxConcurrentExecutions: 2,
   maxQueueDepth: 2,
   limits: DEFAULT_LIMITS,
-  ceph: {
-    endpoint: "http://ceph:9000", region: "us-east-1", bucket: "test",
-    accessKeyId: "key", secretAccessKey: "secret", forcePathStyle: true
+  storage: {
+    provider: "ceph",
+    ceph: {
+      endpoint: "http://ceph:9000", region: "us-east-1", bucket: "test",
+      accessKeyId: "key", secretAccessKey: "secret", forcePathStyle: true
+    }
   }
-};
+} satisfies ServiceConfig;
 
 const servers: ReturnType<typeof buildServer>[] = [];
 
