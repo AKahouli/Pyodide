@@ -1,7 +1,7 @@
-# Connectors in Conversation V2 (Manus) — Backend
+# Connectors in App Builder (Manus) — Backend
 
 This document describes how user-selected **connectors** (remote MCP servers) are
-wired into the Conversation V2 (Manus) chat flow on the backend. Connector CRUD
+wired into the App Builder (Manus) chat flow on the backend. Connector CRUD
 and auth live in the [`connector`](../connector) module; this feature is about
 attaching a per-conversation connector selection to each message turn, resolving
 the current user's auth, and forwarding ready-to-use bindings to the AI engine

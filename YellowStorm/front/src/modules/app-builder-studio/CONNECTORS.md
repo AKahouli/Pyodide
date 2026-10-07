@@ -1,7 +1,7 @@
-# Connectors in Conversation V2 (Manus) — Frontend
+# Connectors in App Builder Studio (Manus) — Frontend
 
 This document describes how a user attaches **connectors** (remote MCP servers) to
-a Conversation V2 (Manus) chat. Connector discovery/management UI lives in the
+a App Builder Studio (Manus) chat. Connector discovery/management UI lives in the
 [`connector`](../connector) module; this feature is about selecting connectors for
 a conversation, showing them as pills, sending them with each message, and keeping
 the selection across reloads and across the new-conversation → session navigation.
@@ -29,7 +29,7 @@ It mirrors the [Skills](./SKILLS.md) frontend wiring.
 ## Overview
 
 - The user picks connectors from the composer menus (`RecentConnectorsMenu` /
-  `ManageConnectorsDialog`); the selection is kept in the conversation-v2 store.
+  `ManageConnectorsDialog`); the selection is kept in the app-builder-studio store.
 - Selected connectors render as removable **pills** below the composer
   (`SelectedConnectorsPills`).
 - Every message send ships the current `selectedConnectorIds` to the backend.
@@ -38,7 +38,7 @@ It mirrors the [Skills](./SKILLS.md) frontend wiring.
 
 ## State Management
 
-The conversation-v2 Zustand store ([`store.ts`](store.ts)) owns the selection:
+The app-builder-studio Zustand store ([`store.ts`](store.ts)) owns the selection:
 
 ```ts
 selectedConnectorIds: string[];                       // selected connectors, sent with every message
@@ -86,7 +86,7 @@ The new-conversation page creates the session, then navigates to the session
 page. Because the session loader hydrates `selectedConnectorIds` from the
 brand-new (empty) pointer, the selection would be wiped before the first message
 is sent. To avoid that, `NewConversationPage` carries the selection in router
-state and `ConversationV2SessionPage` re-applies it right before the initial send
+state and `AppBuilderStudioSessionPage` re-applies it right before the initial send
 (`if (initialConnectorIds?.length) setSelectedConnectorIds(initialConnectorIds)`),
 then `sendMessage` ships it. This mirrors the skills hand-off.
 
@@ -107,7 +107,7 @@ So reopening a conversation re-displays the same connector pills.
 | [`store.ts`](store.ts) | `selectedConnectorIds` state, setters, send-message wiring |
 | [`api.ts`](api.ts) | `connectorIds?` on send body; `selectedConnectorIds` on the pointer |
 | [`components/Composer.tsx`](components/Composer.tsx) | `RecentConnectorsMenu` / `ManageConnectorsDialog` → store; `SelectedConnectorsPills`; remove the `connector_repo` submenu |
-| [`ConversationV2SessionPage.tsx`](ConversationV2SessionPage.tsx) | Rehydrate selection; re-apply carried selection before initial send |
+| [`AppBuilderStudioSessionPage.tsx`](AppBuilderStudioSessionPage.tsx) | Rehydrate selection; re-apply carried selection before initial send |
 | [`../conversation/NewConversationPage.tsx`](../conversation/NewConversationPage.tsx) | Connector multi-select on the new-conversation page; carry selection in router state |
 | [`../connector/components/SelectedConnectorsPills.tsx`](../connector/components/SelectedConnectorsPills.tsx) | Selected-connectors pills component |
 | [`../connector/index.ts`](../connector/index.ts) | Export `SelectedConnectorsPills` |

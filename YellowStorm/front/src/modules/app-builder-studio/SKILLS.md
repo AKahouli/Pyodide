@@ -1,6 +1,6 @@
-# Skills in Conversation V2 (Manus) — Frontend
+# Skills in App Builder Studio (Manus) — Frontend
 
-This document describes how a user attaches **skills** to a Conversation V2
+This document describes how a user attaches **skills** to a App Builder Studio
 (Manus) chat. Skill discovery/management UI lives in the
 [`skill`](../skill) module; this feature is about selecting skills for a
 conversation, showing them as pills, sending them with each message, and keeping
@@ -22,7 +22,7 @@ navigation.
 ## Overview
 
 - The user picks skills from the composer menus (`RecentSkillsMenu` /
-  `ManageSkillsDialog`); the selection is kept in the conversation-v2 store.
+  `ManageSkillsDialog`); the selection is kept in the app-builder-studio store.
 - Selected skills render as removable **pills** below the composer
   (`SelectedSkillsPills`), shared by the v1 and v2 composers so they look
   identical.
@@ -32,7 +32,7 @@ navigation.
 
 ## State Management
 
-The conversation-v2 Zustand store ([`store.ts`](store.ts)) owns the selection:
+The app-builder-studio Zustand store ([`store.ts`](store.ts)) owns the selection:
 
 ```ts
 selectedSkillIds: string[];                       // selected skills, sent with every message
@@ -72,13 +72,13 @@ page. Because the session loader hydrates `selectedSkillIds` from the brand-new
 To avoid that, `NewConversationPage` carries the selection in router state:
 
 ```ts
-navigate(`/conversation-v2/${sessionId}`, {
+navigate(`/studio/${sessionId}`, {
   state: { initialMessage: text, model: litellmModel,
-           skillIds: useConversationV2Store.getState().selectedSkillIds },
+           skillIds: useAppBuilderStudioStore.getState().selectedSkillIds },
 });
 ```
 
-`ConversationV2SessionPage` re-applies it right before the initial send
+`AppBuilderStudioSessionPage` re-applies it right before the initial send
 (`if (initialSkillIds?.length) setSelectedSkillIds(initialSkillIds)`), then
 `sendMessage` ships it.
 
@@ -99,7 +99,7 @@ So reopening a conversation re-displays the same skill pills.
 | [`store.ts`](store.ts) | `selectedSkillIds` state, setters, send-message wiring |
 | [`api.ts`](api.ts) | `selectedSkillIds` on `SessionPointer` |
 | [`components/Composer.tsx`](components/Composer.tsx) | Use `SelectedSkillsPills` instead of inline pills |
-| [`ConversationV2SessionPage.tsx`](ConversationV2SessionPage.tsx) | Rehydrate selection; re-apply carried selection before initial send |
+| [`AppBuilderStudioSessionPage.tsx`](AppBuilderStudioSessionPage.tsx) | Rehydrate selection; re-apply carried selection before initial send |
 | [`../conversation/NewConversationPage.tsx`](../conversation/NewConversationPage.tsx) | Carry selection in router state; use `SelectedSkillsPills` |
 | [`../skill/components/SelectedSkillsPills.tsx`](../skill/components/SelectedSkillsPills.tsx) | New shared pills component (+ overflow hover card) |
 | [`../skill/index.ts`](../skill/index.ts) | Export `SelectedSkillsPills` |

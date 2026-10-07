@@ -1,4 +1,4 @@
-# Conversation V2 — Backend
+# App Builder — Backend
 
 NestJS module that bridges YellowStorm to the APImanus gRPC
 `AppBuilder` service: sessions, streaming chat, event persistence, SSE

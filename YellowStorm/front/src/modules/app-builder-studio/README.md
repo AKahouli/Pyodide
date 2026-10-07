@@ -1,6 +1,4 @@
-# Conversation V2 — Frontend (App Builder Studio)
-
-> **Documentation technique junior (Conversation en mode Agent / conversation-v2, code vérifié)** : [../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md](../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md)
+# App Builder Studio — Frontend
 
 React module that powers **App Builder Studio**: composer, streaming timeline,
 right panel (tool details + **NodePod app preview**), skills/connectors,
@@ -8,13 +6,14 @@ right panel (tool details + **NodePod app preview**), skills/connectors,
 and **App Marketplace** integration.
 
 **Product naming:** User-facing UI/routes say **Studio** / **App Builder Studio**.
-Code and REST paths remain `conversation-v2`. Never surface “conversation-v2”
-in EN/FR copy.
+Module code lives under `app-builder-studio/`; REST calls use the canonical
+`/app-builder` prefix (the backend still accepts the legacy `/conversation-v2`
+prefix as an alias). Never surface “conversation-v2” in EN/FR copy.
 
 | Public route | Component | Notes |
 |---|---|---|
-| `/studio` | `ConversationV2Page` | Studio home / empty state |
-| `/studio/:sessionId` | `ConversationV2SessionPage` | Active session |
+| `/studio` | `AppBuilderStudioPage` | Studio home / empty state |
+| `/studio/:sessionId` | `AppBuilderStudioSessionPage` | Active session |
 | `/conversation-v2`, `/conversation-v2/:sessionId` | redirects | Legacy bookmarks → `/studio…` |
 
 Path helpers: [`studio-paths.ts`](studio-paths.ts) (`STUDIO_BASE_PATH`, `studioSessionPath`, `studioCloneDraftPath`).
@@ -27,7 +26,7 @@ Related docs:
 - Proposed commit split: [`../app-builder/COMMITS.md`](../app-builder/COMMITS.md)
 
 Backend counterpart:
-[`../../../../back/src/modules/conversation-v2/README.md`](../../../../back/src/modules/conversation-v2/README.md).
+[`../../../../back/src/modules/app-builder/README.md`](../../../../back/src/modules/app-builder/README.md).
 
 ## Table of Contents
 
@@ -55,7 +54,7 @@ Backend counterpart:
 
 ## Overview
 
-The frontend consumes conversation-v2 events via a global SSE pipe and renders
+The frontend consumes app-builder-studio events via a global SSE pipe and renders
 a split-pane **Studio** UI:
 
 - **Left**: message timeline with tool calls, plan, thinking, questions
@@ -92,7 +91,7 @@ message.
 2. Navigate to `/studio/{sessionId}?action=clone` (`studioCloneDraftPath`) with
    `location.state.source = 'template-clone'` — **no** template id in the path,
    **no** History prepend. Legacy `/conversation-v2/…` redirects preserve the query.
-3. `ConversationV2SessionPage` detects draft via `isCloneDraftSearch` /
+3. `AppBuilderStudioSessionPage` detects draft via `isCloneDraftSearch` /
    `template-clone-gate` (`isTemplateCloneNavigation` / `isTemplateCloneSession`).
 4. Send stays locked while `previewPhase === 'waiting'` until NodePod is ready
    (`useTemplateClonePreview` + `useWaitForPreviewHost`). Deploy controls stay
@@ -307,8 +306,8 @@ events, absent on the optimistic client-side user echo):
 
 ## Store
 
-[`store.ts`](store.ts) (Zustand) keeps two stores: `useConversationV2Store` (the
-active conversation's view state) and `useConversationV2PointersStore` (the session
+[`store.ts`](store.ts) (Zustand) keeps two stores: `useAppBuilderStudioStore` (the
+active conversation's view state) and `useAppBuilderStudioPointersStore` (the session
 sidebar list). The active store's `State`:
 
 ```ts
@@ -465,59 +464,59 @@ Seven specialized views for rendering tool call results in the right panel:
 
 ```ts
 // Sessions
-conversationV2Api.createSession(workspaceIds?)       // POST /conversation-v2/sessions
-conversationV2Api.listSessions(params?)              // GET /conversation-v2/sessions
-conversationV2Api.getSession(id)                     // GET /conversation-v2/sessions/:id
-conversationV2Api.patchSession(id, body)             // PATCH /conversation-v2/sessions/:id
-conversationV2Api.deleteSession(id)                  // DELETE /conversation-v2/sessions/:id
+appBuilderStudioApi.createSession(workspaceIds?)       // POST /app-builder/sessions
+appBuilderStudioApi.listSessions(params?)              // GET /app-builder/sessions
+appBuilderStudioApi.getSession(id)                     // GET /app-builder/sessions/:id
+appBuilderStudioApi.patchSession(id, body)             // PATCH /app-builder/sessions/:id
+appBuilderStudioApi.deleteSession(id)                  // DELETE /app-builder/sessions/:id
 
 // Chat
-conversationV2Api.sendMessage(id, body)              // POST /conversation-v2/sessions/:id/message
-conversationV2Api.stopSession(id)                    // POST /conversation-v2/sessions/:id/stop
-conversationV2Api.pauseSession(id)                   // POST /conversation-v2/sessions/:id/pause
-conversationV2Api.resumeSession(id)                  // POST /conversation-v2/sessions/:id/resume
+appBuilderStudioApi.sendMessage(id, body)              // POST /app-builder/sessions/:id/message
+appBuilderStudioApi.stopSession(id)                    // POST /app-builder/sessions/:id/stop
+appBuilderStudioApi.pauseSession(id)                   // POST /app-builder/sessions/:id/pause
+appBuilderStudioApi.resumeSession(id)                  // POST /app-builder/sessions/:id/resume
 
 // Events
-conversationV2Api.listEvents(id, since, limit?)      // GET /conversation-v2/sessions/:id/events
+appBuilderStudioApi.listEvents(id, since, limit?)      // GET /app-builder/sessions/:id/events
 
 // Users
-conversationV2Api.searchUsers(query, limit?)         // GET /users/search
+appBuilderStudioApi.searchUsers(query, limit?)         // GET /users/search
 
 // App Builder runtime
-conversationV2Api.createRuntimeTicket(id)            // POST /conversation-v2/sessions/:id/runtime-ticket
+appBuilderStudioApi.createRuntimeTicket(id)            // POST /app-builder/sessions/:id/runtime-ticket
 
 // Source revisions
-conversationV2Api.getRevisionFiles(id, revId)        // GET …/revisions/:revisionId/files
-conversationV2Api.presignRevisionFiles(id, rev, paths) // POST …/revisions/:revisionId/presign
-conversationV2Api.commitWorkspaceRevision(id, body)     // POST …/revisions/commit
-conversationV2Api.getAppSourceUrls(id, ceph, paths)     // POST …/app-source/urls (legacy)
-conversationV2Api.getFileSignedUrl(path)               // POST /conversation-v2/files/signed-url
+appBuilderStudioApi.getRevisionFiles(id, revId)        // GET …/revisions/:revisionId/files
+appBuilderStudioApi.presignRevisionFiles(id, rev, paths) // POST …/revisions/:revisionId/presign
+appBuilderStudioApi.commitWorkspaceRevision(id, body)     // POST …/revisions/commit
+appBuilderStudioApi.getAppSourceUrls(id, ceph, paths)     // POST …/app-source/urls (legacy)
+appBuilderStudioApi.getFileSignedUrl(path)               // POST /app-builder/files/signed-url
 
 // Deploy & share
-conversationV2Api.deploySession(id, body)            // POST /conversation-v2/sessions/:id/deploy
-conversationV2Api.shareDeployedApp(id, emails)       // POST /conversation-v2/sessions/:id/share-deploy
-conversationV2Api.getShared(token)                   // GET /conversation-v2/share/v2/:token
+appBuilderStudioApi.deploySession(id, body)            // POST /app-builder/sessions/:id/deploy
+appBuilderStudioApi.shareDeployedApp(id, emails)       // POST /app-builder/sessions/:id/share-deploy
+appBuilderStudioApi.getShared(token)                   // GET /app-builder/share/v2/:token
 
 // App data (production database)
-conversationV2Api.getAppDataStatus(id)               // GET …/app-data/status
-conversationV2Api.getAppDataTables(id, env)          // GET …/app-data/:env/tables
-conversationV2Api.getAppDataRows(id, env, table)     // GET …/app-data/:env/tables/:table/rows
+appBuilderStudioApi.getAppDataStatus(id)               // GET …/app-data/status
+appBuilderStudioApi.getAppDataTables(id, env)          // GET …/app-data/:env/tables
+appBuilderStudioApi.getAppDataRows(id, env, table)     // GET …/app-data/:env/tables/:table/rows
 
 // Workspace
-conversationV2Api.listWorkspaceDocuments(id, params) // GET …/workspace-documents
-conversationV2Api.getVncSignedUrl(id)                // GET …/vnc/signed-url
+appBuilderStudioApi.listWorkspaceDocuments(id, params) // GET …/workspace-documents
+appBuilderStudioApi.getVncSignedUrl(id)                // GET …/vnc/signed-url
 ```
 
-The deployed-apps Marketplace list and removal (`GET /conversation-v2/apps`,
-`DELETE /conversation-v2/apps/:id`) are consumed by the sibling `app-marketplace`
-module (`appMarketplaceApi`), not `conversationV2Api`.
+The deployed-apps Marketplace list and removal (`GET /app-builder/apps`,
+`DELETE /app-builder/apps/:id`) are consumed by the sibling `app-marketplace`
+module (`appMarketplaceApi`), not `appBuilderStudioApi`.
 
 ## SSE streaming
 
-[`conversationV2Stream.ts`](conversationV2Stream.ts) manages the global SSE
+[`appBuilderStudioStream.ts`](appBuilderStudioStream.ts) manages the global SSE
 connection:
 
-- Connects to `GET /conversation-v2/stream` on app mount.
+- Connects to `GET /app-builder/stream` on app mount.
 - Registers named event listeners for each event type.
 - Dispatches events to the store via `handleStreamEvent()` (routes by `sessionId`).
 - Heartbeat handling: server sends `event: heartbeat` every 15s; a 35s watchdog reconnects on silence.
@@ -578,14 +577,14 @@ Keys under `nodepod.*`, `appRuntime.*`, and Studio empty/banner strings in
 | Path | Role |
 |---|---|
 | `studio-paths.ts` | Public `/studio` paths + clone query helpers |
-| `ConversationV2SessionPage.tsx` | Studio session page: bootstrap / clone-preview / runtime / reconcile |
-| `ConversationV2Page.tsx` | Studio home / empty state |
-| `SharedConversationV2Page.tsx` | Read-only shared view |
+| `AppBuilderStudioSessionPage.tsx` | Studio session page: bootstrap / clone-preview / runtime / reconcile |
+| `AppBuilderStudioPage.tsx` | Studio home / empty state |
+| `SharedAppBuilderStudioPage.tsx` | Read-only shared view |
 | `startAgentSession.ts` | New session, template clone, commit clone draft → `/studio/…` |
 | `template-clone-draft.ts` / `template-clone-gate.ts` | Clone draft URL + Send gate |
 | `store.ts` | Zustand store — session, messages, tools, deploy, SSE state |
 | `api.ts` | REST API client (all endpoints) |
-| `conversationV2Stream.ts` | Global SSE connection + event dispatch |
+| `appBuilderStudioStream.ts` | Global SSE connection + event dispatch |
 | `useStream.ts` | SSE subscription hook with cleanup |
 | `types.ts` | Re-exports from `interfaces/` |
 | `features.ts` | Feature flags |
@@ -637,7 +636,7 @@ Keys under `nodepod.*`, `appRuntime.*`, and Studio empty/banner strings in
 | `components/MessageList.tsx` | Message timeline rendering with auto-scroll |
 | `components/MessageBubble.tsx` | Individual message (markdown, code blocks) |
 | `components/Composer.tsx` | Input + model/skill/connector selectors + send/stop |
-| `components/ConversationV2Header.tsx` | Title, status, pause/stop/share buttons |
+| `components/AppBuilderStudioHeader.tsx` | Title, status, pause/stop/share buttons |
 | `components/SessionStatusBanner.tsx` | Clone waiting/ready + App Builder + stream-error banners |
 | `components/ToolCallCard.tsx` | Tool call summary card |
 | `components/StepBlock.tsx` | Plan step with badge |

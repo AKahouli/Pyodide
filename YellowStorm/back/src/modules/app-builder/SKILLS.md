@@ -1,7 +1,7 @@
-# Skills in Conversation V2 (Manus) — Backend
+# Skills in App Builder (Manus) — Backend
 
 This document describes how user-selected **skills** are wired into the
-Conversation V2 (Manus) chat flow on the backend. Skill CRUD itself lives in the
+App Builder (Manus) chat flow on the backend. Skill CRUD itself lives in the
 [`skill`](../skill) module; this feature is about attaching a per-conversation
 skill selection to each message turn and forwarding it to the AI service (ADK)
 over gRPC.
