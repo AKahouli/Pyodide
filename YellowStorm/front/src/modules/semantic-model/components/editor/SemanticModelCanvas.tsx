@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, NodeToolbar, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, Mail, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -18,6 +18,7 @@ import { businessKey, compatibleRecordRelations, nextLinkedConceptPosition, uniq
 import { conceptDeletion, relationDeletion, typedRecordsDeletion } from '../../utils/graph-deletes';
 import { announceUndoable, isTextEntry } from '../../utils/undo-notice';
 import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell } from './CanvasToolbars';
+import { tableLabel } from '../../utils/data-sources';
 import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
 /** What a concept card says about its data: how many sources feed it, which are usable, and how it recognises a record. */
@@ -208,10 +209,11 @@ function HoverDelete({ label,onDelete,className,visible=false }: Readonly<{ labe
 const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<SourceNodeData>>) {
   const { t } = useModuleTranslation('semantic-model');
   const { source } = data;
-  const Icon = source.kind==='typed' ? Keyboard : source.kind==='spreadsheet' ? Sheet : source.kind==='workspace' ? FolderOpen : FileText;
+  const Icon = source.kind==='typed' ? Keyboard : source.kind==='mail' ? Mail : source.kind==='spreadsheet' ? Sheet : source.kind==='workspace' ? FolderOpen : FileText;
   const title = source.kind==='typed' ? t('designer.typedRecords') : source.label;
   const detail = source.kind==='typed' ? t('editor.recordCount',{count:Number(source.detail)})
     : source.kind==='workspace' ? t(Number(source.detail)===1?'records.table.files_one':'records.table.files',{count:Number(source.detail)})
+    : source.kind==='mail' ? tableLabel(t,source.detail)
     : source.detail || t(`designer.kind.${source.kind}`);
   const [recordInputOpen,setRecordInputOpen] = useState(false);
   const typedConceptId = source.kind==='typed' ? source.id.slice('typed:'.length) : '';

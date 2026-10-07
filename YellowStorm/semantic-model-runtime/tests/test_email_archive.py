@@ -258,7 +258,7 @@ def test_sandbox_previews_prepares_and_derives_from_a_file(archive: bytes, tmp_p
 async def test_population_downloads_an_archive_once_and_derives_its_files_once(archive: bytes, tmp_path: Path):
     from test_population_task import command
 
-    source = {**SOURCE, "sizeBytes": len(archive)}
+    source = {**SOURCE, "sizeBytes": len(archive), "indexInWorkspace": True}
     sources = [{"conceptId": "c1", "source": dict(source), "options": {"sheetName": sheet},
                 "columnMapping": {key: "customer_id", "nom_fichier" if sheet == "attachments" else "objet": "name"},
                 "mappingVersion": "map-v1"}
@@ -294,6 +294,28 @@ async def test_population_downloads_an_archive_once_and_derives_its_files_once(a
     assert len(uploads) == 6  # 4 message texts + 2 PDFs
     second = await run(command(sources=sources), fetch, upload, cache)
     assert second["ok"] is True and len(uploads) == 6
+
+
+@pytest.mark.asyncio
+async def test_population_leaves_the_workspace_alone_unless_the_source_asks_to_index_there(archive: bytes):
+    from test_population_task import command
+
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    sources = [{"conceptId": "c1", "source": source, "options": {"sheetName": "messages"},
+                "columnMapping": {"cle_message": "customer_id", "objet": "name"}, "mappingVersion": "map-v1"}]
+    uploads: list[str] = []
+
+    async def fetch(src: dict, actor: str, *, target: Path) -> Path:
+        target.write_bytes(archive)
+        return target
+
+    async def upload(src: dict, actor: str, entry: dict, path: Path) -> dict:
+        uploads.append(entry["fileName"])
+        return {"documentId": "d", "created": True}
+
+    outcome = await run(command(sources=sources), fetch, upload, None)
+    assert outcome["ok"] is True and outcome["counts"]["materialized"] == 4
+    assert uploads == []
 
 
 async def run(cmd: dict, fetch, upload, cache) -> dict:  # type: ignore[no-untyped-def]

@@ -530,7 +530,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             async with asyncio.timeout(asset_fetch_wall_seconds(source)):
                 archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=limits["maxArchiveMb"]))(
                     source, actor, target=target)
-            await derive_archive(source, archive_files[key])
+            # Copying the e-mails into the workspace only feeds its search; the model reads the
+            # archive itself, so it is done only when the data source asks for it.
+            if source.get("indexInWorkspace") is True:
+                await derive_archive(source, archive_files[key])
         return archive_files[key]
 
     async def derive_archive(source: dict, path: Path) -> None:

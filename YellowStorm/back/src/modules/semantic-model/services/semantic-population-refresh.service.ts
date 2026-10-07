@@ -693,6 +693,10 @@ export class SemanticPopulationRefreshService {
     const usableMappings: MappingRow[] = [];
     const skipped: { mappingId: string; reason: string }[] = [];
     let waitingFiles = 0;
+    const indexed = await this.archivesIndexedInWorkspace(model.id);
+    // The runtime copies an archive's e-mails and attachments into its workspace only when its data source asks to.
+    const withIndexing = <T extends { source: { assetId: string } }>(entry: T): T =>
+      indexed.has(entry.source.assetId) ? { ...entry, source: { ...entry.source, indexInWorkspace: true } } : entry;
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -706,10 +710,10 @@ export class SemanticPopulationRefreshService {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
+          for (const file of files.readable) sources.push(withIndexing(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId))));
           waitingFiles += files.waiting.length;
         } else {
-          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
+          sources.push(withIndexing(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId))));
         }
         usableMappings.push(mapping);
       } catch (error) {
@@ -1142,6 +1146,14 @@ export class SemanticPopulationRefreshService {
   }
 
   /** Readable files of a workspace mapping, listed at run time. */
+  /** The mail archives whose data source asks for their e-mails to be indexed in the workspace too. */
+  private async archivesIndexedInWorkspace(modelId: string): Promise<Set<string>> {
+    const result = await this.database.query<{ documentId: string }>(
+      `SELECT document_id AS "documentId" FROM semantic_model.data_connections
+       WHERE model_id=$1 AND kind='mail_archive' AND (config->>'indexInWorkspace')::boolean IS TRUE`, [modelId]);
+    return new Set(result.rows.map((row) => row.documentId));
+  }
+
   private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
     const all = await this.documents.listAllInWorkspace(workspaceId);
     return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);

@@ -2,6 +2,8 @@ import { SemanticExtractionSettingsController } from './controllers/semantic-ext
 import { SemanticDerivedSourceController } from './controllers/semantic-derived-source.controller';
 import { SemanticDerivedSourceService } from './services/semantic-derived-source.service';
 import { SemanticMappingPresetController } from './controllers/semantic-mapping-preset.controller';
+import { SemanticDataConnectionController } from './controllers/semantic-data-connection.controller';
+import { SemanticDataConnectionService } from './services/semantic-data-connection.service';
 import { SemanticMappingPresetService } from './services/semantic-mapping-preset.service';
 import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
 import { SemanticSearchSettingsService } from './services/semantic-search-settings.service';
@@ -54,9 +56,9 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule),forwardRef(() => NotificationsModule)],
-  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticDataConnectionController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticDataConnectionService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,

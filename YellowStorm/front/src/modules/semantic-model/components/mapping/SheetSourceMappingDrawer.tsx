@@ -76,7 +76,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     if (!target) return;
     setExpand(target.mapping?.expand ?? target.replaces?.expand ?? null);
     setConceptId(target.mapping?.conceptId ?? target.replaces?.conceptId ?? target.conceptId ?? '');
-    setSheetName(target.mapping?.sheetName ?? '');
+    setSheetName(target.mapping?.sheetName ?? target.sheetName ?? '');
     setMappings([]);
     setIdentityField(target.mapping?.identityFields[0] ?? '');
     setAiSettings({ ...target.mapping?.aiSettings });
@@ -85,7 +85,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     setHighlight(null);
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.workspaceId, target?.documentId, target?.mapping?.id, target?.replaces?.id]);
+  }, [target?.workspaceId, target?.documentId, target?.sheetName, target?.mapping?.id, target?.replaces?.id]);
 
   const defaultsQuery = useQuery({
     queryKey: ['semantic-models', 'extraction-defaults'],

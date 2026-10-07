@@ -41,6 +41,7 @@ const setup = (
   records: unknown[] = [],
   recordRelations: unknown[] = [],
   labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
+  indexedArchives: string[] = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -60,6 +61,7 @@ const setup = (
         }
         return { rows: mappings };
       }
+      if (sql.includes('FROM semantic_model.data_connections')) return { rows: indexedArchives.map((documentId) => ({ documentId })) };
       if (sql.includes('FROM semantic_model.records')) return { rows: records };
       if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
@@ -152,6 +154,16 @@ describe('SemanticPopulationRefreshService', () => {
     // Reading freshness never starts a run or touches the runtime specification.
     expect(runtime.requestPopulationRun).toHaveBeenCalledTimes(1);
     expect(models.requireRole).toHaveBeenCalled();
+  });
+
+  it('asks the runtime to index an archive in its workspace only when its data source says so', async () => {
+    const sent = async (indexed: string[]) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, indexed);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent([])).not.toHaveProperty('indexInWorkspace');
+    expect(await sent(['d-1'])).toMatchObject({ assetId: 'd-1', indexInWorkspace: true });
   });
 
   it('sends business synonyms in the specification only when there are some', async () => {

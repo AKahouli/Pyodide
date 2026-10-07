@@ -294,6 +294,31 @@ export interface SheetFieldProfile {
   uniqueRatio: number;
 }
 
+/** The kinds of data source a model can be connected to; SQL databases come next. */
+export type DataConnectionKind = 'mail_archive';
+
+/** A data source of the model, listed in its source explorer. A mail archive is read as three tables. */
+export interface DataConnection {
+  id: string;
+  kind: DataConnectionKind;
+  name: string;
+  workspaceId: string;
+  documentId: string;
+  /** Whether runs also copy the e-mails and attachments into the workspace, to be searched there. */
+  indexInWorkspace: boolean;
+  /** False when the file is gone or its workspace is no longer open to the person. */
+  available: boolean;
+  createdAt: string;
+}
+
+export interface DataConnectionDraft {
+  kind: DataConnectionKind;
+  workspaceId: string;
+  documentId: string;
+  name?: string;
+  indexInWorkspace?: boolean;
+}
+
 export interface SheetProfile {
   sheets: SheetSummary[];
   sheet?: SheetSummary;

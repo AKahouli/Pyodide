@@ -35,6 +35,12 @@ describe('designerFlow', () => {
     expect(feeds.filter((feed) => feed.sourceId === sheet.id).map((feed) => feed.conceptId)).toEqual(['supplier', 'contract']);
   });
 
+  it('shows a mail archive table as a mail source, one box per table', () => {
+    const mail = (id: string, sheetName: string) => mapping(id, 'supplier', { documentId: 'zip', documentName: 'mails.zip', mimeType: 'application/zip', sheetName });
+    const { sources } = designerFlow(graph, [mail('a', 'messages'), mail('b', 'participants')]);
+    expect(sources.filter((source) => source.kind !== 'typed').map((source) => [source.kind, source.detail])).toEqual([['mail', 'messages'], ['mail', 'participants']]);
+  });
+
   it('draws a concept made from another one as a line from that concept, with no source box', () => {
     const derived = { id: 'd1', conceptId: 'supplier', sourceConceptId: 'contract', conflictRule: 'most_frequent' as const, orderBy: null,
       updatedAt: '', fieldMappings: [{ sourceAttribute: 'number', targetAttribute: 'siret' }] };

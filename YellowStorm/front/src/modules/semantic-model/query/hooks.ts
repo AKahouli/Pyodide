@@ -27,6 +27,9 @@ export function useCreateSemanticModel() {
 export function useSourceAssets(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourceAssets(id ?? 'none'), queryFn: () => semanticModelApi.listSourceAssets(id ?? ''), enabled: Boolean(id) });
 }
+export function useDataConnections(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.dataConnections(id ?? 'none'), queryFn: () => semanticModelApi.listDataConnections(id ?? ''), enabled: Boolean(id) });
+}
 export function useSourceMappings(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourceMappings(id ?? 'none'), queryFn: () => semanticModelApi.listSourceMappings(id ?? ''), enabled: Boolean(id) });
 }

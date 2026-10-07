@@ -7,6 +7,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsObject,
   IsOptional,
@@ -24,6 +25,7 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DATA_CONNECTION_KINDS, type DataConnectionKind } from '../domain/semantic-data-connection.types';
 
 /** A sample row's cells: at most 200 columns, each a short name and a text, number, true/false or empty value. */
 @ValidatorConstraint({ name: 'sheetRowValues', async: false })
@@ -1535,4 +1537,41 @@ export class GraphExportDto {
   @Min(20)
   @Max(100000)
   shortenTo?: number;
+}
+
+/** Connect a model to a data source; for now a mail archive file of a workspace. */
+export class CreateDataConnectionDto {
+  @ApiProperty({ enum: DATA_CONNECTION_KINDS })
+  @IsIn(DATA_CONNECTION_KINDS)
+  kind!: DataConnectionKind;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  documentId!: string;
+
+  @ApiPropertyOptional({ maxLength: 120, description: "Defaults to the file's name" })
+  @IsOptional()
+  @IsString()
+  @Matches(/\S/, { message: 'name must not be blank' })
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'Also copy the e-mails and attachments into the workspace, where they are indexed for search' })
+  @IsOptional()
+  @IsBoolean()
+  indexInWorkspace?: boolean;
+}
+
+export class UpdateDataConnectionDto {
+  @ApiProperty({ description: 'Also copy the e-mails and attachments into the workspace, where they are indexed for search' })
+  @IsBoolean()
+  indexInWorkspace!: boolean;
 }
