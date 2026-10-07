@@ -744,3 +744,33 @@ def test_several_records_may_be_set_without_ai_or_with_its_limits():
     assert document.many_records({"options": {"manyRecords": True}})
     assert document.many_records({"options": {"aiSettings": {"manyRecords": True}}})
     assert not document.many_records({"options": {}}) and not document.many_records({})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cut", ["outline", "blocks", "sections"])
+async def test_a_document_read_in_part_is_never_reported_complete(
+        monkeypatch: pytest.MonkeyPatch, index_stubs, cut: str):
+    async def extraction(**_kwargs):
+        return {"model": "gpt-test", "extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "2026-04-01",
+                            "evidenceReferences": ["section:7/block:9"]}], "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+
+    async def outline(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7"}], "truncated": cut == "outline"}
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [AI_BLOCK]}],
+                "missingTargets": [8] if cut == "sections" else [],
+                "coverage": {"directBlocksComplete": cut != "blocks"}}
+
+    monkeypatch.setattr(document, "get_outline", outline)
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert result["coverage"]["status"] == "budget_exhausted"
+    assert any(gap["kind"] == "budget_exhausted" and gap["scope"] == "read" for gap in result["gaps"])

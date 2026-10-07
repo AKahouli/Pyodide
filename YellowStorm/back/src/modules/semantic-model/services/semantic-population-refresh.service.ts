@@ -971,18 +971,26 @@ export class SemanticPopulationRefreshService {
    * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
    * have today (design, mappings and source file versions) with the one of the active data.
    */
-  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+  /**
+   * ``waitingFiles``: files the mappings select that are not indexed yet. A run reads the indexed ones
+   * only, so "current" is current for those: the others join the data once they are indexed.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string; waitingFiles?: number }> {
     let fingerprint: string;
+    let waitingFiles = 0;
     try {
-      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+      const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+      fingerprint = plan.populationExecutionFingerprint;
+      waitingFiles = plan.waitingFiles;
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
       throw error;
     }
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
-    if (!active) return { state: 'never_run' };
-    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
+    const waiting = waitingFiles > 0 ? { waitingFiles } : {};
+    if (!active) return { state: 'never_run', ...waiting };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated', ...waiting };
   }
 
   private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {

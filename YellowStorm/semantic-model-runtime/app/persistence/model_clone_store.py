@@ -185,6 +185,15 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
                 lambda r: (target_model_id, new_revision_id, remap.text(r["entity_id"]), r["attribute"],
                            r["value"], r["origin"], r["validation_state"], remap.dumps(r["evidence"]),
                            r["mapping_version"], r["created_at"]))
+            await _copy(
+                connection, "SELECT * FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
+                "ORDER BY id", source_revision_id,
+                "INSERT INTO semantic_population.assertion_candidates (model_id, data_revision_id, entity_id, "
+                "attribute, value, origin, evidence, mapping_version, created_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)",
+                lambda r: (target_model_id, new_revision_id, remap.text(r["entity_id"]), r["attribute"],
+                           r["value"], r["origin"], remap.dumps(r["evidence"]), r["mapping_version"],
+                           r["created_at"]))
             counts["relationships"] = await _copy(
                 connection, "SELECT * FROM semantic_population.relationships WHERE data_revision_id = $1 ORDER BY id",
                 source_revision_id,

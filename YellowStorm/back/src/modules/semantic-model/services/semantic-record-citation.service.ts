@@ -19,6 +19,8 @@ export interface CitedRecordField {
   label: string;
   value: unknown;
   truncated?: boolean;
+  /** What other sources stated for this field than the value shown: a disagreement, or a second source. */
+  alternatives?: Array<{ value: unknown; origin: NonNullable<CitedRecordField['origin']> }>;
   /** Where the value came from: a document (page, row, column), another record, the AI, or a person. */
   origin?: {
     kind: RuntimeValueOrigin['kind'];
@@ -78,6 +80,7 @@ export class SemanticRecordCitationService {
     const assetIds = [...new Set([
       ...record.provenance.map((source) => source.assetId),
       ...Object.values(record.origins).map((origin) => origin.assetId),
+      ...Object.values(record.alternatives ?? {}).flatMap((items) => items.map((item) => item.origin.assetId)),
     ].filter((id): id is string => typeof id === 'string' && id.length > 0))];
     const readable = new Set(allowedWorkspaceIds);
     const found = assetIds.length ? await this.documents.findByIds(assetIds) : [];
@@ -95,6 +98,9 @@ export class SemanticRecordCitationService {
         key, label: labels.byKey.get(key) ?? key, value: record.values[key] ?? record.keyFields[key] ?? null,
         ...(truncated.has(key) ? { truncated: true } : {}),
         ...(origin ? { origin: describeOrigin(origin, openable) } : {}),
+        ...(record.alternatives?.[key]?.length
+          ? { alternatives: record.alternatives[key].map((item) => ({ value: item.value, origin: describeOrigin(item.origin, openable) })) }
+          : {}),
       };
     });
     const sources = [...new Map(record.provenance.filter((source) => openable.has(source.assetId))

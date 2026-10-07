@@ -243,6 +243,9 @@ describe('SemanticPopulationRefreshService', () => {
     expect(first.specification.sourceScope).toEqual([{ workspaceId: 'ws-1', assetId: 'workspace:ws-1:folder-1' }]);
     expect(accepted).toMatchObject({ sourceCount: 2, waitingFiles: 1 });
     expect(documents.findById).not.toHaveBeenCalled();
+    // Freshness says the data covers the indexed files only while one is still waiting.
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: first.populationExecutionFingerprint });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current', waitingFiles: 1 });
 
     listing.push(file('c'));
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });

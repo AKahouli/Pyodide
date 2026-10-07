@@ -166,15 +166,21 @@ def _evidence(block: dict[str, Any], section: dict[str, Any], raw_text: str,
     }
 
 
-async def _whole_document(connection: Any, document_pk: Any) -> list[dict[str, Any]]:
-    """Every section of the document (bounded by the outline limit), in reading order."""
+async def _whole_document(connection: Any, document_pk: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Every section of the document (bounded by the outline limit), in reading order, and
+    whether that is the whole document: false when the outline, the sections asked for or the
+    blocks read were cut, or a section could not be found."""
     outline = await get_outline(connection, document_pk=document_pk)
     section_pks = [section["sectionPk"] for section in outline["sections"]][:MAX_CLOSURE_SECTIONS]
     if not section_pks:
-        return []
+        return [], not outline["truncated"]
     read = await read_complete_section_set(
         connection, document_pk=document_pk, section_pks=section_pks, include_descendants=True)
-    return sorted(read["sections"], key=_section_position)
+    coverage = read["coverage"]
+    complete = (coverage["directBlocksComplete"] and not coverage.get("outlineTruncated")
+                and not outline["truncated"] and len(outline["sections"]) <= MAX_CLOSURE_SECTIONS
+                and not read.get("missingTargets"))
+    return sorted(read["sections"], key=_section_position), complete
 
 
 def _section_position(section: dict[str, Any]) -> tuple[int, int]:
@@ -740,12 +746,12 @@ async def read_document_values(
     rule_items: dict[str, list[tuple[Any, dict[str, Any], str]]] = {}
     cut_fields: list[str] = []
 
-    whole_cache: list[list[dict[str, Any]]] = []
+    whole_cache: list[tuple[list[dict[str, Any]], bool]] = []
 
     async def whole() -> list[dict[str, Any]]:
         if not whole_cache:
             whole_cache.append(await _whole_document(connection, document_pk))
-        return whole_cache[0]
+        return whole_cache[0][0]
 
     search_truncated = False
     read = None
@@ -837,7 +843,9 @@ async def read_document_values(
             # Fields whose values differ per record (not shared), those matching fewer times than there are
             # records, and those with more matches than are read.
             "itemKeys": sorted(rule_items), "unevenFields": uneven, "cutFields": cut_fields,
-            "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
+            "readComplete": bool((read is None or (read["coverage"]["directBlocksComplete"]
+                                                    and not read["coverage"].get("outlineTruncated")))
+                                 and all(complete for _sections, complete in whole_cache)),
             "searchTruncated": search_truncated}
 
 

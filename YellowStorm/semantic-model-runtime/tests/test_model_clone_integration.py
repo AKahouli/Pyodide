@@ -59,6 +59,9 @@ async def _seed(connection: asyncpg.Connection, model: str, version: str) -> Non
         await connection.execute(
             "INSERT INTO semantic_population.assertions (model_id, data_revision_id, entity_id, attribute, value) "
             "VALUES ($1, $2, $3, 'name', 'x')", model, revision, f"person:{key}")
+        await connection.execute(
+            "INSERT INTO semantic_population.assertion_candidates (model_id, data_revision_id, entity_id, "
+            "attribute, value) VALUES ($1, $2, $3, 'name', 'y')", model, revision, f"person:{key}")
     await connection.execute(
         "INSERT INTO semantic_population.relationships (model_id, data_revision_id, relation_id, source_entity_id, "
         "target_entity_id) VALUES ($1, $2, $3, 'person:a', 'person:b')", model, revision, RELATION)
@@ -115,6 +118,8 @@ async def test_clone_copies_only_the_source_rows_with_remapped_ids(pool) -> None
     assert result["copied"] is True
     assert result["counts"] == {"entities": 2, "aliases": 2, "assertions": 2, "relationships": 1,
                                 "reviewItems": 1, "corrections": 1, "manualSnapshots": 1}
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.assertion_candidates "
+                               "WHERE data_revision_id = $1", result["revisionId"]) == 2
     revision = await pool.fetchrow("SELECT * FROM semantic_population.data_revisions WHERE id = $1",
                                    result["revisionId"])
     assert revision["model_id"] == TARGET and revision["model_version_id"] == TARGET_VERSION

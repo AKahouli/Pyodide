@@ -701,6 +701,8 @@ export interface RuntimeCitedRecord {
     values: Record<string, unknown>;
     truncatedFields: string[];
     origins: Record<string, RuntimeValueOrigin>;
+    /** What other sources stated for a field than the value in ``values``. */
+    alternatives?: Record<string, Array<{ value: unknown; origin: RuntimeValueOrigin }>>;
   };
 }
 

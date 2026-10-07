@@ -572,9 +572,12 @@ async def cited_record(command: CitedRecordQuery, request: Request) -> dict[str,
             values[field] = value[:MAX_CITED_VALUE_CHARS]
             truncated.append(field)
     origins = (await store.list_entity_origins(pool, revision_id, [command.entity_id])).get(command.entity_id) or {}
+    # What other sources stated for a field than the value shown: a disagreement or a second source.
+    alternatives = await store.list_assertion_candidates(pool, revision_id, command.entity_id)
     return {**base, "status": "ok", "record": {
         **describe_entity(entity, compiled), "conceptKey": concept.get("key", ""),
         "values": values, "truncatedFields": truncated, "origins": origins,
+        **({"alternatives": alternatives} if alternatives else {}),
     }}
 
 

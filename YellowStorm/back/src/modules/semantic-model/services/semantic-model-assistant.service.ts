@@ -450,7 +450,7 @@ export class SemanticModelAssistantService {
         ...((mapping as { fileCount?: number }).fileCount !== undefined ? { fileCount: (mapping as { fileCount?: number }).fileCount } : {}),
         fields: mapping.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => field.targetAttribute),
       })),
-      data: { freshness: freshness.state },
+      data: { freshness: freshness.state, ...('waitingFiles' in freshness && freshness.waitingFiles ? { filesNotYetIndexed: freshness.waitingFiles } : {}) },
     };
   }
 

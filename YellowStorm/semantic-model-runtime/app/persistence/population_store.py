@@ -126,10 +126,46 @@ async def store_entity_aliases(pool: Any, *, revision_id: str,
     return len(aliases)
 
 
+# Values other sources gave one field of one record that are kept beside the served one.
+MAX_CANDIDATES_PER_FIELD = 20
+
+
+def _same_support(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    """The same value read from the same place (a document read twice by two mappings of one run)."""
+    def where(assertion: dict[str, Any]) -> tuple[Any, ...]:
+        evidence = assertion.get("evidence") or {}
+        asset = evidence.get("assetRef") or {}
+        return (assertion.get("value"), asset.get("assetId"), asset.get("assetVersionId"),
+                evidence.get("sectionPk"), evidence.get("blockPk"), evidence.get("rowNumber"))
+    return where(first) == where(second)
+
+
+def split_assertions(assertions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The assertion served for each (record, field) — the first, as the merged attribute is — and
+    the others, at most ``MAX_CANDIDATES_PER_FIELD`` per field and without repeating a support."""
+    served: dict[tuple[str, str], dict[str, Any]] = {}
+    others: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for assertion in assertions:
+        key = (assertion["entityId"], assertion["attribute"])
+        if key not in served:
+            served[key] = assertion
+        elif (len(others.get(key, [])) < MAX_CANDIDATES_PER_FIELD
+              and not _same_support(served[key], assertion)
+              and not any(_same_support(kept, assertion) for kept in others.get(key, []))):
+            others.setdefault(key, []).append(assertion)
+    return list(served.values()), [item for items in others.values() for item in items]
+
+
 async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
                            assertions: list[dict[str, Any]]) -> int:
     if not assertions:
         return 0
+    served, candidates = split_assertions(assertions)
+    rows = [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
+             assertion.get("value"), assertion.get("origin", "source"),
+             _json(assertion.get("evidence", {})),
+             (assertion.get("evidence", {}) or {}).get("mappingVersion"))
+            for assertion in served]
     await pool.executemany(
         """
         INSERT INTO semantic_population.assertions
@@ -138,13 +174,22 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
         ON CONFLICT (data_revision_id, entity_id, attribute) DO NOTHING
         """,
-        [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
-          assertion.get("value"), assertion.get("origin", "source"),
-          _json(assertion.get("evidence", {})),
-          (assertion.get("evidence", {}) or {}).get("mappingVersion"))
-         for assertion in assertions],
+        rows,
     )
-    return len(assertions)
+    if candidates:
+        await pool.executemany(
+            """
+            INSERT INTO semantic_population.assertion_candidates
+              (model_id, data_revision_id, entity_id, attribute, value, origin, evidence, mapping_version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            """,
+            [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
+              assertion.get("value"), assertion.get("origin", "source"),
+              _json(assertion.get("evidence", {})),
+              (assertion.get("evidence", {}) or {}).get("mappingVersion"))
+             for assertion in candidates],
+        )
+    return len(rows)
 
 
 async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
@@ -434,6 +479,7 @@ _MODEL_TABLES = (
     "semantic_population.review_items",
     "semantic_population.corrections",
     "semantic_population.relationships",
+    "semantic_population.assertion_candidates",
     "semantic_population.assertions",
     "semantic_population.entities",
     "semantic_population.document_extractions",
@@ -845,20 +891,43 @@ async def list_entity_origins(pool: Any, revision_id: str,
     return result
 
 
+def _assertion_row(row: Any) -> dict[str, Any]:
+    evidence = row["evidence"]
+    return {"entityId": row["entity_id"], "attribute": row["attribute"], "value": row["value"],
+            "origin": row["origin"] or "source",
+            "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})}
+
+
 async def list_revision_assertions(pool: Any, revision_id: str) -> list[dict[str, Any]]:
-    """Every value a revision holds, as a run produced it (value, origin, evidence)."""
+    """Every value a revision holds, as a run produced it (value, origin, evidence): the served
+    value of each field, then the other sources' values, so a run that keeps them stores them again."""
     rows = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertions WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute",
         revision_id,
     )
-    result = []
+    others = await pool.fetch(
+        "SELECT entity_id, attribute, value, origin, evidence "
+        "FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
+        "ORDER BY entity_id, attribute, created_at, id",
+        revision_id,
+    )
+    return [_assertion_row(row) for row in rows] + [_assertion_row(row) for row in others]
+
+
+async def list_assertion_candidates(pool: Any, revision_id: str, entity_id: str) -> dict[str, list[dict[str, Any]]]:
+    """Per field of one record, the values other sources gave it than the one served."""
+    rows = await pool.fetch(
+        "SELECT entity_id, attribute, value, origin, evidence FROM semantic_population.assertion_candidates "
+        "WHERE data_revision_id = $1 AND entity_id = $2 ORDER BY attribute, created_at, id",
+        revision_id, entity_id,
+    )
+    result: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        evidence = row["evidence"]
-        result.append({"entityId": row["entity_id"], "attribute": row["attribute"], "value": row["value"],
-                       "origin": row["origin"] or "source",
-                       "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})})
+        item = _assertion_row(row)
+        result.setdefault(item["attribute"], []).append(
+            {"value": item["value"], "origin": _origin_of(item["evidence"], item["origin"])})
     return result
 
 

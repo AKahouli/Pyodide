@@ -8,6 +8,7 @@ describe('SemanticRecordCitationService', () => {
       keyFields: { id: 'k1' }, values: { body: 'Hi', subject: 'Hello' }, truncatedFields: ['body'],
       provenance: [{ assetId: 'doc-ok', rowNumbers: [4] }, { assetId: 'doc-other' }],
       origins: { subject: { kind: 'source', assetId: 'doc-ok', rowNumber: '4', column: 'B' } },
+      alternatives: { subject: [{ value: 'Hi there', origin: { kind: 'source', assetId: 'doc-ok', rowNumber: '9', column: 'B' } }] },
     },
   };
   const graph = { nodes: [{ key: 'mail', attributes: [{ key: 'subject', label: 'Subject' }, { key: 'body', label: 'Body' }] }] };
@@ -30,6 +31,8 @@ describe('SemanticRecordCitationService', () => {
     expect(view).toMatchObject({ changed: true, status: 'ok', data: 'draft' });
     expect(view.record!.fields.map((field) => field.label)).toEqual(['id', 'Subject', 'Body']);
     expect(view.record!.fields[1].origin).toEqual({ kind: 'source', documentId: 'doc-ok', row: 4, column: 'B' });
+    expect(view.record!.fields[1].alternatives).toEqual([{ value: 'Hi there', origin: { kind: 'source', documentId: 'doc-ok', row: 9, column: 'B' } }]);
+    expect(view.record!.fields[2].alternatives).toBeUndefined();
     expect(view.record!.fields[2].truncated).toBe(true);
     expect(view.record!.sources).toEqual([expect.objectContaining({ documentId: 'doc-ok', rows: [4] })]);
     expect(view.record!.unavailableSources).toBe(1);
