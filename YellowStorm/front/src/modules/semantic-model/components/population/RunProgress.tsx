@@ -58,9 +58,9 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
           style={{ width: `${phase === 'reading' || phase === 'starting' ? percent : 100}%` }} />
       </div>
       <p className='mt-1.5 text-xs text-muted-foreground'>
-        {t('population.progress.filesRead', { done: done.toLocaleString(), total: total.toLocaleString() })}
+        {total > 0 && t('population.progress.filesRead', { done: done.toLocaleString(), total: total.toLocaleString() })}
         {left !== null && <> · {t('population.progress.left', { time: duration(left) })}</>}
-        {!running && elapsed !== null && <> · {t('population.progress.took', { time: duration(elapsed) })}</>}
+        {!running && elapsed !== null && <>{total > 0 && ' · '}{t('population.progress.took', { time: duration(elapsed) })}</>}
       </p>
     </div>
 

@@ -56,6 +56,7 @@ import { SemanticModelInspector } from "../components/editor/SemanticModelInspec
 import { ConceptRecordsPanel } from "../components/records/ConceptRecordsPanel";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
+import { ConceptRefreshDialog } from "../components/records/ConceptRefreshDialog";
 import { SourceMappingDrawer, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
 import { DerivedSourceDrawer, type DerivedSourceTarget } from "../components/mapping/DerivedSourceDrawer";
 import { SourceSuggestionsList, takeChosenSource, useSourceSuggestions } from '../components/assistant/SourceSuggestions';
@@ -173,6 +174,7 @@ export function SemanticModelEditorPage() {
   const [recordsConceptId, setRecordsConceptId] = useState<string | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
+  const [refreshConceptId, setRefreshConceptId] = useState<string | null>(null);
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
   const [boundDataRevisionId, setBoundDataRevisionId] = useState<string>();
   const [populationJobId, setPopulationJobId] = useState<string>();
@@ -632,10 +634,12 @@ export function SemanticModelEditorPage() {
     void openMappingTarget({ ...base, conceptId: first.conceptId, replaces: first });
   };
   /** Read one concept's sources again from its records table; the rest of the data in use is kept. */
-  const refreshConcept = async (conceptId: string) => {
+  const refreshConcept = async (conceptId: string, rereadDocuments: boolean) => {
     if (!modelId) return;
     try {
-      const run = await semanticModelApi.requestPopulationRefresh(modelId, { purpose: 'build', scope: { kind: 'concept', conceptId } });
+      const run = await semanticModelApi.requestPopulationRefresh(modelId, {
+        purpose: 'build', scope: { kind: 'concept', conceptId }, ...(rereadDocuments ? { rereadDocuments } : {}),
+      });
       setPopulationJobId(run.jobId);
       setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
     } catch (error) {
@@ -872,7 +876,7 @@ export function SemanticModelEditorPage() {
             conceptId={recordsConceptId}
             onClose={() => setRecordsConceptId(null)}
             onOpenSource={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
-            onRefresh={canEdit ? () => void refreshConcept(recordsConceptId) : undefined}
+            onRefresh={canEdit ? () => setRefreshConceptId(recordsConceptId) : undefined}
             refreshing={Boolean(populationJobId)}
           />}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
@@ -965,6 +969,12 @@ export function SemanticModelEditorPage() {
         initialConnection={relationConnection}
       />
       <AddRecordDialog open={recordOpen} onOpenChange={setRecordOpen} />
+      <ConceptRefreshDialog
+        open={refreshConceptId !== null}
+        onOpenChange={(open) => { if (!open) setRefreshConceptId(null); }}
+        conceptLabel={refreshConceptId ? conceptLabels[refreshConceptId] ?? refreshConceptId : ''}
+        onConfirm={({ rereadDocuments }) => refreshConcept(refreshConceptId!, rereadDocuments)}
+      />
       {modelId && (
         <SemanticModelValidateDialog
           open={validateOpen}

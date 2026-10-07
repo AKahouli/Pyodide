@@ -891,7 +891,7 @@ export class SemanticPopulationRefreshService {
       = await this.planRefresh(userId, modelId, input, 'run');
     // Forgotten only once the run is known to start, so a refused run keeps the readings.
     const rereadAt = input.rereadDocuments
-      ? (await this.runtime.forgetDocumentReadings(model.id, userId), new Date().toISOString())
+      ? (await this.runtime.forgetDocumentReadings(model.id, userId, scope.kind === 'concept' ? scope.conceptId : undefined), new Date().toISOString())
       : undefined;
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,

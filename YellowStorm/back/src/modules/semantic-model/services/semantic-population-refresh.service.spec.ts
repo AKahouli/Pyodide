@@ -302,10 +302,16 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true });
     expect(runtime.forgetDocumentReadings).toHaveBeenCalledTimes(1);
-    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', undefined);
     expect(runtime.purgeModelData).not.toHaveBeenCalled();
     const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
     expect(keys[0]).not.toEqual(keys[1]);
+  });
+
+  it('forgets only the readings of the refreshed concept when its refresh calls the AI again', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', 'c-customer');
   });
 
   it('keeps the readings when the run is refused', async () => {

@@ -586,17 +586,21 @@ def test_forget_readings_keeps_the_data_and_waits_for_a_running_build(client: Te
                                                                        monkeypatch: pytest.MonkeyPatch):
     from app.persistence import population_store as store
 
-    seen: list[str] = []
+    seen: list[tuple] = []
 
-    async def forget(pool, model_id):  # type: ignore[no-untyped-def]
-        seen.append(model_id)
+    async def forget(pool, model_id, concept_id=None):  # type: ignore[no-untyped-def]
+        seen.append((model_id, concept_id))
         return 12
 
     monkeypatch.setattr(store, "forget_document_readings", forget)
     _inject(client, ScriptedPool([]))
     response = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
     assert response.status_code == 200
-    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == ["m1"]
+    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == [("m1", None)]
+    # A concept's refresh forgets only that concept's readings.
+    scoped = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH,
+                         json={"conceptId": "fait"})
+    assert scoped.status_code == 200 and seen[-1] == ("m1", "fait")
 
     async def running(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise store.PopulationRunning("m1")

@@ -1061,11 +1061,12 @@ export class SemanticRuntimeClientService {
     throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The model data could not be copied.');
   }
 
-  /** Forget the model's earlier AI readings of documents, so the next run reads them again. Refused (409) while a run goes on. */
-  async forgetDocumentReadings(modelId: string, actorUserId: string): Promise<{ modelId: string; documentReadings: number }> {
+  /** Forget the model's earlier AI readings of documents (one concept's when given), so the next run reads them again. Refused (409) while a run goes on. */
+  async forgetDocumentReadings(modelId: string, actorUserId: string, conceptId?: string): Promise<{ modelId: string; documentReadings: number }> {
     try {
       return await this.post<{ modelId: string; documentReadings: number }>(
-        `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/forget-readings`, {}, { 'X-Actor-User-Id': actorUserId });
+        `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/forget-readings`,
+        conceptId ? { conceptId } : {}, { 'X-Actor-User-Id': actorUserId });
     } catch (error) {
       if (error instanceof ConflictException || (error as { status?: number }).status === 409) {
         throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,

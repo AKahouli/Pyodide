@@ -939,6 +939,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         if read["gaps"] or expand_gaps:
             derived["gaps"].extend(read["gaps"] + expand_gaps)
             derived["counts"]["gaps"] = len(derived["gaps"])
+        # A concept made from another one reads no file: its records still show in the run's figures.
+        progress.records += len(derived["entities"])
+        progress.gaps += len(derived["gaps"])
+        await progress.send(force=True)
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:

@@ -672,9 +672,9 @@ async def served_revisions(pool: Any, model_id: str) -> list[str]:
     return [row["data_revision_id"] for row in rows]
 
 
-async def forget_document_readings(pool: Any, model_id: str) -> int:
-    """Forget a model's earlier AI readings of documents, so the next run reads them again.
-    The data in use is untouched. Refused while a run goes on (it would mix both)."""
+async def forget_document_readings(pool: Any, model_id: str, concept_id: str | None = None) -> int:
+    """Forget a model's earlier AI readings of documents (only one concept's when given), so the
+    next run reads them again. The data in use is untouched. Refused while a run goes on (it would mix both)."""
     async with pool.acquire() as connection:
         async with connection.transaction():
             await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -687,7 +687,8 @@ async def forget_document_readings(pool: Any, model_id: str) -> int:
                 raise PopulationRunning(model_id)
             return int(await connection.fetchval(
                 "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id))
+                "WHERE model_id = $1 AND ($2::text IS NULL OR concept_id = $2) RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id, concept_id))
 
 
 async def population_running(pool: Any, model_id: str) -> bool:
