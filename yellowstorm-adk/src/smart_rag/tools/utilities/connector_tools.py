@@ -1317,6 +1317,8 @@ def create_connector_tools(
                     tool_context,
                     action_key=_action_key,
                     trusted_web_result=_result_kind in {"web_search", "web_fetch"},
+                    citation_mode=_citation_mode,
+                    source_context=context,
                 )
                 return registered_response
 
