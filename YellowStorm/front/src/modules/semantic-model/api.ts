@@ -260,13 +260,6 @@ export const semanticModelApi = {
   async updateAdminExtractionSettings(settings: Partial<AiExtractionSettings>): Promise<AiExtractionDefaults> {
     return unwrap(await apiClient.put<ApiResponse<AiExtractionDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.base, settings));
   },
-  /** Whether the person an agent acts for needs the semantic_models permissions. */
-  async getAdminAssistantAccess(): Promise<{ enforcePermissions: boolean }> {
-    return unwrap(await apiClient.get<ApiResponse<{ enforcePermissions: boolean }>>(API_ENDPOINTS.adminSemanticModelSettings.assistantAccess));
-  },
-  async updateAdminAssistantAccess(settings: { enforcePermissions: boolean }): Promise<{ enforcePermissions: boolean }> {
-    return unwrap(await apiClient.put<ApiResponse<{ enforcePermissions: boolean }>>(API_ENDPOINTS.adminSemanticModelSettings.assistantAccess, settings));
-  },
   async getAdminRunLimits(): Promise<RunLimitsDefaults> {
     return unwrap(await apiClient.get<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits));
   },

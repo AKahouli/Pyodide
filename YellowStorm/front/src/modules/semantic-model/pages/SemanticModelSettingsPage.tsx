@@ -7,7 +7,6 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../api';
 import { AiLimitFields, DEFAULT_PARALLEL_CALLS, limitProblem } from '../components/mapping/DocumentFieldRules';
 import type { AiExtractionSettings } from '../types';
-import { AssistantAccessSettings } from '../components/settings/AssistantAccessSettings';
 import { RunLimitsSettings } from '../components/settings/RunLimitsSettings';
 import { SearchIndexSettings } from '../components/settings/SearchIndexSettings';
 import { SearchQuerySettings } from '../components/settings/SearchQuerySettings';
@@ -71,6 +70,5 @@ export function SemanticModelSettingsPage() {
     <RunLimitsSettings group='archive' />
     <SearchIndexSettings />
     <SearchQuerySettings />
-    <AssistantAccessSettings />
   </div>;
 }

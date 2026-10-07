@@ -7,8 +7,6 @@ import { AiExtractionSettingsDto, RunLimitsDto } from '../dto/semantic-model.dto
 import { SemanticExtractionSettingsService } from '../services/semantic-extraction-settings.service';
 import { SearchIndexSettingsDto, SearchQuerySettingsDto } from '../dto/semantic-search-settings.dto';
 import { SemanticSearchSettingsService } from '../services/semantic-search-settings.service';
-import { SemanticAssistantAccessService } from '../services/semantic-assistant-access.service';
-import { AssistantAccessDto } from '../dto/semantic-assistant-access.dto';
 
 @ApiTags('Semantic Model Settings')
 @ApiBearerAuth()
@@ -18,7 +16,6 @@ export class SemanticExtractionSettingsController {
   constructor(
     private readonly settings: SemanticExtractionSettingsService,
     private readonly searchSettings: SemanticSearchSettingsService,
-    private readonly assistantAccess: SemanticAssistantAccessService,
   ) {}
 
   @Get('admin/semantic-model-settings')
@@ -72,19 +69,6 @@ export class SemanticExtractionSettingsController {
   @RequirePermissions(Permissions.ADMIN_ALL)
   updateSearchQuerySettings(@CurrentUser() user: AuthUser, @Body() input: SearchQuerySettingsDto) {
     return this.searchSettings.updateQuerySettings(user._id.toString(), input);
-  }
-
-  @Get('admin/semantic-model-settings/assistant-access')
-  @ApiOperation({ summary: 'Whether the person an agent acts for needs the semantic_models permissions' })
-  @RequirePermissions(Permissions.ADMIN_ALL)
-  getAssistantAccess() {
-    return this.assistantAccess.get();
-  }
-
-  @Put('admin/semantic-model-settings/assistant-access')
-  @RequirePermissions(Permissions.ADMIN_ALL)
-  updateAssistantAccess(@CurrentUser() user: AuthUser, @Body() input: AssistantAccessDto) {
-    return this.assistantAccess.update(user._id.toString(), input);
   }
 
   @Get('semantic-model-settings/search')

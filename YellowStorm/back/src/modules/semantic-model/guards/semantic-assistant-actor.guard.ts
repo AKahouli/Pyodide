@@ -1,10 +1,8 @@
 import { isObjectId } from '@common/postgres/object-id';
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { AuthorizationService } from '@modules/authorization';
-import { Permissions } from '@modules/authorization/constants/permissions';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticAssistantAccessService } from '../services/semantic-assistant-access.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
 type Headers = Record<string, string | string[] | undefined>;
@@ -17,10 +15,7 @@ type Headers = Record<string, string | string[] | undefined>;
  */
 @Injectable()
 export class SemanticAssistantActorGuard implements CanActivate {
-  constructor(
-    private readonly authorization: AuthorizationService,
-    private readonly access: SemanticAssistantAccessService,
-  ) {}
+  constructor(private readonly authorization: AuthorizationService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{ headers: Headers; user?: unknown }>();
@@ -34,10 +29,7 @@ export class SemanticAssistantActorGuard implements CanActivate {
     }
     const roles = await this.authorization.getUserRoles(userId);
     const permissions = await this.authorization.getUserPermissions(roles.map((role) => role.id));
-    // An admin can switch the permission check off (Admin > Semantic models): the person then acts with
-    // every semantic_models permission, while model membership and workspace access still apply.
-    const enforce = (await this.access.get()).enforcePermissions;
-    request.user = { _id: userId, permissions: enforce ? permissions : [...new Set([...permissions, Permissions.SEMANTIC_MODELS_ALL])] };
+    request.user = { _id: userId, permissions };
     return true;
   }
 }
