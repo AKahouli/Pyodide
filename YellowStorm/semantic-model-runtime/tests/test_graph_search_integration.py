@@ -195,6 +195,22 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         absent = (await client.post("/v1/semantic-model-search/query",
                                     json=query("penalty", concepts=["penalty clause"]))).json()
         assert absent["status"] == "not_represented" and absent["unknownConcepts"] == ["penalty clause"]
+        # An exact name is looked up among the records the actor may read: 25 hidden records
+        # bearing the same name never crowd out the readable 26th.
+        twins = [(f"twin-{n:02d}", "ws-hidden" if n < 25 else WORKSPACE_ID) for n in range(26)]
+        model_id = await runtime.fetchval("SELECT model_id FROM semantic_population.data_revisions WHERE id = $1",
+                                          revision_id)
+        await runtime.executemany(
+            "INSERT INTO semantic_population.entities (id, model_id, data_revision_id, concept_id, namespace, "
+            "identity_key, label, provenance) VALUES ($1, $2, $3, 'c-customer', 'ns', $1, 'Twin Corp', $4::jsonb)",
+            [(entity, model_id, revision_id, json.dumps({"sources": [{"assetRef": {"workspaceId": workspace}}]}))
+             for entity, workspace in twins])
+        try:
+            seen = await search_store.exact_entity_ids(runtime, revision_id, "twin corp", None, None, [WORKSPACE_ID])
+            assert seen == ["twin-25"]
+            assert len(await search_store.exact_entity_ids(runtime, revision_id, "twin corp", None, None)) == 25
+        finally:
+            await runtime.execute("DELETE FROM semantic_population.entities WHERE id LIKE 'twin-%'")
         # Records read from a workspace the actor cannot read are never returned or ranked.
         hidden = (await client.post("/v1/semantic-model-search/query",
                                     json=query("support agreement", allowedWorkspaceIds=[]))).json()

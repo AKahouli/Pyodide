@@ -67,7 +67,8 @@ POPULATION_ENGINE_VERSION = "r1-mvp-8"
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
                                      relation_bindings: list[dict],
                                      ai_extraction: dict | None = None,
-                                     derivations: list[dict] | None = None) -> str:
+                                     derivations: list[dict] | None = None,
+                                     limits: dict | None = None) -> str:
     canonical_sources = [{
         "conceptId": source["conceptId"],
         "sourceKind": source["sourceKind"],
@@ -94,6 +95,10 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
     # Only present when a concept is made from another, so other models keep their fingerprint.
     if derivations:
         fingerprinted["derivations"] = derivations
+    # Only the limits an admin set travel with the run (the core hashes the same object), so
+    # other runs keep their fingerprint.
+    if limits:
+        fingerprinted["limits"] = limits
     body = json.dumps(fingerprinted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
@@ -443,7 +448,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
         received = [{**source, "fieldExtractions": source["receivedFieldExtractions"]}
                     if "receivedFieldExtractions" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, received, normalized_bindings, ai_extraction, derivations)
+            expected_hash, received, normalized_bindings, ai_extraction, derivations,
+            payload.get("limits") if isinstance(payload.get("limits"), dict) else None)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
             source.pop("receivedFieldRecipes", None)
@@ -972,16 +978,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     trimmed = {concept_id: [entity for entity in merged["entities"]
                             if entity["entityId"] in kept_ids]
                for concept_id, merged in merged_by_concept.items()}
+    # Links grow with records: a run allowed more records may keep proportionally more links.
+    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     relationships: list[dict] = []
     for binding in validated["relationBindings"]:
         relation = compiled["relations"][binding.get("relationId")]
         reference = binding["referenceField"]
         target = binding["targetField"]
+        # One link past the cap is enough to know the cap is hit (below): no more are built.
         matched = match_relationships(
             relation,
             trimmed.get(relation["sourceConceptId"], []),
             trimmed.get(relation["targetConceptId"], []),
-            reference, target)
+            reference, target, budget=max(0, max_relationships + 1 - len(relationships)))
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     relationships.extend(link for link in derived_links
@@ -992,8 +1001,6 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         relationships.extend(link for link in carried_links
                              if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids
                              and (link["relationId"], link["sourceEntityId"], link["targetEntityId"]) not in made)
-    # Links grow with records: a run allowed more records may keep proportionally more links.
-    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     if len(relationships) > max_relationships:
         relationships = sorted(relationships,
                                key=lambda item: (item.get("relationId", ""),
@@ -1388,7 +1395,7 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
         # Human fixes survive rebuilds: replay every correction still in force
         # on top of the computed rows. The revision records the watermark it
         # applied so activation can refuse a revision built before a newer fix.
-        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id))
+        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id, correction_sequence))
     execution_fingerprint = outcome["executionFingerprint"]
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),

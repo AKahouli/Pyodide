@@ -195,15 +195,27 @@ async def model_correction_sequence(pool: Any, model_id: str) -> int:
     return int(value or 0)
 
 
-async def list_model_corrections(pool: Any, model_id: str,
-                                 limit: int = 5000) -> list[dict[str, Any]]:
-    """Every correction of a model in sequence order (undos included)."""
-    rows = await pool.fetch(
-        "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
-        "action, payload, created_at FROM semantic_population.corrections "
-        "WHERE model_id = $1 ORDER BY sequence LIMIT $2",
-        model_id, limit,
-    )
+CORRECTIONS_PAGE = 5000
+
+
+async def list_model_corrections(pool: Any, model_id: str, up_to: int | None = None,
+                                 page: int = CORRECTIONS_PAGE) -> list[dict[str, Any]]:
+    """Every correction of a model in sequence order (undos included), up to the sequence
+    ``up_to`` when given: read page by page, so a replay covers the whole watermark it records."""
+    rows: list[Any] = []
+    after = 0
+    while True:
+        chunk = await pool.fetch(
+            "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
+            "action, payload, created_at FROM semantic_population.corrections "
+            "WHERE model_id = $1 AND sequence > $2 AND ($3::bigint IS NULL OR sequence <= $3) "
+            "ORDER BY sequence LIMIT $4",
+            model_id, after, up_to, page,
+        )
+        rows.extend(chunk)
+        if len(chunk) < page:
+            break
+        after = int(dict(chunk[-1])["sequence"])
     result = []
     for row in rows:
         values = dict(row)

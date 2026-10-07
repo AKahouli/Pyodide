@@ -232,3 +232,24 @@ async def test_floor_exact_first_and_visibility_apply_to_passages(monkeypatch) -
     store.lists["passage_lexical"] = []
     found = await seeds(monkeypatch, store, allowed=["ws1"])
     assert [seed["entityId"] for seed in found] == ["exact", "mail"]  # vector-only below the floor: dropped
+
+
+@pytest.mark.asyncio
+async def test_an_index_of_earlier_data_finds_records_but_shows_no_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    store = FakeStore(vector=[{"entityId": "other", "similarity": 0.45}],
+                      passage_vector=[hit("mail", 0.62, 4)])
+    monkeypatch.setattr(retrieval, "search_store", store)
+    monkeypatch.setattr(retrieval, "vector_literal", lambda vector: "[1]")
+
+    async def search(index_data: str) -> list[dict]:
+        found = await find_seeds(None, revision_id="r", compiled={"concepts": {}}, query="where are the rack keys",
+                                 concept_ids=None, limit=10, allowed_workspaces=None,
+                                 generation={**GENERATION, "data_revision_id": index_data},
+                                 profile=Profile(), embedder=_embed)  # type: ignore[arg-type]
+        return found["seeds"]
+
+    current = await search("r")
+    assert current[0]["snippet"] and current[0]["passages"]
+    earlier = await search("older")
+    assert {seed["entityId"] for seed in earlier} == {"mail", "other"}
+    assert all(seed["snippet"] == "" and "passages" not in seed for seed in earlier)

@@ -288,10 +288,12 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
     generation in the same vector space under another text format is compared too."""
     embedder = embedder or embed
     settings = settings or SearchSettings()
+    # The index of earlier data finds records, but its text is not the current records' text: no excerpt is shown.
+    earlier = generation is not None and generation.get("data_revision_id") not in (None, revision_id)
     started = time.perf_counter()
     timings = {"embedMs": 0, "seedMs": 0}
     exact_ids = await search_store.exact_entity_ids(
-        pool, revision_id, query.strip(), normalize_identity_value(query), concept_ids)
+        pool, revision_id, query.strip(), normalize_identity_value(query), concept_ids, allowed_workspaces)
     fusion = _Fusion(settings.rrf_k, settings.passages_per_record)
     mode = "exact_only"
     terms = query_terms(query, settings)
@@ -341,7 +343,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
         asked = [compiled["concepts"][concept_id] for concept_id in concept_ids if concept_id in compiled["concepts"]]
         others = [concept_id for concept_id in compiled["concepts"] if concept_id not in set(concept_ids)]
         other_exact = await search_store.exact_entity_ids(
-            pool, revision_id, query.strip(), normalize_identity_value(query), others) if others else []
+            pool, revision_id, query.strip(), normalize_identity_value(query), others, allowed_workspaces) if others else []
         anchors = await anchor_search.find_anchors(
             pool, revision_id=revision_id, compiled=compiled, query=query, asked=asked, tsquery=tsquery,
             index_id=generation["index_id"] if ready else None, exact_ids=other_exact,
@@ -358,7 +360,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
     ranked = fusion.ranked()
     ordered = list(exact_ids) + [entity_id for entity_id in ranked if entity_id not in exact_ids]
     rows = await search_store.entity_rows(pool, revision_id, ordered[: limit * 4])
-    texts = await search_store.document_texts(pool, generation["index_id"], list(rows)) if ready else {}
+    texts = await search_store.document_texts(pool, generation["index_id"], list(rows)) if ready and not earlier else {}
     seeds = []
     has_more = False
     anchor_names = {anchor["entityId"]: anchor for anchor in anchors}
@@ -384,7 +386,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
         else:
             match_class = "linked"
         seed = {**describe_entity(entity, compiled),
-                "snippet": (texts.get(entity_id) or "")[:settings.snippet_chars],
+                "snippet": "" if earlier else (texts.get(entity_id) or "")[:settings.snippet_chars],
                 "matchClass": match_class, "rank": len(seeds) + 1,
                 "diagnostics": dict(entry["diagnostics"]) if entry else {}}
         if entry is not None:
@@ -399,7 +401,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
                            "links": reach["links"], "path": _relation_steps(reach["path"], compiled)}
         seeds.append(seed)
     wanted = [(seed["entityId"], ordinal) for seed in seeds for ordinal in seed.pop("passageOrdinals", [])]
-    passages = await search_store.passage_texts(pool, generation["index_id"], wanted) if wanted else {}
+    passages = await search_store.passage_texts(pool, generation["index_id"], wanted) if wanted and not earlier else {}
     for seed in seeds:
         found = [passages[key] for key in wanted if key[0] == seed["entityId"] and key in passages]
         if found:

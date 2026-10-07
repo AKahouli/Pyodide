@@ -1006,4 +1006,16 @@ describe('SemanticPopulationRefreshService', () => {
       });
     });
   });
+  // The runtime hashes the same body (tests/test_population_fingerprint.py holds the same constant).
+  it('hashes the run with the admin limits as the runtime does', () => {
+    const body = {
+      specHash: 'h',
+      sources: [{ conceptId: 'c1', sourceKind: 'manual', source: { k: 1 }, mappingVersion: 'v1', columnMapping: null,
+        constantMapping: null, fieldMappings: null, options: {}, labelField: null }],
+      relationBindings: [], aiExtraction: null, populationEngineVersion: 'r1-mvp-8',
+      limits: { maxRunSources: 6000, maxRecordsPerRun: 20000 },
+    };
+    expect(new ModelSpecificationService().hashCanonical(body))
+      .toBe('sha256:ab3abd75d44f5015cbd71b617e7662c7f81db605e751cb0a2bf9575f0fdd1207');
+  });
 });

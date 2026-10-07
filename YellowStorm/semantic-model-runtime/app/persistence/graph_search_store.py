@@ -438,16 +438,19 @@ async def passage_texts(pool: Any, index_id: str, keys: list[tuple[str, int]]) -
 
 
 async def exact_entity_ids(pool: Any, revision_id: str, text: str, identity_value: str | None,
-                           concept_ids: list[str] | None, limit: int = 25) -> list[str]:
-    """Records whose id, name or one key value is exactly the query (case aside).
+                           concept_ids: list[str] | None, allowed_workspaces: list[str] | None = None,
+                           limit: int = 25) -> list[str]:
+    """Records whose id, name or one key value is exactly the query (case aside), that the actor
+    may read: the limit applies to those, so records hidden from them never crowd out a readable one.
     Reads the revision itself, so it works before the search index is ready."""
     rows = await pool.fetch(
-        "SELECT id FROM semantic_population.entities "
+        "SELECT id FROM semantic_population.entities entity "
         "WHERE data_revision_id = $1 AND ($4::text[] IS NULL OR concept_id = ANY($4::text[])) "
         "AND (id = $2 OR lower(label) = lower($2) OR ($3::text IS NOT NULL AND EXISTS ("
         "  SELECT 1 FROM jsonb_each_text(identity_key::jsonb) key WHERE key.value = $3))) "
+        f"AND {_readable('entity', '$6')} "
         "ORDER BY id LIMIT $5",
-        revision_id, text, identity_value, concept_ids, limit)
+        revision_id, text, identity_value, concept_ids, limit, allowed_workspaces)
     return [row["id"] for row in rows]
 
 

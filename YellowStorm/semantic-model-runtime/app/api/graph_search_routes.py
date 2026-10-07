@@ -374,7 +374,7 @@ def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> l
                          "so words and meaning may match a little differently once it is done.")
         else:
             notes.append("The search index of the latest data is being built: the index of earlier data was "
-                         "searched, so records added or changed since may be missing.")
+                         "searched, so records added or changed since may be missing, and no excerpt of their text is shown.")
     if found.get("hasMore"):
         notes.append("More records match than were returned: the list is not complete.")
     if found.get("hiddenRecords"):

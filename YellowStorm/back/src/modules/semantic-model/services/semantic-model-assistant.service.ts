@@ -1127,7 +1127,7 @@ export class SemanticModelAssistantService {
     if (result.index.fallback && result.status !== 'index_not_ready') {
       notes.push(result.index.fallback.sameData
         ? 'The search index is being rebuilt: the previous index of this data was searched.'
-        : 'The search index of the latest data is being built: the index of earlier data was searched, so records added or changed since may be missing. Tell the user.');
+        : 'The search index of the latest data is being built: the index of earlier data was searched, so records added or changed since may be missing and no excerpt of their text is shown. Tell the user.');
     }
     for (const anchor of result.anchors ?? []) {
       notes.push(`Found through ${anchor.conceptLabel} "${anchor.label}", which the search names: ${String(anchor.linkedCount)} record(s) asked for are linked to it (via on each record says through which links). For all of them, or to count or filter them, use query_records with linked_to=[{relation, record_ids: ["${anchor.entityId}"]}] or traverse_records.`);
