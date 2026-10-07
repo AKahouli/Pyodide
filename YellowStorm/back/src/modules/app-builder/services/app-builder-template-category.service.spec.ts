@@ -1,0 +1,110 @@
+import { ConflictException, NotFoundException } from '@modules/exceptions';
+import { AppBuilderTemplateCategoryService } from './app-builder-template-category.service';
+
+describe('AppBuilderTemplateCategoryService', () => {
+  const findBySlug = jest.fn();
+  const findByNameInsensitive = jest.fn();
+  const findById = jest.fn();
+  const findAll = jest.fn();
+  const insert = jest.fn();
+  const update = jest.fn();
+  const deleteCategory = jest.fn();
+  const countTemplatesByCategoryIds = jest.fn();
+  const findByCategoryId = jest.fn();
+  const listRevisionsByTemplate = jest.fn();
+  const filterUnreferencedBlobKeys = jest.fn();
+  const removeTemplateArtifacts = jest.fn();
+
+  let svc: AppBuilderTemplateCategoryService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    findBySlug.mockResolvedValue(null);
+    findByNameInsensitive.mockResolvedValue(null);
+    countTemplatesByCategoryIds.mockResolvedValue(new Map());
+    removeTemplateArtifacts.mockResolvedValue(undefined);
+    findByCategoryId.mockResolvedValue([]);
+    listRevisionsByTemplate.mockResolvedValue([]);
+    filterUnreferencedBlobKeys.mockResolvedValue([]);
+
+    svc = new AppBuilderTemplateCategoryService(
+      {
+        findBySlug,
+        findByNameInsensitive,
+        findById,
+        findAll,
+        insert,
+        update,
+        delete: deleteCategory,
+        countTemplatesByCategoryIds,
+      },
+      { findByCategoryId, listRevisionsByTemplate, filterUnreferencedBlobKeys } as never,
+      { removeTemplateArtifacts } as never,
+    );
+  });
+
+  it('creates a category with a slug derived from the name', async () => {
+    insert.mockResolvedValueOnce({
+      id: 'c1',
+      name: 'Productivity',
+      slug: 'productivity',
+      icon: '⚡',
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    const result = await svc.create({ name: 'Productivity', icon: '⚡' });
+
+    expect(insert).toHaveBeenCalledWith({
+      name: 'Productivity',
+      slug: 'productivity',
+      icon: '⚡',
+    });
+    expect(result).toMatchObject({ id: 'c1', slug: 'productivity', templateCount: 0 });
+  });
+
+  it('rejects a duplicate slug or name', async () => {
+    findBySlug.mockResolvedValueOnce({ id: 'c0' } as never);
+    await expect(svc.create({ name: 'Productivity' })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('lists categories with their template counts', async () => {
+    findAll.mockResolvedValueOnce([
+      { id: 'c1', name: 'A', slug: 'a', icon: '', createdAt: new Date(0), updatedAt: new Date(0) },
+    ]);
+    countTemplatesByCategoryIds.mockResolvedValueOnce(new Map([['c1', 3]]));
+
+    const result = await svc.findAll();
+    expect(result[0].templateCount).toBe(3);
+  });
+
+  it('cascades a delete and cleans the templates Ceph artifacts', async () => {
+    const catId = 'b'.repeat(24);
+    findById.mockResolvedValueOnce({ id: catId, name: 'A', slug: 'a', icon: '' });
+    findByCategoryId.mockResolvedValueOnce([
+      { id: 't1', coverImage: 'cover', manifestObjectKey: 'manifest' },
+    ]);
+    listRevisionsByTemplate.mockResolvedValueOnce([
+      {
+        manifestObjectKey: 'manifest',
+        files: [{ objectKey: 'blobs/a' }],
+      },
+    ]);
+    filterUnreferencedBlobKeys.mockResolvedValueOnce(['blobs/a']);
+    deleteCategory.mockResolvedValueOnce(true);
+
+    await svc.delete(catId);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(deleteCategory).toHaveBeenCalledWith(catId);
+    expect(filterUnreferencedBlobKeys).toHaveBeenCalledWith(['blobs/a']);
+    expect(removeTemplateArtifacts).toHaveBeenCalledWith([
+      { coverImage: 'cover', objectKeys: ['manifest', 'blobs/a'] },
+    ]);
+  });
+
+  it('rejects an invalid category id', async () => {
+    await expect(svc.findById('not-an-id')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

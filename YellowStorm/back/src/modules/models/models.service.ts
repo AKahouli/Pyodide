@@ -476,27 +476,27 @@ export class ModelsService implements OnApplicationBootstrap {
   }
 
   /**
-   * Conversation-v2 default (reused by the conversation-v2 flow only). Set by
+   * App-builder default (app-builder module only). Set by
    * an admin on an existing model (e.g. the OpenCode-provider DeepSeek V4
-   * Flash) via `setConversationV2DefaultModel` — no new model config is
+   * Flash) via `setAppBuilderDefaultModel` — no new model config is
    * created. Falls back to the global default when no model is flagged.
    */
-  async getConversationV2DefaultModel(): Promise<ModelResponse | null> {
-    const model = await this.modelStore.findConversationV2Default();
+  async getAppBuilderDefaultModel(): Promise<ModelResponse | null> {
+    const model = await this.modelStore.findAppBuilderDefault();
     return model ? this.toModelResponse(model) : null;
   }
 
-  async setConversationV2DefaultModel(id: string): Promise<ModelResponse | null> {
+  async setAppBuilderDefaultModel(id: string): Promise<ModelResponse | null> {
     // First, verify the model exists (active chat model)
     const model = await this.modelStore.findByModelId(id);
     if (!model || !model.isActive || !this.isChatModel(model)) {
       return null;
     }
 
-    // Clear the previous conversation-v2 default and set the new one atomically
-    const updatedModel = await this.modelStore.setExclusiveFlag(id, 'isConversationV2Default');
+    // Clear the previous app-builder default and set the new one atomically
+    const updatedModel = await this.modelStore.setExclusiveFlag(id, 'isAppBuilderDefault');
 
-    this.logger.log('Conversation-v2 default model set', {
+    this.logger.log('App-builder default model set', {
       context: 'ModelsService',
       modelId: id,
     });
@@ -504,14 +504,14 @@ export class ModelsService implements OnApplicationBootstrap {
     return updatedModel ? this.toModelResponse(updatedModel) : null;
   }
 
-  async clearConversationV2DefaultModel(id: string): Promise<ModelResponse | null> {
-    const model = await this.modelStore.updateByModelId(id, { isConversationV2Default: false });
+  async clearAppBuilderDefaultModel(id: string): Promise<ModelResponse | null> {
+    const model = await this.modelStore.updateByModelId(id, { isAppBuilderDefault: false });
 
     if (!model) {
       return null;
     }
 
-    this.logger.log('Conversation-v2 default model cleared', {
+    this.logger.log('App-builder default model cleared', {
       context: 'ModelsService',
       modelId: id,
     });
@@ -553,7 +553,8 @@ export class ModelsService implements OnApplicationBootstrap {
       types,
       isActive: doc.isActive as boolean,
       isDefault: (doc.isDefault as boolean) || false,
-      isConversationV2Default: (doc.isConversationV2Default as boolean) || false,
+      // Wire key stays `isConversationV2Default`; source is the internal flag.
+      isConversationV2Default: (doc.isAppBuilderDefault as boolean) || false,
       omitTemperature: (doc.omitTemperature as boolean) || false,
       inputModalities,
       maxInputTokens: typeof doc.maxInputTokens === 'number' ? doc.maxInputTokens : null,

@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import appDataConfig from '@config/app-data.config';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
-import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from '@modules/app-builder/app-builder.module';
 import { AppDataMcpController } from './controllers/app-data-mcp.controller';
 import { AppDataOwnerController } from './controllers/app-data-owner.controller';
 import { AppDataHealthController } from './controllers/app-data-health.controller';
@@ -96,7 +96,7 @@ const REMOTE_PROVIDERS = [
     ConfigModule.forFeature(appDataConfig),
     JwtModule.register({}),
     forwardRef(() => AppRuntimeModule),
-    forwardRef(() => ConversationV2Module),
+    forwardRef(() => AppBuilderModule),
   ],
   controllers: APP_DATA_USE_REMOTE ? REMOTE_CONTROLLERS : LOCAL_CONTROLLERS,
   providers: APP_DATA_USE_REMOTE ? REMOTE_PROVIDERS : LOCAL_PROVIDERS,

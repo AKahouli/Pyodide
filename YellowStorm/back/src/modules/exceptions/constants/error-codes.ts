@@ -411,14 +411,14 @@ export enum ErrorCode {
   APP_DATA_INVITE_MISMATCH = 'ERR_4022',
 
   // Conversation V2 template catalog errors (3800-3809)
-  CONVERSATION_V2_TEMPLATE_CATEGORY_NOT_FOUND = 'ERR_3800',
-  CONVERSATION_V2_TEMPLATE_CATEGORY_ALREADY_EXISTS = 'ERR_3801',
-  CONVERSATION_V2_TEMPLATE_NOT_FOUND = 'ERR_3802',
-  CONVERSATION_V2_TEMPLATE_ALREADY_EXISTS = 'ERR_3803',
-  CONVERSATION_V2_TEMPLATE_ZIP_INVALID = 'ERR_3804',
-  CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED = 'ERR_3805',
-  CONVERSATION_V2_TEMPLATE_COVER_INVALID = 'ERR_3806',
-  CONVERSATION_V2_TEMPLATE_PLATFORM_INCOMPATIBLE = 'ERR_3807',
+  APP_BUILDER_TEMPLATE_CATEGORY_NOT_FOUND = 'ERR_3800',
+  APP_BUILDER_TEMPLATE_CATEGORY_ALREADY_EXISTS = 'ERR_3801',
+  APP_BUILDER_TEMPLATE_NOT_FOUND = 'ERR_3802',
+  APP_BUILDER_TEMPLATE_ALREADY_EXISTS = 'ERR_3803',
+  APP_BUILDER_TEMPLATE_ZIP_INVALID = 'ERR_3804',
+  APP_BUILDER_TEMPLATE_NOT_PUBLISHED = 'ERR_3805',
+  APP_BUILDER_TEMPLATE_COVER_INVALID = 'ERR_3806',
+  APP_BUILDER_TEMPLATE_PLATFORM_INCOMPATIBLE = 'ERR_3807',
 
   // Semantic Model errors (3700-3799)
   SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
@@ -742,16 +742,16 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.GOVERNED_TEAM_NOT_ALLOWED]: 'Teams are not available in governed conversations.',
   [ErrorCode.GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE]: 'Governed conversation runtime settings cannot be changed.',
 
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_CATEGORY_NOT_FOUND]: 'Template category not found.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_CATEGORY_ALREADY_EXISTS]:
+  [ErrorCode.APP_BUILDER_TEMPLATE_CATEGORY_NOT_FOUND]: 'Template category not found.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_CATEGORY_ALREADY_EXISTS]:
     'A template category with this name or slug already exists.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND]: 'Template not found.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_ALREADY_EXISTS]:
+  [ErrorCode.APP_BUILDER_TEMPLATE_NOT_FOUND]: 'Template not found.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_ALREADY_EXISTS]:
     'A template with this title already exists in this category.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_ZIP_INVALID]: 'The template source ZIP is invalid or empty.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED]: 'This template is not published yet.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_COVER_INVALID]: 'The template cover image is invalid.',
-  [ErrorCode.CONVERSATION_V2_TEMPLATE_PLATFORM_INCOMPATIBLE]:
+  [ErrorCode.APP_BUILDER_TEMPLATE_ZIP_INVALID]: 'The template source ZIP is invalid or empty.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_NOT_PUBLISHED]: 'This template is not published yet.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_COVER_INVALID]: 'The template cover image is invalid.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_PLATFORM_INCOMPATIBLE]:
     'This template is not compatible with the platform runtime and cannot be published.',
 
   [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',

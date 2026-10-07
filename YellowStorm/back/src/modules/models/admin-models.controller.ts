@@ -153,19 +153,20 @@ export class AdminModelsController {
     return model;
   }
 
-  @Post(':id/set-conversation-v2-default')
+  // `/conversation-v2` form is a deprecated alias for existing clients.
+  @Post([':id/set-app-builder-default', ':id/set-conversation-v2-default'])
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.MODELS_SET_DEFAULT)
-  @ApiOperation({ summary: 'Set a model as the conversation-v2 default' })
+  @ApiOperation({ summary: 'Set a model as the app-builder default' })
   @ApiParam({ name: 'id', description: 'Model ID (e.g., gpt-4o)' })
-  @ApiResponse({ status: 200, description: 'Model set as conversation-v2 default' })
+  @ApiResponse({ status: 200, description: 'Model set as app-builder default' })
   @ApiResponse({ status: 404, description: 'Model not found' })
-  async setConversationV2DefaultModel(
+  async setAppBuilderDefaultModel(
     @Param('id') id: string,
     @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
-    const model = await this.modelsService.setConversationV2DefaultModel(id);
+    const model = await this.modelsService.setAppBuilderDefaultModel(id);
 
     if (!model) {
       throw new NotFoundException(ErrorCode.MODEL_NOT_FOUND);
@@ -185,19 +186,20 @@ export class AdminModelsController {
     return model;
   }
 
-  @Post(':id/clear-conversation-v2-default')
+  // `/conversation-v2` form is a deprecated alias for existing clients.
+  @Post([':id/clear-app-builder-default', ':id/clear-conversation-v2-default'])
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.MODELS_SET_DEFAULT)
-  @ApiOperation({ summary: 'Clear conversation-v2 default status from a model' })
+  @ApiOperation({ summary: 'Clear app-builder default status from a model' })
   @ApiParam({ name: 'id', description: 'Model ID (e.g., gpt-4o)' })
-  @ApiResponse({ status: 200, description: 'Conversation-v2 default status cleared' })
+  @ApiResponse({ status: 200, description: 'App-builder default status cleared' })
   @ApiResponse({ status: 404, description: 'Model not found' })
-  async clearConversationV2DefaultModel(
+  async clearAppBuilderDefaultModel(
     @Param('id') id: string,
     @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
-    const model = await this.modelsService.clearConversationV2DefaultModel(id);
+    const model = await this.modelsService.clearAppBuilderDefaultModel(id);
 
     if (!model) {
       throw new NotFoundException(ErrorCode.MODEL_NOT_FOUND);
