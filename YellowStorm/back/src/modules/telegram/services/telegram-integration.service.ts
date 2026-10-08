@@ -12,6 +12,7 @@ import {
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { isObjectId } from '@common/postgres';
+import { timingSafeStringEquals } from '@common/utils';
 import { TelegramIntegrationStatus } from '../telegram.types';
 import { UpsertAgentTelegramIntegrationDto } from '../dto/upsert-agent-telegram-integration.dto';
 import {
@@ -239,7 +240,7 @@ export class TelegramIntegrationService implements OnModuleInit {
     secretToken: string | undefined,
   ): Promise<TelegramIntegrationRow> {
     const integration = await this.getByIntegrationId(integrationId);
-    if (!secretToken || secretToken !== integration.webhookSecret) {
+    if (!secretToken || !timingSafeStringEquals(secretToken, integration.webhookSecret)) {
       throw new UnauthorizedException(
         ErrorCode.TELEGRAM_WEBHOOK_UNAUTHORIZED,
         'Invalid Telegram webhook secret token',

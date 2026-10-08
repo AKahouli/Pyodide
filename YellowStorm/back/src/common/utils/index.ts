@@ -1,4 +1,5 @@
 export * from './escape-regex';
+export * from './timing-safe.util';
 export * from './random.util';
 export * from './multipart-filename';
 export * from './multipart-limits';

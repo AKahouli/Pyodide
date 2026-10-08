@@ -66,7 +66,9 @@ const notification = (over: Record<string, unknown> = {}) => ({
   value: [{
     subscriptionId: 'sub-1',
     clientState: 'secret-abc',
-    resource: "me/messages/AAA",
+    // The shape Graph actually sends for an inbox subscription (the webhook
+    // pins the resource to this shape and rejects anything else).
+    resource: "me/mailFolders('inbox')/messages/AAA",
     resourceData: { id: 'AAA' },
     ...over,
   }],
@@ -147,6 +149,49 @@ describe('WorkyMailWebhookService', () => {
     expect(result).toEqual({ handled: 0 });
     expect(orchestrator.deliverMailReply).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('pins the Graph fetch to the subscribed inbox shape', async () => {
+    const { service, graphClient } = build({});
+    await service.handleNotifications(notification());
+
+    expect(graphClient.getMessageByResource).toHaveBeenCalledWith(
+      'u1', 'microsoft', "me/mailFolders('inbox')/messages/AAA",
+    );
+  });
+
+  it('rejects a notification whose resource escapes the subscribed folder', async () => {
+    // Attacker-controlled: without the pin this would read any message the
+    // owner's token can reach, in any folder.
+    const { service, graphClient, orchestrator, logger } = build({});
+    const result = await service.handleNotifications(
+      notification({ resource: 'me/mailFolders(\'sentitems\')/messages/AAA' }),
+    );
+
+    expect(result).toEqual({ handled: 0 });
+    expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
+    expect(orchestrator.deliverMailReply).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('rejects a notification with a path-traversal resource', async () => {
+    const { service, graphClient } = build({});
+    const result = await service.handleNotifications(
+      notification({ resource: "me/mailFolders('inbox')/messages/../../users/victim/messages/X" }),
+    );
+
+    expect(result).toEqual({ handled: 0 });
+    expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
+  });
+
+  it('rejects a notification whose resource carries query parameters', async () => {
+    const { service, graphClient } = build({});
+    const result = await service.handleNotifications(
+      notification({ resource: "me/mailFolders('inbox')/messages/AAA?$select=body" }),
+    );
+
+    expect(result).toEqual({ handled: 0 });
+    expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
   });
 
   it('ignores a notification with an unknown clientState', async () => {

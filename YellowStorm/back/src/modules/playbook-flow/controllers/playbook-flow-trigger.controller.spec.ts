@@ -145,39 +145,43 @@ describe('PlaybookFlowTriggerController', () => {
     expect(flowService.update).not.toHaveBeenCalled();
   });
 
-  it('syncs mail subscription and persists result via the compat route', async () => {
+  it('syncs mail subscription with a random clientState (never the flow id) and persists result', async () => {
     const body = { notificationUrl: 'https://example.test/webhook', autoRenewUntil: '2026-06-16T00:00:00.000Z' };
     const flow = { id: flowId, triggerConfig: { kind: 'mail', params: { mailboxAppKey: 'm365' } } };
-    const updated = {
-      id: flowId,
-      triggerConfig: {
-        kind: 'mail',
-        params: {
-          mailboxAppKey: 'm365',
-          subscriptionId: 'sub-1',
-          subscriptionClientState: flowId,
-          subscriptionExpiresAt: '2026-06-16T00:00:00.000Z',
-        },
-      },
-    };
+    const updated = { id: flowId, triggerConfig: { kind: 'mail', params: {} } };
     const flowService = makeFlowService(flow, updated);
     const graphClient = makeGraphClient();
     const controller = new PlaybookFlowTriggerController(flowService as any, graphClient as any);
 
     await controller.syncMailSubscription(userId, flowId, body);
-    expect(graphClient.createInboxSubscription).toHaveBeenCalledWith(
-      userId, 'm365', body.notificationUrl, flowId, '2026-06-16T00:00:00.000Z',
-    );
+    const [, , , clientState, autoRenew] = graphClient.createInboxSubscription.mock.calls[0];
+    expect(clientState).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect(clientState).not.toBe(flowId);
+    expect(autoRenew).toBe('2026-06-16T00:00:00.000Z');
     expect(flowService.update).toHaveBeenCalledWith(flowId, userId, expect.objectContaining({
       triggerConfig: expect.objectContaining({
         kind: 'mail',
         params: expect.objectContaining({
           subscriptionId: 'sub-1',
-          subscriptionClientState: flowId,
+          subscriptionClientState: clientState,
           subscriptionExpiresAt: '2026-06-16T00:00:00.000Z',
+          subscriptionNotificationUrl: body.notificationUrl,
         }),
       }),
     }));
+  });
+
+  it('generates a fresh clientState on every subscription sync (rotation)', async () => {
+    const body = { notificationUrl: 'https://example.test/webhook' };
+    const flow = { id: flowId, triggerConfig: { kind: 'mail', params: { mailboxAppKey: 'm365' } } };
+    const flowService = makeFlowService(flow, { id: flowId, triggerConfig: { kind: 'mail', params: {} } });
+    const graphClient = makeGraphClient();
+    const controller = new PlaybookFlowTriggerController(flowService as any, graphClient as any);
+
+    await controller.syncMailSubscription(userId, flowId, body);
+    await controller.syncMailSubscription(userId, flowId, body);
+    const states = graphClient.createInboxSubscription.mock.calls.map((c: unknown[]) => c[3]);
+    expect(new Set(states).size).toBe(2);
   });
 
   it('syncs mail subscription via the compat /triggers/mail/sync-subscription route', async () => {
