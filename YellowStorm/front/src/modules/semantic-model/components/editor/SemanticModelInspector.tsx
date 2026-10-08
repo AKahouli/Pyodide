@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { Tag, AlertTriangle, Asterisk, ChevronRight, FileText, FolderOpen, GitMerge, KeyRound, Loader2, LockKeyhole, Pencil, Plus, Sheet, Table2, Trash2, X } from 'lucide-react';
+import { Tag, AlertTriangle, Asterisk, BookOpen, ChevronRight, Database, FileText, FolderOpen, GitMerge, KeyRound, Link2, ListTree, Loader2, LockKeyhole, Pencil, Plus, Settings2, Sheet, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
 import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
+import { SettingsPane } from '../settings/SettingsPane';
 import { withSearchIndex } from '../../searchSettings';
 
 export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false,switching }: Readonly<{ switching?:{label:string;count:number}; modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
@@ -38,7 +39,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
-  const knowledgePanel = <KnowledgePanel switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
+  const knowledgePanel = <KnowledgePanel modelId={modelId} switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
@@ -159,18 +160,39 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,on
     select(null);
   };
   const relations = graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? [];
+  // Every part folded when a concept is opened; a review item pointing at a part opens it.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  useEffect(() => setOpen({}), [item.id]);
+  const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
+  useEffect(() => { if (focusRequest?.section) setOpen((current) => ({ ...current, [focusRequest.section!]: true })); }, [focusRequest]);
+  const pane = (id: string) => ({ id: `concept-${id}`, open: Boolean(open[id]), onOpenChange: (next: boolean) => setOpen((current) => ({ ...current, [id]: next })) });
+  const identity = useIdentityRules(modelId || undefined).data?.find((rule) => rule.conceptId === item.id)?.fields ?? [];
+  // The sources' names, shown on the folded part: the files or folders, and the concepts it is made from.
+  const sourceNames = [
+    ...(useSourceMappings(modelId || undefined).data ?? []).filter((mapping) => mapping.conceptId === item.id).map((mapping) => mapping.documentName ?? mapping.documentId),
+    ...(useDerivedSources(modelId || undefined).data ?? []).filter((source) => source.conceptId === item.id)
+      .map((source) => t('derived.fromConcept', { source: graph?.nodes.find((node) => node.id === source.sourceConceptId)?.label ?? '' })),
+  ];
+  const mappingCount = sourceNames.length;
+  const fieldLabel = (key: string) => item.attributes.find((attribute) => attribute.key === key)?.label ?? key;
+  const otherLabel = (relation: SemanticRelationType) => graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId))?.label ?? '';
+  const icon = (Icon: typeof BookOpen) => <Icon className='h-4 w-4 shrink-0 text-muted-foreground' />;
   if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
-  return <div className='space-y-6'>{locked && <div className='flex gap-2 rounded-lg bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
-    <section className='space-y-4'>
-      <SectionHeader title={t('workspaceUi.meaning')} />
+  return <div className='space-y-3'>{locked && <div className='flex gap-2 rounded-lg bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
+    <SettingsPane {...pane('meaning')} title={t('workspaceUi.meaning')} icon={icon(BookOpen)} summary={item.description || t('editor.noDescription')}>
       <Field label={t('field.label')}><Input className='h-9' value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
       <Field label={t('field.description')}><Textarea className='min-h-[4.5rem] resize-y text-sm' rows={3} value={item.description} disabled={locked||!canEdit} placeholder={t('concept.descriptionPlaceholder')} onChange={(event) => update({ description:event.target.value })} /></Field>
       {!locked && <Field label={t('aliases.title')} help={t('aliases.help', { name: item.label })}><AliasChips values={item.aliases ?? []} onChange={(aliases) => update({ aliases })} placeholder={t('aliases.placeholder')} /></Field>}
-    </section>
-    {!locked&&canEdit && <section className={SECTION}><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
-    {!locked&&modelId && <section data-focus-section='identity' className={SECTION}><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
-    <section className={SECTION}>
-      <SectionHeader title={t('workspaceUi.relationships')} count={relations.length || undefined} />
+    </SettingsPane>
+    {!locked&&canEdit && <SettingsPane {...pane('fields')} title={t('attributes.title')} help={t('attributes.help')} icon={icon(ListTree)}
+      summary={item.attributes.length ? `${item.attributes.length} · ${item.attributes.map((attribute) => attribute.label).join(', ')}` : t('identity.noFields')}>
+      <AttributeEditor bare attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></SettingsPane>}
+    {!locked&&modelId && <div data-focus-section='identity'><SettingsPane {...pane('identity')} title={t('identity.title', { name: item.label })} help={t('identity.help', { name: item.label })}
+      icon={<KeyRound className='h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400' />} attention={item.attributes.length > 0 && !identity.length}
+      summary={identity.length ? identity.map(fieldLabel).join(', ') : t('identity.none')}>
+      <IdentitySection bare modelId={modelId} node={item} canEdit={canEdit} /></SettingsPane></div>}
+    <SettingsPane {...pane('relationships')} title={t('workspaceUi.relationships')} icon={icon(Link2)}
+      summary={relations.length ? `${relations.length} · ${[...new Set(relations.map(otherLabel))].join(', ')}` : t('workspaceUi.noRelationships')}>
       {relations.length ? <div className='space-y-1.5'>{relations.map((relation) => {
         const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId));
         const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label };
@@ -179,18 +201,20 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,on
           <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden />
         </button>;
       })}</div> : <p className='text-xs text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}
-    </section>
-    {!locked&&canEdit && <section data-focus-section='sources' className={SECTION}><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} /></section>}
-    <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+    </SettingsPane>
+    {!locked&&canEdit && <div data-focus-section='sources'><SettingsPane {...pane('sources')} title={t('mapping.sourcesTitle', { count: mappingCount })} help={t('mapping.sourcesHelp')} icon={icon(Database)}
+      attention={!mappingCount} summary={mappingCount ? sourceNames.join(', ') : t('mapping.noSources')}>
+      <SourceMappingsSection bare modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} /></SettingsPane></div>}
+    <SettingsPane {...pane('advanced')} title={t('workspaceUi.advanced')} icon={icon(Settings2)} summary={`${t(`category.${item.category}`)} · ${t(`recordPolicy.${item.recordPolicy}`)}`}>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
     {!locked&&canEdit && <><Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
-    </div></details>
+    </SettingsPane>
   </div>;
 }
 
 /** "What makes each <concept> unique?": the identity rule, chosen on the concept itself. */
-export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: string; node: SemanticNodeType; canEdit: boolean }>) {
+export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ modelId: string; node: SemanticNodeType; canEdit: boolean; bare?: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const rules = useIdentityRules(modelId);
@@ -234,7 +258,7 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
     onError: (error) => showError(t('labelField.saveError'), { description: parseApiError(error).message }),
   });
   return <div className='space-y-2'>
-    <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />
+    {!bare && <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />}
     {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
     {node.attributes.length === 0 ? <p className='text-xs text-muted-foreground'>{t('identity.noFields')}</p>
       : <div className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
@@ -260,7 +284,7 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
   </div>;
 }
 
-function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddSource }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void }>) {
+function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddSource,bare }: Readonly<{ bare?:boolean;modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const mappingsQuery = useSourceMappings(modelId || undefined);
@@ -283,7 +307,7 @@ function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddS
     }
   };
   return <div className='space-y-3'>
-    <SectionHeader title={t('mapping.sourcesTitle', { count: mappings.length + derived.length })} help={t('mapping.sourcesHelp')} />
+    {!bare && <SectionHeader title={t('mapping.sourcesTitle', { count: mappings.length + derived.length })} help={t('mapping.sourcesHelp')} />}
     {mappingsQuery.isLoading ? <Loader2 className='h-4 w-4 animate-spin' />
       : mappingsQuery.isError ? (
         <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
@@ -394,7 +418,7 @@ function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord;
 function ReadOnlyField({ label,value }: Readonly<{ label: string; value: string }>) { return <div><p className='text-xs font-medium text-muted-foreground'>{label}</p><p className='mt-1 text-sm'>{value}</p></div>; }
 
 /** A concept's fields, one compact row each; a row opens for its description, other names and choices. */
-function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: AttributeDefinition[]; onChange: (attributes: AttributeDefinition[]) => void }>) {
+function AttributeEditor({ attributes,onChange,bare }: Readonly<{ attributes: AttributeDefinition[]; onChange: (attributes: AttributeDefinition[]) => void; bare?: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [label,setLabel] = useState('');
   const [openIndex,setOpenIndex] = useState<number | null>(null);
@@ -402,7 +426,7 @@ function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: Attribu
   const edit = (index: number, changes: Partial<AttributeDefinition>) => onChange(attributes.map((attribute, itemIndex) => itemIndex === index ? { ...attribute, ...changes } : attribute));
   const remove = (index: number) => { setOpenIndex(null); onChange(attributes.filter((_,itemIndex) => itemIndex !== index)); };
   return <div className='space-y-3'>
-    <SectionHeader title={t('attributes.title')} count={attributes.length || undefined} help={t('attributes.help')} />
+    {!bare && <SectionHeader title={t('attributes.title')} count={attributes.length || undefined} help={t('attributes.help')} />}
     {attributes.length > 0 && <ul className='divide-y rounded-lg border'>{attributes.map((attribute,index) => {
       const open = openIndex === index;
       return <li key={index} className='p-1'>

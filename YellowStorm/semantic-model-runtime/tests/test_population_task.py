@@ -627,6 +627,14 @@ async def test_unchanged_sheet_reuses_its_reading():
                                   query=fake_query, extraction_cache=cache)
     assert prepared == [1, 1]
 
+    # A raised record limit reads it again too, instead of reusing a reading cut at the old one.
+    raised = command()
+    raised["payload"]["sources"][0]["mappingVersion"] = "map-v2"
+    raised["payload"]["limits"] = {"maxRecordsPerSource": 100000}
+    await run_population_for_task(raised, fetch=fake_fetch, prepare=counting_prepare,
+                                  query=fake_query, extraction_cache=cache)
+    assert prepared == [1, 1, 1]
+
 
 def test_compare_revisions_counts_changes_and_names_files_no_longer_read():
     from app.workers.population_tasks import compare_revisions

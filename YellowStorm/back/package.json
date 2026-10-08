@@ -36,7 +36,8 @@
     "release": "commit-and-tag-version",
     "release:patch": "commit-and-tag-version --release-as patch",
     "db:verify": "node --env-file=.env -r ts-node/register scripts/migrate/verify-postgres-state.ts",
-    "db:record-applied": "node --env-file=.env -r ts-node/register scripts/migrate/record-applied-migrations.ts"
+    "db:record-applied": "node --env-file=.env -r ts-node/register scripts/migrate/record-applied-migrations.ts",
+    "start:dev:pretty": "nest start --watch 2>&1 | node ../../scripts/observability/pretty.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",

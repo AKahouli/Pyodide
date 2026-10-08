@@ -64,6 +64,8 @@ class PopulationSource(BaseModel):
     field_extractions: dict[str, dict[str, Any]] | None = Field(
         default=None, alias="fieldExtractions", max_length=25)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
+    # The mapping's own reading limits, e.g. ``maxRecords``; never above the run's (the admin's).
+    read_limits: dict[str, int] | None = Field(default=None, alias="readLimits", max_length=5)
 
     @model_validator(mode="after")
     def validate_mapping_shape(self):  # type: ignore[no-untyped-def]

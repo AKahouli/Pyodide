@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+    # model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     HOST: str = "localhost"
     PORT: int = Field(
@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: Optional[str] = None
     # Default output size for the configured embedding model.
     EMBEDDING_DIMS: int = 2560
+
+    # Storage backend: "ceph" (default) or "azure".
+    STORAGE_PROVIDER: str = "ceph"
 
     # Azure Storage
     AZURE_DATALAKE_CONNECTION_STRING: str

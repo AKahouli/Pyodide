@@ -1448,7 +1448,16 @@ export async function uploadPlaybookAssistantAttachment(
     { requestId, expectedDefinitionRevision, mediaType: file.type, size: file.size },
   );
   const { attachmentId, uploadUrl } = initialized.data.data;
-  const uploadResponse = await fetch(uploadUrl, { method: 'PUT', body: file });
+  // x-ms-blob-type is mandatory on an Azure Blob PUT; Ceph ignores it because an
+  // S3 presigned URL only signs `host`. See uploadToAzure in workspace/api.ts.
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'x-ms-blob-type': 'BlockBlob',
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  });
   if (!uploadResponse.ok) throw new Error('Assistant image upload failed');
   await apiClient.post(
     API_ENDPOINTS.playbooks.assistantAttachmentConfirm(playbookId, attachmentId),

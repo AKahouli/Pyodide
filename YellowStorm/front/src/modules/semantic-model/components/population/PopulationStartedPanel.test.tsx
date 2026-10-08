@@ -16,6 +16,17 @@ describe('PopulationStartedPanel', () => {
     expect(screen.getByText('population.allSourcesIncluded')).toBeInTheDocument();
   });
 
+  it('shows the progress of a refresh that reads no file: its AI calls and records', () => {
+    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: false }} sourceMappings={mappings}
+      progress={{ phase: 'making', total: 0, done: 0, records: 121, ai: { planned: 400, answered: 37, reused: 0, failed: 0, skipped: 0 } }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+
+    expect(screen.getByLabelText('population.progress.title')).toBeInTheDocument();
+    expect(screen.getByText('121')).toBeInTheDocument();
+    expect(screen.getByLabelText('population.progress.ai.title')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.filesRead')).not.toBeInTheDocument();
+  });
+
   it('names every source that will not be read, with its reason', () => {
     render(<PopulationStartedPanel
       outcome={{ jobId:'job-1', status:'queued', skipped: [{ mappingId: 'mapping-2', reason: 'no logical index yet' }], reused: false }}

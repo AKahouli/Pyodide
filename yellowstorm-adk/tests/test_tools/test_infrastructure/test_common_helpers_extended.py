@@ -13,12 +13,53 @@ class TestCommonHelpersExtended:
         helper = CommonHelpers()
         assert helper._has_ceph_config() is False
 
-    def test_normalize_ceph_object_key(self):
+    def test_normalize_object_key(self):
         helper = CommonHelpers()
         helper.ceph_bucket_name = "bucket"
         helper.ceph_endpoint = "https://ceph.example.com"
-        assert helper._normalize_ceph_object_key("s3://bucket/path/file.pdf") == "path/file.pdf"
-        assert helper._normalize_ceph_object_key("bucket/path/file.pdf") == "path/file.pdf"
+        helper.azure_file_system_name = "container"
+
+        assert helper._normalize_object_key("s3://bucket/path/file.pdf") == "path/file.pdf"
+        assert helper._normalize_object_key("bucket/path/file.pdf") == "path/file.pdf"
+        assert (
+            helper._normalize_object_key("https://ceph.example.com/bucket/path/file.pdf")
+            == "path/file.pdf"
+        )
+        # The Azure container counts too, so a path written while on azure also strips.
+        assert helper._normalize_object_key("container/path/file.pdf") == "path/file.pdf"
+        assert (
+            helper._normalize_object_key(
+                "https://acct.blob.core.windows.net/container/path/file.pdf"
+            )
+            == "path/file.pdf"
+        )
+        # Idempotent, and an unknown leading segment is left alone.
+        assert helper._normalize_object_key("path/file.pdf") == "path/file.pdf"
+        assert helper._normalize_object_key("other/path/file.pdf") == "other/path/file.pdf"
+
+    @pytest.mark.asyncio
+    async def test_azure_download_normalizes_the_key(self):
+        """A path carrying a container prefix must reach Azure as a bare key."""
+        helper = CommonHelpers()
+        helper.ceph_bucket_name = "bucket"
+        helper.azure_connection_string = "UseDevelopmentStorage=true"
+        helper.azure_file_system_name = "container"
+
+        with patch(
+            "src.smart_rag.tools.infrastructure.common_helpers.FileClient"
+        ) as mock_file_client, patch("aiofiles.open"), patch("os.makedirs"):
+            client = AsyncMock()
+            client.download_file.return_value = AsyncMock(
+                readall=AsyncMock(return_value=b"data")
+            )
+            mock_file_client.from_connection_string.return_value.__aenter__.return_value = client
+
+            await helper.async_download_from_azure_datalake("bucket/path/file.pdf")
+
+        assert (
+            mock_file_client.from_connection_string.call_args.kwargs["file_path"]
+            == "path/file.pdf"
+        )
 
     def test_build_ceph_get_headers(self):
         helper = CommonHelpers()
@@ -38,6 +79,44 @@ class TestCommonHelpersExtended:
             mock_az.return_value = "/tmp/file.pdf"
             path = await helper.async_download_from_storage("docs/file.pdf")
         mock_az.assert_awaited_once_with("docs/file.pdf")
+        assert path == "/tmp/file.pdf"
+
+    @staticmethod
+    def _with_ceph(helper: CommonHelpers) -> CommonHelpers:
+        helper.ceph_endpoint = "https://ceph.example.com"
+        helper.ceph_bucket_name = "bucket"
+        helper.ceph_access_key_id = "key"
+        helper.ceph_secret_access_key = "secret"
+        return helper
+
+    @pytest.mark.asyncio
+    async def test_async_download_from_storage_prefers_ceph_when_configured(self):
+        """With Ceph credentials present and no provider set, Ceph wins."""
+        helper = self._with_ceph(CommonHelpers())
+        helper.storage_provider = "ceph"
+
+        with patch.object(helper, "async_download_from_ceph_s3", new_callable=AsyncMock) as mock_ceph, \
+             patch.object(helper, "async_download_from_azure_datalake", new_callable=AsyncMock) as mock_az:
+            mock_ceph.return_value = "/tmp/file.pdf"
+            path = await helper.async_download_from_storage("docs/file.pdf")
+
+        mock_ceph.assert_awaited_once_with("docs/file.pdf")
+        mock_az.assert_not_awaited()
+        assert path == "/tmp/file.pdf"
+
+    @pytest.mark.asyncio
+    async def test_storage_provider_azure_wins_over_present_ceph_config(self):
+        """STORAGE_PROVIDER=azure must switch over without stripping CEPH_* first."""
+        helper = self._with_ceph(CommonHelpers())
+        helper.storage_provider = "azure"
+
+        with patch.object(helper, "async_download_from_ceph_s3", new_callable=AsyncMock) as mock_ceph, \
+             patch.object(helper, "async_download_from_azure_datalake", new_callable=AsyncMock) as mock_az:
+            mock_az.return_value = "/tmp/file.pdf"
+            path = await helper.async_download_from_storage("docs/file.pdf")
+
+        mock_az.assert_awaited_once_with("docs/file.pdf")
+        mock_ceph.assert_not_awaited()
         assert path == "/tmp/file.pdf"
 
     def test_filter_ids_with_mapping(self):

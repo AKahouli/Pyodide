@@ -48,6 +48,11 @@ describe('answer completeness', () => {
     });
     expect(findCompleteness(search({ coverage: { expectedCount: 10, indexedCount: 4, exactOnlyCount: 1 } })).reasons).toEqual(['index_partial']);
     expect(findCompleteness(search({ index: { indexId: null, state: 'queued', embeddingFingerprint: null } })).reasons).toEqual(['index_not_ready']);
+    // While an index is built, the last one of the same data answers as well; one of earlier data may miss records.
+    const building = { indexId: 'new', state: 'queued' as const, embeddingFingerprint: null };
+    expect(findCompleteness(search({ index: { ...building, fallback: { indexId: 'old', sameData: true } } })).complete).toBe(true);
+    expect(findCompleteness(search({ index: { ...building, fallback: { indexId: 'old', sameData: false } } })).reasons).toEqual(['index_not_ready']);
+    expect(findCompleteness(search({ linksTruncated: true })).reasons).toEqual(['search_cut']);
   });
 
   it('get_related_records gives the exact total of linked records and says when the walk stopped short', () => {

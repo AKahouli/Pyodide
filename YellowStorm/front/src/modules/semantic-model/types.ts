@@ -131,6 +131,69 @@ export interface AgeGraphNode {
   properties: Record<string, unknown>;
 }
 
+/** Every record and link of the data graph, without values: what the graph view draws and counts. */
+export interface GraphOutline {
+  dataRevisionId?: string;
+  concepts: Array<{ id: string; fields: string[] }>;
+  /** Id, concept id, name, missing field keys, and dates by field. */
+  records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string> }>;
+  /** Id, relation id, source, target. */
+  links: Array<{ id: string; r: string; s: string; t: string }>;
+}
+
+export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null }
+
+/** A document a cited record was read from, as the file viewer opens it. */
+export interface CitedRecordDocument { documentId: string; workspaceId: string; name: string; path: string; mimeType: string }
+
+export interface CitedRecordField {
+  key: string;
+  label: string;
+  value: unknown;
+  truncated?: boolean;
+  origin?: {
+    kind: 'source' | 'metadata' | 'ai' | 'human';
+    documentId?: string;
+    page?: number;
+    row?: number;
+    column?: string;
+    sheet?: string;
+    fromRecord?: { entityId: string; name: string };
+    corrected?: boolean;
+  };
+}
+
+/** The record behind a chat citation, read again for the person opening it. */
+export interface CitedRecordView {
+  model: { id: string; name: string };
+  data: 'published' | 'draft';
+  dataRevisionId: string;
+  changed: boolean;
+  status: 'ok' | 'hidden' | 'missing';
+  record?: {
+    entityId: string;
+    concept: string;
+    conceptKey: string;
+    name: string;
+    keyFields: Record<string, unknown>;
+    fields: CitedRecordField[];
+    sources: Array<CitedRecordDocument & { rows?: number[] }>;
+    unavailableSources: number;
+  };
+}
+
+export type GraphExportChoice = 'full' | 'short' | 'exclude';
+
+export interface GraphExportContent {
+  dataRevisionId?: string;
+  modelName: string;
+  exportedBy: string;
+  exportedAt: string;
+  shortenTo: number;
+  records: Array<{ id: string; c: string; l: string; v: Record<string, unknown> }>;
+  links: Array<{ id: string; r: string; s: string; t: string }>;
+}
+
 export interface AgeGraphEdge {
   id: string;
   label: string;
@@ -229,6 +292,43 @@ export interface SheetFieldProfile {
   sample: string;
   populatedRatio: number;
   uniqueRatio: number;
+}
+
+/** The kinds of data source a model can be connected to; SQL databases come next. */
+export type DataConnectionKind = 'mail_archive';
+
+/** A data source of the model, listed in its source explorer. A mail archive is read as three tables. */
+export interface DataConnection {
+  id: string;
+  kind: DataConnectionKind;
+  name: string;
+  workspaceId: string;
+  documentId: string;
+  /** Whether runs also copy the e-mails and attachments into the workspace, to be searched there. */
+  indexInWorkspace: boolean;
+  /** The reading limits set on this connection; one left out uses its default. */
+  limits: ArchiveReadLimits;
+  /** The most read time and memory an admin allows, also the value of a connection that sets none. */
+  ceilings: Required<Pick<ArchiveReadLimits, 'archiveTimeoutSeconds' | 'parserMemoryMb'>>;
+  /** False when the file is gone or its workspace is no longer open to the person. */
+  available: boolean;
+  createdAt: string;
+}
+
+/** How much of a mail archive a run reads, chosen per connection. */
+export interface ArchiveReadLimits {
+  maxArchiveEmails?: number;
+  maxArchiveMb?: number;
+  archiveTimeoutSeconds?: number;
+  parserMemoryMb?: number;
+}
+
+export interface DataConnectionDraft {
+  kind: DataConnectionKind;
+  workspaceId: string;
+  documentId: string;
+  name?: string;
+  indexInWorkspace?: boolean;
 }
 
 export interface SheetProfile {
@@ -341,10 +441,11 @@ export interface RunLimits {
   maxValuesPerRun: number;
   maxAiRowsPerSource: number;
   maxAiParallelCalls: number;
-  maxArchiveEmails: number;
-  maxArchiveMb: number;
+  /** Also the most a mail archive connection may give its reader, and what one that sets none gets. */
   parserMemoryMb: number;
   archiveTimeoutSeconds: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. */
+  purgeTimeoutSeconds: number;
 }
 
 export interface RunLimitsDefaults {
@@ -361,12 +462,18 @@ export interface AiExtractionSettings {
   parallelCalls?: number;
   /** One document gives several records, one per item the AI finds. Set on a mapping only. */
   manyRecords?: boolean;
+  /** Most records a sheet mapping gives, never above the admin's records per source. Mapping only. */
+  maxRecords?: number;
+  /** Most files a workspace mapping reads, never above the admin's files per run. Mapping only. */
+  maxFiles?: number;
 }
 
 /** The admin defaults with every limit filled in, and which ones the admin set. */
 export interface AiExtractionDefaults {
   aiSettings: AiExtractionSettings;
   configured: Partial<AiExtractionSettings>;
+  /** The most records and files a mapping may choose (the admin's run limits); absent from the admin endpoint. */
+  sourceCeilings?: { maxRecordsPerSource: number; maxRunSources: number };
 }
 
 /** How one extracted field was read in a preview, or why it was not. */

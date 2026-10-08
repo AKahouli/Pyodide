@@ -329,6 +329,8 @@ export interface RuntimeComputedPreview {
 
 /** Query embedding can take a few seconds; seeds and expansion get a fixed, longer deadline. */
 const GRAPH_SEARCH_TIMEOUT_MS = 15_000;
+/** Clearing a large model cascades through every record; the runtime is given the admin's purge time, and this much more to answer. */
+const PURGE_ANSWER_MARGIN_MS = 10_000;
 
 export type RuntimeSearchEnvironment = 'draft' | 'production';
 export type RuntimeSearchIndexState = 'ready' | 'queued' | 'indexing' | 'failed' | 'missing' | 'unavailable';
@@ -358,14 +360,36 @@ export interface RuntimeGraphSearchSeed {
   label: string;
   keyFields: Record<string, unknown>;
   snippet: string;
-  matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid';
-  /** Where the best matches were: the record's own search text, or a passage of a long field. */
-  matchedIn?: 'record' | 'passage';
+  /** linked: found only through its link to a record the request names (see via). */
+  matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid' | 'linked';
+  /** Where the best matches were: the record's own search text, a passage of a long field, or only its link. */
+  matchedIn?: 'record' | 'passage' | 'link';
+  /** The record of another concept the request names, that this record is linked to, and the links in between. */
+  via?: RuntimeGraphSearchVia;
   /** Best matching passages of long fields (up to 2), quoted around the words of the query. */
   passages?: RuntimeGraphSearchPassage[];
   rank: number;
   diagnostics: Record<string, unknown>;
   provenance: RuntimeRecordProvenance[];
+}
+
+export interface RuntimeGraphSearchVia {
+  entityId: string;
+  /** The name the request gives it. */
+  label: string;
+  conceptLabel: string;
+  links: number;
+  /** From that record to this one: each relationship key and the way it was read. */
+  path: Array<{ relation: string; direction: 'outgoing' | 'incoming' }>;
+}
+
+/** A record of another concept that the request names; the records asked for linked to it were found through it. */
+export interface RuntimeGraphSearchAnchor {
+  entityId: string;
+  label: string;
+  conceptLabel: string;
+  /** Records asked for linked to it, through the fewest links (all of them, even beyond the limit). */
+  linkedCount: number;
 }
 
 export interface RuntimeGraphSearchPassage {
@@ -385,12 +409,19 @@ export interface RuntimeGraphSearchResult {
   modelVersionId: string;
   dataRevisionId: string;
   projectionRef: string;
-  index: { indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null };
+  index: {
+    indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null;
+    /** While this index is built, the last ready one was searched: of the same data, or of earlier data. */
+    fallback?: { indexId: string; sameData: boolean };
+  };
   modeUsed: 'hybrid' | 'lexical_only' | 'exact_only';
   status: 'found' | 'no_match' | 'not_represented' | 'index_not_ready';
   concepts: { conceptId: string; key: string; label: string }[];
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
+  anchors?: RuntimeGraphSearchAnchor[];
+  /** The walk from the anchors was cut short: linked records may be missing. */
+  linksTruncated?: boolean;
   hasMore?: boolean;
   hiddenRecords?: number;
   notes?: string[];
@@ -497,7 +528,8 @@ export interface RuntimeGraphSearchIndexStatus {
 }
 
 export interface RuntimeRecordsFilter { field: string; op: string; value?: unknown; as?: string }
-export interface RuntimeRecordsGroupBy { field: string; bucket?: string; as?: string }
+/** step (traverse only): group on the records of that point of the walk, 0 being its start. */
+export interface RuntimeRecordsGroupBy { field: string; bucket?: string; as?: string; step?: number }
 export interface RuntimeRecordsAggregate { op: string; field?: string; as?: string }
 export interface RuntimeRecordsOrderBy { field: string; direction?: 'asc' | 'desc'; as?: string }
 
@@ -561,6 +593,9 @@ export interface RuntimeRecordsAppliedQuery {
 export interface RuntimeRecordsDiagnostics {
   readableRecords: number;
   checks: Array<{ part: string; field: string; op: string; matches: number; didYouMean?: string[] }>;
+  /** traverse only: how many start records match on their own, and why none did. */
+  startRecords?: number;
+  start?: RuntimeRecordsDiagnostics;
 }
 
 export interface RuntimeRecordsQueryResult {
@@ -584,7 +619,93 @@ export interface RuntimeRecordsQueryResult {
   diagnostics?: RuntimeRecordsDiagnostics;
   buckets?: Record<string, unknown>[];
   bucketsTruncated?: boolean;
+  /** Grouped on linked records: a record counts in the group of each record it is linked to. */
+  groupsOverlap?: boolean;
   aggregates?: Record<string, unknown>;
+}
+
+/** A walk: start records, then relationships step by step, each with conditions on the records it reaches. */
+export interface RuntimeTraverseStep {
+  relation: string;
+  direction?: 'outgoing' | 'incoming';
+  minHops?: number;
+  maxHops?: number;
+  filters?: RuntimeRecordsFilter[];
+  match?: 'all' | 'any';
+}
+
+export interface RuntimeTraverseRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  allowedWorkspaceIds?: string[] | null;
+  start: { concept: string; recordIds?: string[]; filters?: RuntimeRecordsFilter[]; match?: 'all' | 'any' };
+  steps: RuntimeTraverseStep[];
+  groupBy?: RuntimeRecordsGroupBy[];
+  aggregates?: RuntimeRecordsAggregate[];
+  orderBy?: RuntimeRecordsOrderBy[];
+  fields?: string[];
+  limit?: number;
+  offset?: number;
+  catalog: RuntimeRecordsCatalog;
+}
+
+export interface RuntimeConnectRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  allowedWorkspaceIds?: string[] | null;
+  fromEntityId: string;
+  toEntityId: string;
+  maxLinks?: number;
+  maxPaths?: number;
+  relations?: string[];
+  catalog: RuntimeRecordsCatalog;
+}
+
+export interface RuntimeConnectResult {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  status: 'connected' | 'not_connected' | 'not_found' | 'same_record';
+  links?: number;
+  maxLinks: number;
+  searchedLinks: number;
+  paths: Array<{
+    records: string[];
+    steps: Array<{ fromEntityId: string; relationId: string; relationKey: string; direction: 'outgoing' | 'incoming'; toEntityId: string }>;
+  }>;
+  records: Array<{ entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown> }>;
+  unknownRecords?: string[];
+  morePaths?: boolean;
+  /** The search stopped at a limit: a chain may exist that it did not reach. */
+  truncated: boolean;
+  graphLayout?: 'typed' | 'entity';
+}
+
+/** One record an answer cited, read again from the data in use (changed: the data was rebuilt since). */
+export interface RuntimeCitedRecord {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  changed: boolean;
+  status: 'ok' | 'hidden' | 'missing';
+  record?: {
+    entityId: string;
+    conceptId: string;
+    conceptKey: string;
+    conceptLabel: string;
+    label: string;
+    keyFields: Record<string, unknown>;
+    provenance: Array<{ assetId: string; workspaceId?: string; rowNumbers?: number[] }>;
+    values: Record<string, unknown>;
+    truncatedFields: string[];
+    origins: Record<string, RuntimeValueOrigin>;
+    /** What other sources stated for a field than the value in ``values``. */
+    alternatives?: Record<string, Array<{ value: unknown; origin: RuntimeValueOrigin }>>;
+  };
 }
 
 export interface RuntimeRecordsOverview {
@@ -675,6 +796,7 @@ export class SemanticRuntimeClientService {
     path: string,
     body: unknown,
     headers: Record<string, string> = {},
+    timeoutMs = this.config.runtimeRequestTimeoutMs,
   ): Promise<T> {
     const base = this.requireWrites();
     try {
@@ -686,7 +808,7 @@ export class SemanticRuntimeClientService {
           ...headers,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         throw Object.assign(new Error(`HTTP ${res.status}`), {
@@ -877,10 +999,10 @@ export class SemanticRuntimeClientService {
   }
 
   /** Clear a model's built data (records, links, review items, finished builds); its settings stay. */
-  async purgeModelData(modelId: string, actorUserId: string, options: { forgetDocumentReading: boolean }): Promise<RuntimePurgedData> {
+  async purgeModelData(modelId: string, actorUserId: string, options: { forgetDocumentReading: boolean; timeoutSeconds: number }): Promise<RuntimePurgedData> {
     return this.post<RuntimePurgedData>(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/purge`, options, {
       'X-Actor-User-Id': actorUserId,
-    });
+    }, options.timeoutSeconds * 1000 + PURGE_ANSWER_MARGIN_MS);
   }
 
   /**
@@ -942,11 +1064,12 @@ export class SemanticRuntimeClientService {
     throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The model data could not be copied.');
   }
 
-  /** Forget the model's earlier AI readings of documents, so the next run reads them again. Refused (409) while a run goes on. */
-  async forgetDocumentReadings(modelId: string, actorUserId: string): Promise<{ modelId: string; documentReadings: number }> {
+  /** Forget the model's earlier AI readings of documents (one concept's when given), so the next run reads them again. Refused (409) while a run goes on. */
+  async forgetDocumentReadings(modelId: string, actorUserId: string, conceptId?: string): Promise<{ modelId: string; documentReadings: number }> {
     try {
       return await this.post<{ modelId: string; documentReadings: number }>(
-        `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/forget-readings`, {}, { 'X-Actor-User-Id': actorUserId });
+        `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/forget-readings`,
+        conceptId ? { conceptId } : {}, { 'X-Actor-User-Id': actorUserId });
     } catch (error) {
       if (error instanceof ConflictException || (error as { status?: number }).status === 409) {
         throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
@@ -1144,6 +1267,22 @@ export class SemanticRuntimeClientService {
   /** Filters, counts, groups and lists the records of one concept in the data bound to one environment. */
   async recordsQuery(body: RuntimeRecordsQueryRequest): Promise<RuntimeRecordsQueryResult> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/records-query', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** A walk from start records along the stored links, with conditions at each step: the records it reaches, counted, grouped or listed. */
+  async traverseRecords(body: RuntimeTraverseRequest): Promise<RuntimeRecordsQueryResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/traverse', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** The shortest chains of links between two records. */
+  async connectRecords(body: RuntimeConnectRequest): Promise<RuntimeConnectResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/connect', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** One record an answer cited: its values, where each came from, and the files it was read from. */
+  async citedRecord(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment; allowedWorkspaceIds?: string[] | null;
+    entityId: string; expectedDataRevisionId?: string }): Promise<RuntimeCitedRecord> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/record', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
   }
 
   /** The concepts and relations of the bound data, with the number of records the actor may see. */

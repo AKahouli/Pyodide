@@ -7,7 +7,7 @@ import { WorkspaceShareService } from '@modules/workspace/workspace-share.servic
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { graphDiff } from '../domain/graph-diff';
-import { findCompleteness, queryCompleteness, relatedCompleteness } from '../domain/answer-completeness';
+import { connectCompleteness, findCompleteness, queryCompleteness, relatedCompleteness } from '../domain/answer-completeness';
 import {
   attributeTypes,
   type AttributeDefinition,
@@ -27,7 +27,7 @@ import { SemanticModelWorkspaceService } from './semantic-model-workspace.servic
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticModelVersionService } from './semantic-model-version.service';
 import { SemanticGraphSearchService } from './semantic-graph-search.service';
-import type { RecordsQuery } from './semantic-graph-search.service';
+import type { ConnectQuery, RecordsQuery, TraverseQuery } from './semantic-graph-search.service';
 import type { RuntimeGraphExpandStep, RuntimeRecordsQueryResult, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
 
 /**
@@ -217,12 +217,57 @@ function describeField(field: AttributeDefinition) {
 
 const HOW_TO_QUERY = 'query_records(concept, filters=[{field, op, value}], match="all"|"any", group_by=[field | {field, bucket}], '
   + 'aggregates=[{op, field}], order_by=[{field, direction}], fields, limit, offset). Name concepts and fields by key or label from '
-  + 'this description; "name" is the record name; "<relation>.<field>" filters on a linked record (relation by key, label or inverse label). '
+  + 'this description; "name" is the record name; "<relation>.<field>" filters on a linked record (relation by key, label or inverse label), '
+  + '"<relation>.<relation>.<field>" on one further away; group_by accepts them too (a record counts in the group of each linked record). '
   + 'ops: eq, ne, contains, starts_with, ends_with, in, gt, gte, lt, lte, between, is_empty, not_empty; text ignores case and accents. '
   + 'Dates: ISO (2026-07-14, 2026-07, 2026) or today, yesterday, last_N_days|weeks|months|years, this_/last_week|month|quarter|year (UTC); '
-  + 'buckets: day, week, month, quarter, year. aggregates: count, count_distinct, sum, avg, min, max. limit 0 returns only counts.';
+  + 'buckets: day, week, month, quarter, year. aggregates: count, count_distinct, sum, avg, min, max. limit 0 returns only counts. '
+  + 'traverse_records(start={concept, record_ids or filters}, steps=[{relation, filters, max_hops}], group_by=[{field, step: 0}]) walks '
+  + 'several links with conditions at each step and counts, groups or lists the records reached; connect_records(from, to) gives the '
+  + 'shortest chains of links between two records.';
 
 /** The answer of a valid records query: groups, or a page of records with optional totals. */
+/** The records of one answer the chat can cite (it numbers each one); more are shown but not cited. */
+export const MAX_CITED_RECORDS = 30;
+const CITED_QUOTE_CHARS = 300;
+const CITED_KEY_FIELDS = 5;
+
+/** A record an answer may cite: enough to name it and to open it again (model, data, revision, id). */
+export interface RecordCitationSource {
+  type: 'record';
+  modelId: string;
+  modelName: string;
+  data: AssistantDataChoice;
+  dataRevisionId: string;
+  entityId: string;
+  concept: string;
+  name: string;
+  keyFields: Record<string, string>;
+  /** The field the quote is taken from, when the record was found by a passage of it. */
+  field?: string;
+  quote?: string;
+}
+
+/** The citable records of a read result, once each, in the order shown, without hidden or unnamed ones. */
+export function recordCitations(model: { id: string; name: string }, data: AssistantDataChoice, dataRevisionId: string,
+  records: Array<{ entityId: string; concept: string; name: string; keyFields?: Record<string, unknown>; field?: string; quote?: string }>): RecordCitationSource[] {
+  const cited = new Map<string, RecordCitationSource>();
+  for (const record of records) {
+    if (cited.size >= MAX_CITED_RECORDS) break;
+    if (!record.entityId || cited.has(record.entityId)) continue;
+    const keyFields = Object.fromEntries(Object.entries(record.keyFields ?? {}).slice(0, CITED_KEY_FIELDS)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '').map(([key, value]) => [key, String(value)]));
+    const quote = record.quote?.trim();
+    cited.set(record.entityId, {
+      type: 'record', modelId: model.id, modelName: model.name, data, dataRevisionId, entityId: record.entityId,
+      concept: record.concept, name: record.name || Object.values(keyFields)[0] || record.entityId, keyFields,
+      ...(record.field ? { field: record.field } : {}),
+      ...(quote ? { quote: quote.length > CITED_QUOTE_CHARS ? `${quote.slice(0, CITED_QUOTE_CHARS - 1)}…` : quote } : {}),
+    });
+  }
+  return [...cited.values()];
+}
+
 function queryResultBody(result: RuntimeRecordsQueryResult) {
   const common = { total: result.total ?? 0, ...(result.unparsable && Object.keys(result.unparsable).length ? { unparsable: result.unparsable } : {}) };
   if (result.buckets) return { ...common, groups: result.buckets, truncated: Boolean(result.bucketsTruncated) };
@@ -231,6 +276,18 @@ function queryResultBody(result: RuntimeRecordsQueryResult) {
     ...common, ...(result.aggregates ? { totals: result.aggregates } : {}),
     records: result.records ?? [], offset: result.offset ?? 0, nextOffset: more ? result.nextOffset : null, truncated: more,
   };
+}
+
+/** A walk that reached nothing: whether its start matched any record, and the stored values a start filter may have meant. */
+function walkStartNotes(diagnostics: NonNullable<RuntimeRecordsQueryResult['diagnostics']>): string[] {
+  if (diagnostics.startRecords === undefined) return [];
+  const notes = [diagnostics.startRecords === 0
+    ? 'No start record matches the start of the walk (its records or filters): fix the start first.'
+    : `${String(diagnostics.startRecords)} start records match; the walk from them reaches no record matching the steps (the check "path" counts the records it reaches with no step condition of the last step).`];
+  for (const check of (diagnostics.start?.checks ?? []).filter((item) => item.didYouMean?.length)) {
+    notes.push(`The start's ${check.part} matches no stored value of "${check.field}". Stored values that look like it: ${(check.didYouMean ?? []).map((value) => `"${value}"`).join(', ')}. Ask the user or retry with one of them.`);
+  }
+  return notes;
 }
 
 /** Why a records query matched nothing: an empty concept, or which filter or link left nothing, and the stored values a text value may have meant. */
@@ -242,7 +299,8 @@ function emptyResultNotes(result: RuntimeRecordsQueryResult): string[] {
       ? 'No record matches: every record of this concept comes from sources the user cannot open.'
       : 'No record matches: this concept holds no record yet.'];
   }
-  const notes = [`No record matches this query, out of ${String(diagnostics.readableRecords)} readable records. Each condition alone keeps: ${diagnostics.checks.map((check) => `${check.part} (${check.field} ${check.op}) ${String(check.matches)}`).join('; ')}.`];
+  const notes = walkStartNotes(diagnostics);
+  notes.push(`No record matches this query, out of ${String(diagnostics.readableRecords)} readable records. Each condition alone keeps: ${diagnostics.checks.map((check) => `${check.part} (${check.field} ${check.op}) ${String(check.matches)}`).join('; ')}.`);
   for (const check of diagnostics.checks.filter((item) => item.didYouMean?.length)) {
     notes.push(`${check.part} matches no stored value of "${check.field}". Stored values that look like it: ${(check.didYouMean ?? []).map((value) => `"${value}"`).join(', ')}. Ask the user or retry with one of them; never present the empty result as the answer.`);
   }
@@ -269,6 +327,7 @@ function queryNotes(result: RuntimeRecordsQueryResult): string[] {
     notes.push(`${String(count)} value${count > 1 ? 's' : ''} of "${field.label}" could not be read as ${kinds[field.type] ?? 'typed values'} and ${count > 1 ? 'were' : 'was'} left out of the comparisons, groups and totals on this field. Say so in the answer.`);
   }
   if (result.hiddenRecords) notes.push(`${String(result.hiddenRecords)} records of this concept come from sources the user cannot open: they are not counted or shown.`);
+  if (result.groupsOverlap) notes.push('The groups are linked records: a record linked to several of them counts in each of their groups (and in the empty group when it has none), so the counts can add up to more than total. entityIds gives the record of each group, to follow it further.');
   if (result.total === 0) notes.push(...emptyResultNotes(result));
   if (result.bucketsTruncated) notes.push(`Only the first ${String(result.buckets?.length ?? 0)} groups are returned: more exist. Say the list is incomplete, or narrow the query.`);
   if (!result.buckets && result.nextOffset !== null && result.nextOffset !== undefined) {
@@ -391,7 +450,7 @@ export class SemanticModelAssistantService {
         ...((mapping as { fileCount?: number }).fileCount !== undefined ? { fileCount: (mapping as { fileCount?: number }).fileCount } : {}),
         fields: mapping.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => field.targetAttribute),
       })),
-      data: { freshness: freshness.state },
+      data: { freshness: freshness.state, ...('waitingFiles' in freshness && freshness.waitingFiles ? { filesNotYetIndexed: freshness.waitingFiles } : {}) },
     };
   }
 
@@ -1065,6 +1124,15 @@ export class SemanticModelAssistantService {
       environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit,
     });
     const notes: string[] = [];
+    if (result.index.fallback && result.status !== 'index_not_ready') {
+      notes.push(result.index.fallback.sameData
+        ? 'The search index is being rebuilt: the previous index of this data was searched.'
+        : 'The search index of the latest data is being built: the index of earlier data was searched, so records added or changed since may be missing and no excerpt of their text is shown. Tell the user.');
+    }
+    for (const anchor of result.anchors ?? []) {
+      notes.push(`Found through ${anchor.conceptLabel} "${anchor.label}", which the search names: ${String(anchor.linkedCount)} record(s) asked for are linked to it (via on each record says through which links). For all of them, or to count or filter them, use query_records with linked_to=[{relation, record_ids: ["${anchor.entityId}"]}] or traverse_records.`);
+    }
+    if (result.linksTruncated) notes.push('The walk from the record the search names was cut short: linked records may be missing.');
     if (result.status === 'index_not_ready') {
       notes.push(`The search index of this data is not ready (${result.index.state}): ${String(result.coverage.indexedCount)} of ${String(result.coverage.expectedCount)} records can be found by meaning. Tell the user that records may be missing.`);
     }
@@ -1086,9 +1154,17 @@ export class SemanticModelAssistantService {
       notes.push(`Only ${String(result.coverage.indexedCount + result.coverage.exactOnlyCount)} of ${String(result.coverage.expectedCount)} records are in the search index: matching records may be missing.`);
     }
     if (completeness.hiddenRecords) notes.push(`${String(completeness.hiddenRecords)} records come from sources the user cannot open: they were not searched or shown.`);
+    const citationSources = recordCitations(model, data, result.dataRevisionId, result.seeds.map((seed) => {
+      const passage = seed.matchedIn === 'passage' ? seed.passages?.[0] : undefined;
+      return {
+        entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
+        field: passage?.field, quote: passage?.text
+      };
+    }));
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
+      ...(result.anchors?.length ? { foundThrough: result.anchors.map((anchor) => ({ entityId: anchor.entityId, concept: anchor.conceptLabel, name: anchor.label, linkedRecords: anchor.linkedCount })) } : {}),
       records: result.seeds.map((seed) => {
         const passages = (seed.passages ?? []).map((passage) => ({ field: passage.field, fieldKey: passage.fieldKey, text: passage.text }));
         // Found by words deep in a long field: the passage says why, the start of the record does not.
@@ -1097,10 +1173,11 @@ export class SemanticModelAssistantService {
           entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
           snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
           match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
+          ...(seed.via ? { via: { entityId: seed.via.entityId, concept: seed.via.conceptLabel, name: seed.via.label, links: seed.via.links, path: seed.via.path } } : {}),
           ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
         };
       }),
-      coverage: result.coverage, completeness, notes,
+      coverage: result.coverage, completeness, notes, citationSources,
     };
   }
 
@@ -1154,6 +1231,9 @@ export class SemanticModelAssistantService {
       })),
       links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
       linkCounts, completeness, notes,
+      citationSources: recordCitations(model, data, result.dataRevisionId, result.nodes.map((node) => ({
+        entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields
+      }))),
     };
   }
 
@@ -1216,14 +1296,80 @@ export class SemanticModelAssistantService {
     const { data = 'published', ...query } = input;
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.queryRecords(userId, modelId, { ...query, environment: assistantEnvironment(data) });
+    return this.recordsAnswer(model, data, result, input.concept,
+      'The query is not valid: fix the parts listed in errors, using the concept and field names from describe_model, and call again.');
+  }
+
+  /**
+   * A walk from start records along the model's real relationships, with conditions at each step
+   * (traverse_records): the records it reaches, counted, grouped (by a field of an earlier point of the
+   * walk with step) or listed, exactly, answered like query_records.
+   */
+  async traverseRecords(userId: string, modelId: string, input: Omit<TraverseQuery, 'environment'> & { data?: AssistantDataChoice }) {
+    const { data = 'published', ...query } = input;
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.traverseRecords(userId, modelId, { ...query, environment: assistantEnvironment(data) });
+    return this.recordsAnswer(model, data, result, input.start.concept,
+      'The walk is not valid: fix the parts listed in errors (each step names a relationship of the records the step before reached, from describe_model) and call again.');
+  }
+
+  /**
+   * How two records are connected (connect_records): the shortest chains of real links between them, read
+   * both ways. A record the user cannot see never links two others.
+   */
+  async connectRecords(userId: string, modelId: string, input: Omit<ConnectQuery, 'environment' | 'fromEntityId' | 'toEntityId'> & {
+    fromRecordId: string; toRecordId: string; data?: AssistantDataChoice;
+  }) {
+    const { data = 'published', fromRecordId, toRecordId, ...query } = input;
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.connectRecords(userId, modelId, {
+      ...query, fromEntityId: fromRecordId, toEntityId: toRecordId, environment: assistantEnvironment(data),
+    });
+    const records = new Map(result.records.map((record) => [record.entityId, record]));
+    const completeness = connectCompleteness(result);
+    const notes: string[] = [];
+    const limited = query.relations?.length ? ' through the relationships asked for' : '';
+    if (result.status === 'connected') {
+      notes.push(`The records are ${String(result.links)} link${result.links === 1 ? '' : 's'} apart. paths lists ${String(result.paths.length)} shortest chain${result.paths.length === 1 ? '' : 's'}${result.morePaths ? ' (more chains of that length exist)' : ''}: describe the connection from their steps only, each being a stored link.`);
+    } else if (result.status === 'not_connected') {
+      notes.push(result.truncated
+        ? 'No chain was found, but the search stopped early (some records have too many links to follow them all): say that a connection may exist, or narrow the search with relations.'
+        : `No chain of at most ${String(result.maxLinks)} links connects these records${limited} (links read both ways, among the records the user can see).${result.maxLinks < 6 ? ' A longer chain may exist: call again with a higher max_links (up to 6) before saying they are not connected.' : ''}`);
+    } else if (result.status === 'not_found') {
+      notes.push(`${(result.unknownRecords ?? []).join(', ')}: no such record in this data, or it comes from sources the user cannot open. Use the entityId of records returned by find_records or query_records.`);
+    } else {
+      notes.push('Both ids are the same record.');
+    }
+    if (result.truncated && result.status === 'connected') notes.push('The search stopped early: other chains of that length may exist. Say so if it matters.');
+    return {
+      model: this.modelRef(model), data, status: result.status, ...(result.links !== undefined ? { links: result.links } : {}),
+      searchedLinks: result.searchedLinks,
+      paths: result.paths.map((path) => ({
+        records: path.records.map((id) => {
+          const record = records.get(id);
+          return { entityId: id, concept: record?.conceptLabel ?? '', name: record?.label ?? '', keyFields: record?.keyFields ?? {} };
+        }),
+        steps: path.steps.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
+      })),
+      completeness, notes,
+      citationSources: recordCitations(model, data, result.dataRevisionId, result.paths.flatMap((path) => path.records).map((id) => {
+        const record = records.get(id);
+        return { entityId: id, concept: record?.conceptLabel ?? '', name: record?.label ?? '', keyFields: record?.keyFields };
+      })),
+    };
+  }
+
+  /** The answer of query_records and traverse_records: errors to fix, or the records or groups with their notes. */
+  private recordsAnswer(model: Parameters<SemanticModelAssistantService['modelRef']>[0], data: AssistantDataChoice,
+    result: RuntimeRecordsQueryResult & { definitionsVersionId: string | null }, concept: string, invalidNote: string) {
     const base = { model: this.modelRef(model), data, status: result.status, appliedQuery: result.appliedQuery };
     if (result.status !== 'ok') {
       const unknownConcept = result.status === 'not_represented';
       return {
         ...base, errors: result.errors ?? [],
         notes: [unknownConcept
-          ? `The model has no concept "${input.concept}": this information is not in the model. Its concepts: ${(result.errors?.[0]?.available ?? []).join(', ')}.`
-          : 'The query is not valid: fix the parts listed in errors, using the concept and field names from describe_model, and call again.'],
+          ? `The model has no concept "${concept}": this information is not in the model. Its concepts: ${(result.errors?.[0]?.available ?? []).join(', ')}.`
+          : invalidNote],
       };
     }
     const notes = queryNotes(result);
@@ -1233,6 +1379,11 @@ export class SemanticModelAssistantService {
     return {
       ...base, concept: result.concept?.label, ...queryResultBody(result),
       ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}), completeness: queryCompleteness(result), notes,
+      ...(result.records?.length ? {
+        citationSources: recordCitations(model, data, result.dataRevisionId, result.records.map((record) => ({
+          entityId: record.entityId, concept: result.concept?.label ?? '', name: record.name, keyFields: record.keyFields
+        })))
+      } : {}),
     };
   }
 

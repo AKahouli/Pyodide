@@ -91,6 +91,30 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getAllByText('Using tools')).toHaveLength(2);
   });
 
+  it('collapses exact adjacent saved reasoning replays without merging actors or tool spans', () => {
+    const data = { summary: 'Inspect the full report', detail: 'Inspect the full report before answering.', status: 'completed', actorId: 'agent-1' };
+    const { container } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[
+      { id: 'a', type: 'agentActivity', data },
+      { id: 'replay', type: 'agentActivity', data },
+      { id: 'other-actor', type: 'agentActivity', data: { ...data, actorId: 'agent-2' } },
+      { id: 'same-prefix', type: 'agentActivity', data: { ...data, detail: 'Inspect the full report with different evidence.' } },
+      { id: 'tool', type: 'toolActivity', data: { toolName: 'search', status: 'completed' } },
+      { id: 'next-span', type: 'agentActivity', data },
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand activity' }));
+    expect(container.querySelectorAll('[data-desktop-activity] [data-agent-summary]')).toHaveLength(4);
+    expect(container.querySelectorAll('[data-desktop-activity] [data-tool-status]')).toHaveLength(1);
+  });
+
+  it('provides localized running text under reduced motion on desktop and mobile', () => {
+    const components = [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Inspect the report', status: 'running' } }];
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming components={components} />);
+    expect(container.querySelector('[data-running-status]')).toHaveTextContent('Running');
+    expect(container.querySelector('[data-running-status]')).toHaveClass('motion-reduce:inline');
+    rerender(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={components} />);
+    expect(container.querySelector('[data-running-status]')).not.toBeInTheDocument();
+  });
+
   it('renders tools in arrival order and keeps artifacts and the answer outside the activity pane', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'

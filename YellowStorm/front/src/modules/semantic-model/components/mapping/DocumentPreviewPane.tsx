@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Search, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Eye, FileText, Loader2, Search, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
@@ -125,7 +125,9 @@ export function documentStatusText(t: (key: `mapping.live.status.${KnownStatus |
  * What the shown document gives for one field: found (with the value and its page), or why not,
  * with a way to see it in the document.
  */
-export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel, findLabelText }: Readonly<{
+export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel, findLabelText, columnLabel }: Readonly<{
+  /** The name a column or source field is shown by (its key otherwise). */
+  columnLabel?: (column: string) => string;
   /** The "Find label" button's text: in the document (default), or in a sheet's cells. */
   findLabelText?: string;
   reading?: DocumentFieldReading;
@@ -162,8 +164,10 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
         : <p className='text-foreground/80'>{text.reason(current)}</p>}
     </div>
     {found && current.page ? <span className='shrink-0 tabular-nums text-muted-foreground'>{pageRange(t, current.page, current.pageEnd)}</span> : null}
-    {found && !current.page && current.column ? <span className='max-w-[8rem] shrink-0 truncate text-muted-foreground'>{current.column}</span> : null}
-    {canShow &&<Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onShow(current)}>{t('mapping.live.show')}</Button>}
+    {found && !current.page && current.column ? <span className='max-w-[8rem] shrink-0 truncate text-muted-foreground'>{columnLabel?.(current.column) ?? current.column}</span> : null}
+    {/* Where the value was found: the passage marked in the text. */}
+    {canShow && <Button type='button' size='icon' variant='ghost' className='h-5 w-5 shrink-0' aria-label={t('mapping.live.show')} title={t('mapping.live.showWhere')}
+      onClick={() => onShow(current)}><Eye className='h-3.5 w-3.5' /></Button>}
     {!found && labels.length > 0 && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onFindLabel(labels[0])}>
       <Search className='mr-1 h-3 w-3' />{findLabelText ?? t('mapping.live.findLabel')}
     </Button>}

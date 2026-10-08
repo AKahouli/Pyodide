@@ -83,6 +83,7 @@ class _PurgeConnection:
     def __init__(self, running: int = 0) -> None:
         self.running = running
         self.statements: list[tuple[str, tuple]] = []
+        self.timeouts: list[float] = []
 
     def acquire(self):  # type: ignore[no-untyped-def]
         return self
@@ -96,11 +97,13 @@ class _PurgeConnection:
     async def __aexit__(self, *_args):  # type: ignore[no-untyped-def]
         return None
 
-    async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+    async def execute(self, sql: str, *params, timeout=None):  # type: ignore[no-untyped-def]
         self.statements.append((sql, params))
 
-    async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+    async def fetch(self, sql: str, *params, timeout=None):  # type: ignore[no-untyped-def]
         self.statements.append((sql, params))
+        if timeout is not None:
+            self.timeouts.append(timeout)
         if "FROM semantic_runtime.active_bindings" in sql:
             return [{"data_revision_id": "dr_published"}]
         if "DELETE FROM semantic_population.data_revisions" in sql:
@@ -108,8 +111,10 @@ class _PurgeConnection:
                     {"id": "dr_b", "projection_ref": None}]
         return []
 
-    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+    async def fetchval(self, sql: str, *params, timeout=None):  # type: ignore[no-untyped-def]
         self.statements.append((sql, params))
+        if timeout is not None:
+            self.timeouts.append(timeout)
         if "FROM semantic_jobs.jobs WHERE" in sql and "count(*)" in sql and "DELETE" not in sql:
             return self.running
         if "model_data_resets" in sql:
@@ -133,6 +138,8 @@ async def test_purge_keeps_published_data_and_settings():
                       "projections": ["age:v1:pop_dr_a"]}
     # Only the draft pointer goes; the revision another environment serves is kept.
     assert "environment = 'draft'" in sql
+    # Clearing a large model outlasts the API pool's few-second statement limit.
+    assert connection.statements[0][0].startswith("SET LOCAL statement_timeout = '300s'")
     revisions = next(params for statement, params in connection.statements
                      if "DELETE FROM semantic_population.data_revisions" in statement)
     assert revisions == ("m1", ["dr_published"])
@@ -140,6 +147,17 @@ async def test_purge_keeps_published_data_and_settings():
     for kept in ("semantic_population.corrections", "semantic_runtime.specifications",
                  "manual_", "document_extractions"):
         assert kept not in sql
+
+
+@pytest.mark.asyncio
+async def test_purge_uses_the_time_it_is_given():
+    from app.persistence.population_store import purge_model_data
+
+    connection = _PurgeConnection()
+    await purge_model_data(connection, "m1", forget_document_reading=True, timeout_s=900)
+    assert connection.statements[0][0] == "SET LOCAL statement_timeout = '900s'"
+    # The heavy deletes wait as long as the statement may run.
+    assert connection.timeouts == [900, 900]
 
 
 @pytest.mark.asyncio

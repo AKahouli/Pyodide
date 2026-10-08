@@ -6,6 +6,46 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MSG_SELECT = '$select=id,conversationId,receivedDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,hasAttachments';
 const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 4320 * 60 * 1000; // Graph max for mailFolders: 72 hours
 
+/** Graph notification resource for an inbox subscription; ids are opaque Graph ids. */
+const INBOX_RESOURCE = /^\/?(?:me\/)?(?:users\/[^/]+\/)?mailfolders\('([^'"\s?&#%]+)'\)\/messages(?:\('([^'"\s?&#%]+)'\)|\/([^'"\s?&#%/]+))$/i;
+/** Well-known folder names Graph resolves for anyone — only the subscribed inbox may be named. */
+const WELLKNOWN_FOLDERS = new Set([
+  'inbox', 'drafts', 'sentitems', 'deleteditems', 'archive', 'junkemail',
+  'outbox', 'recoverableitems', 'syncissues', 'conflicts', 'conversationhistory',
+]);
+/** A single opaque Graph id segment (no delimiters that could escape the path we rebuild). */
+const OPAQUE_ID = /^[^'"\s/?&#]+$/;
+
+/**
+ * Pin a notification's `resource` to the subscribed inbox shape before it is
+ * used as a Graph path. Graph does not sign notifications, so the resource
+ * path is attacker-controlled on a public webhook — reading it verbatim would
+ * let a spoofed notification point the fetch at any mailbox resource the
+ * owner's token can reach (sent items, drafts, other paths). A resource that
+ * is present but does not match the subscribed shape is refused; only a
+ * missing resource falls back to `resourceData.id` in the subscribed folder.
+ * Returns the reconstructed `me/mailFolders('<folder>')/messages/<id>` or
+ * null when the shape does not match the subscription.
+ */
+export function pinInboxMessageResource(resource: unknown, messageIdFallback?: unknown): string | null {
+  const raw = typeof resource === 'string' ? resource.trim() : '';
+  if (raw.length > 0) {
+    const match = INBOX_RESOURCE.exec(raw);
+    if (!match) return null;
+    const folder = match[1];
+    if (folder.toLowerCase() !== 'inbox' && WELLKNOWN_FOLDERS.has(folder.toLowerCase())) return null;
+    // Quoted ids are Graph key syntax and may contain `/`; keep that form
+    // verbatim. The unquoted form is a plain path segment and stays strict.
+    return match[2] !== undefined
+      ? `me/mailFolders('${folder}')/messages('${match[2]}')`
+      : `me/mailFolders('${folder}')/messages/${match[3]}`;
+  }
+  if (typeof messageIdFallback === 'string' && OPAQUE_ID.test(messageIdFallback)) {
+    return `me/mailFolders('inbox')/messages/${messageIdFallback}`;
+  }
+  return null;
+}
+
 @Injectable()
 export class PlaybookFlowMailGraphClientService {
   constructor(

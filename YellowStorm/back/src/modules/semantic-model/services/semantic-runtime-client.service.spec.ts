@@ -249,6 +249,22 @@ describe('SemanticRuntimeClientService deleteModel', () => {
   });
 });
 
+describe('SemanticRuntimeClientService purgeModelData', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('sends the purge time in the body and waits that long plus ten seconds', async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ modelId: 'm1', revisions: 0, jobs: 0 }), { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    const client = new SemanticRuntimeClientService(config() as any);
+    await client.purgeModelData('m1', 'u1', { forgetDocumentReading: true, timeoutSeconds: 600 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m1/purge');
+    expect(JSON.parse(init.body)).toEqual({ forgetDocumentReading: true, timeoutSeconds: 600 });
+    expect(timeout).toHaveBeenCalledWith(610_000);
+  });
+});
+
 describe('SemanticRuntimeClientService cloneModelData', () => {
   let fetchMock: jest.Mock;
   const command = { targetModelId: 't1', targetModelVersionId: 'v1', idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };

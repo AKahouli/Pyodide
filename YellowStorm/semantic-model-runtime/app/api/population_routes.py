@@ -304,6 +304,9 @@ class PurgeModelDataCommand(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     forget_document_reading: bool = Field(default=False, alias="forgetDocumentReading")
+    # The admin's purge time (Admin > Semantic models); absent means the built-in one.
+    timeout_seconds: int = Field(default=store.DEFAULT_PURGE_TIMEOUT_S, alias="timeoutSeconds",
+                                 ge=30, le=3600)
 
 
 @router.post("/models/{model_id}/purge", status_code=status.HTTP_200_OK)
@@ -316,6 +319,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     try:
         result = await store.purge_model_data(
             pool, model_id, forget_document_reading=command.forget_document_reading,
+            timeout_s=command.timeout_seconds,
             emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     except store.PopulationRunning as exc:
         raise HTTPException(status_code=409, detail="population_running") from exc
@@ -337,14 +341,21 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     return {**result, "projectionsDropped": dropped}
 
 
+class ForgetReadingsCommand(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    concept_id: str | None = Field(default=None, alias="conceptId", min_length=1, max_length=200)
+
+
 @router.post("/models/{model_id}/forget-readings", status_code=status.HTTP_200_OK)
-async def forget_document_readings(model_id: str, request: Request) -> dict[str, object]:
-    """Forget the model's earlier AI readings of documents so the next run reads every document
-    again. Records, links and the data in use stay as they are."""
+async def forget_document_readings(model_id: str, request: Request,
+                                   command: ForgetReadingsCommand | None = None) -> dict[str, object]:
+    """Forget the model's earlier AI readings of documents (one concept's when ``conceptId`` is
+    given) so the next run reads them again. Records, links and the data in use stay as they are."""
     if not model_id or len(model_id) > 200:
         raise HTTPException(status_code=422, detail="invalid_model_id")
     try:
-        forgotten = await store.forget_document_readings(_population_pool(request), model_id)
+        forgotten = await store.forget_document_readings(_population_pool(request), model_id,
+                                                         command.concept_id if command else None)
     except store.PopulationRunning as exc:
         raise HTTPException(status_code=409, detail="population_running") from exc
     return {"modelId": model_id, "documentReadings": forgotten}

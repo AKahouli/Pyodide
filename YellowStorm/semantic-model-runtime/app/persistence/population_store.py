@@ -126,10 +126,46 @@ async def store_entity_aliases(pool: Any, *, revision_id: str,
     return len(aliases)
 
 
+# Values other sources gave one field of one record that are kept beside the served one.
+MAX_CANDIDATES_PER_FIELD = 20
+
+
+def _same_support(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    """The same value read from the same place (a document read twice by two mappings of one run)."""
+    def where(assertion: dict[str, Any]) -> tuple[Any, ...]:
+        evidence = assertion.get("evidence") or {}
+        asset = evidence.get("assetRef") or {}
+        return (assertion.get("value"), asset.get("assetId"), asset.get("assetVersionId"),
+                evidence.get("sectionPk"), evidence.get("blockPk"), evidence.get("rowNumber"))
+    return where(first) == where(second)
+
+
+def split_assertions(assertions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The assertion served for each (record, field) — the first, as the merged attribute is — and
+    the others, at most ``MAX_CANDIDATES_PER_FIELD`` per field and without repeating a support."""
+    served: dict[tuple[str, str], dict[str, Any]] = {}
+    others: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for assertion in assertions:
+        key = (assertion["entityId"], assertion["attribute"])
+        if key not in served:
+            served[key] = assertion
+        elif (len(others.get(key, [])) < MAX_CANDIDATES_PER_FIELD
+              and not _same_support(served[key], assertion)
+              and not any(_same_support(kept, assertion) for kept in others.get(key, []))):
+            others.setdefault(key, []).append(assertion)
+    return list(served.values()), [item for items in others.values() for item in items]
+
+
 async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
                            assertions: list[dict[str, Any]]) -> int:
     if not assertions:
         return 0
+    served, candidates = split_assertions(assertions)
+    rows = [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
+             assertion.get("value"), assertion.get("origin", "source"),
+             _json(assertion.get("evidence", {})),
+             (assertion.get("evidence", {}) or {}).get("mappingVersion"))
+            for assertion in served]
     await pool.executemany(
         """
         INSERT INTO semantic_population.assertions
@@ -138,13 +174,22 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
         ON CONFLICT (data_revision_id, entity_id, attribute) DO NOTHING
         """,
-        [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
-          assertion.get("value"), assertion.get("origin", "source"),
-          _json(assertion.get("evidence", {})),
-          (assertion.get("evidence", {}) or {}).get("mappingVersion"))
-         for assertion in assertions],
+        rows,
     )
-    return len(assertions)
+    if candidates:
+        await pool.executemany(
+            """
+            INSERT INTO semantic_population.assertion_candidates
+              (model_id, data_revision_id, entity_id, attribute, value, origin, evidence, mapping_version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            """,
+            [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
+              assertion.get("value"), assertion.get("origin", "source"),
+              _json(assertion.get("evidence", {})),
+              (assertion.get("evidence", {}) or {}).get("mappingVersion"))
+             for assertion in candidates],
+        )
+    return len(rows)
 
 
 async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
@@ -195,15 +240,27 @@ async def model_correction_sequence(pool: Any, model_id: str) -> int:
     return int(value or 0)
 
 
-async def list_model_corrections(pool: Any, model_id: str,
-                                 limit: int = 5000) -> list[dict[str, Any]]:
-    """Every correction of a model in sequence order (undos included)."""
-    rows = await pool.fetch(
-        "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
-        "action, payload, created_at FROM semantic_population.corrections "
-        "WHERE model_id = $1 ORDER BY sequence LIMIT $2",
-        model_id, limit,
-    )
+CORRECTIONS_PAGE = 5000
+
+
+async def list_model_corrections(pool: Any, model_id: str, up_to: int | None = None,
+                                 page: int = CORRECTIONS_PAGE) -> list[dict[str, Any]]:
+    """Every correction of a model in sequence order (undos included), up to the sequence
+    ``up_to`` when given: read page by page, so a replay covers the whole watermark it records."""
+    rows: list[Any] = []
+    after = 0
+    while True:
+        chunk = await pool.fetch(
+            "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
+            "action, payload, created_at FROM semantic_population.corrections "
+            "WHERE model_id = $1 AND sequence > $2 AND ($3::bigint IS NULL OR sequence <= $3) "
+            "ORDER BY sequence LIMIT $4",
+            model_id, after, up_to, page,
+        )
+        rows.extend(chunk)
+        if len(chunk) < page:
+            break
+        after = int(dict(chunk[-1])["sequence"])
     result = []
     for row in rows:
         values = dict(row)
@@ -337,17 +394,25 @@ class PopulationRunning(Exception):
     """A build of the model is still going on; its data cannot be cleared under it."""
 
 
+DEFAULT_PURGE_TIMEOUT_S = 300
+
+
 async def purge_model_data(pool: Any, model_id: str, *,
                            forget_document_reading: bool = False,
-                           emit_signal: bool = False) -> dict[str, Any]:
+                           emit_signal: bool = False,
+                           timeout_s: int = DEFAULT_PURGE_TIMEOUT_S) -> dict[str, Any]:
     """Clear what builds produced for a model, so the next build starts from nothing.
 
     The model's settings stay: specification, corrections and hand-typed records
     (manual snapshots). Data served to another environment (published) stays
     until that environment moves on. Returns the projection graphs no longer
-    referenced, for the caller to drop from the graph database."""
+    referenced, for the caller to drop from the graph database. ``timeout_s`` is how long
+    the clearing may take (the admin's purge time)."""
     async with pool.acquire() as connection:
         async with connection.transaction():
+            # The API pool stops statements after a few seconds; clearing a large model
+            # cascades through every record, so the purge gets its own budget.
+            await connection.execute(f"SET LOCAL statement_timeout = '{int(timeout_s)}s'")
             # One purge at a time per model, and none while a build runs.
             await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                                      f"purge:{model_id}")
@@ -367,7 +432,7 @@ async def purge_model_data(pool: Any, model_id: str, *,
             removed = await connection.fetch(
                 "DELETE FROM semantic_population.data_revisions "
                 "WHERE model_id = $1 AND NOT (id = ANY($2::text[])) "
-                "RETURNING id, projection_ref", model_id, sorted(kept))
+                "RETURNING id, projection_ref", model_id, sorted(kept), timeout=timeout_s)
             review_items = await connection.fetchval(
                 "WITH gone AS (DELETE FROM semantic_population.review_items "
                 "WHERE model_id = $1 AND (data_revision_id IS NULL "
@@ -382,7 +447,8 @@ async def purge_model_data(pool: Any, model_id: str, *,
             if forget_document_reading:
                 readings = await connection.fetchval(
                     "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id)
+                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
+                    timeout=timeout_s)
             generation = await connection.fetchval(
                 "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
                 "ON CONFLICT (model_id) DO UPDATE SET generation = "
@@ -422,6 +488,7 @@ _MODEL_TABLES = (
     "semantic_population.review_items",
     "semantic_population.corrections",
     "semantic_population.relationships",
+    "semantic_population.assertion_candidates",
     "semantic_population.assertions",
     "semantic_population.entities",
     "semantic_population.document_extractions",
@@ -614,9 +681,9 @@ async def served_revisions(pool: Any, model_id: str) -> list[str]:
     return [row["data_revision_id"] for row in rows]
 
 
-async def forget_document_readings(pool: Any, model_id: str) -> int:
-    """Forget a model's earlier AI readings of documents, so the next run reads them again.
-    The data in use is untouched. Refused while a run goes on (it would mix both)."""
+async def forget_document_readings(pool: Any, model_id: str, concept_id: str | None = None) -> int:
+    """Forget a model's earlier AI readings of documents (only one concept's when given), so the
+    next run reads them again. The data in use is untouched. Refused while a run goes on (it would mix both)."""
     async with pool.acquire() as connection:
         async with connection.transaction():
             await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -629,7 +696,8 @@ async def forget_document_readings(pool: Any, model_id: str) -> int:
                 raise PopulationRunning(model_id)
             return int(await connection.fetchval(
                 "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id))
+                "WHERE model_id = $1 AND ($2::text IS NULL OR concept_id = $2) RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id, concept_id))
 
 
 async def population_running(pool: Any, model_id: str) -> bool:
@@ -833,20 +901,43 @@ async def list_entity_origins(pool: Any, revision_id: str,
     return result
 
 
+def _assertion_row(row: Any) -> dict[str, Any]:
+    evidence = row["evidence"]
+    return {"entityId": row["entity_id"], "attribute": row["attribute"], "value": row["value"],
+            "origin": row["origin"] or "source",
+            "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})}
+
+
 async def list_revision_assertions(pool: Any, revision_id: str) -> list[dict[str, Any]]:
-    """Every value a revision holds, as a run produced it (value, origin, evidence)."""
+    """Every value a revision holds, as a run produced it (value, origin, evidence): the served
+    value of each field, then the other sources' values, so a run that keeps them stores them again."""
     rows = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertions WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute",
         revision_id,
     )
-    result = []
+    others = await pool.fetch(
+        "SELECT entity_id, attribute, value, origin, evidence "
+        "FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
+        "ORDER BY entity_id, attribute, created_at, id",
+        revision_id,
+    )
+    return [_assertion_row(row) for row in rows] + [_assertion_row(row) for row in others]
+
+
+async def list_assertion_candidates(pool: Any, revision_id: str, entity_id: str) -> dict[str, list[dict[str, Any]]]:
+    """Per field of one record, the values other sources gave it than the one served."""
+    rows = await pool.fetch(
+        "SELECT entity_id, attribute, value, origin, evidence FROM semantic_population.assertion_candidates "
+        "WHERE data_revision_id = $1 AND entity_id = $2 ORDER BY attribute, created_at, id",
+        revision_id, entity_id,
+    )
+    result: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        evidence = row["evidence"]
-        result.append({"entityId": row["entity_id"], "attribute": row["attribute"], "value": row["value"],
-                       "origin": row["origin"] or "source",
-                       "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})})
+        item = _assertion_row(row)
+        result.setdefault(item["attribute"], []).append(
+            {"value": item["value"], "origin": _origin_of(item["evidence"], item["origin"])})
     return result
 
 

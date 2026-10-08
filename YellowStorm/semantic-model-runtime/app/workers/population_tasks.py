@@ -28,7 +28,7 @@ from app.population.computed_fields import (apply_row_recipes, check_inputs, nor
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
-from app.population.run_limits import ai_pacing, run_limits
+from app.population.run_limits import ai_pacing, run_limits, source_limits, source_record_cap
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
@@ -67,7 +67,8 @@ POPULATION_ENGINE_VERSION = "r1-mvp-8"
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
                                      relation_bindings: list[dict],
                                      ai_extraction: dict | None = None,
-                                     derivations: list[dict] | None = None) -> str:
+                                     derivations: list[dict] | None = None,
+                                     limits: dict | None = None) -> str:
     canonical_sources = [{
         "conceptId": source["conceptId"],
         "sourceKind": source["sourceKind"],
@@ -83,6 +84,8 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
         # Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         **({"fieldExtractions": source["fieldExtractions"]} if source.get("fieldExtractions") else {}),
+        # Only present when a mapping sets its own reading limits.
+        **({"readLimits": source["readLimits"]} if source.get("readLimits") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -94,6 +97,10 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
     # Only present when a concept is made from another, so other models keep their fingerprint.
     if derivations:
         fingerprinted["derivations"] = derivations
+    # Only the limits an admin set travel with the run (the core hashes the same object), so
+    # other runs keep their fingerprint.
+    if limits:
+        fingerprinted["limits"] = limits
     body = json.dumps(fingerprinted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
@@ -387,6 +394,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
                             if extractions else {})}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
+                **({"readLimits": entry["readLimits"]} if isinstance(entry.get("readLimits"), dict) else {}),
             })
             mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
         try:
@@ -443,7 +451,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
         received = [{**source, "fieldExtractions": source["receivedFieldExtractions"]}
                     if "receivedFieldExtractions" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, received, normalized_bindings, ai_extraction, derivations)
+            expected_hash, received, normalized_bindings, ai_extraction, derivations,
+            payload.get("limits") if isinstance(payload.get("limits"), dict) else None)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
             source.pop("receivedFieldRecipes", None)
@@ -522,9 +531,13 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                             dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")))
             target = archive_dir["path"] / f"{len(archive_files)}.bin"
             async with asyncio.timeout(asset_fetch_wall_seconds(source)):
-                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=limits["maxArchiveMb"]))(
+                archive_mb = source_limits(limits, source)["maxArchiveMb"]
+                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=archive_mb))(
                     source, actor, target=target)
-            await derive_archive(source, archive_files[key])
+            # Copying the e-mails into the workspace only feeds its search; the model reads the
+            # archive itself, so it is done only when the data source asks for it.
+            if source.get("indexInWorkspace") is True:
+                await derive_archive(source, archive_files[key])
         return archive_files[key]
 
     async def derive_archive(source: dict, path: Path) -> None:
@@ -541,7 +554,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             from app.persistence.extraction_cache import extraction_cache_key
             cache_key = extraction_cache_key({
                 "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
-                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"]})
+                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
+                # Tables cut at the old e-mail or size limit are derived again once it changes.
+                "limits": {key: value for key, value in source_limits(limits, source).items()
+                           if key in ("maxArchiveEmails", "maxArchiveMb")}})
             if await extraction_cache.get(cache_key) is not None:
                 return
         phase = progress.phase
@@ -550,7 +566,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             with tempfile.TemporaryDirectory(prefix="semantic-derived-",
                                              dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
                 await progress.advance("opening", 0, None)
-                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=limits),
+                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=source_limits(limits, source)),
                                                 source, path, Path(directory))
                 created = sent = failed = 0
                 await progress.advance("files", 0, len(files))
@@ -604,7 +620,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             key = str(data)
             if key not in email_tables:
                 email_tables[key] = await asyncio.to_thread(
-                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables", limits=limits)
+                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables",
+                    limits=source_limits(limits, source))
             table = email_tables[key][selected_sheet(options)]
             await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
             return {**{name: table[name] for name in ("rowCount", "columns", "sizeBytes", "contentHash")},
@@ -687,6 +704,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
                     "content": content_digest,
+                    # A reading cut at the old limit must not be reused once the limit changes.
+                    "recordCap": source_record_cap(limits, entry),
                     # Only present with a recipe, so a sheet without one keeps its cached reading.
                     **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
                     **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
@@ -765,10 +784,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             limit=QUERY_ROW_LIMIT, offset=offset)
                         constants = entry.get("constantMapping", {})
                         raws = page["rows"]
-                        # The admin's per-source limit: the rest of the sheet is left unread.
-                        capped = len(raws) > limits["maxRecordsPerSource"] - records
+                        # The mapping's (else the admin's) per-source limit: the rest of the sheet is left unread.
+                        record_cap = source_record_cap(limits, entry)
+                        capped = len(raws) > record_cap - records
                         if capped:
-                            raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
+                            raws = raws[:max(0, record_cap - records)]
                             complete_enumeration = sheet_complete = False
                         expand_gaps: list = []
                         if expand:
@@ -933,6 +953,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         if read["gaps"] or expand_gaps:
             derived["gaps"].extend(read["gaps"] + expand_gaps)
             derived["counts"]["gaps"] = len(derived["gaps"])
+        # A concept made from another one reads no file: its records still show in the run's figures.
+        progress.records += len(derived["entities"])
+        progress.gaps += len(derived["gaps"])
+        await progress.send(force=True)
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:
@@ -972,16 +996,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     trimmed = {concept_id: [entity for entity in merged["entities"]
                             if entity["entityId"] in kept_ids]
                for concept_id, merged in merged_by_concept.items()}
+    # Links grow with records: a run allowed more records may keep proportionally more links.
+    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     relationships: list[dict] = []
     for binding in validated["relationBindings"]:
         relation = compiled["relations"][binding.get("relationId")]
         reference = binding["referenceField"]
         target = binding["targetField"]
+        # One link past the cap is enough to know the cap is hit (below): no more are built.
         matched = match_relationships(
             relation,
             trimmed.get(relation["sourceConceptId"], []),
             trimmed.get(relation["targetConceptId"], []),
-            reference, target)
+            reference, target, budget=max(0, max_relationships + 1 - len(relationships)))
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     relationships.extend(link for link in derived_links
@@ -992,8 +1019,6 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         relationships.extend(link for link in carried_links
                              if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids
                              and (link["relationId"], link["sourceEntityId"], link["targetEntityId"]) not in made)
-    # Links grow with records: a run allowed more records may keep proportionally more links.
-    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     if len(relationships) > max_relationships:
         relationships = sorted(relationships,
                                key=lambda item: (item.get("relationId", ""),
@@ -1388,7 +1413,7 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
         # Human fixes survive rebuilds: replay every correction still in force
         # on top of the computed rows. The revision records the watermark it
         # applied so activation can refuse a revision built before a newer fix.
-        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id))
+        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id, correction_sequence))
     execution_fingerprint = outcome["executionFingerprint"]
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),

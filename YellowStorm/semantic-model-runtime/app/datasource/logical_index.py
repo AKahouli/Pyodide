@@ -14,8 +14,10 @@ created by :func:`create_index_pool`.
 
 from __future__ import annotations
 
+import copy
 import os
 import re
+import time
 from typing import Any
 
 MANIFEST_VERSION = "r1-index-v1"
@@ -78,7 +80,37 @@ async def create_index_pool(*, min_size: int = 1, max_size: int = 2):  # type: i
     )
 
 
+# What a deployment of the index can do changes only when it is upgraded: one answer per
+# database serves every document of a run (four queries each, otherwise) for this long.
+CAPABILITY_TTL_SECONDS = 60.0
+_capability_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+
+
+def clear_capability_cache() -> None:
+    _capability_cache.clear()
+
+
+def _database_of(connection: Any) -> tuple[Any, ...] | None:
+    """Which database a connection reads (None when it cannot be told: nothing is cached)."""
+    params = getattr(connection, "_params", None)
+    database = getattr(params, "database", None)
+    addr = getattr(connection, "_addr", None)
+    return (str(addr), database) if database and addr else None
+
+
 async def detect_capabilities(connection: Any) -> dict[str, Any]:
+    """The capability manifest, read at most once a minute per database."""
+    database = _database_of(connection)
+    cached = _capability_cache.get(database) if database else None
+    if cached is not None and time.monotonic() - cached[0] < CAPABILITY_TTL_SECONDS:
+        return copy.deepcopy(cached[1])
+    manifest = await _read_capabilities(connection)
+    if database:
+        _capability_cache[database] = (time.monotonic(), copy.deepcopy(manifest))
+    return manifest
+
+
+async def _read_capabilities(connection: Any) -> dict[str, Any]:
     """Versioned capability manifest of the deployed index (P4.1).
 
     Detects extensions, tables and the columns readiness depends on. Nothing is

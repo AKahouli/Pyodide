@@ -49,12 +49,12 @@ export function CorrectionNote({ correction, onUndo, busy, className = '' }: Rea
 }
 
 /** A value with a "Fix" action that turns it into a small editor. */
-export function FixValueButton({ value, onSave, busy, label }: Readonly<{ value: unknown; onSave: (value: string) => void; busy?: boolean; label: string }>) {
+export function FixValueButton({ value, onSave, busy, label, iconOnly, className = '' }: Readonly<{ value: unknown; onSave: (value: string) => void; busy?: boolean; label: string; iconOnly?: boolean; className?: string }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value == null ? '' : String(value));
   if (!editing) {
-    return <button type='button' className='inline-flex items-center gap-1 text-[11px] text-primary' onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true); }} aria-label={t('corrections.fixValueOf', { field: label })}><Pencil className='h-3 w-3' />{t('corrections.fixValue')}</button>;
+    return <button type='button' className={`inline-flex items-center gap-1 text-[11px] text-primary ${className}`} onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true); }} aria-label={t('corrections.fixValueOf', { field: label })} title={iconOnly ? t('corrections.fixValueOf', { field: label }) : undefined}><Pencil className='h-3 w-3' />{!iconOnly && t('corrections.fixValue')}</button>;
   }
   return <form className='mt-1 flex items-center gap-1' onSubmit={(event) => { event.preventDefault(); onSave(draft); setEditing(false); }}>
     <Input autoFocus className={INPUT_COMPACT} value={draft} onChange={(event) => setDraft(event.target.value)} aria-label={t('corrections.newValueOf', { field: label })} />

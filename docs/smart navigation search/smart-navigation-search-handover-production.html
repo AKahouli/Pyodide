@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Navigation Search — Developer Handover</title>
+<style>
+:root{
+  --bg:#0d0f12; --panel:#15181d; --panel2:#1b1f25; --text:#f4f5f7; --muted:#aeb5c0;
+  --yellow:#ffd21f; --yellow2:#ffea7a; --green:#58d68d; --blue:#77b9ff; --red:#ff7c7c;
+  --purple:#c79cff; --cyan:#73e0df; --border:#2b313a; --code:#101317;
+  --shadow:0 18px 50px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:
+ radial-gradient(circle at 80% 5%,rgba(255,210,31,.10),transparent 28rem),
+ radial-gradient(circle at 8% 38%,rgba(119,185,255,.06),transparent 25rem),
+ var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.62}
+a{color:var(--yellow2);text-decoration:none}
+a:hover{text-decoration:underline}
+.shell{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1500px;margin:auto}
+nav{position:sticky;top:0;height:100vh;overflow:auto;padding:28px 20px 40px;border-right:1px solid var(--border);background:rgba(13,15,18,.88);backdrop-filter:blur(14px)}
+.brand{display:flex;gap:10px;align-items:center;margin-bottom:24px}
+.brandmark{width:34px;height:34px;border-radius:9px;background:var(--yellow);color:#111;display:grid;place-items:center;font-weight:900}
+.brand strong{font-size:14px;letter-spacing:.04em}
+.navsection{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:#7d8591;margin:22px 8px 8px}
+nav a{display:block;padding:7px 9px;border-radius:7px;color:#cbd1d8;font-size:13px}
+nav a:hover{background:#1d2127;text-decoration:none;color:white}
+main{min-width:0;padding:44px 5vw 100px}
+.hero{max-width:1120px;padding:52px 54px;border:1px solid var(--border);border-radius:28px;background:
+ linear-gradient(135deg,rgba(255,210,31,.13),rgba(255,210,31,.02) 34%,rgba(119,185,255,.05)),
+ var(--panel);box-shadow:var(--shadow);position:relative;overflow:hidden}
+.hero:after{content:"";position:absolute;width:420px;height:420px;border:1px solid rgba(255,210,31,.18);border-radius:50%;right:-150px;top:-180px;box-shadow:0 0 80px rgba(255,210,31,.08)}
+.eyebrow{font-size:12px;color:var(--yellow);text-transform:uppercase;letter-spacing:.18em;font-weight:800}
+h1{font-size:clamp(38px,5vw,72px);line-height:1.02;margin:14px 0 20px;letter-spacing:-.045em;max-width:850px}
+h2{margin:72px 0 20px;font-size:34px;letter-spacing:-.025em;scroll-margin-top:24px}
+h3{margin:34px 0 12px;font-size:22px}
+h4{font-size:16px;margin:22px 0 8px}
+.lede{font-size:20px;color:#cbd1d8;max-width:850px}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:28px}
+.badge{border:1px solid #3a404a;background:#111419;border-radius:999px;padding:7px 11px;color:#cfd5dd;font-size:12px}
+.badge.yellow{border-color:#746315;background:#28240b;color:var(--yellow2)}
+section{max-width:1120px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.card{grid-column:span 4;background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:22px}
+.card.wide{grid-column:span 6}.card.full{grid-column:1/-1}
+.card h3,.card h4{margin-top:0}
+.kicker{font-size:12px;color:var(--yellow);font-weight:800;text-transform:uppercase;letter-spacing:.09em}
+.callout{border-left:4px solid var(--yellow);padding:16px 18px;margin:22px 0;background:#191a14;border-radius:0 12px 12px 0}
+.callout.info{border-color:var(--blue);background:#111922}.callout.danger{border-color:var(--red);background:#211315}
+.small{font-size:13px;color:var(--muted)}
+.muted{color:var(--muted)}
+.diagram{background:linear-gradient(180deg,#171a1f,#101216);border:1px solid var(--border);border-radius:20px;padding:18px;overflow:auto;box-shadow:var(--shadow)}
+.diagram svg{display:block;width:100%;min-width:760px;height:auto}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0 0;font-size:12px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+pre{background:var(--code);border:1px solid var(--border);border-radius:14px;padding:16px;overflow:auto;color:#dbe2ea;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#171a1f;border:1px solid #292e36;padding:.08em .32em;border-radius:5px}
+pre code{background:none;border:0;padding:0}
+table{width:100%;border-collapse:collapse;margin:18px 0 28px;background:var(--panel);border:1px solid var(--border);font-size:14px}
+th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--border);padding:12px 14px}
+th{color:var(--yellow2);background:#12151a;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+tr:last-child td{border-bottom:0}
+.flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:16px 0}
+.step{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 13px;font-weight:700;font-size:13px}
+.arrow{color:var(--yellow);font-size:20px}
+.pill{display:inline-block;font-size:11px;padding:3px 8px;border-radius:999px;background:#252b33;color:#cfd6df;margin:1px 2px}
+.good{color:var(--green)}.warn{color:var(--yellow2)}.bad{color:var(--red)}.blue{color:var(--blue)}
+.filemap{display:grid;grid-template-columns:1fr 2fr;gap:0;border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.filemap div{padding:12px 14px;border-bottom:1px solid var(--border)}
+.filemap div:nth-child(odd){font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--yellow2);background:#111419}
+.filemap div:nth-child(even){background:var(--panel)}
+.timeline{position:relative;padding-left:28px}
+.timeline:before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:2px;background:#343a44}
+.titem{position:relative;margin:18px 0;padding:0 0 0 10px}
+.titem:before{content:"";position:absolute;left:-26px;top:6px;width:11px;height:11px;border-radius:50%;background:var(--yellow);box-shadow:0 0 0 5px #24200c}
+.titem strong{display:block}
+kbd{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;padding:2px 6px;border:1px solid #444b55;border-bottom-width:2px;border-radius:5px;background:#181b20}
+.checklist{list-style:none;padding-left:0}
+.checklist li{margin:9px 0;padding-left:27px;position:relative}
+.checklist li:before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:900}
+.num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;background:#2a250b;color:var(--yellow);font-weight:900;font-size:12px;margin-right:8px}
+.footer{border-top:1px solid var(--border);margin-top:90px;padding-top:28px;color:#828a95;font-size:12px}
+@media(max-width:980px){.shell{grid-template-columns:1fr}nav{display:none}main{padding:24px 18px 70px}.hero{padding:34px 26px}.card,.card.wide{grid-column:1/-1}.filemap{grid-template-columns:1fr}.filemap div:nth-child(odd){border-bottom:0}.diagram svg{min-width:680px}}
+@media print{nav{display:none}.shell{display:block}body{background:white;color:#111}main{padding:0}.hero,.card,.diagram,table{box-shadow:none;background:white;color:#111}.muted,.small{color:#555}pre{white-space:pre-wrap}}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav>
+  <div class="brand"><div class="brandmark">Y</div><div><strong>SMART NAVIGATION</strong><div class="small">Developer handover</div></div></div>
+  <div class="navsection">Start here</div>
+  <a href="#mental-model">Mental model</a>
+  <a href="#production-delta">Production branch changes</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#code-map">Code map</a>
+  <div class="navsection">Retrieval</div>
+  <a href="#tool-routing">Tool routing</a>
+  <a href="#search-flow">Search flow</a>
+  <a href="#hybrid">Hybrid ranking</a>
+  <a href="#scalable-scope">Scalable search scope</a>
+  <a href="#section-search">Search in sections</a>
+  <a href="#hierarchy">Hierarchy & expansion</a>
+  <a href="#loop">Agent-controlled follow-up</a>
+  <a href="#evidence-budget">Evidence budgeting</a>
+  <div class="navsection">Contracts</div>
+  <a href="#data-model">Data model</a>
+  <a href="#result-contract">Result contract</a>
+  <a href="#citations">Citations</a>
+  <a href="#security">Security & scope</a>
+  <div class="navsection">Operate & change</div>
+  <a href="#failure">Failure modes</a>
+  <a href="#debug">Debug playbook</a>
+  <a href="#change-guide">Where to change code</a>
+  <a href="#onboarding">First-day checklist</a>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Engineering handover · YellowMind / YellowStorm</div>
+  <h1>Smart Navigation Search</h1>
+  <p class="lede">How the Logical Search MCP discovers the right document area, returns bounded evidence, navigates structural context, and produces citation-ready answers without flooding the agent context.</p>
+  <div class="meta">
+    <span class="badge yellow">Branch: feature/fixes-for-production</span>
+    <span class="badge">Snapshot: 2a446f9153f2a6f997bdcfbd125c9a81fcf881b8</span>
+    <span class="badge">MCP: FastMCP + FastAPI</span>
+    <span class="badge">Storage: PostgreSQL + pgvector + pg_search</span>
+  </div>
+</header>
+
+<section id="mental-model">
+<h2>1. The mental model</h2>
+<div class="callout">
+  <strong>Smart Navigation is not “vector search”.</strong><br>
+  It is a staged evidence-retrieval system: constrain the authorized corpus in SQL, discover the most relevant logical areas, return bounded exact evidence, navigate only when needed, and validate citations at the end.
+</div>
+
+<div class="grid">
+  <div class="card"><div class="kicker">Scope</div><h3>Constrain before ranking</h3><p>The production path keeps large workspace scope in PostgreSQL through <code>SearchScope</code>; Python receives bounded candidate metadata rather than the whole corpus.</p></div>
+  <div class="card"><div class="kicker">Discover</div><h3>Find where to look</h3><p>One hybrid <code>search</code> call ranks sections and blocks using semantic, lexical and bounded filename signals.</p></div>
+  <div class="card"><div class="kicker">Focus</div><h3>Find the exact evidence</h3><p><code>search_in_sections</code> searches inside already selected sections without re-searching the whole workspace.</p></div>
+  <div class="card"><div class="kicker">Navigate</div><h3>Read structure only when needed</h3><p>Ancestors, descendants and context expansion remain optional; the default search skips hierarchy loading.</p></div>
+  <div class="card"><div class="kicker">Bound</div><h3>Protect context and capacity</h3><p>Evidence, DB workers and model work all have bounded budgets/queues with explicit degraded-mode behavior.</p></div>
+  <div class="card"><div class="kicker">Verify</div><h3>Cite exact source locations</h3><p>Block/image IDs are validated against stored evidence and mapped to page-level citation locations in the terminal citation call.</p></div>
+</div>
+
+<div class="flow">
+  <span class="step">Question</span><span class="arrow">→</span>
+  <span class="step">SQL scope</span><span class="arrow">→</span>
+  <span class="step">One search pass</span><span class="arrow">→</span>
+  <span class="step">Exact evidence</span><span class="arrow">→</span>
+  <span class="step">Optional focused follow-up</span><span class="arrow">→</span>
+  <span class="step">Citation lookup</span><span class="arrow">→</span>
+  <span class="step">Answer</span>
+</div>
+</section>
+
+
+<section id="production-delta">
+<h2>2. What changed in <code>feature/fixes-for-production</code></h2>
+<p>The production branch is eight commits ahead of the snapshot used for the previous handover. The changes alter both the public MCP contract and the internal retrieval path.</p>
+<div class="grid">
+  <div class="card wide"><div class="kicker">Public contract</div><h3>Document identity is now <code>document_id</code></h3>
+    <p><code>get_document_strategy</code>, <code>read_content</code> and <code>search</code> use indexed <code>LogicalDocument.id</code>. Public MCP responses strip <code>file_name</code> and identify document groups with <code>document_id</code>.</p>
+  </div>
+  <div class="card wide"><div class="kicker">Agent control</div><h3>No server-side rewrite loop</h3>
+    <p><code>activate_loop</code> and <code>loop_counter</code> are gone. The agent inspects evidence, rewrites only for a concrete unresolved gap, and may pass <code>exclude_section_ids</code> to discover different sections.</p>
+  </div>
+  <div class="card wide"><div class="kicker">Scale</div><h3>Scope stays in PostgreSQL</h3>
+    <p><code>SearchScope</code> avoids loading whole-workspace document metadata or giant document-ID lists into Python. Candidate metadata is hydrated only after bounded retrieval.</p>
+  </div>
+  <div class="card wide"><div class="kicker">Ranking</div><h3>Filename relevance is an internal signal</h3>
+    <p>The default final blend is 75% block RRF, 20% section RRF and 5% filename relevance. When filename semantics are enabled, that 5% is split 3% text / 2% semantic.</p>
+  </div>
+  <div class="card wide"><div class="kicker">Capacity</div><h3>Bounded waiting queues</h3>
+    <p>DB and model admission now have queue limits in addition to running-worker limits. Overload becomes a retryable condition instead of unbounded waiting.</p>
+  </div>
+  <div class="card wide"><div class="kicker">Operations</div><h3>Production setup + load testing</h3>
+    <p>The branch adds database-index verification/apply scripts and a real MCP load-test runner for p50/p95/p99, throughput, response size and errors.</p>
+  </div>
+</div>
+<div class="callout info">
+<strong>Migration note for developers:</strong> if code, prompts, tests or clients still refer to <code>file_name</code> as the MCP document scope, or to <code>activate_loop</code>/<code>loop_counter</code>, they are using the previous contract.
+</div>
+</section>
+
+
+<section id="architecture">
+<h2>3. Architecture overview</h2>
+<div class="diagram">
+<svg viewBox="0 0 1180 650" role="img" aria-label="Production Smart Navigation architecture">
+<defs>
+  <marker id="arrp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#ffd21f"/></marker>
+  <filter id="glowp"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<style>
+  .boxp{fill:#181c22;stroke:#353c46;stroke-width:1.5}.corep{stroke:#ffd21f;stroke-width:2.3}
+  .tp{fill:#f4f5f7;font:700 17px system-ui}.sp{fill:#aeb5c0;font:12px system-ui}
+  .ap{stroke:#ffd21f;stroke-width:2;fill:none;marker-end:url(#arrp)}.thinp{stroke:#68717e;stroke-width:1.5;fill:none;stroke-dasharray:6 6}
+</style>
+<rect x="20" y="240" width="185" height="120" rx="18" class="boxp"/>
+<text x="112" y="278" text-anchor="middle" class="tp">Agent / ADK</text>
+<text x="112" y="306" text-anchor="middle" class="sp">tool selection + follow-up</text>
+<text x="112" y="329" text-anchor="middle" class="sp">evidence completeness</text>
+
+<rect x="265" y="115" width="355" height="365" rx="24" class="boxp corep" filter="url(#glowp)"/>
+<text x="443" y="154" text-anchor="middle" class="tp">Logical Search MCP</text>
+<text x="443" y="180" text-anchor="middle" class="sp">authorization · scope · retrieval · navigation · evidence</text>
+
+<rect x="295" y="210" width="135" height="62" rx="12" class="boxp"/>
+<text x="363" y="235" text-anchor="middle" class="sp">SearchScope</text>
+<text x="363" y="255" text-anchor="middle" class="sp">SQL-owned corpus scope</text>
+
+<rect x="455" y="210" width="135" height="62" rx="12" class="boxp"/>
+<text x="523" y="235" text-anchor="middle" class="sp">query preparation</text>
+<text x="523" y="255" text-anchor="middle" class="sp">embedding + FTS</text>
+
+<rect x="295" y="300" width="135" height="62" rx="12" class="boxp"/>
+<text x="363" y="325" text-anchor="middle" class="sp">hybrid ranking</text>
+<text x="363" y="345" text-anchor="middle" class="sp">block + section + name</text>
+
+<rect x="455" y="300" width="135" height="62" rx="12" class="boxp"/>
+<text x="523" y="325" text-anchor="middle" class="sp">evidence / hierarchy</text>
+<text x="523" y="345" text-anchor="middle" class="sp">read + expand + cite</text>
+
+<rect x="335" y="395" width="215" height="48" rx="12" class="boxp"/>
+<text x="443" y="424" text-anchor="middle" class="sp">bounded DB + model admission queues</text>
+
+<rect x="700" y="40" width="210" height="115" rx="18" class="boxp"/>
+<text x="805" y="77" text-anchor="middle" class="tp">LiteLLM</text>
+<text x="805" y="104" text-anchor="middle" class="sp">fresh query embedding</text>
+<text x="805" y="126" text-anchor="middle" class="sp">optional translation / filename semantics</text>
+
+<rect x="700" y="205" width="210" height="195" rx="18" class="boxp"/>
+<text x="805" y="240" text-anchor="middle" class="tp">PostgreSQL</text>
+<text x="805" y="267" text-anchor="middle" class="sp">logical documents / sections / blocks</text>
+<text x="805" y="290" text-anchor="middle" class="sp">images / text positions</text>
+<text x="805" y="320" text-anchor="middle" class="sp">pgvector HNSW</text>
+<text x="805" y="343" text-anchor="middle" class="sp">pg_search / ParadeDB BM25</text>
+<text x="805" y="372" text-anchor="middle" class="sp">scope + filename indexes</text>
+
+<rect x="700" y="455" width="210" height="112" rx="18" class="boxp"/>
+<text x="805" y="491" text-anchor="middle" class="tp">Vectorstore Indexer</text>
+<text x="805" y="518" text-anchor="middle" class="sp">OCR · parsing · embeddings</text>
+<text x="805" y="540" text-anchor="middle" class="sp">writes the logical index</text>
+
+<rect x="975" y="455" width="170" height="112" rx="18" class="boxp"/>
+<text x="1060" y="492" text-anchor="middle" class="tp">Source assets</text>
+<text x="1060" y="520" text-anchor="middle" class="sp">Ceph / files</text>
+<text x="1060" y="542" text-anchor="middle" class="sp">original documents</text>
+
+<path d="M205 300 C230 300 240 300 265 300" class="ap"/>
+<path d="M620 220 C655 170 665 120 700 105" class="ap"/>
+<path d="M620 310 C650 310 670 310 700 310" class="ap"/>
+<path d="M805 455 L805 400" class="ap"/>
+<path d="M910 512 C938 512 947 512 975 512" class="thinp"/>
+</svg>
+</div>
+<div class="legend">
+  <span><i class="dot" style="background:#ffd21f"></i>Smart Navigation core</span>
+  <span><i class="dot" style="background:#77b9ff"></i>optional model stages</span>
+  <span><i class="dot" style="background:#58d68d"></i>persistent logical index</span>
+</div>
+
+<div class="callout info">
+<strong>Production ownership boundary:</strong> the Vectorstore owns schema population and indexing. The MCP is a read-only schema consumer. The scalable search path changes how scope and candidates are queried; it does not move source documents or embeddings out of PostgreSQL.
+</div>
+</section>
+
+<section id="code-map">
+<h2>4. Code map — know where to look</h2>
+<div class="filemap">
+<div>logical_indexing_server.py</div><div>Public MCP tools, argument validation, document/workspace scope, deadlines, one-pass search orchestration and response shaping.</div>
+<div>search_scope.py</div><div><strong>Production scalable scope.</strong> Keeps authorized document filters, language grouping, filename-token logic and candidate metadata in SQL.</div>
+<div>db_helpers.py</div><div>Core hybrid SQL retrieval, candidate fusion, bounded hydration, readers and citation lookup.</div>
+<div>filename_relevance.py</div><div>Deterministic normalized filename tokens, fiscal-year aliases and structured issuer matching.</div>
+<div>filename_semantic.py</div><div>Optional bounded semantic filename ranking. It contributes only a small ranking signal.</div>
+<div>section_search.py</div><div>Focused ranking inside already selected sections. Mixes semantic and lexical signals and can add adjacent blocks.</div>
+<div>context_navigation.py</div><div>Hierarchy loading, ancestor/descendant traversal, structural expansion, combined context serialization and continuation pagination.</div>
+<div>evidence.py</div><div>Exact excerpts, response-byte accounting, fair evidence packing and navigation trimming. Public document groups use <code>document_id</code>.</div>
+<div>operations.py</div><div>Admission state, bounded queue behavior, tracked operations and graceful drain on shutdown.</div>
+<div>query_embeddings.py</div><div>Fresh query vector generation under model-admission and deadline budgets. No cross-request vector cache.</div>
+<div>query_translation.py</div><div>Optional multilingual lexical variants; reuses one API client per event loop but does not cache translations.</div>
+<div>models.py</div><div>Read-side schema contract for documents, sections, blocks, images and word positions.</div>
+<div>session.py</div><div>PostgreSQL sessions, DB worker admission and per-statement deadlines.</div>
+<div>router.py</div><div>FastAPI/MCP mounting, bearer auth, workspace headers, retryable overload handling and lifecycle.</div>
+<div>smart-navigation-search-skill.md</div><div>Full agent-facing retrieval contract.</div>
+<div>smart-navigation-search-gpt5.4mini.md</div><div>Compact operating instructions optimized for the smaller receiving model.</div>
+<div>docs/operations.md</div><div>Production settings, DB index rollout, CI/integration testing and real MCP load-test guidance.</div>
+</div>
+<div class="callout danger">
+<strong>Removed concept:</strong> <code>query_rewrite.py</code> and the server-controlled iterative loop are no longer part of the current architecture.
+</div>
+</section>
+
+<section id="tool-routing">
+<h2>5. Tool routing — current production contract</h2>
+<div class="diagram">
+<svg viewBox="0 0 1120 650" role="img" aria-label="Production tool routing decision tree">
+<defs><marker id="a2p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffd21f"/></marker></defs>
+<style>.n{fill:#181c22;stroke:#38414c;stroke-width:1.4}.y{stroke:#ffd21f;stroke-width:2}.tx{fill:#f4f5f7;font:700 15px system-ui}.sm{fill:#aeb5c0;font:12px system-ui}.ln{stroke:#ffd21f;stroke-width:1.8;fill:none;marker-end:url(#a2p)}</style>
+<rect x="430" y="25" width="260" height="65" rx="16" class="n y"/><text x="560" y="53" text-anchor="middle" class="tx">Document-grounded question</text><text x="560" y="75" text-anchor="middle" class="sm">known document IDs?</text>
+<rect x="65" y="150" width="260" height="78" rx="16" class="n"/><text x="195" y="180" text-anchor="middle" class="tx">Complete known document(s)</text><text x="195" y="203" text-anchor="middle" class="sm">need the whole file</text>
+<rect x="430" y="150" width="260" height="78" rx="16" class="n y"/><text x="560" y="180" text-anchor="middle" class="tx">Targeted question</text><text x="560" y="203" text-anchor="middle" class="sm">document IDs optional</text>
+<rect x="795" y="150" width="260" height="78" rx="16" class="n"/><text x="925" y="180" text-anchor="middle" class="tx">Gap in known section(s)</text><text x="925" y="203" text-anchor="middle" class="sm">already have section IDs</text>
+<path d="M520 90 C430 122 330 125 245 150" class="ln"/><path d="M560 90 L560 150" class="ln"/><path d="M600 90 C690 122 800 125 870 150" class="ln"/>
+
+<rect x="65" y="292" width="260" height="80" rx="16" class="n"/><text x="195" y="320" text-anchor="middle" class="tx">get_document_strategy</text><text x="195" y="345" text-anchor="middle" class="sm">document_id → read_all or search</text>
+<rect x="430" y="292" width="260" height="80" rx="16" class="n y"/><text x="560" y="320" text-anchor="middle" class="tx">search</text><text x="560" y="345" text-anchor="middle" class="sm">one hybrid retrieval pass</text>
+<rect x="795" y="292" width="260" height="80" rx="16" class="n"/><text x="925" y="320" text-anchor="middle" class="tx">search_in_sections</text><text x="925" y="345" text-anchor="middle" class="sm">local evidence ranking</text>
+<path d="M195 228 L195 292" class="ln"/><path d="M560 228 L560 292" class="ln"/><path d="M925 228 L925 292" class="ln"/>
+
+<rect x="140" y="440" width="220" height="72" rx="16" class="n"/><text x="250" y="470" text-anchor="middle" class="tx">read_content</text><text x="250" y="493" text-anchor="middle" class="sm">strategy-selected document IDs</text>
+<rect x="450" y="440" width="220" height="72" rx="16" class="n"/><text x="560" y="470" text-anchor="middle" class="tx">follow-up?</text><text x="560" y="493" text-anchor="middle" class="sm">gap-specific, agent controlled</text>
+<rect x="760" y="440" width="220" height="72" rx="16" class="n"/><text x="870" y="470" text-anchor="middle" class="tx">read_sections / blocks</text><text x="870" y="493" text-anchor="middle" class="sm">if ranked excerpts aren't enough</text>
+<path d="M195 372 C195 400 225 410 250 440" class="ln"/><path d="M560 372 L560 440" class="ln"/><path d="M925 372 C925 400 895 410 870 440" class="ln"/>
+
+<rect x="430" y="570" width="260" height="58" rx="16" class="n y"/><text x="560" y="595" text-anchor="middle" class="tx">locate_answer_citations</text><text x="560" y="616" text-anchor="middle" class="sm">terminal retrieval call</text>
+<path d="M250 512 C310 555 390 560 430 590" class="ln"/><path d="M560 512 L560 570" class="ln"/><path d="M870 512 C810 555 730 560 690 590" class="ln"/>
+</svg>
+</div>
+
+<table>
+<tr><th>Tool</th><th>Key arguments</th><th>Use it when</th></tr>
+<tr><td><code>search</code></td><td><code>query, workspace_id, document_id?, top_k, exclude_section_ids?, include_hierarchy</code></td><td>First choice for targeted retrieval. Known document IDs must be batched into one call.</td></tr>
+<tr><td><code>search_in_sections</code></td><td><code>query, section_id[], workspace_id, top_k, include_neighbors</code></td><td>You already know up to 10 public section IDs and need a precise detail.</td></tr>
+<tr><td><code>get_document_strategy</code></td><td><code>workspace_id, document_id[]</code></td><td>You want to read complete known documents and need the service to choose full-read versus search.</td></tr>
+<tr><td><code>read_content</code></td><td><code>workspace_id, document_id[], offsets</code></td><td>The strategy selected full-document reading; continuation is by one document ID.</td></tr>
+<tr><td><code>read_sections</code></td><td><code>section_id[]</code></td><td>You need the full selected sequence, visual payload, or omitted evidence.</td></tr>
+<tr><td><code>read_blocks</code></td><td><code>block_id[]</code></td><td>A selected block is truncated and full exact text matters.</td></tr>
+<tr><td><code>expand_context</code></td><td><code>section_id[]</code></td><td>Meaning depends on parent scope, prerequisites or descendant branches.</td></tr>
+<tr><td><code>locate_answer_citations</code></td><td><code>workspace_id, citations[]</code></td><td>All material evidence gaps are resolved. This must be the final retrieval call.</td></tr>
+</table>
+</section>
+
+<section id="search-flow">
+<h2>6. What happens inside <code>search</code></h2>
+<div class="timeline">
+  <div class="titem"><strong>1 — Validate request + authorization scope</strong><span class="muted">Query and workspace are required. Optional <code>document_id</code> can narrow the authorized scope; <code>exclude_section_ids</code> is validated as positive public integer IDs.</span></div>
+  <div class="titem"><strong>2 — Build one request-local <code>SearchContext</code></strong><span class="muted">With scalable scope enabled, <code>SearchScope</code> stores SQL predicates/config groups instead of materializing whole-workspace metadata in Python.</span></div>
+  <div class="titem"><strong>3 — Prepare three independent signals concurrently</strong><span class="muted">Fresh query embedding, multilingual lexical variants, and optional bounded filename-semantic scores run under one request deadline.</span></div>
+  <div class="titem"><strong>4 — Run section and block candidate channels</strong><span class="muted">Vector and BM25/FTS candidate queries run inside the scoped corpus. Excluded public section IDs are filtered before candidate limits.</span></div>
+  <div class="titem"><strong>5 — Add filename context and fuse</strong><span class="muted">Block, section and filename ranks are combined with configured weights. Exact structured issuer matches can narrow the document set.</span></div>
+  <div class="titem"><strong>6 — Hydrate bounded winners only</strong><span class="muted">Candidate document metadata, section metadata, block counts/pages, previews and image counts are loaded for selected winners rather than the whole corpus.</span></div>
+  <div class="titem"><strong>7 — Attach hierarchy only on demand</strong><span class="muted"><code>include_hierarchy=false</code> avoids hierarchy loading. When true, ancestors and all-level descendants are navigation metadata, not evidence.</span></div>
+  <div class="titem"><strong>8 — Focus section evidence</strong><span class="muted">The global matched block is preferred, then <code>search_section_evidence</code> selects bounded additional evidence inside each winner.</span></div>
+  <div class="titem"><strong>9 — Pack grouped evidence</strong><span class="muted">Return <code>documents[].sections[].blocks[]</code> under one byte budget. Public document identity is <code>document_id</code>.</span></div>
+</div>
+
+<pre><code>search(
+    query,
+    workspace_id,
+    document_id=None,
+    top_k=5,
+    exclude_section_ids=None,
+    include_hierarchy=False,
+)</code></pre>
+
+<div class="callout info">
+<strong>Important production change:</strong> one <code>search</code> call is one retrieval pass. There is no server-side rewrite loop and no <code>suggested_files</code> output. The agent decides whether a second search is justified.
+</div>
+</section>
+
+<section id="hybrid">
+<h2>7. Hybrid retrieval and ranking</h2>
+<div class="grid">
+  <div class="card"><div class="kicker">Block evidence</div><h3>75%</h3><p>Hybrid RRF built from block semantic and lexical candidates. This is the dominant ranking signal.</p></div>
+  <div class="card"><div class="kicker">Section title</div><h3>20%</h3><p>Section-title semantic/BM25 rank gives structural topic context.</p></div>
+  <div class="card"><div class="kicker">Filename</div><h3>5%</h3><p>Internal routing signal only. Default split with semantics enabled: 3% deterministic text + 2% semantic filename rank.</p></div>
+</div>
+
+<div class="diagram">
+<svg viewBox="0 0 1130 390">
+<defs><marker id="a3p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffd21f"/></marker></defs>
+<style>.b{fill:#181c22;stroke:#39414b}.tt{fill:#fff;font:700 15px system-ui}.ss{fill:#aeb5c0;font:12px system-ui}.l{stroke:#ffd21f;stroke-width:2;fill:none;marker-end:url(#a3p)}</style>
+<rect x="25" y="150" width="175" height="82" rx="15" class="b"/><text x="112" y="182" text-anchor="middle" class="tt">Query</text><text x="112" y="207" text-anchor="middle" class="ss">authorized scope</text>
+
+<rect x="270" y="30" width="195" height="75" rx="15" class="b"/><text x="368" y="60" text-anchor="middle" class="tt">Embedding</text><text x="368" y="84" text-anchor="middle" class="ss">fresh per request</text>
+<rect x="270" y="155" width="195" height="75" rx="15" class="b"/><text x="368" y="185" text-anchor="middle" class="tt">FTS variants</text><text x="368" y="209" text-anchor="middle" class="ss">optional translation</text>
+<rect x="270" y="280" width="195" height="75" rx="15" class="b"/><text x="368" y="310" text-anchor="middle" class="tt">Filename signals</text><text x="368" y="334" text-anchor="middle" class="ss">tokens + optional semantics</text>
+
+<rect x="560" y="35" width="210" height="70" rx="15" class="b"/><text x="665" y="64" text-anchor="middle" class="tt">Block candidates</text><text x="665" y="88" text-anchor="middle" class="ss">vector + BM25</text>
+<rect x="560" y="155" width="210" height="70" rx="15" class="b"/><text x="665" y="184" text-anchor="middle" class="tt">Section candidates</text><text x="665" y="208" text-anchor="middle" class="ss">vector + BM25</text>
+<rect x="560" y="275" width="210" height="70" rx="15" class="b"/><text x="665" y="304" text-anchor="middle" class="tt">Filename rank</text><text x="665" y="328" text-anchor="middle" class="ss">text / semantic RRF</text>
+
+<rect x="870" y="145" width="225" height="95" rx="15" class="b"/><text x="982" y="178" text-anchor="middle" class="tt">Weighted final score</text><text x="982" y="202" text-anchor="middle" class="ss">0.75 block + 0.20 section</text><text x="982" y="222" text-anchor="middle" class="ss">+ 0.05 filename</text>
+
+<path d="M200 175 C230 120 240 70 270 68" class="l"/><path d="M200 191 L270 191" class="l"/><path d="M200 207 C230 270 240 310 270 317" class="l"/>
+<path d="M465 68 L560 68" class="l"/><path d="M465 191 L560 191" class="l"/><path d="M465 317 L560 310" class="l"/>
+<path d="M770 70 C820 90 820 155 870 175" class="l"/><path d="M770 190 L870 190" class="l"/><path d="M770 310 C820 290 820 225 870 210" class="l"/>
+</svg>
+</div>
+
+<h3>Filename behavior developers must know</h3>
+<ul>
+<li>Generic terms such as <code>report</code>, <code>annual</code> or <code>document</code> do not narrow document scope.</li>
+<li>Structured issuer patterns such as <code>ISSUER_2025...</code> can be recognized; a confident exact issuer match can narrow discovery to those document IDs.</li>
+<li>FY/fiscal-year and 10-K/10-Q forms are normalized.</li>
+<li>Optional filename semantics are bounded by <code>SEARCH_FILENAME_SEMANTIC_MAX_FILES=100</code> and a 5-second stage timeout by default.</li>
+<li>Filename signals are routing context, not evidence and are not returned as <code>suggested_files</code>.</li>
+</ul>
+<p><strong>Scores rank evidence; they are not confidence probabilities.</strong></p>
+</section>
+
+
+<section id="scalable-scope">
+<h2>8. Production scalability path</h2>
+<p>The main production optimization is architectural: avoid moving corpus-scale scope state into Python.</p>
+<div class="diagram">
+<svg viewBox="0 0 1110 400" role="img" aria-label="Legacy versus scalable scope">
+<style>.b{fill:#181c22;stroke:#39414b;stroke-width:1.5}.badb{stroke:#ff7c7c}.goodb{stroke:#58d68d}.tt{fill:#fff;font:700 14px system-ui}.sm{fill:#aeb5c0;font:12px system-ui}.r{stroke:#ff7c7c;stroke-width:2;fill:none}.g{stroke:#58d68d;stroke-width:2;fill:none}</style>
+<text x="270" y="30" text-anchor="middle" class="tt">Legacy rollback path</text>
+<rect x="40" y="60" width="190" height="70" rx="14" class="b badb"/><text x="135" y="91" text-anchor="middle" class="tt">PostgreSQL corpus</text><text x="135" y="113" text-anchor="middle" class="sm">authorized documents</text>
+<rect x="310" y="60" width="205" height="70" rx="14" class="b badb"/><text x="412" y="91" text-anchor="middle" class="tt">Python doc_map</text><text x="412" y="113" text-anchor="middle" class="sm">scoped metadata loaded</text>
+<path d="M230 95 L310 95" class="r"/>
+<text x="275" y="86" text-anchor="middle" class="sm">can scale with corpus</text>
+
+<text x="785" y="30" text-anchor="middle" class="tt">Scalable production path</text>
+<rect x="600" y="60" width="190" height="70" rx="14" class="b goodb"/><text x="695" y="91" text-anchor="middle" class="tt">PostgreSQL corpus</text><text x="695" y="113" text-anchor="middle" class="sm">scope remains in SQL</text>
+<rect x="865" y="60" width="205" height="70" rx="14" class="b goodb"/><text x="967" y="91" text-anchor="middle" class="tt">SearchScope</text><text x="967" y="113" text-anchor="middle" class="sm">predicates + bounded metadata</text>
+<path d="M790 95 L865 95" class="g"/>
+
+<rect x="600" y="195" width="190" height="70" rx="14" class="b goodb"/><text x="695" y="226" text-anchor="middle" class="tt">Candidate SQL</text><text x="695" y="248" text-anchor="middle" class="sm">vector / BM25 / filename</text>
+<rect x="865" y="195" width="205" height="70" rx="14" class="b goodb"/><text x="967" y="226" text-anchor="middle" class="tt">Hydrate winners</text><text x="967" y="248" text-anchor="middle" class="sm">candidate documents only</text>
+<path d="M790 230 L865 230" class="g"/>
+<path d="M967 130 L967 195" class="g"/>
+<path d="M695 130 L695 195" class="g"/>
+
+<rect x="600" y="315" width="470" height="55" rx="14" class="b"/>
+<text x="835" y="338" text-anchor="middle" class="tt">Result: bounded application memory + database-owned filtering</text>
+<text x="835" y="359" text-anchor="middle" class="sm">capacity improvement, not proof of million-document latency</text>
+</svg>
+</div>
+
+<h3><code>SearchScope</code> responsibilities</h3>
+<ul>
+<li>Build the canonical authorized document predicate once per request.</li>
+<li>Detect single-document scope with at most two identity rows so diversity rules stay compatible.</li>
+<li>Discover distinct FTS configurations without materializing all document metadata.</li>
+<li>Keep issuer narrowing and normalized filename token overlap in SQL.</li>
+<li>Expose direct workspace filtering for child tables when safe.</li>
+<li>Hydrate document metadata only for bounded candidate document IDs.</li>
+</ul>
+
+<h3>Production index additions</h3>
+<table>
+<tr><th>Index</th><th>Why it exists</th></tr>
+<tr><td><code>idx_documents_filename_tokens</code></td><td>GIN lookup of normalized filename tokens.</td></tr>
+<tr><td><code>idx_documents_filename_issuer</code></td><td>Exact normalized issuer lookup.</td></tr>
+<tr><td><code>idx_documents_workspace_filename_order</code></td><td>Bounded workspace filename preselection.</td></tr>
+<tr><td><code>idx_documents_workspace_fts</code></td><td>Scoped language/config discovery.</td></tr>
+<tr><td><code>idx_blocks_doc_page_id</code></td><td>Ordered document/page reading.</td></tr>
+</table>
+
+<div class="callout info">
+<strong>Feature flag:</strong> <code>SEARCH_SCALABLE_SCOPE_ENABLED=true</code> is the production default. Setting it to false restores the legacy request-local metadata path for rollback/debugging; the extra indexes may remain installed.
+</div>
+</section>
+
+
+<section id="section-search">
+<h2>9. Focused retrieval with <code>search_in_sections</code></h2>
+<p>Once global search has found a large relevant section, the next question is often not “read everything”, but “find the exact prerequisite / exception / amount / clause inside this section”. That is the role of <code>search_in_sections</code>.</p>
+
+<div class="grid">
+  <div class="card wide"><h3>Public behavior</h3><ul><li>Accepts up to 10 numeric public section IDs.</li><li>Ranks evidence independently inside each exact section.</li><li>Returns exact text or image descriptions with IDs.</li><li>Can include one previous and one next text block around each selected hit.</li></ul></div>
+  <div class="card wide"><h3>Local scoring</h3><p>For text blocks, the helper computes approximately:</p><pre><code>0.7 × semantic_similarity
++ 0.3 × lexical_rank(title + content)</code></pre><p class="small">The discovered global hit can be flagged as preferred so it is not accidentally dropped.</p></div>
+</div>
+
+<div class="callout">
+<strong>Why title context matters:</strong> a block containing “120 EUR” may not repeat “cancellation penalty”. By scoring <em>section title + block content</em>, the local search keeps the subject context.
+</div>
+
+<h3>Neighbor logic</h3>
+<div class="flow">
+<span class="step">previous block</span><span class="arrow">→</span>
+<span class="step" style="border-color:#ffd21f">ranked hit</span><span class="arrow">→</span>
+<span class="step">next block</span>
+</div>
+<p class="muted">Neighbors are there to avoid dropping adjacent exceptions or continuation sentences. They are optional evidence and are packed after ranked hits.</p>
+</section>
+
+<section id="hierarchy">
+<h2>10. Hierarchy navigation and context expansion</h2>
+<p>Logical sections are not treated as unrelated chunks. The navigation layer reconstructs parent/child relationships inside one document and detects missing links or cycles.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 1040 430">
+<style>.bx{fill:#181c22;stroke:#39414b;stroke-width:1.5}.sel{stroke:#ffd21f;stroke-width:3}.tx{fill:#f4f5f7;font:700 14px system-ui}.sm{fill:#aeb5c0;font:11px system-ui}.ln{stroke:#65707c;stroke-width:2;fill:none}</style>
+<path d="M520 90 L520 150 M520 150 L260 150 M520 150 L780 150 M260 150 L260 205 M780 150 L780 205 M260 275 L260 330 M260 300 L465 330 M780 275 L780 330" class="ln"/>
+<rect x="420" y="25" width="200" height="65" rx="14" class="bx"/><text x="520" y="52" text-anchor="middle" class="tx">Contract</text><text x="520" y="74" text-anchor="middle" class="sm">ancestor</text>
+<rect x="160" y="205" width="200" height="70" rx="14" class="bx sel"/><text x="260" y="234" text-anchor="middle" class="tx">Penalties</text><text x="260" y="257" text-anchor="middle" class="sm">selected section</text>
+<rect x="680" y="205" width="200" height="70" rx="14" class="bx"/><text x="780" y="234" text-anchor="middle" class="tx">SLA</text><text x="780" y="257" text-anchor="middle" class="sm">unrelated sibling</text>
+<rect x="120" y="330" width="200" height="70" rx="14" class="bx"/><text x="220" y="359" text-anchor="middle" class="tx">Late delivery</text><text x="220" y="382" text-anchor="middle" class="sm">descendant</text>
+<rect x="365" y="330" width="200" height="70" rx="14" class="bx"/><text x="465" y="359" text-anchor="middle" class="tx">Exceptions</text><text x="465" y="382" text-anchor="middle" class="sm">descendant</text>
+<rect x="680" y="330" width="200" height="70" rx="14" class="bx"/><text x="780" y="359" text-anchor="middle" class="tx">Availability</text><text x="780" y="382" text-anchor="middle" class="sm">not in selected subtree</text>
+</svg>
+</div>
+
+<h3><code>include_hierarchy</code> versus <code>expand_context</code></h3>
+<table>
+<tr><th></th><th><code>include_hierarchy=true</code></th><th><code>expand_context</code></th></tr>
+<tr><td>Purpose</td><td>Navigation hints</td><td>Actual structured context</td></tr>
+<tr><td>Returns</td><td>Ancestor + descendant IDs/titles</td><td>Selected root, all descendants recursively, ancestors' own blocks</td></tr>
+<tr><td>Content</td><td>No section body loading</td><td>Exact combined evidence stream</td></tr>
+<tr><td>When</td><td>Need to understand where a match sits</td><td>Need surrounding scope, prerequisites, branches or qualifications</td></tr>
+</table>
+
+<div class="callout info">
+<strong>Completeness invariant:</strong> once an expansion has started, continuation pages belong to one logical reading operation. A byte-budget boundary is not a semantic end-of-context boundary.
+</div>
+
+<pre><code>[sections [{"section_id": 120, "title": "Penalties"}, ...]]
+
+[section {"section_id": 120, "title": "Penalties"}]
+[block {"block_id": 811, "page_number": 14}]
+Exact source text...
+
+[section {"section_id": 123, "title": "Exceptions"}]
+[block {"block_id": 829, "page_number": 15}]
+Exact source text...</code></pre>
+</section>
+
+<section id="loop">
+<h2>11. Agent-controlled follow-up search</h2>
+<div class="callout">
+<strong>There is no server-side iterative-search state anymore.</strong> One <code>search</code> call means one retrieval pass. The agent decides whether another call is necessary after inspecting evidence and omissions.
+</div>
+
+<div class="diagram">
+<svg viewBox="0 0 1110 340" role="img" aria-label="Agent controlled follow-up search">
+<defs><marker id="af" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffd21f"/></marker></defs>
+<style>.b{fill:#181c22;stroke:#39414b}.tx{fill:#fff;font:700 14px system-ui}.sm{fill:#aeb5c0;font:11px system-ui}.l{stroke:#ffd21f;stroke-width:2;fill:none;marker-end:url(#af)}</style>
+<rect x="25" y="125" width="175" height="72" rx="14" class="b"/><text x="112" y="154" text-anchor="middle" class="tx">search pass</text><text x="112" y="177" text-anchor="middle" class="sm">query + current scope</text>
+<rect x="270" y="125" width="195" height="72" rx="14" class="b"/><text x="368" y="154" text-anchor="middle" class="tx">inspect evidence</text><text x="368" y="177" text-anchor="middle" class="sm">what is still missing?</text>
+<rect x="535" y="35" width="205" height="72" rx="14" class="b"/><text x="638" y="64" text-anchor="middle" class="tx">gap inside section?</text><text x="638" y="87" text-anchor="middle" class="sm">search/read selected IDs</text>
+<rect x="535" y="215" width="205" height="72" rx="14" class="b"/><text x="638" y="244" text-anchor="middle" class="tx">gap elsewhere?</text><text x="638" y="267" text-anchor="middle" class="sm">reformulate search</text>
+<rect x="830" y="215" width="245" height="72" rx="14" class="b"/><text x="953" y="244" text-anchor="middle" class="tx">exclude prior sections?</text><text x="953" y="267" text-anchor="middle" class="sm">exclude_section_ids=[...]</text>
+<path d="M200 161 L270 161" class="l"/><path d="M465 150 C500 120 510 75 535 70" class="l"/><path d="M465 175 C500 200 510 250 535 250" class="l"/><path d="M740 250 L830 250" class="l"/><path d="M953 287 C953 330 112 330 112 197" class="l"/>
+</svg>
+</div>
+
+<h3>Follow-up rules</h3>
+<ul>
+<li><strong>Inside known sections:</strong> prefer <code>search_in_sections</code>, <code>read_sections</code> or <code>read_blocks</code>.</li>
+<li><strong>Outside known sections:</strong> issue a new focused <code>search</code>, preserving workspace and known document IDs.</li>
+<li><strong>Need different sections:</strong> optionally pass prior public section IDs as <code>exclude_section_ids=[101088,101056]</code>.</li>
+<li>Exclusions are stateless: the agent must accumulate and resend them. They filter both section and block candidate channels before their limits.</li>
+<li>Do not exclude when revisiting or validating evidence already found.</li>
+<li>Stop when another call would not close a material evidence gap.</li>
+</ul>
+
+<pre><code># initial
+search(query="renewal conditions", workspace_id="legal", document_id=["doc-42"])
+
+# follow-up only if a different area is needed
+search(
+  query="automatic renewal notice period",
+  workspace_id="legal",
+  document_id=["doc-42"],
+  exclude_section_ids=[101088, 101056]
+)</code></pre>
+</section>
+
+<section id="evidence-budget">
+<h2>12. Evidence budgeting — why responses stay small</h2>
+<div class="grid">
+  <div class="card"><div class="kicker">Excerpt</div><h3>1,000 chars</h3><p>Default maximum exact excerpt size per selected block.</p></div>
+  <div class="card"><div class="kicker">Search payload</div><h3>24 KB</h3><p>Default serialized JSON byte budget shared by grouped search evidence.</p></div>
+  <div class="card"><div class="kicker">Section hits</div><h3>3</h3><p>Default primary block evidence per selected section before optional neighbors. The grouped output uses document IDs rather than filenames.</p></div>
+</div>
+
+<h3>How the packer works</h3>
+<ol>
+<li>Group sections under documents and deduplicate section IDs.</li>
+<li>Build ranked evidence lists and exact serialized byte sizes.</li>
+<li>If metadata does not fit, trim optional navigation first.</li>
+<li>If necessary, omit trailing sections with an explicit <code>sections_omitted</code> count.</li>
+<li>Allocate ranked primary hits <strong>round-robin across sections</strong>.</li>
+<li>Allocate optional adjacent evidence only after primaries.</li>
+<li>Restore source order inside each section.</li>
+<li>Set <code>budget_exhausted</code> and <code>has_more_blocks</code> truthfully.</li>
+</ol>
+
+<div class="callout">
+<strong>Design rule:</strong> response limits must reduce payload, not create fake completeness. Any optimization that removes evidence must preserve an explicit way to detect and retrieve what was omitted.
+</div>
+</section>
+
+<section id="data-model">
+<h2>13. Data model used by navigation</h2>
+<div class="diagram">
+<svg viewBox="0 0 1120 500">
+<style>.b{fill:#181c22;stroke:#39414b;stroke-width:1.5}.h{fill:#ffd21f;font:700 15px system-ui}.x{fill:#dce2e9;font:12px ui-monospace,monospace}.l{stroke:#69727f;stroke-width:2;fill:none}</style>
+<rect x="35" y="45" width="240" height="175" rx="16" class="b"/>
+<text x="55" y="75" class="h">logical_documents</text><text x="55" y="105" class="x">id : string</text><text x="55" y="128" class="x">workspace_id</text><text x="55" y="151" class="x">file_name</text><text x="55" y="174" class="x">total_pages</text><text x="55" y="197" class="x">fts_config</text>
+
+<rect x="440" y="30" width="250" height="205" rx="16" class="b"/>
+<text x="460" y="60" class="h">logical_sections</text><text x="460" y="90" class="x">id : public numeric ID</text><text x="460" y="113" class="x">document_id</text><text x="460" y="136" class="x">workspace_id</text><text x="460" y="159" class="x">section_id : local parser ID</text><text x="460" y="182" class="x">title / title_tsv</text><text x="460" y="205" class="x">embedding</text>
+
+<rect x="845" y="45" width="240" height="205" rx="16" class="b"/>
+<text x="865" y="75" class="h">logical_blocks</text><text x="865" y="105" class="x">id / block_id</text><text x="865" y="128" class="x">document_id</text><text x="865" y="151" class="x">workspace_id</text><text x="865" y="174" class="x">section_id : local ID</text><text x="865" y="197" class="x">content / content_tsv</text><text x="865" y="220" class="x">embedding / page / bbox</text>
+
+<rect x="265" y="330" width="250" height="135" rx="16" class="b"/>
+<text x="285" y="360" class="h">logical_images</text><text x="285" y="390" class="x">id / document_id / section_id</text><text x="285" y="413" class="x">content / image_base64</text><text x="285" y="436" class="x">page / bbox / words</text>
+
+<rect x="645" y="330" width="270" height="135" rx="16" class="b"/>
+<text x="665" y="360" class="h">logical_text_positions</text><text x="665" y="390" class="x">document_id / section_id</text><text x="665" y="413" class="x">block_id / page_number</text><text x="665" y="436" class="x">word-level positions</text>
+<path d="M275 135 L440 135 M690 135 L845 135 M180 220 C190 300 300 300 360 330 M965 250 C965 300 840 300 800 330" class="l"/>
+</svg>
+</div>
+
+<div class="callout danger">
+<strong>Do not confuse IDs.</strong> <code>logical_sections.id</code> is the public numeric section ID used by navigation tools. <code>logical_sections.section_id</code> is the document-local parser key. Citations use block or image IDs — never section IDs.
+</div>
+</section>
+
+<section id="result-contract">
+<h2>14. Search result contract</h2>
+<p>The production MCP response deliberately exposes stable indexed IDs and exact evidence, while removing filenames from the model-facing tool payload.</p>
+<pre><code>{
+  "documents": [
+    {
+      "document_id": "66f0b9...",
+      "workspace_id": "ws-1",
+      "sections": [
+        {
+          "section_id": 14390,
+          "title": "Penalties",
+          "rank": 1,
+          "score": 0.84,
+          "blocks": [
+            {
+              "block_id": 91231,
+              "page_number": 14,
+              "score": 0.84,
+              "content": "If delivery is delayed ...",
+              "content_truncated": false
+            }
+          ],
+          "has_more_blocks": true,
+          "ancestors": [ ... ],       // only if include_hierarchy=true
+          "descendants": [ ... ]
+        }
+      ]
+    }
+  ],
+  "budget_exhausted": false
+}</code></pre>
+
+<div class="callout info">
+<strong>No <code>suggested_files</code> contract:</strong> filename relevance is now an internal ranking signal. If the agent needs a broader or different search, it reformulates the query or narrows with known <code>document_id</code> values; it does not follow filename suggestions from the tool.
+</div>
+
+<h3>Fields that mean “keep investigating”</h3>
+<div class="grid">
+<div class="card"><code>content_truncated</code><p>Selected block is only a preview. Use <code>read_blocks</code> when the omitted text could affect the answer.</p></div>
+<div class="card"><code>has_more_blocks</code><p>Section contains additional block evidence beyond the returned ranked selection.</p></div>
+<div class="card"><code>sections_omitted</code><p>Some ranked sections did not fit the shared response budget.</p></div>
+<div class="card"><code>budget_exhausted</code><p>The packer trimmed navigation/evidence or whole sections.</p></div>
+<div class="card"><code>not_evaluated</code><p>A bounded read batch could not process this input under its current budget/deadline.</p></div>
+<div class="card"><code>hierarchy_issues</code><p>Context traversal found missing references or cycles; structural completeness is not guaranteed.</p></div>
+</div>
+</section>
+
+<section id="citations">
+<h2>15. Citation lifecycle</h2>
+<p>Citation lookup is a <strong>validation phase</strong>, not a discovery phase.</p>
+<div class="flow">
+<span class="step">Retrieve evidence</span><span class="arrow">→</span>
+<span class="step">Resolve all answer gaps</span><span class="arrow">→</span>
+<span class="step">Build citation items</span><span class="arrow">→</span>
+<span class="step">locate_answer_citations</span><span class="arrow">→</span>
+<span class="step">Final answer</span>
+</div>
+<pre><code>{
+  "type": "text",
+  "block_id": "14579",
+  "evidence_text": "exact text copied from the retrieved block",
+  "reference": 1
+}</code></pre>
+<p>The locator uses <code>logical_text_positions</code> for page/word coordinates where available. The Mistral path has a dedicated variant because source positioning differs.</p>
+<div class="callout danger"><strong>Invariant:</strong> citation lookup must be the final retrieval tool call. Do not navigate or search after citations have been finalized.</div>
+</section>
+
+<section id="security">
+<h2>16. Security and workspace scope</h2>
+<div class="grid">
+<div class="card wide"><h3>Transport authentication</h3><pre><code>Authorization: Bearer &lt;MCP_API_KEY&gt;
+Workspace-Id: finance, legal</code></pre><p>The tool's <code>workspace_id</code> must be contained in the effective authenticated scope.</p></div>
+<div class="card wide"><h3>Document scoping</h3><p>Known documents are scoped with indexed <code>document_id</code> values. Section/block/image tools resolve owning documents from their unique IDs; they do not accept <code>document_id</code>.</p></div>
+</div>
+
+<div class="callout danger">
+<strong>Security invariant:</strong> workspace/document predicates belong in the candidate SQL. Never broaden retrieval and filter authorization afterward. The scalable path exists partly to preserve this rule without materializing large authorized scopes in Python.
+</div>
+
+<p>The MCP API key is still a trusted service credential. Repository documentation notes that deployments with user-specific ACLs must resolve permitted scopes upstream or through a server-side identity/ACL resolver; the <code>logical_documents.user_id</code> column is not the MCP authorization mechanism.</p>
+</section>
+
+<section id="failure">
+<h2>17. Failure, overload and degraded-mode behavior</h2>
+<table>
+<tr><th>Condition</th><th>Behavior</th><th>Developer rule</th></tr>
+<tr><td>Embedding provider unavailable / model queue occupied</td><td>Supported search paths can continue lexical-only.</td><td>Dependency failure must not masquerade as “no evidence”.</td></tr>
+<tr><td>Recoverable ParadeDB lexical failure</td><td>Can retry vector-only in a fresh DB session.</td><td>Never reuse an aborted transaction.</td></tr>
+<tr><td>DB/model admission queue full</td><td>Retryable overload. HTTP search returns 503 with <code>Retry-After: 1</code>; MCP surfaces a retry message.</td><td>Clients retry with backoff + jitter; do not queue forever.</td></tr>
+<tr><td>Search deadline exhausted</td><td>The single pass fails or returns the path's defined degraded result.</td><td>There is no hidden server loop to recover.</td></tr>
+<tr><td>Hierarchy cycle / missing ref</td><td>Return <code>hierarchy_issues</code>; do not claim context completeness.</td><td>Do not invent hierarchy repairs.</td></tr>
+<tr><td>Response budget exhausted</td><td>Trim optional navigation/evidence with omission flags.</td><td>Payload limit ≠ semantic completion.</td></tr>
+<tr><td>Caller cancellation / shutdown</td><td>No new admission; tracked blocking work drains before pools/clients close when possible.</td><td>Do not close shared resources underneath active workers.</td></tr>
+</table>
+
+<h3>Relevant default budgets</h3>
+<table>
+<tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+<tr><td><code>SEARCH_REQUEST_TIMEOUT_SECONDS</code></td><td>30 s</td><td>Whole search deadline.</td></tr>
+<tr><td><code>SEARCH_RETRIEVAL_RESERVE_SECONDS</code></td><td>5 s</td><td>Time reserved for DB retrieval/response assembly.</td></tr>
+<tr><td><code>QUERY_TRANSLATION_TIMEOUT_SECONDS</code></td><td>5 s</td><td>Optional multilingual lexical preparation.</td></tr>
+<tr><td><code>SEARCH_FILENAME_SEMANTIC_TIMEOUT_SECONDS</code></td><td>5 s</td><td>Optional filename-semantic stage.</td></tr>
+<tr><td><code>EMBEDDING_TIMEOUT_SECONDS</code></td><td>15 s</td><td>Fresh query embedding call.</td></tr>
+<tr><td><code>DB_SYNC_WORKER_LIMIT</code></td><td>10</td><td>Concurrent blocking DB workers per process.</td></tr>
+<tr><td><code>DB_QUEUE_LIMIT</code></td><td>100</td><td>Bounded DB admission waiters per process.</td></tr>
+<tr><td><code>MODEL_REQUEST_LIMIT</code></td><td>10</td><td>Concurrent synchronous model work.</td></tr>
+<tr><td><code>MODEL_QUEUE_LIMIT</code></td><td>100</td><td>Bounded model admission waiters.</td></tr>
+</table>
+</section>
+
+<section id="debug">
+<h2>18. Debug playbook</h2>
+
+<h3>Search returns the wrong document</h3>
+<ul class="checklist">
+<li>Confirm <code>workspace_id</code> and optional <code>document_id</code> scope passed to the tool.</li>
+<li>Check whether <code>SEARCH_SCALABLE_SCOPE_ENABLED</code> is on and inspect the <code>SearchScope</code> predicates.</li>
+<li>Inspect filename issuer narrowing separately from content ranking.</li>
+<li>Confirm the issue is not public <code>logical_sections.id</code> versus local parser <code>section_id</code>.</li>
+</ul>
+
+<h3>Good section, wrong block</h3>
+<ul class="checklist">
+<li>Inspect the globally preferred block and <code>search_section_evidence</code> winners.</li>
+<li>Compare block semantic versus lexical components.</li>
+<li>Check whether the section title contributes expected lexical context.</li>
+<li>Check <code>has_more_blocks</code> before concluding evidence is absent.</li>
+</ul>
+
+<h3>Latency spike</h3>
+<ul class="checklist">
+<li>Separate scope preparation, embedding, translation, filename semantics, candidate SQL, hierarchy and evidence hydration timing.</li>
+<li>Check DB/model queue wait and overload errors before increasing worker counts.</li>
+<li>Verify hierarchy was not enabled unnecessarily.</li>
+<li>Compare <code>SEARCH_SCALABLE_SCOPE_ENABLED=true</code> and false on the same corpus/query.</li>
+<li>Inspect broad mixed-language BM25 queries; current production docs identify them as a remaining ceiling.</li>
+</ul>
+
+<h3>Agent repeats searches</h3>
+<ul class="checklist">
+<li>There is no server loop: inspect the agent policy and actual tool trace.</li>
+<li>For gaps inside known sections, use local/read tools rather than another global search.</li>
+<li>For a genuinely new global area, use a reformulated query and optionally <code>exclude_section_ids</code>.</li>
+<li>Stop when repeated calls add no new evidence.</li>
+</ul>
+
+<h3>Production commands</h3>
+<pre><code># unit + configured integration tests
+python -m unittest discover -s tests
+
+# verify required DB extensions / indexes without applying changes
+python -m scripts.setup_database
+
+# apply missing supported search indexes
+python -m scripts.setup_database --apply
+
+# real MCP load test (can incur model cost)
+python -m scripts.load_test_search \
+  --url http://localhost:8045/http/ \
+  --cases search-cases.json \
+  --requests 100 \
+  --concurrency 4 \
+  --output logs/load-c4.json</code></pre>
+
+<p class="small">Compare equivalent workloads with scalable scope disabled/enabled. Measure evidence quality together with p50/p95/p99, throughput, response sizes, queue waits, DB CPU/I/O and errors.</p>
+</section>
+
+<section id="change-guide">
+<h2>19. “I need to change X” — where do I work?</h2>
+<table>
+<tr><th>Goal</th><th>Primary file(s)</th><th>Regression risk</th></tr>
+<tr><td>Change public tool arguments / document identity contract</td><td><code>logical_indexing_server.py</code>, skill files, tool-format tests</td><td>Agent/client compatibility</td></tr>
+<tr><td>Change corpus scoping or million-document behavior</td><td><code>search_scope.py</code>, <code>db_helpers.py</code></td><td><strong>Security + memory + DB plans</strong></td></tr>
+<tr><td>Change block/section/filename fusion</td><td><code>db_helpers.py</code>, <code>filename_relevance.py</code>, <code>filename_semantic.py</code></td><td>Recall, diversity, latency</td></tr>
+<tr><td>Change focused section evidence</td><td><code>section_search.py</code></td><td>Exception/qualification recall</td></tr>
+<tr><td>Change hierarchy behavior</td><td><code>context_navigation.py</code></td><td>Cycles, missing links, source order</td></tr>
+<tr><td>Change token/payload packing</td><td><code>evidence.py</code></td><td>Starvation, false completeness, byte cap</td></tr>
+<tr><td>Change overload / shutdown behavior</td><td><code>operations.py</code>, <code>session.py</code>, <code>router.py</code></td><td>Capacity accounting and graceful shutdown</td></tr>
+<tr><td>Change embedding or translation</td><td><code>query_embeddings.py</code>, <code>query_translation.py</code>, <code>settings.py</code></td><td>Model latency, multilingual recall</td></tr>
+<tr><td>Change required database indexes</td><td><code>scripts/setup_database.py</code>, operations docs</td><td>Rollout load, query-plan compatibility</td></tr>
+<tr><td>Change citation mapping</td><td><code>db_helpers.py</code> citation functions</td><td>Source grounding integrity</td></tr>
+</table>
+
+<h3>Before changing retrieval</h3>
+<pre><code>minimum fixture set:
+- exact factual answer
+- qualification / exception adjacent to the hit
+- title-only match
+- image-only evidence
+- multi-document scope by document_id
+- same local section key in two documents
+- broad workspace search under scalable scope
+- issuer_YEAR filename narrowing
+- mixed-language BM25
+- exclude_section_ids follow-up
+- long section with late answer
+- hierarchy cycle / missing reference
+- embedding outage / lexical outage
+- queue overload
+- response-budget overflow</code></pre>
+</section>
+
+<section id="onboarding">
+<h2>20. New developer onboarding checklist</h2>
+<div class="grid">
+<div class="card wide"><div class="kicker">First 30 minutes</div>
+<ul class="checklist">
+<li>Read this handover end to end.</li>
+<li>Open <code>logical_indexing_server.py</code> and identify the current public tool schemas.</li>
+<li>Read <code>smart-navigation-search-skill.md</code> and note the document-ID contract.</li>
+<li>Confirm there is no server-side query rewrite loop.</li>
+</ul></div>
+<div class="card wide"><div class="kicker">Next 60 minutes</div>
+<ul class="checklist">
+<li>Trace one <code>search</code> through <code>SearchContext</code> and <code>SearchScope</code>.</li>
+<li>Trace candidate fusion in <code>unified_search</code>.</li>
+<li>Trace evidence hydration into <code>search_section_evidence</code>.</li>
+<li>Trace <code>expand_context</code> and <code>group_evidence</code>.</li>
+</ul></div>
+<div class="card wide"><div class="kicker">Production orientation</div>
+<ul class="checklist">
+<li>Run <code>scripts.setup_database</code> in check-only mode.</li>
+<li>Know the MCP-specific index list and which team owns schema migrations.</li>
+<li>Understand DB/model worker limits and queue limits.</li>
+<li>Read <code>docs/operations.md</code> before tuning concurrency.</li>
+</ul></div>
+<div class="card wide"><div class="kicker">Before first PR</div>
+<ul class="checklist">
+<li>Add a regression test that fails before your change.</li>
+<li>Test the scalable path and rollback path where relevant.</li>
+<li>Check workspace/document scope cannot widen.</li>
+<li>Check response budgets and completeness flags.</li>
+<li>Check final model-facing payload, not only SQL output.</li>
+</ul></div>
+</div>
+</section>
+
+<section>
+<h2>21. Golden rules</h2>
+<div class="grid">
+<div class="card"><span class="num">1</span><strong>Scope before ranking.</strong><p>Never retrieve broadly and filter security scope afterward.</p></div>
+<div class="card"><span class="num">2</span><strong>Search before read.</strong><p>Targeted questions use one search pass first; known documents are scoped by document ID.</p></div>
+<div class="card"><span class="num">3</span><strong>Read when completeness requires it.</strong><p>Top-ranked evidence is not automatically a full procedure or exhaustive list.</p></div>
+<div class="card"><span class="num">4</span><strong>IDs are contracts.</strong><p>Document IDs scope documents; public section IDs navigate/exclude; block/image IDs cite.</p></div>
+<div class="card"><span class="num">5</span><strong>Budgets must be truthful.</strong><p>Every omission needs an explicit signal and retrieval path; citation lookup remains terminal.</p></div>
+<div class="card"><span class="num">6</span><strong>Follow-up is agent controlled.</strong><p>No hidden server loop: issue another search only for a concrete unresolved gap.</p></div>
+</div>
+</section>
+
+<section>
+<h2>22. Source snapshot</h2>
+<p>This handover is aligned to the production-fixes branch below. It supersedes the previous snapshot based on <code>feature/add-search-in-section</code> commit <code>c53df951...</code>.</p>
+<pre><code>Repository: YellowsysOrg/mcp-server-logical-search
+Branch:     feature/fixes-for-production
+Commit:     2a446f9153f2a6f997bdcfbd125c9a81fcf881b8
+Commit date: 2026-10-07
+
+Previous handover baseline:
+c53df9518a0a7b861ec26875cd9552a6f5abf5b4
+
+Core references:
+src/mcp_server/logical_indexing_server.py
+src/mcp_server/search_scope.py
+src/mcp_server/db_helpers.py
+src/mcp_server/filename_relevance.py
+src/mcp_server/filename_semantic.py
+src/mcp_server/section_search.py
+src/mcp_server/context_navigation.py
+src/mcp_server/evidence.py
+src/modules/query_embeddings.py
+src/modules/query_translation.py
+src/modules/operations.py
+src/db/models.py
+src/db/session.py
+src/config/settings.py
+skills/smart-navigation-search-skill.md
+skills/smart-navigation-search-gpt5.4mini.md
+docs/logical-search.md
+docs/operations.md
+scripts/setup_database.py
+scripts/load_test_search.py</code></pre>
+</section>
+
+<div class="footer">
+  Smart Navigation Search · Production Developer Handover · Updated from feature/fixes-for-production.
+</div>
+</main>
+</div>
+</body>
+</html>

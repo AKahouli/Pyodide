@@ -7,6 +7,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsObject,
   IsOptional,
@@ -24,6 +25,7 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DATA_CONNECTION_KINDS, type DataConnectionKind } from '../domain/semantic-data-connection.types';
 
 /** A sample row's cells: at most 200 columns, each a short name and a text, number, true/false or empty value. */
 @ValidatorConstraint({ name: 'sheetRowValues', async: false })
@@ -629,6 +631,14 @@ export class AiExtractionSettingsDto {
   @ApiPropertyOptional({ description: 'One document gives several records, one per item the AI finds (mapping only)' })
   @IsOptional() @IsBoolean()
   manyRecords?: boolean;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500000, description: "Most records this sheet gives; never above the admin's records per source (mapping only)" })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500000)
+  maxRecords?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 50000, description: "Most files a workspace mapping reads, always the same ones; never above the admin's files per run (mapping only)" })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50000)
+  maxFiles?: number;
 }
 
 export class RunLimitsDto {
@@ -656,21 +666,17 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
   maxAiParallelCalls?: number;
 
-  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most e-mails one archive may hold' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
-  maxArchiveEmails?: number;
-
-  @ApiPropertyOptional({ minimum: 10, maximum: 51200, description: 'Largest e-mail archive read, in MB' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(51200)
-  maxArchiveMb?: number;
-
-  @ApiPropertyOptional({ minimum: 256, maximum: 16384, description: 'Memory of the reader process for one source, in MB' })
+  @ApiPropertyOptional({ minimum: 256, maximum: 16384, description: 'Memory of the reader process for one source, in MB; the most a mail archive connection may choose' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(256) @Max(16384)
   parserMemoryMb?: number;
 
-  @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: 'Time one full read of an e-mail archive may take, in seconds' })
+  @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: 'Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
   archiveTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 30, maximum: 3600, description: 'Time "Start over from scratch" may take to clear the data of a model, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(30) @Max(3600)
+  purgeTimeoutSeconds?: number;
 }
 
 export class DerivedFieldMappingDto {
@@ -1494,4 +1500,109 @@ export class SaveCanvasPositionsDto {
   @ValidateNested({ each: true })
   @Type(() => CanvasPositionDto)
   positions!: CanvasPositionDto[];
+}
+
+export class GraphSearchQueryDto {
+  @ApiProperty({ maxLength: 200 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  q!: string;
+
+  @ApiPropertyOptional({ default: 8, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+}
+
+export class GraphExportDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+
+  @ApiPropertyOptional({ description: "Per concept id, per field: 'full', 'short' or 'exclude'. Fields left out are shortened." })
+  @IsOptional()
+  @IsObject()
+  fields?: Record<string, Record<string, 'full' | 'short' | 'exclude'>>;
+
+  @ApiPropertyOptional({ default: 200, minimum: 20, maximum: 100000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(20)
+  @Max(100000)
+  shortenTo?: number;
+}
+
+/** Connect a model to a data source; for now a mail archive file of a workspace. */
+export class CreateDataConnectionDto {
+  @ApiProperty({ enum: DATA_CONNECTION_KINDS })
+  @IsIn(DATA_CONNECTION_KINDS)
+  kind!: DataConnectionKind;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  documentId!: string;
+
+  @ApiPropertyOptional({ maxLength: 120, description: "Defaults to the file's name" })
+  @IsOptional()
+  @IsString()
+  @Matches(/\S/, { message: 'name must not be blank' })
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'Also copy the e-mails and attachments into the workspace, where they are indexed for search' })
+  @IsOptional()
+  @IsBoolean()
+  indexInWorkspace?: boolean;
+}
+
+/** A mail archive connection's reading limits; a limit left out uses its default. */
+export class ArchiveReadLimitsDto {
+  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most e-mails the archive may hold' })
+  @IsOptional() @IsInt() @Min(100) @Max(200000)
+  maxArchiveEmails?: number;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: 51200, description: 'Largest archive read, in MB' })
+  @IsOptional() @IsInt() @Min(10) @Max(51200)
+  maxArchiveMb?: number;
+
+  @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: "Time one full read may take, in seconds; at most the admin's value" })
+  @IsOptional() @IsInt() @Min(60) @Max(7200)
+  archiveTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 256, maximum: 16384, description: "Memory of the reading process, in MB; at most the admin's value" })
+  @IsOptional() @IsInt() @Min(256) @Max(16384)
+  parserMemoryMb?: number;
+}
+
+/** Changes either or both settings; the limits given replace the connection's limits. */
+export class UpdateDataConnectionDto {
+  @ApiPropertyOptional({ description: 'Also copy the e-mails and attachments into the workspace, where they are indexed for search' })
+  @IsOptional()
+  @IsBoolean()
+  indexInWorkspace?: boolean;
+
+  @ApiPropertyOptional({ type: ArchiveReadLimitsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ArchiveReadLimitsDto)
+  limits?: ArchiveReadLimitsDto;
 }

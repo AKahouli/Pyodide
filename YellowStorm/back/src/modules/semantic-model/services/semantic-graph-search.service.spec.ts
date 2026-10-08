@@ -22,6 +22,8 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     ensureGraphSearchIndex: jest.fn().mockResolvedValue({ jobId: 'job-1', index: { state: 'queued' } }),
     recordsQuery: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
     recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
+    traverseRecords: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
+    connectRecords: jest.fn().mockResolvedValue({ status: 'not_connected', paths: [], records: [], truncated: false }),
   };
   const graphs = { getGraph: jest.fn().mockResolvedValue(versionGraph) };
   const searchSettings = { runtimePayload: jest.fn().mockResolvedValue({ index: {}, search: {} }) };
@@ -137,6 +139,30 @@ describe('SemanticGraphSearchService', () => {
       },
     });
     expect(result.definitionsVersionId).toBe('published-1');
+  });
+
+  it('walks and connects records with the bound definitions and the allow-list', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'viewer', status: 'published', currentDraftVersionId: 'draft-2', currentPublishedVersionId: 'published-1' });
+    const catalog = {
+      concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+      relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+    };
+    const walked = await service.traverseRecords('user-1', 'model-1', {
+      environment: 'production', start: { concept: 'Customer', recordIds: ['c-1'] }, steps: [{ relation: 'receives' }], limit: 0,
+    });
+    expect(runtime.traverseRecords).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'], catalog,
+      start: { concept: 'Customer', recordIds: ['c-1'] }, steps: [{ relation: 'receives' }], limit: 0,
+    });
+    expect(walked.definitionsVersionId).toBe('published-1');
+    await service.connectRecords('user-1', 'model-1', { environment: 'production', fromEntityId: 'a', toEntityId: 'b', maxLinks: 3 });
+    expect(runtime.connectRecords).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'], catalog,
+      fromEntityId: 'a', toEntityId: 'b', maxLinks: 3,
+    });
+    const viewer = setup({ id: 'model-1', role: 'viewer', status: 'draft', currentDraftVersionId: 'draft-2' });
+    await expect(viewer.service.connectRecords('user-1', 'model-1', { environment: 'draft', fromEntityId: 'a', toEntityId: 'b' }))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
   });
 
   it('reads the draft definitions for draft data, which only editors may query', async () => {

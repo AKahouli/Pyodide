@@ -2,6 +2,8 @@ import { SemanticExtractionSettingsController } from './controllers/semantic-ext
 import { SemanticDerivedSourceController } from './controllers/semantic-derived-source.controller';
 import { SemanticDerivedSourceService } from './services/semantic-derived-source.service';
 import { SemanticMappingPresetController } from './controllers/semantic-mapping-preset.controller';
+import { SemanticDataConnectionController } from './controllers/semantic-data-connection.controller';
+import { SemanticDataConnectionService } from './services/semantic-data-connection.service';
 import { SemanticMappingPresetService } from './services/semantic-mapping-preset.service';
 import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
 import { SemanticSearchSettingsService } from './services/semantic-search-settings.service';
@@ -48,14 +50,15 @@ import { SemanticDataGrantRevocationService } from './services/semantic-data-gra
 import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
 import { SemanticModelAssistantService } from './services/semantic-model-assistant.service';
 import { SemanticGraphSearchService } from './services/semantic-graph-search.service';
+import { SemanticRecordCitationService } from './services/semantic-record-citation.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule),forwardRef(() => NotificationsModule)],
-  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticDataConnectionController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticDataConnectionService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,
@@ -78,6 +81,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticAccessEventHandler,
     SemanticModelAssistantService,
     SemanticGraphSearchService,
+    SemanticRecordCitationService,
     SemanticAssistantActorGuard,
     SemanticAssistantModelGuard,
   ],

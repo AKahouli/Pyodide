@@ -46,13 +46,30 @@ class EmbeddingProfile:
     timeout_seconds: float = 30.0
     batch_size: int = 32
 
+    def _named(self, serializer: str | None) -> str:
+        body: dict[str, Any] = {"provider": "litellm", "model": self.model, "dimension": self.dimension,
+                                "distance": "cosine", "documentPrefix": DOCUMENT_PREFIX,
+                                "queryInstruction": QUERY_INSTRUCTION}
+        if serializer is not None:
+            body.update({"serializer": serializer, "fieldPolicy": FIELD_POLICY_VERSION})
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()[:32]
+
     @property
     def fingerprint(self) -> str:
-        body = json.dumps({"provider": "litellm", "model": self.model, "dimension": self.dimension,
-                           "distance": "cosine", "documentPrefix": DOCUMENT_PREFIX,
-                           "queryInstruction": QUERY_INSTRUCTION, "serializer": SERIALIZER_VERSION,
-                           "fieldPolicy": FIELD_POLICY_VERSION}, sort_keys=True)
-        return "emb:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+        """Names an index generation: the vectors' space and the search text format."""
+        return "emb:" + self._named(SERIALIZER_VERSION)
+
+    @property
+    def vector_fingerprint(self) -> str:
+        """Names the vectors' space only: two generations with it compare their vectors, and a
+        text embedded once is reused by any later text format (the embedding cache's key)."""
+        return "vec:" + self._named(None)
+
+    @property
+    def cache_fingerprints(self) -> list[str]:
+        """Cache keys whose vectors this profile reuses: its own, then those cached before the
+        cache was keyed by vector space (the gs-doc-v2 generations), for the same text."""
+        return [self.vector_fingerprint, "emb:" + self._named("gs-doc-v2")]
 
 
 def profile_from_env() -> EmbeddingProfile | None:

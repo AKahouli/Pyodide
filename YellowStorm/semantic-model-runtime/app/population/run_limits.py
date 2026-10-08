@@ -52,6 +52,34 @@ def run_limits(payload: Any) -> dict[str, int]:
     return limits
 
 
+# What a mail archive's connection chooses; read time and memory never above the run's (the admin's) value.
+ARCHIVE_LIMIT_KEYS = ("maxArchiveEmails", "maxArchiveMb", "archiveTimeoutSeconds", "parserMemoryMb")
+ARCHIVE_CEILING_KEYS = ("archiveTimeoutSeconds", "parserMemoryMb")
+
+
+def source_limits(limits: dict[str, int], source: Any) -> dict[str, int]:
+    """The run's limits with an archive source's own ones over them."""
+    given = source.get("archiveLimits") if isinstance(source, dict) else None
+    if not isinstance(given, dict):
+        return limits
+    merged = dict(limits)
+    for key in ARCHIVE_LIMIT_KEYS:
+        value = given.get(key)
+        low, high = RUN_LIMIT_RANGES[key]
+        if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
+            merged[key] = min(value, limits[key]) if key in ARCHIVE_CEILING_KEYS else value
+    return merged
+
+
+def source_record_cap(limits: dict[str, int], entry: Any) -> int:
+    """Most records one source gives: its mapping's own choice (``readLimits.maxRecords``), never above the run's."""
+    read_limits = entry.get("readLimits") if isinstance(entry, dict) else None
+    value = read_limits.get("maxRecords") if isinstance(read_limits, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return min(value, limits["maxRecordsPerSource"])
+    return limits["maxRecordsPerSource"]
+
+
 def ai_pacing(limits: dict[str, int], settings: dict[str, Any] | None) -> dict[str, int]:
     """How many records a reader may send to the AI, and how many calls at once (the mapping's
     choice, never above the admin's ceiling)."""

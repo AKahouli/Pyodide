@@ -2338,7 +2338,27 @@ class ChatbotServicer(
             # Build CitationComponent with TextSourceData or ImageSourceData
             parent_id = component_data.get("parent_id", "")
 
-            if "web_source" in component_data:
+            if "record_source" in component_data:
+                record = component_data.get("record_source", {})
+                key_fields = record.get("key_fields") if isinstance(record.get("key_fields"), dict) else {}
+                component_kwargs["citation"] = chatbot_pb2.CitationComponent(
+                    parent_id=str(parent_id) if parent_id else "",
+                    record_source=chatbot_pb2.RecordSourceData(
+                        type="record",
+                        reference=str(record.get("reference", "")),
+                        model_id=str(record.get("model_id", "")),
+                        model_name=str(record.get("model_name", "")),
+                        data=str(record.get("data", "")),
+                        data_revision_id=str(record.get("data_revision_id", "")),
+                        entity_id=str(record.get("entity_id", "")),
+                        concept=str(record.get("concept", "")),
+                        name=str(record.get("name", "")),
+                        key_fields={str(key): str(value) for key, value in key_fields.items()},
+                        field=str(record.get("field", "")),
+                        quote=str(record.get("quote", "")),
+                    ),
+                )
+            elif "web_source" in component_data:
                 web_source_data = component_data.get("web_source", {})
                 component_kwargs["citation"] = chatbot_pb2.CitationComponent(
                     parent_id=str(component_data.get("parent_id", "")),

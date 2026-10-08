@@ -96,6 +96,14 @@ describe('SemanticModelCanvas', () => {
     expect(screen.getByText(/editor.recordCount/)).toBeInTheDocument();
   });
 
+  it('rings only the concepts a run is refreshing', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const { rerender } = render(<SemanticModelCanvas canEdit knowledge={knowledge} refreshingConcepts={[contractGraph.nodes[0].id]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.getAllByRole('status', { name: /editor.refreshing/ })).toHaveLength(1);
+    rerender(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.queryByRole('status', { name: /editor.refreshing/ })).not.toBeInTheDocument();
+  });
+
   it('brings data into a concept from the + on its left', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onOpenKnowledge = vi.fn();
@@ -266,6 +274,41 @@ describe('SemanticModelCanvas', () => {
     expect(useSemanticModelEditorStore.getState().graph?.nodes).toEqual([]);
     expect(showSuccess).toHaveBeenCalledWith('designer.delete.conceptDone', expect.anything());
     input.remove();
+  });
+
+  it('copies the selected concept and pastes it as a new one with its fields, only with Ctrl/Cmd+V and not while typing', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([]);
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.keyDown(window,{key:'c',ctrlKey:true});
+    expect(showSuccess).toHaveBeenCalledWith('designer.clipboard.copied');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    fireEvent.keyDown(input,{key:'v',ctrlKey:true});
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
+    input.remove();
+    fireEvent.keyDown(window,{key:'v',metaKey:true});
+    const nodes = useSemanticModelEditorStore.getState().graph!.nodes;
+    expect(nodes).toHaveLength(2);
+    const pasted = nodes.find((node)=>node.id!=='contract')!;
+    expect(pasted).toMatchObject({ label:'designer.clipboard.copyName', key:'designer_clipboard_copyname', systemKey:null, recordPolicy:'expected' });
+    expect(pasted.attributes).toEqual(nodes[0].attributes);
+    expect(pasted.position).not.toEqual(nodes[0].position);
+  });
+
+  it('pastes a copied source onto the selected concept, or onto empty canvas when none is selected', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onMapStructuredDrop = vi.fn(), onPaneDrop = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({ assetKind:'excel_sheet', sheetName:'Sheet1', documentName:'clients.xlsx' })]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onMapStructuredDrop={onMapStructuredDrop} onPaneDrop={onPaneDrop} />);
+    act(()=>useSemanticModelEditorStore.getState().select('source:workspace:document:Sheet1'));
+    fireEvent.keyDown(window,{key:'c',ctrlKey:true});
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.keyDown(window,{key:'v',ctrlKey:true});
+    expect(onMapStructuredDrop).toHaveBeenCalledWith(expect.objectContaining({ kind:'document', documentId:'document', sheetName:'Sheet1', structured:true, mappable:true }), 'contract');
+    act(()=>useSemanticModelEditorStore.getState().select(null));
+    fireEvent.keyDown(window,{key:'v',ctrlKey:true});
+    expect(onPaneDrop).toHaveBeenCalledWith(expect.objectContaining({ documentId:'document' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
   });
 
   it('hands a source removal to the page, which removes it at once with Undo', () => {

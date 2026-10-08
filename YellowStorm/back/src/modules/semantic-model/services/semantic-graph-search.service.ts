@@ -15,8 +15,12 @@ import {
   RuntimeGraphSearchResult,
   RuntimeRecordsCatalog,
   RuntimeRecordsOverview,
+  RuntimeConnectRequest,
+  RuntimeConnectResult,
+  RuntimeCitedRecord,
   RuntimeRecordsQueryRequest,
   RuntimeRecordsQueryResult,
+  RuntimeTraverseRequest,
   RuntimeSearchEnvironment,
   SemanticRuntimeClientService,
 } from './semantic-runtime-client.service';
@@ -40,6 +44,8 @@ export interface GraphExpandQuery {
 }
 
 export type RecordsQuery = Omit<RuntimeRecordsQueryRequest, 'actorUserId' | 'modelId' | 'allowedWorkspaceIds' | 'catalog'>;
+export type TraverseQuery = Omit<RuntimeTraverseRequest, 'actorUserId' | 'modelId' | 'allowedWorkspaceIds' | 'catalog'>;
+export type ConnectQuery = Omit<RuntimeConnectRequest, 'actorUserId' | 'modelId' | 'allowedWorkspaceIds' | 'catalog'>;
 
 /** The model definitions a query was read with: the version bound to the environment (draft or published). */
 export interface ModelDefinitions {
@@ -124,6 +130,46 @@ export class SemanticGraphSearchService {
       actorUserId: userId, modelId: model.id, allowedWorkspaceIds, catalog: recordsCatalog(definitions.graph), ...input,
     }));
     return { ...result, definitionsVersionId: definitions.versionId };
+  }
+
+  /** A walk from start records along the stored links (traverse_records), answered like queryRecords on the records it reaches. */
+  async traverseRecords(userId: string, modelId: string, input: TraverseQuery): Promise<RuntimeRecordsQueryResult & { definitionsVersionId: string | null }> {
+    const model = await this.requireReadable(userId, modelId, input.environment);
+    const [allowedWorkspaceIds, definitions] = await Promise.all([
+      this.allowedWorkspaceIds(userId, model.id), this.definitions(model, input.environment),
+    ]);
+    const result = await this.bound(input.environment, () => this.runtime.traverseRecords({
+      actorUserId: userId, modelId: model.id, allowedWorkspaceIds, catalog: recordsCatalog(definitions.graph), ...input,
+    }));
+    return { ...result, definitionsVersionId: definitions.versionId };
+  }
+
+  /** The shortest chains of links between two records (connect_records); a hidden record never links two others. */
+  async connectRecords(userId: string, modelId: string, input: ConnectQuery): Promise<RuntimeConnectResult> {
+    const model = await this.requireReadable(userId, modelId, input.environment);
+    const [allowedWorkspaceIds, definitions] = await Promise.all([
+      this.allowedWorkspaceIds(userId, model.id), this.definitions(model, input.environment),
+    ]);
+    return this.bound(input.environment, () => this.runtime.connectRecords({
+      actorUserId: userId, modelId: model.id, allowedWorkspaceIds, catalog: recordsCatalog(definitions.graph), ...input,
+    }));
+  }
+
+  /**
+   * One record an answer cited, read again for the person opening it: hidden when it now comes from a source
+   * they cannot open, with the model's definitions (field names) and the workspaces they may read.
+   */
+  async citedRecord(userId: string, modelId: string, input: { environment: RuntimeSearchEnvironment; entityId: string; dataRevisionId?: string }):
+    Promise<{ model: { id: string; name: string }; cited: RuntimeCitedRecord; allowedWorkspaceIds: string[] } & ModelDefinitions> {
+    const model = await this.requireReadable(userId, modelId, input.environment);
+    const [allowedWorkspaceIds, definitions] = await Promise.all([
+      this.allowedWorkspaceIds(userId, model.id), this.definitions(model, input.environment),
+    ]);
+    const cited = await this.bound(input.environment, () => this.runtime.citedRecord({
+      actorUserId: userId, modelId: model.id, environment: input.environment, allowedWorkspaceIds, entityId: input.entityId,
+      ...(input.dataRevisionId ? { expectedDataRevisionId: input.dataRevisionId } : {}),
+    }));
+    return { model: { id: model.id, name: model.name }, cited, allowedWorkspaceIds, ...definitions };
   }
 
   /** The concepts and relations of the bound data with the records the person may see, and the model's definitions. */

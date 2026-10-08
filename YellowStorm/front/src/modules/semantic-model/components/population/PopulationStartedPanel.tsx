@@ -108,7 +108,8 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
         {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
         {stopping ? t('runStop.stopping') : t('runStop.stop')}
       </Button>}
-      {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {/* A refresh of a concept made from another one reads no file, yet reports its steps, AI calls and records. */}
+      {shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
       {/* The new data becomes searchable once its index is built, after the run. */}
       {modelId && (tone === 'done' || tone === 'gaps') && serving?.decision !== 'keep_previous' && <SearchIndexProgress modelId={modelId} dataRevisionId={dataRevisionId} />}
       {/* A result missing data never replaces the graph in use; the first graph of a model is shown anyway. */}
