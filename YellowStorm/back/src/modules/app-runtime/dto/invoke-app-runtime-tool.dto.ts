@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 
 export class InvokeAppRuntimeToolDto {
-  @ApiProperty({ description: 'Workspace to dispatch to (Conversation V2 session id).' })
+  @ApiProperty({ description: 'Workspace to dispatch to (App Builder session id).' })
   @IsString()
   @MinLength(1)
   @MaxLength(200)

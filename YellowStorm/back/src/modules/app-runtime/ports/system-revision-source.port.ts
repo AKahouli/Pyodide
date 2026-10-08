@@ -1,9 +1,9 @@
 /**
  * Lookup port for revisions that App Runtime does not own.
  *
- * Template revisions are produced by Conversation V2. App Runtime only needs
+ * Template revisions are produced by App Builder. App Runtime only needs
  * to know whether a foreign revision id resolves and where its manifest lives,
- * so it depends on this port instead of importing Conversation V2 stores. The
+ * so it depends on this port instead of importing App Builder stores. The
  * adapter lives with the implementation that owns the data.
  */
 export const SYSTEM_REVISION_SOURCE = Symbol('SYSTEM_REVISION_SOURCE');

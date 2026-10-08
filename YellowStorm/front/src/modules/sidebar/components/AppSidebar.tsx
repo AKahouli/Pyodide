@@ -22,6 +22,7 @@ import {
 import { useAppBuilderStudioPointersStore } from '@/modules/app-builder-studio/store';
 import {
   DEFAULT_FEATURE_VISIBILITY,
+  ensureEvaluationTarget,
   getFeatureVisibility,
   NAVIGATION_TARGETS,
   navigationLabel,
@@ -46,7 +47,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const { t, language } = useModuleTranslation('sidebar');
   const { hasAnyPermission, canUseFeature, canSeeMenu } = usePermissions();
   const { hasAdminAccess } = useAdminAccess();
-  const navigation = useNavigationSettings();
+  const rawNavigation = useNavigationSettings();
+  const navigation = useMemo(() => ensureEvaluationTarget(rawNavigation), [rawNavigation]);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
   const { user } = useAuth();
   const pendingApproval = isPendingAdminApproval(user);

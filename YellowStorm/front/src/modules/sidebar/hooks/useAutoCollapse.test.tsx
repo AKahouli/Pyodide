@@ -52,7 +52,7 @@ describe('useAutoCollapse', () => {
     expect(sidebarState.setOpen).not.toHaveBeenCalled();
   });
 
-  it('does not collapse Conversation v2', () => {
+  it('does not collapse App Builder', () => {
     document.cookie = 'sidebar_state=true';
     locationState.pathname = '/app-builder/session-1';
     renderHook(() => useAutoCollapse());

@@ -1,4 +1,4 @@
-/** Shared Conversation V2 session status enums (no Mongoose dependency). */
+/** Shared App Builder session status enums (no Mongoose dependency). */
 
 export type AppBuilderSessionStatus =
   | 'active'

@@ -133,7 +133,7 @@ export const appBuilderAppShares = appBuilderSchema.table(
 );
 
 /**
- * Admin-managed catalog of app templates shown in the Conversation V2 gallery.
+ * Admin-managed catalog of app templates shown in the App Builder gallery.
  * `slug` is the stable public key; `icon` is a display hint (emoji/name).
  */
 export const appBuilderTemplateCategories = appBuilderSchema.table(

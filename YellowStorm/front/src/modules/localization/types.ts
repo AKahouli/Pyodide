@@ -8,6 +8,7 @@ import type auth from '../auth/locales/en.json';
 import type connectedApp from '../connected-app/locales/en.json';
 import type conversation from '../conversation/locales/en.json';
 import type appBuilderStudio from '../app-builder-studio/locales/en.json';
+import type evaluationLogicalSearch from '../evaluation-logical-search/locales/en.json';
 import type fileViewer from '../file-viewer/locales/en.json';
 import type governance from '../governance/locales/en.json';
 import type groups from '../groups/locales/en.json';
@@ -37,6 +38,7 @@ export type NamespaceResourceMap = {
   'connected-app': typeof connectedApp;
   conversation: typeof conversation;
   'app-builder-studio': typeof appBuilderStudio;
+  'evaluation-logical-search': typeof evaluationLogicalSearch;
   'file-viewer': typeof fileViewer;
   governance: typeof governance;
   groups: typeof groups;
@@ -88,7 +90,7 @@ export type TranslationKey = {
     : `${K & string}.${NamespaceKeyMap[K]}`
 }[keyof NamespaceKeyMap];
 
-export type ModuleTranslationKey<N extends Namespace> = NamespaceKeyMap[N];
+export type ModuleTranslationKey<N extends keyof NamespaceKeyMap> = NamespaceKeyMap[N];
 
 export type TranslationEntry = string | PluralForms;
 export type TranslationDictionary = Record<string, TranslationEntry>;

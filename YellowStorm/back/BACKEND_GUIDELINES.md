@@ -200,7 +200,7 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 | `ERR_3500`–`ERR_3530` | Worky |
 | `ERR_3600`–`ERR_3688` | Governance (incl. governed-conversation codes `ERR_3680`–`ERR_3688`) |
 | `ERR_3700`–`ERR_3710` | Semantic model |
-| `ERR_3800`–`ERR_3806` | Conversation V2 template catalog (incl. category codes `ERR_3800`–`ERR_3801` and template codes `ERR_3802`–`ERR_3806`) |
+| `ERR_3800`–`ERR_3806` | App Builder template catalog (incl. category codes `ERR_3800`–`ERR_3801` and template codes `ERR_3802`–`ERR_3806`) |
 
 Adding a code: pick the right range, add to backend enum, mirror it in `front/src/lib/error-codes.ts`, and add EN+FR messages in frontend `errors.json`. Frontend drift is easy to miss because unknown backend codes still reach the UI as generic errors.
 
@@ -262,7 +262,7 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 | `playbook-flow` | `playbook-flow.proto` | `PlaybookFlowRuntime` | 5 RPCs |
 | `worky` | `companion_ai.proto` | Companion AI orchestrator | Worky orchestration |
 
-Any `.proto` consumed by YellowStorm ADK must be mirrored in `yellowstorm-adk/grpc/proto/` and changed on both sides in one change set. The current ADK tree mirrors `a2a_admin.proto`, `chatbot.proto`, `playbook-flow.proto`, and `companion_ai.proto`; it does not contain `conversation.proto`. Treat that absence as unresolved ownership/contract debt: verify the Conversation V2 server owner before changing the proto, and add the ADK mirror if ADK is the receiver.
+Any `.proto` consumed by YellowStorm ADK must be mirrored in `yellowstorm-adk/grpc/proto/` and changed on both sides in one change set. The current ADK tree mirrors `a2a_admin.proto`, `chatbot.proto`, `playbook-flow.proto`, and `companion_ai.proto`; it does not contain `conversation.proto`. Treat that absence as unresolved ownership/contract debt: verify the App Builder server owner before changing the proto, and add the ADK mirror if ADK is the receiver.
 
 **Packaging:** every backend `.proto` needed at runtime must be available from a standalone `dist/` artifact and from the production image. `nest-cli.json` declares `**/*.proto`; `package.json`'s `postbuild` explicitly copies `chatbot.proto`, `conversation.proto`, `playbook-flow.proto`, and `companion_ai.proto`; the Dockerfile explicitly copies all five proto directories. `a2a_admin.proto` is currently omitted from the explicit `postbuild` copy and was absent from a standalone local `dist/` after `npm run build`, although Docker compensates for it. Fix that build-artifact gap before relying on `dist/` outside the Docker image. When adding a proto, verify Nest assets, `postbuild`, the Docker image, and runtime path resolution.
 
@@ -333,8 +333,8 @@ Current SSE endpoints and pipes use these serving patterns:
 | Conversation | `GET /api/v1/conversations/stream` | `StreamAuth` decorator | `@Sse()`, RxJS `Observable` |
 | Notifications | `GET /api/v1/notifications/stream` | `SseAuth` decorator | `@Sse()`, heartbeat via `interval()` |
 | Playbook flow | `GET /api/v1/playbooks/stream` | `PlaybookFlowStreamAuthGuard` (query token) | `@Sse()`, `@Public()`, per-user connection tracking |
-| Conversation v2 pipe | `GET /api/v1/conversation-v2/stream` | Query token | Manual SSE (no `@Sse()`), flush via warmup padding, Nagle disable, heartbeat stream |
-| Conversation v2 live tail | `GET /api/v1/conversation-v2/sessions/:id/stream/live` | Query token | Manual SSE polling `eventStore.listSince` (`liveTailPollMs`, default 1000ms) |
+| App Builder pipe | `GET /api/v1/conversation-v2/stream` | Query token | Manual SSE (no `@Sse()`), flush via warmup padding, Nagle disable, heartbeat stream |
+| App Builder live tail | `GET /api/v1/conversation-v2/sessions/:id/stream/live` | Query token | Manual SSE polling `eventStore.listSince` (`liveTailPollMs`, default 1000ms) |
 | Worky events | `GET /api/v1/worky/streams/:id/events` | `WorkyStreamAccessGuard` | `@Sse()` endpoint; frontend consumes via fetch + `ReadableStream` |
 
 **Rules:**

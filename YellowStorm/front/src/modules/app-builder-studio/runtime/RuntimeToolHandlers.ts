@@ -112,7 +112,7 @@ export interface ToolContext {
   previewCtrl: PreviewController;
   revisions: WorkspaceRevisionStore;
   workspaceId: string;
-  /** Conversation V2 session id (Mongo) for revision APIs. */
+  /** App Builder session id (Mongo) for revision APIs. */
   sessionId: string;
   toolCallId?: string;
   onProgress?: ToolProgressReporter;

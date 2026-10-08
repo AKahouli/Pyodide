@@ -51,7 +51,7 @@ export interface SessionPointer {
 export type AgentSessionSource = 'new-conversation' | 'app-builder' | 'template-clone';
 
 /**
- * React Router `location.state` carried into Conversation V2 session routes
+ * React Router `location.state` carried into App Builder session routes
  * (new conversation, App Builder start, template Clone App).
  */
 export interface AgentSessionLocationState {

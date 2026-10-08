@@ -9,7 +9,7 @@ import { AppBuilderEventStoreService } from './app-builder-event-store.service';
 import { AppBuilderStreamService } from './app-builder-stream.service';
 
 /**
- * Bridges the App Runtime `application_component` ports to Conversation V2's
+ * Bridges the App Runtime `application_component` ports to App Builder's
  * stream and event store, translating between the camelCase port inputs and
  * the snake_case wire payload.
  *

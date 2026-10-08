@@ -46,7 +46,7 @@ const multipartLimits = {
   limits: { fileSize: TEMPLATE_MAX_ZIP_BYTES, files: 2, fields: 10 },
 };
 
-@ApiTags('Admin Conversation V2 Templates')
+@ApiTags('Admin App Builder Templates')
 @ApiBearerAuth()
 // `/app-builder` is canonical; `/conversation-v2` is a deprecated alias kept so existing clients,
 // bookmarked URLs and integrations keep working. Remove once legacy traffic has stopped.

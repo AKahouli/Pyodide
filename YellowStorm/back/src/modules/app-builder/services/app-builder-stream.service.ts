@@ -92,7 +92,7 @@ export class AppBuilderStreamService implements OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
     private readonly modelsService: ModelsService,
-    // forwardRef: App Runtime services inject Conversation V2 ports that depend
+    // forwardRef: App Runtime services inject App Builder ports that depend
     // on this stream service — breaks Nest's silent bootstrap deadlock (exit 0).
     @Inject(forwardRef(() => RuntimeFinalizedRevisionService))
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,

@@ -197,6 +197,21 @@ def apply_display_patch():
         return failures
     AgentEvaluator._process_metrics_and_get_failures = staticmethod(patched_process_metrics)
 
+def _qualify_dest_proxy_model(model_str: str) -> str:
+    """Route a bare model name to the YellowMind LiteLLM proxy.
+
+    litellm refuses provider-less names ("LLM Provider NOT provided"). Azure-hosted
+    families (gpt-*) live under azure/<model> on the proxy; everything else
+    (glm-5.2, deepseek-*, ...) is served through the OpenAI-compatible endpoint and
+    must be qualified as openai/<model>.
+    """
+    if "/" in model_str:
+        return model_str
+    if model_str.lower().startswith("gpt"):
+        return f"azure/{model_str}"
+    return f"openai/{model_str}"
+
+
 def apply_litellm_debug_patch():
     try:
         import litellm
@@ -230,8 +245,7 @@ def apply_litellm_debug_patch():
             if "gpt-4" in model_str.lower() or "mini" in model_str.lower():
                 pass 
             
-            if "/" not in model_str and not model_str.startswith("azure/"):
-                model_str = f"azure/{model_str}"
+            model_str = _qualify_dest_proxy_model(model_str)
             
             if "messages" in kwargs:
                 kwargs["messages"] = normalize_messages_for_model(
@@ -282,8 +296,7 @@ def apply_litellm_debug_patch():
 
             logger.info(f"[ADK LLM SYNC CALL START] model: {model_str}")
             
-            if "/" not in model_str and not model_str.startswith("azure/"):
-                model_str = f"azure/{model_str}"
+            model_str = _qualify_dest_proxy_model(model_str)
             
             if "messages" in kwargs:
                 kwargs["messages"] = normalize_messages_for_model(

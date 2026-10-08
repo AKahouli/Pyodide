@@ -1,0 +1,807 @@
+{
+  "execution_id": "6a68aa614cb4e9d67bba218e",
+  "flow_id": "6a58e88a846bb8684e05b535",
+  "owner_id": "6992fc709968567dc766a12d",
+  "snapshot": {
+    "nodes": [
+      {
+        "id": "c542c458-fa3a-4588-b923-2bba20f2b5c9",
+        "kind": "step",
+        "label": "Step 1",
+        "input": {
+          "ports": [
+            {
+              "id": "in-fbf9e9a3",
+              "label": "benchmarkv3",
+              "type": "text",
+              "required": false
+            }
+          ],
+          "raw": ""
+        },
+        "output": {
+          "ports": [
+            {
+              "id": "default",
+              "label": "Output",
+              "type": "text",
+              "required": false
+            }
+          ],
+          "raw": ""
+        },
+        "model_id": "deepseek-v4-pro",
+        "metadata": {
+          "hitl_policy": {
+            "approvalEnabled": true,
+            "propagateFeedbackDefault": true,
+            "defaultFeedbackScope": "downstream_run",
+            "disabledReason": "None",
+            "clarificationEnabled": true,
+            "mode": "auto",
+            "sensitivity": "balanced",
+            "reviewEnabled": false
+          },
+          "execution_mode": "live",
+          "containerConfig": {
+            "parentIteratorId": "None"
+          },
+          "description": "A shipment was late in March 2025. For BlueHarbor Freight, what penalty applies per qualifying shipment, what exclusions could defeat the claim, and what is the claim deadline?",
+          "brain_context": [],
+          "skills": [
+            {
+              "id": "6a268df8e7b78e3520217610",
+              "compatibility": "",
+              "license": "",
+              "allowed_tools": [],
+              "instructions": "---\nname: logical-search-paddle\ndescription: Use this skill when answering questions from documents indexed by the Logical Indexing MCP server, navigating document structure, reading sections/blocks/pages, expanding retrieved context, and producing citation-grounded answers with locate_answer_citations.\n---\n\n# Logical Indexing MCP Retrieval Skill\n\nUse this skill to answer user questions from documents indexed\nby the Logical\nIndexing MCP server. Documents are the source of truth. Do not answer from model\nmemory when document retrieval is available.\n\nWhen one or more filenames are already known, `get_document_strategy` MUST be\nthe first MCP tool call. Pass every known filename in that one call, then execute\nthe grouped `next_tool_calls` it returns. The sole exception is an explicit\nrequest to summarize or resume one complete known file: call\n`summarize(workspace_id, file_name)` directly.\n\nWhen no filename is provided, DO NOT call `get_document_strategy`. Call\n`search(query, workspace_id)` directly without a `file_name` argument.\n\n## Exact Unique-ID Tool Arguments\n\nNever send `file_name` to `read_section`, `read_blocks`, `expand_context`, or\n`locate_answer_citations`. This prohibition applies to both a filename string\nand a filename list. These tools resolve the owning document from unique IDs\ninside `workspace_id`.\n\nThe terminal citation call must have exactly this top-level shape:\n\n```json\n{\n  \"workspace_id\": \"workspace-id\",\n  \"citations\": [\n    {\n      \"type\": \"text\",\n      \"block_id\": \"204430\",\n      \"evidence_text\": \"exact evidence\",\n      \"reference\": 1\n    }\n  ]\n}\n```\n\nDo not copy filenames used by earlier search/read calls into the citation call.\n\n## Required End State\n\nAn explicit whole-file summary handled by `summarize` is a separate terminal\nworkflow. Answer from its `table_of_contents` result; do not call\n`get_document_strategy`, context expansion, or citation lookup afterward.\n`summarize` does not return block IDs for citation lookup.\n\nExcept for that explicit whole-file summary workflow, every document-grounded\nanswer must follow this sequence:\n\n1. Retrieve candidate evidence.\n2. Read the relevant content at the right granularity.\n3. Call `expand_context` for every evidence section used in the answer, unless\n   the evidence came from `read_content`.\n4. Call `locate_answer_citations` as the final retrieval tool.\n5. Answer using only citations returned by `locate_answer_citations`.\n\n`expand_context` is mandatory after all section/block/page evidence gathering\nand before `locate_answer_citations`. Exception: when the model uses\n`read_content`, do not call `expand_context`, because the full file content is\nalready available from `read_content`. `locate_answer_citations` is obligatory\nand must be the last tool call before the final answer whenever document\nevidence is used.\n\n## Scope Rules\n\n- `workspace_id` is required for every tool call.\n- `workspace_id` may be a string or list only for `search`, `search_sections`,\n  `search_blocks`, and `locate_answer_citations`.\n- `workspace_id` must be a single string for `get_document_strategy`,\n  `read_content`, `get_document_map`, `read_section`, `read_blocks`,\n  `expand_context`, `read_page`, and `summarize`.\n- `file_name` is required for `get_document_strategy`, `read_content`,\n  `get_document_map`, `read_page`, and `summarize`. `get_document_strategy` and\n  `read_content` accept either one filename or a list and return one result per\n  input file in order.\n- `file_name` is optional for `search`, `search_sections`, and `search_blocks`.\n- `file_name` may be a single string or a list of strings for the search-style\n  tools, `get_document_strategy`, and `read_content`. These tools accept a\n  one-item list or one string when only one file is known.\n- `read_section`, `read_blocks`, `expand_context`, and\n  `locate_answer_citations` have no `file_name` argument. Unique section,\n  block, or image IDs resolve the document inside the workspace.\n- `get_document_map` and `read_page` require exactly one concrete `file_name` string.\n- `summarize` requires exactly one concrete `workspace_id` string and one\n  concrete `file_name` string; neither argument accepts a list.\n\nIf `file_name` is unknown, call `search(query, workspace_id)` directly across\nthe workspace. Do not call `get_document_strategy` without filenames.\n\n## Entry Point\n\n### Explicit Whole-File Summary\n\nWhen the user explicitly asks to summarize or resume one complete known file:\n\n1. Call `summarize(workspace_id, file_name)` directly.\n2. Do not call `get_document_strategy` first.\n3. Use the returned `table_of_contents` to write the summary. For documents\n   under 50 pages, each section title may include a normalized preview of up to\n   100 characters from that section\\'s first non-empty block. For documents with\n   50 pages or more, the result contains section titles only.\n4. Do not use `summarize` for targeted questions, fact lookup, document\n   navigation, topic summaries, or summaries spanning multiple files. Use the\n   normal retrieval workflow for those requests.\n\n### Multiple Known Files\n\nWhen several filenames are available, do not loop over them for tools that\nsupport lists:\n\n1. Call `get_document_strategy` once with the complete `file_name` list.\n2. Do not partition or reinterpret individual files yourself. Execute each entry\n   in its returned `next_tool_calls`.\n3. A `read_content` entry may contain only one filename even when six filenames\n   were submitted. Call it once with exactly the returned list.\n   Its `after_success` contract marks those filenames retrieval-complete. After\n   a successful `read_content`, do not call `search`, `search_sections`,\n   `search_blocks`, `get_document_map`, `read_section`, `read_blocks`,\n   `expand_context`, or `read_page` for those filenames. Draft from the returned\n   full content, then call the terminal citation tool.\n4. A `search` entry contains every search-strategy filename in one list. Add the\n   user\\'s query, which is identified in `required_arguments_to_add`.\n5. Only `get_document_map` and `read_page` are called separately per file\n   because they accept one filename. Section tools use unique section IDs and\n   never take `file_name`.\n6. Call `locate_answer_citations(workspace_id, citations)` last. It never takes\n   `file_name`.\n\nNever make one `get_document_strategy`, `read_content`, `search`,\n`search_sections`, or `search_blocks` call per file when the same operation can\nbe expressed as one list-valued call.\n\n### Known File\n\nWhen the user or prior context provides a specific file:\n\n1. Call `get_document_strategy(workspace_id, file_name)`.\n2. If `strategy` is `\"read_all\"`, call `read_content(workspace_id, file_name)`.\n   After `read_content` succeeds for a file, do not call any search, map,\n   section, block, context-expansion, or page-reading tool for that file.\n3. If `strategy` is `\"search\"`, choose from `search`, `get_document_map`,\n   `search_sections`, `search_blocks`, `read_section`, `read_blocks`, and\n   `read_page` based on the question.\n4. For every section that supports the answer, call\n   `expand_context(section_id, workspace_id)`, unless the supporting\n   evidence came from `read_content`. When there are multiple evidence\n   sections, pass `section_id` as a list of numeric section IDs in one\n   `expand_context` call.\n5. Call `locate_answer_citations(workspace_id, citations)` last.\n\n### Unknown File\n\nWhen the file is not known:\n\n1. Do not call `get_document_strategy`.\n2. Call `search(query, workspace_id)` directly with no `file_name` argument.\n3. Continue with the returned section IDs and block IDs.\n\n## Tool Selection\n\n- `summarize`: direct and terminal tool only for an explicit request to\n  summarize or resume one complete known file. It accepts exactly one\n  `workspace_id` and one `file_name` and returns only `table_of_contents`.\n  It is the sole exception to the known-file `get_document_strategy`-first\n  rule.\n- `get_document_strategy`: mandatory first tool when `file_name` is known.\n  Accepts one filename or a filename list. Batch all known filenames into one\n  call. It returns one object whose `next_tool_calls` groups all `read_all`\n  filenames under `read_content` and all large filenames under `search`.\n- `read_content`: use only with the filename list in the returned\n  `next_tool_calls` read_content entry. It accepts one filename or a list and\n  reads each full document. After it succeeds for a file, the only remaining\n  retrieval call for that file is the mandatory final citation lookup. A\n  successful result explicitly returns `retrieval_complete: true` and\n  `next_action` with the exposed citation tool name.\n- `search`: default broad retrieval tool. It searches sections and blocks and\n  returns section-level results with tagged block content. Its `file_name`\n  accepts one string or a list; batch files that use the same query.\n- `get_document_map`: returns the full ordered section map of a known file,\n  including titles, page ranges, block counts, and image counts. Use it to\n  understand document structure before choosing sections to read.\n- `search_sections`: searches section titles/previews/content to find relevant\n  document areas. Its `file_name` accepts one string or a list; batch files that\n  use the same query. Follow with `read_section` or `read_blocks`.\n- `search_blocks`: searches precise block evidence, optionally narrowed by\n  `section_id`. Its `file_name` accepts one string or a list; batch files that\n  use the same query. Follow with `read_section` or `read_blocks`.\n- `read_section`: reads a section with its blocks and images. Use when a\n  section is likely relevant or visual/image/table/chart content matters.\n- `read_blocks`: reads all blocks in a section without image payloads. Use for\n  text-focused block inspection.\n- `read_page`: reads a specific page or page range when the page number is\n  known.\n- `expand_context`: mandatory bounded context expansion for every evidence\n  section before citation lookup, except when the evidence came from\n  `read_content`. It accepts one numeric `section_id` string or a list of\n  numeric `section_id` strings. A single `section_id` returns one context object;\n  a list returns `{\"contexts\": [...]}`, with one context object per requested\n  section. It returns only two ancestor levels, two descendant levels, and\n  same-parent same-level sections.\n- `locate_answer_citations`: terminal citation lookup. This must be the final\n  retrieval call.\n\n## Search And Reading Workflow\n\nFor each user question:\n\n1. Break multi-part requests into independent retrieval objectives.\n2. Generate focused search queries for each objective.\n3. Use the user document language and exact named entities when possible.\n4. Prefer `get_document_map` when structure, headings, page ranges, or section\n   navigation will help.\n5. Prefer `search_sections` for finding relevant areas.\n6. Prefer `search_blocks` for exact facts, dates, numbers, clauses, obligations,\n   and quotes.\n7. Use `read_section` when you need the full section, images, tables, charts, or\n   surrounding blocks.\n8. Use `read_blocks` when you need every block in a selected section.\n9. Use `read_page` only when a page number or page range is known.\n10. After all relevant section/block/page search/read calls, call\n    `expand_context` for each evidence section used. Prefer one batched call\n    with `section_id` as a list when multiple sections need expansion. Do not\n    call `expand_context` after `read_content`, because `read_content` already\n    loads the full file. Use bounded context to verify nearby hierarchy without\n    loading all descendants of an ancestor.\n11. Build citation inputs from retrieved evidence and call\n    `locate_answer_citations` last.\n\n## IDs And Citation Inputs\n\n- Use `section_id` only for section navigation tools such as `read_section`,\n  `read_blocks`, `search_blocks(section_id=...)`, and `expand_context`.\n  `expand_context` is the only section navigation tool here that accepts a list\n  of section IDs.\n- `expand_context.section_id` must be the numeric `logical_sections.id` returned\n  by tools, for example `\"14390\"`. Do not invent or prefix values like\n  `\"sec_14390\"` unless the tool explicitly returned that exact identifier.\n- `expand_context` derives the target level from stored ancestor refs. For a\n  level-5 section, it returns ancestor levels 3 and 4, descendant levels 6 and\n  7, and sections at level 5 with the same parent. File and workspace metadata\n  are returned once at the top level, not repeated inside each section.\n- Use block IDs from `LogicalBlock.id`, `LogicalBlock.block_id`, or\n  `<block id=\"...\">` tags for text citations.\n- Never pass a `section_id` as a text citation `block_id`.\n- Use `image_id` only for image citations.\n\n`locate_answer_citations` citation items must contain:\n\n```json\n{\n  \"type\": \"text\",\n  \"block_id\": \"14579\",\n  \"evidence_text\": \"exact evidence text copied from the retrieved block\",\n  \"reference\": 1\n}\n```\n\nFor image citations:\n\n```json\n{\n  \"type\": \"image\",\n  \"image_id\": \"82\",\n  \"evidence_text\": \"exact text copied from the retrieved image content field\",\n  \"reference\": 2\n}\n```\n\n## Answer Rules\n\n- Answer only from retrieved evidence.\n- Every date, number, name, KPI, obligation, deadline, comparison, and quoted\n  statement needs a citation.\n- Cite claims immediately with references returned by\n  `locate_answer_citations`, such as `[1]`.\n- Do not invent citations, page numbers, files, bounding boxes, quotes, or\n  conclusions.\n- If evidence is insufficient, say what could not be verified.\n- Do not include a separate references section unless the user asks for it.\n\n## Prohibited Behavior\n\nNever:\n\n- Skip retrieval for a document question.\n- Skip `get_document_strategy` when `file_name` is known, except for an explicit\n  whole-file summary handled directly by `summarize`.\n- Call `summarize` for anything other than an explicit request to summarize or\n  resume one complete known file.\n- Pass a list to `summarize`; it requires one workspace and one filename.\n- Call `get_document_strategy` when no `file_name` is provided; call `search`\n  directly instead.\n- Call `read_content` for filenames not returned in the read_content entry of\n  `get_document_strategy.next_tool_calls`.\n- Call `get_document_strategy`, `read_content`, `get_document_map`, or\n  `read_page` without a known `file_name`.\n- Skip `expand_context` before citation lookup when evidence came from\n  section/block/page tools.\n- Call any retrieval tool after `locate_answer_citations`.\n- Use citations not returned by `locate_answer_citations`.\n- Pass `file_name` to `read_section`, `read_blocks`, or `expand_context`; their\n  unique section IDs resolve the document. `get_document_map` and `read_page`\n  still require one filename string.\n- Search, read sections or blocks, expand context, read pages, or inspect the\n  map of a file after `read_content` has successfully returned that full file.\n- Use document IDs as search queries.\n- Return raw search results as the answer without citation grounding.\n",
+              "files": [],
+              "description": "Use this skill when answering questions from documents indexed by the Logical Indexing MCP server, navigating document structure, reading sections/blocks/pages, expanding retrieved context, and producing citation-grounded answers with locate_answer_citations.",
+              "metadata": {},
+              "name": "logical-search-paddle"
+            }
+          ],
+          "agent_model": "deepseek-v4-pro",
+          "max_clarifications": 3.0,
+          "agent_name": "Search Agent V2",
+          "agent_prompt": "# General Instructions\n- Must Always consider your core expertise when you handle the received tasks, Must reconsider and reformulate task if needed.\n- Must Always start by thinking step by step to resolve the given task\n \n \n## Reasoning Step by Step Strategy\n- Must Always Think step by step:\n- Analyze the given task before acting\n- Determine required informations and tools\n- Must always USE the given tools before to get the required information\n- Formulate evidence-based conclusions\n- Verify logical consistency before responding\n \n##Response format\n- Must always generate a detailed and precise answer\n- Synthesize findings \n- Use Emoji to highlight key findings and valuable informations\n- Generate well-formatted tables in markdown when it comes to structure data (KPIs, numbers, etc ...), analyze, compare, synthetise data\n\n \n \n## Knowledge Priority\n1. **Search first**: Always query available tools (documents, web, databases) before responding to factual questions\n2. **Apply retrieved data**: Use methodologies and information from searchable sources as the primary basis for responses\n3. **Fallback only**: Use internal knowledge exclusively when tools return no relevant results\n \n## Tool Execution\n- Must Read and follow instruction sections embedded in each tool definition\n- **Must ALWAYS USE search tools for any info-retrieval task.** EVEN if something (in the <additional_context>) related already exists or mention that the data was not extracted/found \n- Must always USE the given tools before ending your response\n- If required parameters are missing, request clarification before executing\n- Never guess or fabricate information—search instead\n## Failure Handling\n- If search yields no results: reformulate query and retry\n- If information conflicts: present multiple perspectives with sources\n- If tool capabilities are insufficient: state limitations clearly and suggest alternatives\n \n \n# Source citations protocol \n- Must Always generate source citations following the instructions as stated below :\n \n## Mandatory format\n- a source citation refers to a context used to generate a fact, details, attributes ...it is always encapsuled inside brackets as following as following : **[1] [2] [3] ...**\n- Must always Use numeric sequence inside square brackets  when generating source citations as following : **[1] [2] [3] ...**\n \n \n## Citation Requirements\nThe following rules must be applied for text and image sources.\n \n**Mandatory Citation Scope**\nMust ALWAYS generate source citations when **generating tables, for every cell and row**.\nMust always generate source citations Even if there is already a mention about sources (image or text)\nMust always ensure to show all source citations considered as proof, not only the methodology citations. you can find theses proofs in the current and historical context related to previous agent result\nMust always include the most relevant source citations in **Every fact detail** generated in your response like :\n- Numerical values (KPIs, metrics, statistics, percentages, amounts)\n- Factual statements and claims\n- Dates, timeframes, and deadlines\n- Quoted text or paraphrased content\n- Comparative statements (e.g., \"higher than\", \"exceeds\")\n- Image-derived information\n \n**Citation Placement Rules**\n- For images, Must always cite the numeric reference assigned to the image file, not its filename\n- Must Always generate source citation for each distinct fact detail/attribut, \nExample : `The company achieved $1.2M [3] in Q1 and $1.5M [4] in Q2, representing 25% growth [5] year-over-year`\n- Must always generate source citations when generating tables, for every cell and row.\n- For images, Must always consider the first page when multiple pages are identified\n- For multiple sources supporting the same fact, cite all **relevant* sources consecutively: example : `exceeds $3M threshold [2][79]`\n- Must always place source citations at the exact location of the cited fact, even in mid-sentence as following : \"The company achieved $1.2M [3] in Q1 and $1.5M [4] in Q2\"\n- Must **Never** add a separate sources citations section at the end of the response, sources MUST BE directly placed behind every fact detail/attribute\n \n**Strict Prohibitions**\n- Must Never hallucinate or assume source references or page number\n- Must Never use descriptive citations like `[Source A]`, `[Document 1]`, or `[image.png]`\n- Must Never omit citations to avoid repetition—every fact needs its reference at its exact location\n \n \n**Comprehensive Sourcing**\n- If information appears in multiple sources (text documents, images, tables), cite all relevant source citations\n- When a single sentence contains multiple data points, each data point must have its own citation(s) at the precise location\n- For calculated or derived values or deductions, cite all source citations related to the context used as source/material\n \n**Example Applications**\n- Inline citations: `The daily penalty of $350 [1] applies at each stage, with a maximum cap of $600 [1] per incident as specified in clause 4.2 [2]`\n- Table row: `Product A | 125 units [2] | €15,000 [2] | 8% growth [4]`\n- Multiple facts: `The Paris office [3] generated €2.4M revenue [5] with 45 employees [3], while the Lyon office [3] achieved €1.8M [5] with 32 employees [3]`\n \n## Multi-source enforcement\n- Must Always Cite **all** relevant sources for each statement.\n- If info is in both text and images → cite both.\n- If unsure relevance → **cite it**.\n- Must Never compress or reduce citations.\n\n<Document_Search_Tool_Instructions>\n\n\n- Must always prioritize this Tool over Code Interpretor tool when it comes to search specific information.\n- Must never use this search Tool if the task requests a full content / row by row extraction \n- Must never use this search Tool to extract full contents or generate summaries, use instead the code interpretor tool if available, you must suggest the user to use Code Interpretor tool\n## Priority\n- Always treat provided documents as the **primary** source of truth. Use internal knowledge **only** if required info is not in the docs.\n\n## Mandatory tool use\n- Must never use the search tool when it comes to search over sql tables.\n- **Must ALWAYS USE search tools for any info-retrieval task.** EVEN if something related already exists in the <additional_context> OR this task has been already executed before\n- If the task includes: *identify, find, locate, retrieve, extract, what is, who is, when did, how much, list all, summarize, compare*, or asks for specific **data/dates/names/figures/facts** → **immediately use search tools** (no assumptions).\n\n## Search Query generation rules\n- Generate at most 6 atomic queries, one for each distinct concept.\n- Must Always Rewrite each query in the **target document’s language**.\n- If documents are filtered by an attribute, use the language of the **first** document in the set.\n- Must Use exact terminology from document domain\n- Must Include abbreviations AND full forms\n- Must Add contextual qualifiers (dates, names, categories) when available\n- Must never include in the generated query any document id\n**Example** — Task: “chercher la date de fin du projet et le calendrier de paiement”\n- Query 1, Doc Language=\"en\" --> \"project completion deadline\"  \n- Query 2, Doc Language=\"en\" --> \"due date delivery timeline\"\n\n## Tool execution framework\n- **Never** use document search tools if **no documents** are available.\n- After each tool call, review results and choose the next action.\n\n### 1) Targeted search (Recherche ciblée)\n- Use only when specific documents are identified (name/attribute/document type).\n- Use always the given attribut / document type as filter if defined. \n- Run `perform_document_search` **once per query**.\n\n### 2) Global search (Recherche globale)\nUse only when no document is specified or targeted search is inefficient.\n- Run `perform_standard_search` **once per query**.\n\n**Critical constraints**\n- Never return **global search** results as final output.\n- If global search identifies documents, **follow with targeted search**.\n- Never fabricate info absent from results.\n- Must Always Write each search query in the **target document’s language**.\n- If documents are filtered by an attribute or document type, use the language of the **first** document in the set to generate the query\n- Never respond without using available tools unless not required.\n \n## Source citations instructions to Apply only when the context is retrieved from the search tool\n- Must Always generate source citations following the instructions as stated below :\n\n### Mandatory format\n- a source citation refers to a context used to generate a fact, details, attributes ...it is always encapsuled inside brackets as following as following : **[1] [2] [3] ...**\n- Must always Use numeric sequence inside square brackets  when generating source citations as following : **[1] [2] [3] ...**\n\n\n### Citation Requirements\nThe following rules must be applied for text and image sources.\n\n**Mandatory Citation Scope**\nMust always generate source citations Even if there is already a mention about sources (image or text)\nMust ALWAYS generate source citations when **generating tables, for every cell and row**.\nMust always ensure to show all source citations considered as proof, not only the methodology citations. you can find theses proofs in the current and historical context related to previous agent result\nMust always include the most relevant source citations in **Every fact detail** generated in your response like :\n- Numerical values (KPIs, metrics, statistics, percentages, amounts)\n- Factual statements and claims\n- Dates, timeframes, and deadlines\n- Quoted text or paraphrased content\n- Comparative statements (e.g., \"higher than\", \"exceeds\")\n- Image-derived information\n\n**Citation Placement Rules**\n- For images, Must always cite the numeric reference assigned to the image file, not its filename\n- Must Always generate source citation for each distinct fact detail/attribut, \nExample : `The company achieved $1.2M [3] in Q1 and $1.5M [4] in Q2, representing 25% growth [5] year-over-year`\n- For images, Must always consider the first page when multiple pages are identified\n- For multiple sources supporting the same fact, cite all **relevant* sources consecutively: example : `exceeds $3M threshold [2][79]`\n- Must always place source citations at the exact location of the cited fact, even in mid-sentence as following : \"The company achieved $1.2M [3] in Q1 and $1.5M [4] in Q2\"\n- Must **Never** add a separate source citations section at the end of the answer, sources MUST BE directly placed behind every fact detail / attribute\n\n\n**Strict Prohibitions**\n- Must Never hallucinate or assume source references or page number\n- Must Never use descriptive citations like `[Source A]`, `[Document 1]`, or `[image.png]`\n- Must Never omit citations to avoid repetition—every fact needs its reference at its exact location\n\n\n**Comprehensive Sourcing**\n- If information appears in multiple sources (text documents, images, tables), cite all relevant source citations\n- When a single sentence contains multiple data points, each data point must have its own citation(s) at the precise location\n- For calculated or derived values or deductions, cite all source citations related to the context used as source/material\n\n**Example Applications**\n- Inline citations: `The daily penalty of $350 [1] applies at each stage, with a maximum cap of $600 [1] per incident as specified in clause 4.2 [2]`\n- Table row: `Product A | 125 units [2] | €15,000 [2] | 8% growth [4]`\n- Multiple facts: `The Paris office [3] generated €2.4M revenue [5] with 45 employees [3], while the Lyon office [3] achieved €1.8M [5] with 32 employees [3]`\n\n### Multi-source enforcement\n- Must Always Cite **all** relevant sources for each statement.\n- If info is in both text and images → cite both.\n- If unsure relevance → **cite it**.\n- Must Never compress or reduce citations.\n \n \n\n## Prohibited behaviors\n- Answering info requests without running search tools\n- Using prior knowledge instead of document search\n- Returning global results without targeted follow-up\n- Omitting citations\n- Fabricating or inferring beyond results\n```\n\n</Document_Search_Tool_Instructions>",
+          "agent_type": "simple",
+          "agent_params": {
+            "max_temporary_child_agents": "4",
+            "platform_api_token": "ac336a34c1c32a8ec87f26cb5c4e22b311ccdaf7587cf543808864c58a812794",
+            "temperature": "0",
+            "user_id": "6992fc709968567dc766a12d",
+            "guardrails_classifier_model": "",
+            "enable_temporary_child_agents": "false",
+            "platform_api_url": "http://localhost:3000/api",
+            "session_id": "6a68a97b4cb4e9d67bba1f39"
+          },
+          "connector_bindings": [
+            {
+              "connector_id": "6a451f048b8695ebb0050f27",
+              "mcp_transport_type": "streamable_http",
+              "auth_headers": {
+                "Authorization": "Bearer 31daeea8e328f4d08a81cb01d0256ad54091f4b1c8556ea3cf2487b779977b9c"
+              },
+              "fixed_params": {},
+              "auth_env": {},
+              "connector_name": "smart-navigation-search-paddle",
+              "actions": [
+                {
+                  "action_key": "get_document_strategy",
+                  "description": "MANDATORY FIRST MCP TOOL CALL when workspace_id and one or more file names\nare known. Do not call another MCP retrieval tool first.\nIf file_name is unknown or not provided, DO NOT call this tool. Call\nsearch(query, workspace_id) directly without file_name.\n\nRetrieves the total number of pages for every input file, groups the files\nby retrieval strategy, and returns actionable follow-up tool calls.\nworkspace_id must be exactly one string. file_name accepts one file name or\na list of file names. A single file may be passed as a string or one-item list.\nWhen several file names are known, make ONE batched call with the complete\nlist. Do not call this tool separately once per file.\n\nStrategy rules (controlled by PAGE_THRESHOLD env var, default 20):\n- total_pages > PAGE_THRESHOLD  → strategy \"search\"\n    Available tools (use selectively based on the user query):\n    • get_document_map    — structural outline of the document (sections + page ranges)\n    • search              — unified hybrid search across sections a",
+                  "label": "Get Document Strategy",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "One file name string or a list of file name strings. When multiple files are known, pass the complete list in one batched tool call; do not call the tool separately once per file. A single file may be passed as one string or a one-item list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "read_content",
+                  "description": "Call this tool ONLY with filenames returned under the read_content entry in\nget_document_strategy.next_tool_calls. If file_name is unknown, do NOT call this\ntool — use search(), search_sections, search_blocks, read_section,\nread_blocks, expand_context, or read_page instead.\n\nReads every block in each requested document and returns the content grouped\nby page. workspace_id must be exactly one string. file_name accepts one file\nname or a list of file names. A single file keeps the existing response\nobject; a list returns one document content object per file in the same order.\nWhen several read_all files are known, make ONE batched call with the\ncomplete list. Do not call this tool separately once per file.\nA successful result includes retrieval_complete=true and next_action naming\nthe terminal citation tool. Treat those fields as binding per-file routing:\ndo not perform any additional search or navigation for that file.\nEach page is wrapped in an XML tag: <page_N>...</page_N> so the model can\ncite precise page ",
+                  "label": "Read Content",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "One file name string or a list of file name strings. When multiple files are known, pass the complete list in one batched tool call; do not call the tool separately once per file. A single file may be passed as one string or a one-item list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "search",
+                  "description": "Unified section-level hybrid search across all documents in the requested\nworkspace or workspaces.\nNever search a file whose successful read_content result has\nretrieval_complete=true; its full evidence is already available.\nRequires a non-empty query. Do not call this tool with only workspace_id.\nWhen no filenames are provided, this is the first retrieval tool: call it\ndirectly with query and workspace_id and omit file_name.\nWhen filenames are known, call this only from the search entry returned by\nget_document_strategy.next_tool_calls; get_document_strategy must be first.\nfile_name accepts either one file name or a list. When the same query applies\nto several known files, pass the complete list in ONE call instead of making\none call per file.\n\nDocuments are filtered by workspace_id and file_name before their stored\nfts_config values are inspected. BM25 uses meaning-preserving query variants\nfor only the languages present in that filtered document set, while the\nembedding channel searches the original query.",
+                  "label": "Search",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "query": {
+                        "default": "None",
+                        "title": "Query",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "One file name string or a list of file name strings. When multiple files are known, pass the complete list in one batched tool call; do not call the tool separately once per file. A single file may be passed as one string or a one-item list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "get_document_map",
+                  "description": "Retrieves the navigable structural outline of a document.\nDo not call this for a file whose successful read_content result has\nretrieval_complete=true.\nThis tool accepts exactly one workspace_id and exactly one file_name; both\nare required, and neither accepts a list.\n\nReturns document metadata and an ordered list of sections with titles,\npage ranges, positions, block counts, and image_count. Use this tool to\nunderstand document structure, then call read_section on the relevant\nsection_ids to get full content. If image_count > 0, read_section also\nreturns MCP image content for that section.\n\nArgs:\n    workspace_id: Required workspace ID for the document. Must be a single string, not a list.\n    file_name: Required file name of the document. Must be a single string, not a list.\n\nReturns:\n    Document metadata and ordered section hierarchy with titles, page ranges,\n    positions, and block counts\n\nCitation rule for final answers: if the final answer uses document sources,\nthe final retrieval tool must be locate",
+                  "label": "Get Document Map",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "Optional or required file name according to the tool. Accepts exactly one file name string and never a list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "summarize",
+                  "description": "Returns a compact outline used to prepare a summary of one complete file.\nFor documents under 50 pages, each section title is followed by the first\nnon-empty block preview, normalized and truncated to at most 100 characters.\nFor documents with 50 pages or more, it contains section titles only.\n\nCall this tool ONLY when the user explicitly asks for a summary or resume\nof the file itself. Do not call it for targeted questions, fact lookup,\ndocument navigation, section search, or summaries of a topic spanning\nmultiple files. For those requests, follow the normal document strategy\nand retrieval workflow instead.\n\nThis tool accepts exactly one workspace_id and exactly one file_name; both\nare required, and neither accepts a list.\n\nArgs:\n    workspace_id: Required workspace ID containing the file. Must be a\n        single string, not a list.\n    file_name: Required name of the file to summarize. Must be a single\n        string, not a list.\n\nReturns:\n    An object containing only table_of_contents.",
+                  "label": "Summarize",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "Optional or required file name according to the tool. Accepts exactly one file name string and never a list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "search_sections",
+                  "description": "Searches document sections using semantic and keyword retrieval to identify\nthe most relevant high-level areas related to a query.\nDocuments are filtered before language grouping. Keyword retrieval uses an\noriginal-plus-translated query variant with each selected document group's\nstored fts_config. BM25 and semantic rankings are fused with weighted RRF.\nNever search a file whose successful read_content result has\nretrieval_complete=true.\nRequires a non-empty query. Do not call this tool with only workspace_id.\nCall get_document_strategy first, then use this tool only for filenames in\nits returned search group.\nfile_name accepts either one file name or a list. When the same query applies\nto several known files, pass the complete list in ONE call instead of making\none call per file.\n\nReturns lightweight results with section identifiers, relevance scores,\npage ranges, short previews, and image_count. Results are lightweight —\nalways call read_section on relevant section_ids to get full block content.\nIf image_co",
+                  "label": "Search Sections",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "query": {
+                        "default": "None",
+                        "title": "Query",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "limit": {
+                        "default": 10.0,
+                        "type": "integer",
+                        "title": "Limit"
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "One file name string or a list of file name strings. When multiple files are known, pass the complete list in one batched tool call; do not call the tool separately once per file. A single file may be passed as one string or a one-item list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "search_blocks",
+                  "description": "Searches fine-grained blocks inside documents or sections to retrieve\nprecise evidence. Supports filtering by document and section.\nDocuments are filtered before language grouping. Keyword retrieval uses an\noriginal-plus-translated query variant with each selected document group's\nstored fts_config. BM25 and semantic rankings are fused with weighted RRF.\nNever search a file whose successful read_content result has\nretrieval_complete=true.\nEach result includes image_count for its section. Call read_section on the section_id\nto get full block content; if image_count > 0, it also returns MCP image content.\nRequires a non-empty query. Do not call this tool with only workspace_id.\nCall get_document_strategy first, then use this tool only for filenames in\nits returned search group.\nfile_name accepts either one file name or a list. When the same query applies\nto several known files, pass the complete list in ONE call instead of making\none call per file.\n\nArgs:\n    query: Required non-empty search query string. Build",
+                  "label": "Search Blocks",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "section_id": {
+                        "default": "None",
+                        "title": "Section Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "query": {
+                        "default": "None",
+                        "title": "Query",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "limit": {
+                        "default": 10.0,
+                        "type": "integer",
+                        "title": "Limit"
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "One file name string or a list of file name strings. When multiple files are known, pass the complete list in one batched tool call; do not call the tool separately once per file. A single file may be passed as one string or a one-item list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "read_section",
+                  "description": "Retrieves the complete content of a section, its child blocks, and its\nimages. Image metadata is returned under images[], and actual image bytes\nare returned as separate MCP image content items.\nDo not call this for a section belonging to a file whose successful\nread_content result has retrieval_complete=true.\nNo file_name argument is needed because the numeric logical_sections.id is\nunique. The section is resolved inside the authorized workspace.\n\nFor strategy=\"search\", this is the only tool that returns images. Call it whenever:\n- The query involves charts, figures, diagrams, tables, or any visual content\n- A section title or preview suggests images are relevant\n- You need to visually verify content referenced in block text\n- Another tool returned a section_id and images may be relevant\nNote: for strategy=\"read_all\", images are returned inline by read_content.\n\nArgs:\n    section_id: Target section identifier\n    workspace_id: Required workspace ID for the document. Must be a single string, not a list.\n    i",
+                  "label": "Read Section",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "section_id": {
+                        "default": "None",
+                        "title": "Section Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "include_blocks": {
+                        "default": true,
+                        "type": "boolean",
+                        "title": "Include Blocks"
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "read_blocks",
+                  "description": "Retrieves the full content of all blocks within a section.\nDo not call this for a section belonging to a file whose successful\nread_content result has retrieval_complete=true.\nNo file_name argument is needed because the numeric logical_sections.id is\nunique. The section is resolved inside the authorized workspace.\n\nReturns blocks with full metadata including page_number and block_type.\nUse after selecting relevant blocks from search results or when\ndetailed block-level inspection is needed. Use read_section to also\nretrieve MCP image content for the section.\n\nArgs:\n    section_id: Target section identifier\n    workspace_id: Required workspace ID for the document. Must be a single string, not a list.\n\nReturns:\n    List of blocks with full content and positional metadata\n\nCitation rule for final answers: if the final answer uses document sources,\nthe final retrieval tool must be locate_answer_citations. Use block_id\nfor text citations or image_id for image citations.",
+                  "label": "Read Blocks",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "section_id": {
+                        "default": "None",
+                        "title": "Section Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "expand_context",
+                  "description": "Retrieves bounded hierarchy context around one or more target sections. Use\nwhen a section appears incomplete, references point to nearby hierarchy, or\nbroader contextual understanding is required.\nDo not call this for sections belonging to files whose successful\nread_content results have retrieval_complete=true.\nThe response is intentionally limited:\n- target_section: the requested section, including all selected blocks\n- ancestors: only the two levels above the target section\n- descendants: only the first two stored descendants of the target section\nIt does not resolve the full descendants list or return ancestor_descendants.\nReturned sections include all blocks for each selected context section.\nBy default images[] includes image_id/content metadata only; set\nEXPAND_CONTEXT_INCLUDE_IMAGE_BYTES=true only if this tool must return\nseparate MCP image content items.\nThis tool accepts one section_id string or a list of section_id strings. It\naccepts exactly one workspace_id. No file_name argument is needed becau",
+                  "label": "Expand Context",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "section_id": {
+                        "default": "None",
+                        "description": "One section ID string or a non-empty list of section ID strings. For multiple IDs, the response contains one ordered result per ID under contexts; missing sections produce an error item in that list.",
+                        "title": "Section Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "read_page",
+                  "description": "Retrieves all blocks on a specific page or range of pages from documents.\nDo not call this for a file whose successful read_content result has\nretrieval_complete=true.\nThis tool accepts exactly one workspace_id and exactly one file_name; both\nare required, and neither accepts a list.\nReturns a flat list of blocks ordered by page number and position. Use to\nread content at a known page location. Use read_section on any returned\nsection_id to retrieve MCP image content for that section.\n\nProvide either page_number for a single page, or start_page and end_page\nfor a range.\n\nArgs:\n    workspace_id: Required workspace ID for the document. Must be a single string, not a list.\n    file_name: Required file name of the document. Must be a single string, not a list.\n    page_number: Single page number to retrieve\n    start_page: Start of page range (inclusive)\n    end_page: End of page range (inclusive)\n\nReturns:\n    List of blocks on the requested page(s) with content and metadata\n\nCitation rule for final answers: if ",
+                  "label": "Read Page",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "end_page": {
+                        "default": "None",
+                        "title": "End Page",
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "start_page": {
+                        "default": "None",
+                        "title": "Start Page",
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "page_number": {
+                        "default": "None",
+                        "title": "Page Number",
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "file_name": {
+                        "default": "None",
+                        "description": "Optional or required file name according to the tool. Accepts exactly one file name string and never a list.",
+                        "title": "File Name",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "action_key": "locate_answer_citations",
+                  "description": "Locates precise answer/evidence spans inside cited blocks and returns\npage-level highlight bounding boxes.\n\nSTRICT INPUT CONTRACT: accepted top-level arguments are workspace_id and\ncitations only. Never send file_name, including a filename string or list.\n\nTERMINAL TOOL - call this after the answer has been drafted and relevant\nblocks have been selected. After calling this tool, answer directly using\nthe returned citations.\nNo file_name argument is needed because block_id and image_id targets are\nunique. workspace_id remains required for authorization scope.\n\nSearch V2 rule:\n- After drafting any answer using document evidence, call locate_answer_citations.\n- This must be the final retrieval tool before responding with sources.\n- Final answer may only cite references returned by locate_answer_citations.\n- If a claim cannot be located, remove the citation or mark it unsupported.\n- Do not invent page numbers, paths, quotes, or bbox.\n\nText citations must include type=\"text\", block_id, evidence_text, and numeric r",
+                  "label": "Locate Answer Citations",
+                  "parameter_schema": {
+                    "type": "object",
+                    "properties": {
+                      "workspace_id": {
+                        "default": "None",
+                        "title": "Workspace Id",
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "citations": {
+                        "default": "None",
+                        "description": "Required citation list. Each item MUST include type. For text citations use {'type':'text','block_id':'...','evidence_text':'...','reference':1}. For image citations use {'type':'image','image_id':'...','evidence_text':'exact text copied from images[].content','reference':1}.",
+                        "title": "Citations",
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/LocateAnswerCitationInput"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "$defs": {
+                      "LocateAnswerCitationInput": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "default": "None",
+                            "description": "Required citation target type. Must be 'text' with block_id or 'image' with image_id.",
+                            "title": "Type",
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "image"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "image_id": {
+                            "default": "None",
+                            "description": "LogicalImage.id for an image citation. Required when type='image'.",
+                            "title": "Image Id",
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "block_id": {
+                            "default": "None",
+                            "description": "LogicalBlock.id or LogicalBlock.block_id for a text citation. Required when type='text'.",
+                            "title": "Block Id",
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reference": {
+                            "default": "None",
+                            "description": "Numeric answer citation reference, for example 1, 2, or 3.",
+                            "title": "Reference",
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0.0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "evidence_text": {
+                            "default": "None",
+                            "description": "Exact answer evidence text. For text citations this is located inside the cited block. For image citations this must be copied verbatim from the cited image object's content field, not generated or paraphrased by the LLM.",
+                            "title": "Evidence Text",
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "title": "LocateAnswerCitationInput"
+                      }
+                    }
+                  }
+                }
+              ],
+              "mcp_server_config": {
+                "headers": {
+                  "X-mistral": "false",
+                  "X-Deep-Search": "true"
+                }
+              },
+              "mcp_server_url": "https://mcp-logical-search.yellowmind.ai/http/",
+              "connector_slug": "smart-navigation-search-paddle"
+            }
+          ]
+        },
+        "task_template_id": "",
+        "prompt_template_id": "",
+        "output_format_id": ""
+      }
+    ],
+    "control_edges": [],
+    "data_bindings": [
+      {
+        "id": "bind-c542c458-fa3a-4588-b923-2bba20f2b5c9-in-fbf9e9a3",
+        "target_node": "c542c458-fa3a-4588-b923-2bba20f2b5c9",
+        "target_port": "in-fbf9e9a3",
+        "source_kind": "constant",
+        "iteration": "current",
+        "constant_value": {
+          "id": "6a6875d5200ba2ba010bf8a7",
+          "kind": "workspace",
+          "workspacePath": "6992fc709968567dc766a12d/benchmarkv3",
+          "workspaceId": "6a6875d5200ba2ba010bf8a7",
+          "workspaceName": "benchmarkv3",
+          "label": "benchmarkv3",
+          "text": "6a6875d5200ba2ba010bf8a7",
+          "metadata": {
+            "workspaceId": "6a6875d5200ba2ba010bf8a7",
+            "workspaceName": "benchmarkv3"
+          },
+          "name": "benchmarkv3"
+        },
+        "source_node": "",
+        "source_port": "",
+        "trigger_path": "",
+        "state_path": "",
+        "expression": ""
+      }
+    ],
+    "settings": {
+      "recursion_limit": 25,
+      "max_parallelism": 5
+    }
+  },
+  "input_context": {
+    "query": ""
+  },
+  "settings": {
+    "recursion_limit": 25,
+    "max_parallelism": 5
+  },
+  "seeded_task_outputs": []
+}

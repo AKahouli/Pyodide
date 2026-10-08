@@ -262,7 +262,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
   CONVERSATION_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
 
-  // Conversation V2 (Manus)
+  // App Builder (Manus)
   CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
   CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
@@ -274,7 +274,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS: Joi.number().min(1000).default(900000),
   CONVERSATION_V2_LIVE_TAIL_POLL_MS: Joi.number().min(100).default(1000),
 
-  // Conversation V2 gRPC channel security (separate AI service → own cert + key).
+  // App Builder gRPC channel security (separate AI service → own cert + key).
   CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
   CONVERSATION_V2_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
   CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),

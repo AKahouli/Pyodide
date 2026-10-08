@@ -1,4 +1,4 @@
-/** Conversation V2 template catalog limits and Ceph layout constants. */
+/** App Builder template catalog limits and Ceph layout constants. */
 
 import {
   SYSTEM_MANIFEST_PREFIX as TEMPLATE_MANIFEST_PREFIX,

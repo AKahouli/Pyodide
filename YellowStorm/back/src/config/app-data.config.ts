@@ -45,7 +45,7 @@ export default registerAs('appData', () => ({
   mcpEnabled: process.env.APP_DATA_MCP_ENABLED === 'true',
   /** Policy-driven HTTP CRUD for generated React apps. */
   publicApiEnabled: process.env.APP_DATA_PUBLIC_API_ENABLED === 'true',
-  /** Owner read-only Data tab in Conversation V2. */
+  /** Owner read-only Data tab in App Builder. */
   dataTabEnabled: process.env.APP_DATA_DATA_TAB_ENABLED === 'true',
   /** Public base URL for generated apps in dev preview (VITE_YM_APP_DATA_URL). */
   publicBaseUrl:

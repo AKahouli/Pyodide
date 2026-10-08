@@ -289,6 +289,7 @@
   "roles.permissions.menus.appMarketplace": "Marketplace d'applications",
   "roles.permissions.menus.govern": "Gouverner",
   "roles.permissions.menus.governance": "Gouvernance",
+  "roles.permissions.menus.evaluationLogicalSearch": "Évaluation recherche logique",
   "roles.permissions.menus.admin": "Administration",
   "roles.permissions.groups.users.label": "Gestion des utilisateurs",
   "roles.permissions.groups.users.description": "Gérer les permissions liées aux utilisateurs",

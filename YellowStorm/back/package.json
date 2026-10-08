@@ -32,6 +32,7 @@
     "test:store:conversations": "node --env-file=.env -r ts-node/register -r tsconfig-paths/register scripts/test-conversation-postgres-store.ts",
     "repair:conversation-owner-members": "node --env-file=.env -r ts-node/register scripts/migrations/2026-09-18-repair-conversation-owner-members.ts",
     "backfill:humain-embeddings": "node --env-file=.env -r ts-node/register scripts/backfill-humain-role-embeddings.ts",
+    "backfill:eval-payload": "node --env-file=.env -r ts-node/register scripts/backfill-eval-result-payload.ts",
     "release": "commit-and-tag-version",
     "release:patch": "commit-and-tag-version --release-as patch",
     "db:verify": "node --env-file=.env -r ts-node/register scripts/migrate/verify-postgres-state.ts",
@@ -78,7 +79,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.7.5",
-    "ua-parser-js": "^2.0.8"
+    "ua-parser-js": "^2.0.8",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@azure/storage-blob": "^12.29.1",

@@ -1,5 +1,5 @@
 /**
- * Persistence ports for the Conversation V2 template catalog
+ * Persistence ports for the App Builder template catalog
  * (`conversation_v2.template_categories` + `conversation_v2.templates`).
  * All SQL lives in the Postgres implementation; services never query directly.
  */

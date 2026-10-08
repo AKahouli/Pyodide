@@ -58,7 +58,7 @@ describe('useModelsStore.syncAppBuilderDefault', () => {
     });
   });
 
-  it('updates conversation v2 default flags immediately', () => {
+  it('updates App Builder default flags immediately', () => {
     useModelsStore.getState().syncAppBuilderDefault('model-b');
 
     const models = useModelsStore.getState().models;

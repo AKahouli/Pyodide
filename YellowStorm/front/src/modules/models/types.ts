@@ -67,7 +67,7 @@ export interface ModelsActions {
   // Refresh models (force fetch)
   refreshModels: () => Promise<void>;
 
-  /** Push Conversation V2 default change to all consumers (chat, composer) without refetch. */
+  /** Push App Builder default change to all consumers (chat, composer) without refetch. */
   syncAppBuilderDefault: (modelId: string | null) => void;
 
   /** Push the global default model change (star on /admin/models) to all consumers without refetch. */

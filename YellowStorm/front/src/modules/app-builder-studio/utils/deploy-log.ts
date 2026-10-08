@@ -1,4 +1,4 @@
-/** Browser console tracer for the Conversation V2 Publish/Deploy path. */
+/** Browser console tracer for the App Builder Publish/Deploy path. */
 const LOG = '[c2-deploy]';
 
 export function deployLog(phase: string, details?: Record<string, unknown>): void {

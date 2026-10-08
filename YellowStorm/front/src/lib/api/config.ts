@@ -772,6 +772,9 @@ export const API_ENDPOINTS = {
     scenariosByAgent: (agentId: string) => `/evaluation/scenarios/agent/${agentId}`,
     scenarioById: (id: string) => `/evaluation/scenarios/${id}`,
   },
+  logicalSearchEvaluation: {
+    base: '/evaluation/logical-search',
+  },
   playbookFlows: {
     list: '/playbooks',
     byId: (id: string) => `/playbooks/${id}`,

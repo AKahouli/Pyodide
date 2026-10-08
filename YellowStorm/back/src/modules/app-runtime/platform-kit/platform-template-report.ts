@@ -28,7 +28,7 @@ export interface TemplatePlatformReport {
 
 /**
  * Tells the admin, at upload time, whether a template will survive the
- * Template → Conversation V2 → Deployment path — instead of discovering it
+ * Template → App Builder → Deployment path — instead of discovering it
  * when a user's deploy fails.
  */
 export async function analyzeTemplatePlatform(

@@ -71,7 +71,26 @@ export async function startNativeQualificationHost(apiUrl: string, internalToken
     env: { ...process.env, PYTHONPATH: runtime, PYTHONUTF8: '1',
       ROOT_WORK_DATABASE_URL: database.toString(), ROOT_WORK_BACKGROUND_ENABLED: String(enabled),
       ROOT_WORK_LLM_CAPACITY_ENABLED: String(enabled), INTERNAL_SERVICE_SECRET: internalToken,
-      GRPC_API_KEY: key, PLATFORM_API_URL: apiUrl, VECTOR_NATIVE_WAIT_FIXTURE: String(waitFixture) } });
+      GRPC_API_KEY: key, PLATFORM_API_URL: apiUrl, VECTOR_NATIVE_WAIT_FIXTURE: String(waitFixture),
+      // The host imports the ADK app, which builds Settings (middleware → get_settings) at import
+      // time. CI ships no yellowstorm-adk/.env, so supply non-secret placeholders for the required
+      // fields; the qualification fixture never reaches Azure, Redis or LiteLLM.
+      AZURE_DATALAKE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=qualification;AccountKey=placeholder;EndpointSuffix=core.windows.net',
+      AZURE_DATALAKE_FILE_SYSTEM_NAME: 'qualification',
+      DATABASE_URL: database.toString().replace('postgresql://', 'postgresql+asyncpg://'),
+      LINKUP_API_KEY: 'qualification-placeholder',
+      WEB_SEARCH_PROMPT: 'qualification-placeholder',
+      API_URL: apiUrl,
+      LITELLM_API_BASE_URL: 'http://127.0.0.1:4000',
+      LITELLM_API_SECRET_KEY: 'qualification-placeholder',
+      REDIS_HOST: '127.0.0.1',
+      REDIS_PORT: '6379',
+      ADK_API_KEY: 'qualification-placeholder',
+      VECTORSTORE_API_KEY: 'qualification-placeholder',
+      EMBEDDING_MODEL: 'text-embedding-3-small',
+      // llm_factory assigns these Optional settings into os.environ at import without a guard.
+      OLLAMA_API_BASE_URL: 'http://127.0.0.1:11434',
+      OLLAMA_API_KEY: 'qualification-placeholder' } });
   // Native logs are not echoed while it runs: settings/provider diagnostics may contain credentials.
   // The tail is kept, redacted, for the startup-failure rejection below so the real reason is visible.
   let stderrTail = '';

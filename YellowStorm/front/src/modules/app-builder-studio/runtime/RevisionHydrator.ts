@@ -25,7 +25,7 @@ function safeHost(url: string): string {
 export type VfsFiles = Record<string, string | Uint8Array>;
 
 export class RevisionHydrator {
-  /** Hydrate NodePod from a published App Market template (no Conversation V2 session). */
+  /** Hydrate NodePod from a published App Market template (no App Builder session). */
   async hydrateFromCatalogTemplate(templateId: string): Promise<VfsFiles> {
     log('hydrateFromCatalogTemplate:start', { templateId });
     const listed = await templateCatalogApi.listTemplatePreviewFiles(templateId);

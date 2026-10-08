@@ -63,7 +63,7 @@ export class TemplateCatalogController {
 
   /**
    * List manifest files for a published template revision (App Market clone preview
-   * before a Conversation V2 session exists).
+   * before a App Builder session exists).
    */
   @Get('templates/:id/preview/files')
   @ApiOperation({ summary: 'List files in a published template revision for browser preview' })

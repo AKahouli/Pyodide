@@ -24,7 +24,7 @@ import { CreateTemplateCategoryDto } from './dto/create-template-category.dto';
 import { UpdateTemplateCategoryDto } from './dto/update-template-category.dto';
 import { ITemplateCategoryResponse } from './interfaces/template-catalog.interface';
 
-@ApiTags('Admin Conversation V2 Template Categories')
+@ApiTags('Admin App Builder Template Categories')
 @ApiBearerAuth()
 // `/app-builder` is canonical; `/conversation-v2` is a deprecated alias kept so existing clients,
 // bookmarked URLs and integrations keep working. Remove once legacy traffic has stopped.

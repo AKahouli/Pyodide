@@ -548,7 +548,7 @@ export class RuntimeRevisionService {
   }
 
   /**
-   * Resolve a published Conversation V2 template revision. The manifest lives
+   * Resolve a published App Builder template revision. The manifest lives
    * at the template's DB-recorded key and is stored in the same system folder
    * as the starter manifest, so the browser loads it through the identical
    * `…/revisions/:id/files` + `presign` path. The `template_revisions` row is

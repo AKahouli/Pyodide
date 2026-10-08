@@ -20,6 +20,7 @@ export const NAVIGATION_TARGETS: Record<NavigationTargetKey, {
   connectedApps: { permission: 'menu.connected_apps', path: '/apps', defaultLabels: { en: 'Connected apps', fr: 'Applications connectees' } },
   appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications" }, feature: 'appBuilder' },
   governance: { permission: 'menu.governance', path: '/governance', defaultLabels: { en: 'Governance', fr: 'Gouvernance' }, feature: 'governance' },
+  evaluationLogicalSearch: { permission: 'menu.evaluation_logical_search', path: '/evaluation-logical-search', defaultLabels: { en: 'Logical search evaluation', fr: 'Evaluation recherche logique' }, feature: 'governance' },
   admin: { permission: 'menu.admin', path: '/admin', defaultLabels: { en: 'Administration', fr: 'Administration' } },
 };
 
@@ -46,7 +47,8 @@ export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
     { id: 'history', type: 'item', parentId: 'ask', position: 1, visible: true, labels: NAVIGATION_TARGETS.history.defaultLabels, targetKey: 'history' },
     { id: 'govern', type: 'group', parentId: null, position: 4, visible: true, labels: { en: 'Govern', fr: 'Gouverner' } },
     { id: 'governance', type: 'item', parentId: 'govern', position: 0, visible: true, labels: NAVIGATION_TARGETS.governance.defaultLabels, targetKey: 'governance' },
-    { id: 'admin', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
+    { id: 'evaluation-logical-search', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels, targetKey: 'evaluationLogicalSearch' },
+    { id: 'admin', type: 'item', parentId: 'govern', position: 2, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
   ],
 };
 
@@ -74,6 +76,49 @@ export function navigationLabel(labels: { en: string; fr: string }, language: st
 
 export function findNavigationTarget(settings: NavigationSettings, targetKey: NavigationTargetKey) {
   return settings.nodes.find((node) => node.targetKey === targetKey);
+}
+
+/**
+ * Ensures the evaluation logical search entry is always present in the managed
+ * navigation, right after Governance in the same group. This keeps the entry
+ * reachable even when the backend returns navigation settings persisted before
+ * the target existed (the injected node is not part of the persisted payload).
+ */
+export function ensureEvaluationTarget(settings: NavigationSettings): NavigationSettings {
+  if (settings.nodes.some((node) => node.targetKey === 'evaluationLogicalSearch')) {
+    return settings;
+  }
+
+  const governance = settings.nodes.find((node) => node.targetKey === 'governance');
+  const governGroup = settings.nodes.find(
+    (node) => node.type === 'group' && (node.id === 'govern' || node.id === governance?.parentId),
+  );
+  const parentId = governance?.parentId ?? governGroup?.id ?? null;
+  const siblings = settings.nodes.filter((node) => node.parentId === parentId);
+  const anchor = siblings.find((node) => node.targetKey === 'governance');
+  const position = anchor
+    ? anchor.position + 1
+    : siblings.length
+      ? Math.max(...siblings.map((node) => node.position)) + 1
+      : 0;
+
+  const nodes = settings.nodes.map((node) =>
+    node.parentId === parentId && node.position >= position
+      ? { ...node, position: node.position + 1 }
+      : node,
+  );
+  nodes.push({
+    id: 'evaluation-logical-search',
+    type: 'item',
+    parentId,
+    position,
+    visible: true,
+    launcherVisible: true,
+    labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels,
+    targetKey: 'evaluationLogicalSearch',
+  });
+
+  return { ...settings, nodes };
 }
 
 export function isNavigationNodeVisible(settings: NavigationSettings, id: string, placement: 'sidebar' | 'launcher' = 'sidebar'): boolean {

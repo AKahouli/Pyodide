@@ -923,7 +923,7 @@ export class BrowserRuntimeHost {
 
   /**
    * Template ZIP validation: boot NodePod from in-memory files only (no runtime
-   * ticket, Ceph hydration, or Conversation v2 session).
+   * ticket, Ceph hydration, or App Builder session).
    */
   async startFromLocalFiles(sessionId: string, files: VfsFiles): Promise<void> {
     if (this._destroyed) return;

@@ -59,7 +59,7 @@ export function writeSelectedModelForSession(
   writeMap(map);
 }
 
-/** Drop persisted picks that matched a rotated Conversation V2 admin default. */
+/** Drop persisted picks that matched a rotated App Builder admin default. */
 export function clearSelectedModelIdFromAllSessions(modelId: string): void {
   const map = readMap();
   let changed = false;
