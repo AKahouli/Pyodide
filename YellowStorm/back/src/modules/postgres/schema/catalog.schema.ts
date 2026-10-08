@@ -55,7 +55,7 @@ export const catalogAiModels = catalogSchema.table(
     types: text('types').array().notNull().default([]),
     isActive: boolean('is_active').notNull().default(true),
     isDefault: boolean('is_default').notNull().default(false),
-    isAppBuilderDefault: boolean('is_conversation_v2_default').notNull().default(false),
+    isAppBuilderDefault: boolean('is_app_builder_default').notNull().default(false),
     omitTemperature: boolean('omit_temperature').notNull().default(false),
     inputModalities: text('input_modalities').array().notNull().default(['text']),
     maxInputTokens: integer('max_input_tokens'),
@@ -74,7 +74,7 @@ export const catalogAiModels = catalogSchema.table(
     index('idx_ai_models_type_active').on(t.type, t.isActive),
     index('idx_ai_models_types').using('gin', t.types),
     uniqueIndex('uq_ai_models_single_default').on(t.isDefault).where(sql`${t.isDefault}`),
-    uniqueIndex('uq_ai_models_single_v2_default').on(t.isAppBuilderDefault).where(sql`${t.isAppBuilderDefault}`),
+    uniqueIndex('uq_ai_models_single_app_builder_default').on(t.isAppBuilderDefault).where(sql`${t.isAppBuilderDefault}`),
   ],
 );
 

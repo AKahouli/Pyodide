@@ -66,7 +66,7 @@ export class AdminTemplateCategoryController {
       actorId: user._id,
       actorEmail: user.email,
       // Audit identifiers are persisted: `action`/`targetType` values are frozen
-      // (same policy as `ERR_380x` codes and the `conversation_v2` DB schema).
+      // (same policy as `ERR_380x` codes and the `app_builder` DB schema).
       action: 'conversation_v2_template_categories.create',
       targetId: category.id,
       targetType: 'ConversationV2TemplateCategory',

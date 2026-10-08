@@ -14,7 +14,7 @@ import {
 import { objectId, objectIdArray, timestamps } from '../../../common/postgres/columns';
 
 /** P8 app-builder schema (plan 2026-09-22). Separate from conversation.* V1. */
-export const appBuilderSchema = pgSchema('conversation_v2');
+export const appBuilderSchema = pgSchema('app_builder');
 
 export const appBuilderSessions = appBuilderSchema.table(
   'sessions',
@@ -48,21 +48,21 @@ export const appBuilderSessions = appBuilderSchema.table(
   },
   (t) => [
     check(
-      'c2_sessions_status_enum',
+      'ab_sessions_status_enum',
       sql`${t.status} IN ('active','waiting','paused','stopped','completed','error')`,
     ),
     check(
-      'c2_sessions_deploy_status_enum',
+      'ab_sessions_deploy_status_enum',
       sql`${t.deployStatus} IN ('idle','deploying','deployed','error')`,
     ),
-    check('c2_sessions_event_sequence_nonneg', sql`${t.eventSequence} >= 0`),
-    check('c2_sessions_event_count_nonneg', sql`${t.eventCount} >= 0`),
-    index('idx_c2_sessions_owner_deleted_last').on(t.ownerId, t.deletedAt, t.lastEventAt.desc()),
-    index('idx_c2_sessions_system_workspace').on(t.systemWorkspaceId),
-    uniqueIndex('uq_c2_sessions_ai_session')
+    check('ab_sessions_event_sequence_nonneg', sql`${t.eventSequence} >= 0`),
+    check('ab_sessions_event_count_nonneg', sql`${t.eventCount} >= 0`),
+    index('idx_ab_sessions_owner_deleted_last').on(t.ownerId, t.deletedAt, t.lastEventAt.desc()),
+    index('idx_ab_sessions_system_workspace').on(t.systemWorkspaceId),
+    uniqueIndex('uq_ab_sessions_ai_session')
       .on(t.aiSessionId)
       .where(sql`${t.aiSessionId} IS NOT NULL`),
-    uniqueIndex('uq_c2_sessions_share_token')
+    uniqueIndex('uq_ab_sessions_share_token')
       .on(t.shareTokenHash)
       .where(sql`${t.shareTokenHash} IS NOT NULL`),
   ],
@@ -84,17 +84,17 @@ export const appBuilderEvents = appBuilderSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    check('c2_events_sequence_nonneg', sql`${t.sequence} >= 0`),
+    check('ab_events_sequence_nonneg', sql`${t.sequence} >= 0`),
     check(
-      'c2_events_type_enum',
+      'ab_events_type_enum',
       sql`${t.type} IN (
         'message','tool','step','plan','title','done','wait','error',
         'application_component','app_build_progress'
       )`,
     ),
-    uniqueIndex('uq_c2_events_session_sequence').on(t.sessionId, t.sequence),
-    uniqueIndex('uq_c2_events_session_event_id').on(t.sessionId, t.eventId),
-    index('idx_c2_events_session_type_sequence').on(t.sessionId, t.type, t.sequence),
+    uniqueIndex('uq_ab_events_session_sequence').on(t.sessionId, t.sequence),
+    uniqueIndex('uq_ab_events_session_event_id').on(t.sessionId, t.eventId),
+    index('idx_ab_events_session_type_sequence').on(t.sessionId, t.type, t.sequence),
   ],
 );
 
@@ -118,17 +118,17 @@ export const appBuilderAppShares = appBuilderSchema.table(
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex('uq_c2_shares_session_user')
+    uniqueIndex('uq_ab_shares_session_user')
       .on(t.sessionId, t.recipientUserId)
       .where(sql`${t.recipientUserId} IS NOT NULL`),
-    uniqueIndex('uq_c2_shares_session_email')
+    uniqueIndex('uq_ab_shares_session_email')
       .on(t.sessionId, t.recipientEmail)
       .where(sql`${t.recipientEmail} IS NOT NULL`),
-    uniqueIndex('uq_c2_shares_invite_token')
+    uniqueIndex('uq_ab_shares_invite_token')
       .on(t.inviteTokenHash)
       .where(sql`${t.inviteTokenHash} IS NOT NULL`),
-    index('idx_c2_shares_recipient_updated').on(t.recipientUserId, t.updatedAt.desc()),
-    index('idx_c2_app_shares_owner').on(t.ownerId),
+    index('idx_ab_shares_recipient_updated').on(t.recipientUserId, t.updatedAt.desc()),
+    index('idx_ab_app_shares_owner').on(t.ownerId),
   ],
 );
 
@@ -146,10 +146,10 @@ export const appBuilderTemplateCategories = appBuilderSchema.table(
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex('uq_c2_tpl_categories_slug').on(t.slug),
-    uniqueIndex('uq_c2_tpl_categories_name').on(t.name),
+    uniqueIndex('uq_ab_tpl_categories_slug').on(t.slug),
+    uniqueIndex('uq_ab_tpl_categories_name').on(t.name),
     check(
-      'c2_tpl_categories_slug_format',
+      'ab_tpl_categories_slug_format',
       sql`${t.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`,
     ),
   ],
@@ -180,12 +180,12 @@ export const appBuilderTemplates = appBuilderSchema.table(
     ...timestamps(),
   },
   (t) => [
-    check('c2_templates_status_enum', sql`${t.status} IN ('draft','published')`),
-    uniqueIndex('uq_c2_templates_category_title').on(t.categoryId, t.title),
-    uniqueIndex('uq_c2_templates_revision')
+    check('ab_templates_status_enum', sql`${t.status} IN ('draft','published')`),
+    uniqueIndex('uq_ab_templates_category_title').on(t.categoryId, t.title),
+    uniqueIndex('uq_ab_templates_revision')
       .on(t.revisionId)
       .where(sql`${t.revisionId} IS NOT NULL`),
-    index('idx_c2_templates_category').on(t.categoryId),
+    index('idx_ab_templates_category').on(t.categoryId),
   ],
 );
 
@@ -212,9 +212,9 @@ export const appBuilderTemplateRevisions = appBuilderSchema.table(
     ...timestamps(),
   },
   (t) => [
-    check('c2_tpl_revisions_status_enum', sql`${t.status} IN ('draft','published')`),
-    check('c2_tpl_revisions_file_count_nonneg', sql`${t.fileCount} >= 0`),
-    uniqueIndex('uq_c2_tpl_revisions_revision').on(t.revisionId),
-    index('idx_c2_tpl_revisions_template').on(t.templateId),
+    check('ab_tpl_revisions_status_enum', sql`${t.status} IN ('draft','published')`),
+    check('ab_tpl_revisions_file_count_nonneg', sql`${t.fileCount} >= 0`),
+    uniqueIndex('uq_ab_tpl_revisions_revision').on(t.revisionId),
+    index('idx_ab_tpl_revisions_template').on(t.templateId),
   ],
 );

@@ -74,9 +74,9 @@ interface KeyedPair {
  * deliberately not reconciled here.
  */
 const NEW_MODULE_PAIRS: KeyedPair[] = [
-  { mongo: 'conversation_v2_sessions', pg: 'conversation_v2.sessions', lowerCase: true },
-  { mongo: 'conversation_v2_events', pg: 'conversation_v2.events', lowerCase: true },
-  { mongo: 'conversation_v2_app_shares', pg: 'conversation_v2.app_shares', lowerCase: true },
+  { mongo: 'conversation_v2_sessions', pg: 'app_builder.sessions', lowerCase: true },
+  { mongo: 'conversation_v2_events', pg: 'app_builder.events', lowerCase: true },
+  { mongo: 'conversation_v2_app_shares', pg: 'app_builder.app_shares', lowerCase: true },
   { mongo: 'app_runtime_bindings', pg: 'app_runtime.bindings', mongoKey: 'bindingId', pgKey: 'binding_id' },
   { mongo: 'app_source_revisions', pg: 'app_runtime.source_revisions', lowerCase: true },
   { mongo: 'app_finalized_revisions', pg: 'app_runtime.finalized_revisions', lowerCase: true },
