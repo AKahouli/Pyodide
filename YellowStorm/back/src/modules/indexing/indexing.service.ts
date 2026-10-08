@@ -406,10 +406,7 @@ export class IndexingService {
     });
 
     try {
-      // Look up the document + workspace to derive the (workspace_name,
-      // file_path, file_name) triple the upstream endpoint needs. All callers
-      // (single delete, bulk delete, reindex) invoke us BEFORE removing the
-      // document row, so the lookup is guaranteed to find it.
+      // Read stored file identifiers before the document row is removed.
       const document = await this.documentReadPort.findOne({ id: documentId, workspaceId });
       if (!document) {
         this.logger.warn('Document not found for index delete, skipping', {
@@ -418,15 +415,9 @@ export class IndexingService {
         });
         return;
       }
-      const workspace = await this.workspaceReadPort.findById(document.workspaceId);
-
       const result = await this.indexingClient.deleteIndex({
         documentId,
         workspaceId,
-        // storagePrefix is the immutable Ceph segment — workspace.name can
-        // drift on rename but the file's location can't. Same fallback chain
-        // as indexDocument so identifiers stay aligned across index/delete.
-        workspaceName: workspace?.storagePrefix || workspace?.alias || workspaceId,
         filePath: document.path ?? '',
         fileName: document.filename ?? document.originalName,
       });
