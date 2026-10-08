@@ -306,9 +306,21 @@ export interface DataConnection {
   documentId: string;
   /** Whether runs also copy the e-mails and attachments into the workspace, to be searched there. */
   indexInWorkspace: boolean;
+  /** The reading limits set on this connection; one left out uses its default. */
+  limits: ArchiveReadLimits;
+  /** The most read time and memory an admin allows, also the value of a connection that sets none. */
+  ceilings: Required<Pick<ArchiveReadLimits, 'archiveTimeoutSeconds' | 'parserMemoryMb'>>;
   /** False when the file is gone or its workspace is no longer open to the person. */
   available: boolean;
   createdAt: string;
+}
+
+/** How much of a mail archive a run reads, chosen per connection. */
+export interface ArchiveReadLimits {
+  maxArchiveEmails?: number;
+  maxArchiveMb?: number;
+  archiveTimeoutSeconds?: number;
+  parserMemoryMb?: number;
 }
 
 export interface DataConnectionDraft {
@@ -429,8 +441,7 @@ export interface RunLimits {
   maxValuesPerRun: number;
   maxAiRowsPerSource: number;
   maxAiParallelCalls: number;
-  maxArchiveEmails: number;
-  maxArchiveMb: number;
+  /** Also the most a mail archive connection may give its reader, and what one that sets none gets. */
   parserMemoryMb: number;
   archiveTimeoutSeconds: number;
 }
@@ -449,12 +460,18 @@ export interface AiExtractionSettings {
   parallelCalls?: number;
   /** One document gives several records, one per item the AI finds. Set on a mapping only. */
   manyRecords?: boolean;
+  /** Most records a sheet mapping gives, never above the admin's records per source. Mapping only. */
+  maxRecords?: number;
+  /** Most files a workspace mapping reads, never above the admin's files per run. Mapping only. */
+  maxFiles?: number;
 }
 
 /** The admin defaults with every limit filled in, and which ones the admin set. */
 export interface AiExtractionDefaults {
   aiSettings: AiExtractionSettings;
   configured: Partial<AiExtractionSettings>;
+  /** The most records and files a mapping may choose (the admin's run limits); absent from the admin endpoint. */
+  sourceCeilings?: { maxRecordsPerSource: number; maxRunSources: number };
 }
 
 /** How one extracted field was read in a preview, or why it was not. */

@@ -21,8 +21,6 @@ export const RUN_LIMIT_FIELDS: ReadonlyArray<{ key: keyof RunLimits; builtIn: nu
   { key: 'maxValuesPerRun', builtIn: 50000, min: 1000, max: 5000000, group: 'size' },
   { key: 'maxAiRowsPerSource', builtIn: 500, min: 0, max: 200000, group: 'ai' },
   { key: 'maxAiParallelCalls', builtIn: 8, min: 1, max: 32, group: 'ai' },
-  { key: 'maxArchiveEmails', builtIn: 50000, min: 100, max: 200000, group: 'archive' },
-  { key: 'maxArchiveMb', builtIn: 1024, min: 10, max: 51200, group: 'archive' },
   { key: 'archiveTimeoutSeconds', builtIn: 900, min: 60, max: 7200, group: 'archive' },
   { key: 'parserMemoryMb', builtIn: 512, min: 256, max: 16384, group: 'archive' },
 ];

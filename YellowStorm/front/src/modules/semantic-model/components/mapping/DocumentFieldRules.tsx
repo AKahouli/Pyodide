@@ -380,7 +380,7 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
 /** The AI calls a run makes at once when nothing sets it (the runtime's own default). */
 export const DEFAULT_PARALLEL_CALLS = 4;
 
-const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords'>; min: number; max: number }> = [
+const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords' | 'maxRecords' | 'maxFiles'>; min: number; max: number }> = [
   { key: 'maxBlocks', min: 10, max: 500 },
   { key: 'maxCharacters', min: 2000, max: 400000 },
   { key: 'longDocumentCharacters', min: 1000, max: 2000000 },

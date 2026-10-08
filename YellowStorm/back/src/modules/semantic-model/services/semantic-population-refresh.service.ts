@@ -1,4 +1,4 @@
-import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions, mappingFileCap, mappingRecordCap } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -6,6 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
+import { pickArchiveLimits, type ArchiveReadLimits } from '../domain/semantic-data-connection.types';
 import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
@@ -693,10 +694,16 @@ export class SemanticPopulationRefreshService {
     const usableMappings: MappingRow[] = [];
     const skipped: { mappingId: string; reason: string }[] = [];
     let waitingFiles = 0;
-    const indexed = await this.archivesIndexedInWorkspace(model.id);
-    // The runtime copies an archive's e-mails and attachments into its workspace only when its data source asks to.
-    const withIndexing = <T extends { source: { assetId: string } }>(entry: T): T =>
-      indexed.has(entry.source.assetId) ? { ...entry, source: { ...entry.source, indexInWorkspace: true } } : entry;
+    const archives = await this.archiveConnections(model.id);
+    // An archive's connection says how much of it is read, and whether the runtime also copies its e-mails and
+    // attachments into the workspace. Only what was set travels, so other sources keep their fingerprint.
+    const withIndexing = <T extends { source: { assetId: string } }>(entry: T): T => {
+      const archive = archives.get(entry.source.assetId);
+      if (!archive) return entry;
+      return { ...entry, source: { ...entry.source,
+        ...(archive.indexInWorkspace ? { indexInWorkspace: true } : {}),
+        ...(Object.keys(archive.limits).length ? { archiveLimits: archive.limits } : {}) } };
+    };
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -710,7 +717,9 @@ export class SemanticPopulationRefreshService {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(withIndexing(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId))));
+          // A mapping may read only its first files (in the stable order the runtime sees), never more than the admin allows.
+          const maxFiles = mappingFileCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRunSources);
+          for (const file of files.readable.slice(0, maxFiles)) sources.push(withIndexing(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId))));
           waitingFiles += files.waiting.length;
         } else {
           sources.push(withIndexing(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId))));
@@ -870,6 +879,8 @@ export class SemanticPopulationRefreshService {
         ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
         // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
+        // Only present when a mapping sets its own reading limits.
+        ...('readLimits' in source && source.readLimits ? { readLimits: source.readLimits } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -1147,11 +1158,15 @@ export class SemanticPopulationRefreshService {
 
   /** Readable files of a workspace mapping, listed at run time. */
   /** The mail archives whose data source asks for their e-mails to be indexed in the workspace too. */
-  private async archivesIndexedInWorkspace(modelId: string): Promise<Set<string>> {
-    const result = await this.database.query<{ documentId: string }>(
-      `SELECT document_id AS "documentId" FROM semantic_model.data_connections
-       WHERE model_id=$1 AND kind='mail_archive' AND (config->>'indexInWorkspace')::boolean IS TRUE`, [modelId]);
-    return new Set(result.rows.map((row) => row.documentId));
+  /** Per archive file, what its connection chose: read time and memory never above the admin's. */
+  private async archiveConnections(modelId: string): Promise<Map<string, { indexInWorkspace: boolean; limits: ArchiveReadLimits }>> {
+    const result = await this.database.query<{ documentId: string; indexInWorkspace: boolean | null; limits: unknown }>(
+      `SELECT document_id AS "documentId", (config->>'indexInWorkspace')::boolean AS "indexInWorkspace", config->'limits' AS limits
+       FROM semantic_model.data_connections WHERE model_id=$1 AND kind='mail_archive'`, [modelId]);
+    const admin = { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() };
+    const ceilings = { archiveTimeoutSeconds: admin.archiveTimeoutSeconds, parserMemoryMb: admin.parserMemoryMb };
+    return new Map(result.rows.map((row) => [row.documentId,
+      { indexInWorkspace: row.indexInWorkspace === true, limits: pickArchiveLimits(row.limits, ceilings) }]));
   }
 
   private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
@@ -1269,6 +1284,7 @@ export class SemanticPopulationRefreshService {
       );
     }
     const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
+    const maxRecords = mappingRecordCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRecordsPerSource);
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
@@ -1285,6 +1301,8 @@ export class SemanticPopulationRefreshService {
       ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
       ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
+      // Only sent when the mapping reads fewer records than the admin allows, so other sheets keep their fingerprint.
+      ...(maxRecords !== undefined ? { readLimits: { maxRecords } } : {}),
       mappingVersion,
     };
   }

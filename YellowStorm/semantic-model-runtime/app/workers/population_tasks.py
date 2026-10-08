@@ -28,7 +28,7 @@ from app.population.computed_fields import (apply_row_recipes, check_inputs, nor
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
-from app.population.run_limits import ai_pacing, run_limits
+from app.population.run_limits import ai_pacing, run_limits, source_limits, source_record_cap
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
@@ -84,6 +84,8 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
         # Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         **({"fieldExtractions": source["fieldExtractions"]} if source.get("fieldExtractions") else {}),
+        # Only present when a mapping sets its own reading limits.
+        **({"readLimits": source["readLimits"]} if source.get("readLimits") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -392,6 +394,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
                             if extractions else {})}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
+                **({"readLimits": entry["readLimits"]} if isinstance(entry.get("readLimits"), dict) else {}),
             })
             mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
         try:
@@ -528,7 +531,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                             dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")))
             target = archive_dir["path"] / f"{len(archive_files)}.bin"
             async with asyncio.timeout(asset_fetch_wall_seconds(source)):
-                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=limits["maxArchiveMb"]))(
+                archive_mb = source_limits(limits, source)["maxArchiveMb"]
+                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=archive_mb))(
                     source, actor, target=target)
             # Copying the e-mails into the workspace only feeds its search; the model reads the
             # archive itself, so it is done only when the data source asks for it.
@@ -559,7 +563,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             with tempfile.TemporaryDirectory(prefix="semantic-derived-",
                                              dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
                 await progress.advance("opening", 0, None)
-                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=limits),
+                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=source_limits(limits, source)),
                                                 source, path, Path(directory))
                 created = sent = failed = 0
                 await progress.advance("files", 0, len(files))
@@ -613,7 +617,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             key = str(data)
             if key not in email_tables:
                 email_tables[key] = await asyncio.to_thread(
-                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables", limits=limits)
+                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables",
+                    limits=source_limits(limits, source))
             table = email_tables[key][selected_sheet(options)]
             await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
             return {**{name: table[name] for name in ("rowCount", "columns", "sizeBytes", "contentHash")},
@@ -774,10 +779,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             limit=QUERY_ROW_LIMIT, offset=offset)
                         constants = entry.get("constantMapping", {})
                         raws = page["rows"]
-                        # The admin's per-source limit: the rest of the sheet is left unread.
-                        capped = len(raws) > limits["maxRecordsPerSource"] - records
+                        # The mapping's (else the admin's) per-source limit: the rest of the sheet is left unread.
+                        record_cap = source_record_cap(limits, entry)
+                        capped = len(raws) > record_cap - records
                         if capped:
-                            raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
+                            raws = raws[:max(0, record_cap - records)]
                             complete_enumeration = sheet_complete = False
                         expand_gaps: list = []
                         if expand:

@@ -41,7 +41,7 @@ const setup = (
   records: unknown[] = [],
   recordRelations: unknown[] = [],
   labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
-  indexedArchives: string[] = [],
+  archives: Array<string | { documentId: string; indexInWorkspace?: boolean; limits?: unknown }> = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -61,7 +61,7 @@ const setup = (
         }
         return { rows: mappings };
       }
-      if (sql.includes('FROM semantic_model.data_connections')) return { rows: indexedArchives.map((documentId) => ({ documentId })) };
+      if (sql.includes('FROM semantic_model.data_connections')) return { rows: archives.map((archive) => typeof archive === 'string' ? { documentId: archive, indexInWorkspace: true, limits: null } : archive) };
       if (sql.includes('FROM semantic_model.records')) return { rows: records };
       if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
@@ -166,6 +166,18 @@ describe('SemanticPopulationRefreshService', () => {
     expect(await sent(['d-1'])).toMatchObject({ assetId: 'd-1', indexInWorkspace: true });
   });
 
+  it("sends an archive's own reading limits, read time and memory lowered to the built-in ceiling", async () => {
+    const sent = async (archive: { documentId: string; limits?: unknown }) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, [archive]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent({ documentId: 'd-1', limits: {} })).not.toHaveProperty('archiveLimits');
+    const source = await sent({ documentId: 'd-1', limits: { maxArchiveEmails: 200, maxArchiveMb: 5, archiveTimeoutSeconds: 5000, parserMemoryMb: 300 } });
+    expect(source).not.toHaveProperty('indexInWorkspace');
+    expect(source.archiveLimits).toEqual({ maxArchiveEmails: 200, archiveTimeoutSeconds: 900, parserMemoryMb: 300 });
+  });
+
   it('sends business synonyms in the specification only when there are some', async () => {
     const { database, runtime, service } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
@@ -223,6 +235,33 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
     expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
     expect(result.summary.unresolvedRelations).toBe(3);
+  });
+
+  it("sends a sheet mapping's own record limit, never above the built-in records per source", async () => {
+    const sent = async (aiSettings: unknown) => {
+      const { runtime, service } = setup([MAPPING({ aiSettings })]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0];
+    };
+    expect(await sent(null)).not.toHaveProperty('readLimits');
+    expect(await sent({ maxRecords: 50 })).toMatchObject({ readLimits: { maxRecords: 50 } });
+    expect((await sent({ maxRecords: 50 })).options).not.toHaveProperty('aiSettings');
+    expect(await sent({ maxRecords: 90000 })).toMatchObject({ readLimits: { maxRecords: 5000 } });
+  });
+
+  it('reads only as many files of a workspace mapping as it chose, always the same ones', async () => {
+    const file = (id: string) => ({ id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
+      contentHash: `sha256:${id}`, updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 10, createdBy: 'u-9', indexingStatus: 'ready' });
+    const workspace = MAPPING({
+      scope: 'workspace', folderId: 'folder-1', documentId: 'workspace:ws-1:folder-1', sheetName: '', assetKind: 'document',
+      validatedSourceVersion: null, aiSettings: { maxFiles: 2 },
+      fieldMappings: [{ sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' }, { sourceField: 'Customer Id', targetAttribute: 'customer_id', mode: 'extract' }],
+    });
+    const { documents, runtime, service } = setup([workspace]);
+    (documents as any).listAllInWorkspace = jest.fn(async () => [file('c'), file('a'), file('b'), { id: 'folder-1', isFolder: true, mimeType: '', parentId: null }]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as any)[0].payload;
+    expect(payload.sources.map((source: any) => source.source.assetId)).toEqual(['a', 'b']);
   });
 
   it('reads every readable file of a workspace mapping, and sees a new file as a change', async () => {

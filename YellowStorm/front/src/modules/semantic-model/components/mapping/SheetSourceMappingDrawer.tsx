@@ -21,6 +21,7 @@ import { FormField, INPUT, ROW_LIST } from '../form/FormParts';
 import { SettingsPane } from '../settings/SettingsPane';
 import { isMailArchive } from '../../utils/data-sources';
 import { ArchiveIndexingPane } from './ArchiveIndexingPane';
+import { ReadLimitPane, readLimitProblem } from './ReadLimitPane';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
 import { FieldLiveStatus } from './DocumentPreviewPane';
 import { computedProblem, recipeColumns } from './FieldRecipeEditor';
@@ -38,9 +39,9 @@ const MAX_ROWS = 20;
 // The runtime's default bound on rows read with AI per source and run (SEMANTIC_MAX_AI_ROWS_PER_SOURCE).
 const MAX_AI_ROWS = 500;
 
-type Pane = 'samples' | 'expand' | 'fields' | 'key' | 'result' | 'preview' | 'archive';
+type Pane = 'samples' | 'expand' | 'fields' | 'key' | 'result' | 'preview' | 'archive' | 'limits';
 // Every part starts folded, as in "fill from another concept": its title says what it holds or what to fix.
-const FOLDED: Record<Pane, boolean> = { samples: false, expand: false, fields: false, key: false, result: false, preview: false, archive: false };
+const FOLDED: Record<Pane, boolean> = { samples: false, expand: false, fields: false, key: false, result: false, preview: false, archive: false, limits: false };
 
 type Span = { start: number; end: number };
 /** What is marked in a shown text: a searched label, or where values were found (a column's span). */
@@ -199,7 +200,8 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     return false;
   }).map((mapping) => mapping.targetAttribute);
   const identityValid = !identityField || payload.some((mapping) => mapping.targetAttribute === identityField);
-  const limitsValid = !usesAi || !limitProblem(aiSettings);
+  const recordCeiling = defaultsQuery.data?.sourceCeilings?.maxRecordsPerSource;
+  const limitsValid = (!usesAi || !limitProblem(aiSettings)) && !readLimitProblem(aiSettings.maxRecords, recordCeiling);
   const expandIssue = expandProblem(expand) ? t('derived.expand.row.problem')
     : !expand && payload.some(readsItem) ? t('derived.expand.row.itemWithoutExpand') : null;
   const canSave = Boolean(conceptId && sheetName && payload.length && identityValid && !problems.length && limitsValid && !expandIssue);
@@ -326,7 +328,8 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     mutationFn: () => semanticModelApi.createSourceMapping(modelId, {
       conceptId, workspaceId: target!.workspaceId, documentId: target!.documentId, sheetName, assetKind: target!.assetKind,
       fieldMappings: payload, identityFields: identityField ? [identityField] : [],
-      ...(usesAi ? { aiSettings } : {}),
+      // Without AI, only the sheet's own record limit is kept.
+      ...(usesAi ? { aiSettings } : aiSettings.maxRecords !== undefined ? { aiSettings: { maxRecords: aiSettings.maxRecords } } : {}),
       ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
       ...(target!.replaces ? { mappingId: target!.replaces.id } : {}),
     }),
@@ -541,6 +544,9 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
             {t('mapping.identityEvidence', { name: evidence.name, unique: Math.round(evidence.uniqueRatio * 100), populated: Math.round(evidence.populatedRatio * 100) })}
           </p>)}
         </SettingsPane>}
+
+        {ready && <ReadLimitPane {...paneProps('limits')} limit='maxRecords' ceiling={recordCeiling} value={aiSettings}
+          onChange={(next) => setAiSettings(next)} />}
 
         {archive && ready && <ArchiveIndexingPane modelId={modelId} workspaceId={target.workspaceId} documentId={target.documentId} canEdit
           open={panes.archive} onOpenChange={paneProps('archive').onOpenChange} />}

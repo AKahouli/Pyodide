@@ -121,14 +121,15 @@ describe('Sheet mapping with the document field mapping', () => {
 
   it('lets a mail archive mapping choose to also index the archive in its workspace, saved at once', async () => {
     api.listDataConnections.mockResolvedValue([{ id: 'c-1', kind: 'mail_archive', name: 'mails2.zip', workspaceId: 'workspace-1', documentId: 'document-1',
-      indexInWorkspace: false, available: true, createdAt: '' }]);
+      indexInWorkspace: false, limits: { maxArchiveMb: 50 }, ceilings: { archiveTimeoutSeconds: 900, parserMemoryMb: 512 }, available: true, createdAt: '' }]);
     api.updateDataConnection.mockResolvedValue({});
     renderDrawer({ ...target(), mimeType: 'application/zip' });
     const pane = await screen.findByRole('region', { name: 'mapping.pane.archiveTitle' });
-    expect(within(pane).getByRole('button', { expanded: false })).toHaveTextContent('mapping.pane.archiveOff');
+    expect(within(pane).getByRole('button', { expanded: false })).toHaveTextContent('mapping.pane.archiveOff · settings.runLimits.maxArchiveEmails 50,000 · settings.runLimits.maxArchiveMb 50');
     fireEvent.click(within(pane).getByRole('button', { expanded: false }));
     fireEvent.click(await within(pane).findByRole('checkbox', { name: 'dataSources.dialog.indexLabel' }));
     await waitFor(() => expect(api.updateDataConnection).toHaveBeenCalledWith('model-1', 'c-1', { indexInWorkspace: true }));
+    expect(within(pane).getByLabelText('settings.runLimits.maxArchiveMb')).toHaveValue(50);
     expect(api.createSourceMapping).not.toHaveBeenCalled();
   });
 
@@ -142,6 +143,21 @@ describe('Sheet mapping with the document field mapping', () => {
     expect(api.createSourceMapping.mock.calls[0][1]).not.toHaveProperty('aiSettings');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
     expect(useSemanticModelEditorStore.getState().graph?.revision).toBe(0);
+  });
+
+  it("saves the sheet's own record limit without AI, refusing more than the admin allows", async () => {
+    api.getExtractionDefaults.mockResolvedValue({ aiSettings: { maxBlocks: 400, maxCharacters: 60000, longDocumentCharacters: 30000, blocksPerField: 8 }, configured: {},
+      sourceCeilings: { maxRecordsPerSource: 5000, maxRunSources: 5000 } });
+    renderDrawer();
+    await openAll();
+    const limit = await screen.findByLabelText('mapping.readLimits.maxRecords');
+    expect(limit).toHaveAttribute('placeholder', '5000');
+    fireEvent.change(limit, { target: { value: '9000' } });
+    expect(screen.getByRole('button', { name: 'mapping.save' })).toBeDisabled();
+    fireEvent.change(limit, { target: { value: '50' } });
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(api.createSourceMapping.mock.calls[0][1].aiSettings).toEqual({ maxRecords: 50 });
   });
 
   it('shows the document field mapping for every concept field, with the sheet modes', async () => {

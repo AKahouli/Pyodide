@@ -1,6 +1,6 @@
 import { SemanticDataConnectionService } from './semantic-data-connection.service';
 
-const row = { id: 'c-1', kind: 'mail_archive', name: 'mails.zip', workspaceId: 'ws-1', documentId: 'doc-1', indexInWorkspace: false, createdAt: new Date('2026-10-07T00:00:00.000Z') };
+const row = { id: 'c-1', kind: 'mail_archive', name: 'mails.zip', workspaceId: 'ws-1', documentId: 'doc-1', indexInWorkspace: false, limits: {}, createdAt: new Date('2026-10-07T00:00:00.000Z') };
 const archive = { id: 'doc-1', workspaceId: 'ws-1', originalName: 'mails.zip', mimeType: 'application/zip', isFolder: false };
 
 describe('SemanticDataConnectionService', () => {
@@ -19,7 +19,8 @@ describe('SemanticDataConnectionService', () => {
       findByIdsInWorkspace: jest.fn(async () => document ? [document] : []),
     };
     const shares = { hasAccess: jest.fn(async () => access), filterAccessible: jest.fn(async (_user: string, ids: string[]) => access ? ids : []) };
-    return { service: new SemanticDataConnectionService(database as never, models as never, documents as never, shares as never), database, client, models };
+    const settings = { getRunLimits: jest.fn(async () => ({ runLimits: { archiveTimeoutSeconds: 900, parserMemoryMb: 512 } })) };
+    return { service: new SemanticDataConnectionService(database as never, models as never, documents as never, shares as never, settings as never), database, client, models };
   };
   const dto = { kind: 'mail_archive' as const, workspaceId: 'ws-1', documentId: 'doc-1' };
 
@@ -49,8 +50,17 @@ describe('SemanticDataConnectionService', () => {
     const { service, database, models } = setup({ rows: [{ ...row, indexInWorkspace: true }] });
     await expect(service.update('user', 'model', 'c-1', { indexInWorkspace: true })).resolves.toMatchObject({ id: 'c-1', indexInWorkspace: true, available: true });
     expect(models.requireActiveRole).toHaveBeenCalledWith('user', 'model', ['owner', 'editor']);
-    expect(database.query.mock.calls[0]).toEqual([expect.stringContaining('WHERE id=$1 AND model_id=$2'), ['c-1', 'model', true]]);
+    expect(database.query.mock.calls[0]).toEqual([expect.stringContaining('WHERE id=$1 AND model_id=$2'), ['c-1', 'model', '{"indexInWorkspace":true}']]);
     await expect(setup({ rows: [] }).service.update('user', 'model', 'c-9', { indexInWorkspace: false })).rejects.toThrow('Data source not found');
+  });
+
+  it("replaces a connection's reading limits, refusing read time or memory above the admin's", async () => {
+    const { service, database } = setup({ rows: [{ ...row, limits: { maxArchiveEmails: 200, parserMemoryMb: 300 } }] });
+    await expect(service.update('user', 'model', 'c-1', { limits: { maxArchiveEmails: 200, parserMemoryMb: 300 } }))
+      .resolves.toMatchObject({ limits: { maxArchiveEmails: 200, parserMemoryMb: 300 }, ceilings: { archiveTimeoutSeconds: 900, parserMemoryMb: 512 } });
+    expect((database.query.mock.calls[0] as unknown[])[1]).toEqual(['c-1', 'model', '{"limits":{"maxArchiveEmails":200,"parserMemoryMb":300}}']);
+    await expect(service.update('user', 'model', 'c-1', { limits: { archiveTimeoutSeconds: 1000 } })).rejects.toThrow('at most 900');
+    await expect(service.update('user', 'model', 'c-1', {})).rejects.toThrow('Nothing to change');
   });
 
   it('refuses a workspace the editor cannot open, a missing file, a file that is not a mail archive and a full list', async () => {

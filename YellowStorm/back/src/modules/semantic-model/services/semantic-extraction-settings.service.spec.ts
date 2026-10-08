@@ -47,7 +47,7 @@ describe('run limits', () => {
     expect(database.query.mock.calls[0][1]).toEqual(['{"maxRecordsPerRun":50000}', 'admin-1']);
     expect(saved).toEqual({ configured: { maxRecordsPerRun: 50000 }, runLimits: {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
-      maxAiRowsPerSource: 500, maxAiParallelCalls: 8, maxArchiveEmails: 50000, maxArchiveMb: 1024,
+      maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
       parserMemoryMb: 512, archiveTimeoutSeconds: 900 } });
   });
 });

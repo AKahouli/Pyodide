@@ -79,9 +79,9 @@ export class SemanticExtractionSettingsController {
   }
 
   @Get('semantic-model-settings/extraction')
-  @ApiOperation({ summary: 'The AI reading limits a document mapping starts from' })
+  @ApiOperation({ summary: 'The AI reading limits a mapping starts from, and the most records and files it may choose' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL], 'any')
   getExtractionDefaults() {
-    return this.settings.getDefaults();
+    return this.settings.getMappingDefaults();
   }
 }

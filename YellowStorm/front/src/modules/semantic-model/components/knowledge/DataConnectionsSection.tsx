@@ -1,6 +1,6 @@
 import { useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ChevronDown, ChevronRight, GripVertical, Loader2, Mail, Plug, Plus, RefreshCw, Table2, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Gauge, GripVertical, Loader2, Mail, Plug, Plus, RefreshCw, Table2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { parseApiError } from '@/lib/api-error';
@@ -13,6 +13,7 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { DataConnection } from '../../types';
 import { MAIL_TABLES, tableLabel } from '../../utils/data-sources';
 import { SectionHeader } from '../form/FormParts';
+import { ArchiveLimitsEditor, useArchiveLimitsSummary } from './ArchiveLimitsEditor';
 import { ConnectDataSourceDialog } from './ConnectDataSourceDialog';
 
 type TableResource = Extract<KnowledgeResource, { kind: 'document' }>;
@@ -90,9 +91,11 @@ export function DataConnectionsSection({ modelId, canEdit, onUse, onDragStart, o
   onShowWorkspaces: () => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const limitsSummary = useArchiveLimitsSummary();
   const client = useQueryClient();
   const connections = useDataConnections(modelId || undefined);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [limitsOpen, setLimitsOpen] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const remove = useMutation({
     mutationFn: (connection: DataConnection) => semanticModelApi.deleteDataConnection(modelId, connection.id),
@@ -132,6 +135,15 @@ export function DataConnectionsSection({ modelId, canEdit, onUse, onDragStart, o
               onCheckedChange={(value) => indexing.mutate({ connection, on: value === true })} />
             {t('dataSources.indexInWorkspace')}
           </label> : connection.indexInWorkspace && <p className='border-t px-3 py-2 text-xs text-muted-foreground'>{t('dataSources.indexOn')}</p>}
+          <button type='button' className='flex min-h-11 w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/30'
+            aria-expanded={limitsOpen === connection.id} onClick={() => setLimitsOpen((current) => current === connection.id ? null : connection.id)}
+            title={t('dataSources.limits.help')}>
+            {limitsOpen === connection.id ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
+            <Gauge className='h-3.5 w-3.5 shrink-0' />
+            <span className='shrink-0 font-medium text-foreground'>{t('dataSources.limits.title')}</span>
+            <span className='min-w-0 flex-1 truncate'>{limitsSummary(connection)}</span>
+          </button>
+          {limitsOpen === connection.id && <div className='border-t p-3'><ArchiveLimitsEditor modelId={modelId} connection={connection} canEdit={canEdit} /></div>}
           {open && <div className='border-t bg-muted/20 p-2'><ConnectionTables modelId={modelId} connection={connection} canEdit={canEdit} onUse={onUse} onDragStart={onDragStart} onDragEnd={onDragEnd} /></div>}
         </div>;
       })

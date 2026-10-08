@@ -344,6 +344,18 @@ def test_run_limits_fall_back_to_built_in_values_and_stay_in_range():
                                   "maxRunSources": True}}) == {**DEFAULT_RUN_LIMITS, "maxRecordsPerRun": 50000}
 
 
+def test_an_archive_connection_sets_its_own_limits_but_not_more_time_or_memory_than_the_run():
+    from app.population.run_limits import DEFAULT_RUN_LIMITS, source_limits
+
+    limits = {**DEFAULT_RUN_LIMITS, "archiveTimeoutSeconds": 600}
+    assert source_limits(limits, {"assetId": "a"}) is limits
+    chosen = source_limits(limits, {"archiveLimits": {"maxArchiveEmails": 200, "maxArchiveMb": 5000,
+                                                      "archiveTimeoutSeconds": 3000, "parserMemoryMb": 300,
+                                                      "maxRecordsPerRun": 100}})
+    assert chosen == {**limits, "maxArchiveEmails": 200, "maxArchiveMb": 5000, "archiveTimeoutSeconds": 600,
+                      "parserMemoryMb": 300}
+
+
 @pytest.mark.asyncio
 async def test_admin_limits_cap_records_per_source_and_per_run(archive: bytes):
     from test_population_task import command
@@ -400,6 +412,12 @@ async def test_admin_limit_on_records_per_source_stops_reading_that_source():
     limited["payload"]["limits"] = {"maxRecordsPerSource": 100}
     outcome = await run_population_for_task(limited, fetch=fetch, upload_derived=upload)
     assert outcome["counts"]["materialized"] == 100 and outcome["completeEnumeration"] is False
+    # A mapping may read fewer records than the admin allows, never more.
+    own = command(sources=[{**sources[0], "readLimits": {"maxRecords": 40}}])
+    assert (await run_population_for_task(own, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 40
+    more = command(sources=[{**sources[0], "readLimits": {"maxRecords": 400}}])
+    more["payload"]["limits"] = {"maxRecordsPerSource": 100}
+    assert (await run_population_for_task(more, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 100
 
 
 def test_corps_falls_back_to_full_text_when_nothing_new() -> None:

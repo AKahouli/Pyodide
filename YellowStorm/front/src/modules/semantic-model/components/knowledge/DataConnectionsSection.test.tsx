@@ -9,7 +9,8 @@ const workspaceApi = vi.hoisted(() => ({ getWorkspaces: vi.fn(), getDocuments: v
 vi.mock('@/modules/workspace/api', () => workspaceApi);
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 
-const connection = { id: 'c-1', kind: 'mail_archive' as const, name: 'Legal mailbox', workspaceId: 'ws', documentId: 'zip', indexInWorkspace: false, available: true, createdAt: '2026-10-07T00:00:00.000Z' };
+const connection = { id: 'c-1', kind: 'mail_archive' as const, name: 'Legal mailbox', workspaceId: 'ws', documentId: 'zip', indexInWorkspace: false,
+  limits: {}, ceilings: { archiveTimeoutSeconds: 900, parserMemoryMb: 512 }, available: true, createdAt: '2026-10-07T00:00:00.000Z' };
 
 function wrap(children: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -57,6 +58,22 @@ describe('DataConnectionsSection', () => {
     expect(box).not.toBeChecked();
     fireEvent.click(box);
     await waitFor(() => expect(update).toHaveBeenCalledWith('m', 'c-1', { indexInWorkspace: true }));
+  });
+
+  it("sets an archive's reading limits, read time and memory no higher than the admin allows", async () => {
+    const update = vi.spyOn(semanticModelApi, 'updateDataConnection').mockResolvedValue(connection);
+    render(wrap(<DataConnectionsSection modelId='m' canEdit onDragStart={vi.fn()} onDragEnd={vi.fn()} onShowWorkspaces={vi.fn()} />));
+    const fold = await screen.findByRole('button', { name: /dataSources.limits.title/ });
+    expect(fold).toHaveTextContent('settings.runLimits.maxArchiveEmails 50,000');
+    fireEvent.click(fold);
+    const memory = screen.getByLabelText('settings.runLimits.parserMemoryMb');
+    expect(memory).toHaveAttribute('placeholder', '512');
+    fireEvent.change(memory, { target: { value: '1024' } });
+    expect(screen.getByRole('button', { name: 'settings.save' })).toBeDisabled();
+    fireEvent.change(memory, { target: { value: '300' } });
+    fireEvent.change(screen.getByLabelText('settings.runLimits.maxArchiveEmails'), { target: { value: '200' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.save' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('m', 'c-1', { limits: { parserMemoryMb: 300, maxArchiveEmails: 200 } }));
   });
 
   it('keeps a connection whose file is gone closed and says why; viewers cannot connect or remove', async () => {
