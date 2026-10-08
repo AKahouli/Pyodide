@@ -123,7 +123,7 @@ export const DraftAppCard = memo(function DraftAppCard({
       >
         <ActionButton
           label={t('card.continue')}
-          onClick={() => navigate(`/conversation-v2/${app.sessionId}`)}
+          onClick={() => navigate(`/studio/${app.sessionId}`)}
         >
           <MessageSquare className='size-3.5' />
         </ActionButton>

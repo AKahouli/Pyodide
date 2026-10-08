@@ -51,7 +51,7 @@ The playbook module is a self-contained feature module that handles:
 - **Bulk Delete**: Select and delete multiple playbooks at once
 - **Token Usage**: Per-execution and aggregate token tracking with usage indicator
 - **Beta Disclaimer**: First-visit modal with dismissible beta notice
-- **Execution schedule**: `Playbook.executionSchedule` (`ExecutionScheduleData | null`) matches the backend embedded document (daily / weekly / monthly / advanced). The **list** exposes `PlaybookSummary.scheduleEnabled` (whether an enabled schedule exists) and optional `executionSchedule` for rich badge display in cards. The **store** persists schedule changes via `upsertPlaybookSchedule` / `clearPlaybookSchedule` (`PUT` and `DELETE` on `/playbooks/:id/schedule`), with `scheduleSaving` / `scheduleError` for UI loading and errors (convenience hooks in `useSchedule.ts`). **UI** lives under `components/schedule/` (extracted sub-components: sheet, badge, type selector, active toggle, daily/weekly/monthly/advanced editors, helpers).
+- **Execution schedule**: `Playbook.executionSchedule` (`ExecutionScheduleData | null`) matches the backend embedded document (daily / weekly / monthly / advanced). The **list** exposes `PlaybookSummary.scheduleEnabled` (whether an enabled schedule exists) and optional `executionSchedule` for rich badge display in cards. The **store** persists schedule changes via `upsertPlaybookSchedule` / `clearPlaybookSchedule` (`PUT` and `DELETE` on `/playbooks/:id/schedule`), with `scheduleSaving` / `scheduleError` for UI loading and errors. **UI** lives under `components/schedule/` (extracted sub-components: sheet, badge, type selector, active toggle, daily/weekly/monthly/advanced editors, helpers).
 - **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend [`PlaybookScheduleRunnerService`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) starts a run (see [Backend: schedule runner](#backend-schedule-runner-reference)).
 
 ## Agent Quick Context
@@ -175,7 +175,6 @@ playbook/
 ├── hooks/
 │   ├── useAutosave.ts                   # Debounced autosave (1s)
 │   ├── usePlaybookCanvas.ts             # ReactFlow <-> Zustand store bridge
-│   └── useSchedule.ts                   # Convenience selectors: useScheduleSaving(), useScheduleError()
 ├── constants/
 │   └── schedule.constants.ts            # Schedule UI limits (e.g. max times/slots)
 ├── utils/
@@ -313,13 +312,11 @@ useLatestExecutionForPlaybook(playbookId) // PlaybookExecution | null (most rece
 useExecutionHistory()                     // PlaybookExecutionSummary[] (useShallow, stable empty ref)
 useExecutionsLoading()                    // boolean
 useIsExecuting(playbookId?)               // boolean (checks executingPlaybookIds)
-useExecutingPlaybookIds()                 // string[] (useShallow)
 useIsDirty()                              // boolean
 useDirtyVersion()                         // number
 useIsGenerating()                         // boolean
 useIsSaving()                             // boolean
 useSelectedStep()                         // string | null
-usePlaybookError()                        // string | null
 useDesignMessages()                       // DesignMessage[] (useShallow, stable empty ref)
 useDesignMessagesLoading()                // boolean
 useIsDesigning()                          // boolean
@@ -331,8 +328,6 @@ usePageMode()                             // PlaybookPageMode
 useWorkspaceExplorerOpen()                // boolean
 useCanUndo() / useCanRedo()               // boolean
  useHasActiveExecution(playbookId)         // boolean (checks executingPlaybookIds + history currentExecution)
- useScheduleSaving()                       // boolean (schedule PUT/DELETE in flight)
- useScheduleError()                        // string | null (last schedule API error)
 ```
 
 ---

@@ -132,7 +132,7 @@ describe('scripts/migrate/*-fk.ts use fk-specs.ts as their only source', () => {
     const referenced: string[] = [];
     for (const file of scripts) {
       const src = fs.readFileSync(path.join(dir, file), 'utf8');
-      const call = src.match(/fkSpecs\(([^)]*)\)/s)?.[1] ?? '';
+      const call = (/fkSpecs\(([^)]*)\)/s.exec(src))?.[1] ?? '';
       referenced.push(...[...call.matchAll(/'(fk_[a-z0-9_]+)'/g)].map((m) => m[1]));
     }
     const expected = [...FK_SPECS, ...FK_SPECS_IN_0020, ...FK_SPECS_IN_0037, ...FK_SPECS_IN_0041].map((s) => s.name).sort();

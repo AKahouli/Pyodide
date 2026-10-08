@@ -864,3 +864,23 @@ async def test_recovery_ends_a_dead_workers_run_that_was_asked_to_stop(pool: asy
     assert await _recover(repository) == {"exhausted": 0, "requeued": 0}
     assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
     assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_worker_hands_back_its_previous_processs_runs(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    node = "population-worker:semantic-population@host:"
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE,
+                                       lease_owner=f"{node}old-boot:run", lease_seconds=900)
+    await repository.request_cancel(admitted.job_id, "user-1")
+
+    # Another node's process and this boot's own runs are left alone.
+    assert await repository.release_abandoned_leases(
+        node_prefix="population-worker:other@host:", boot_prefix="population-worker:other@host:new:") == 0
+    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}old-boot:") == 0
+    # The node starting again under a new boot id releases it, and the stop takes effect at once.
+    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new-boot:") == 1
+    await _recover(repository)
+    assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancelled"

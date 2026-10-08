@@ -102,3 +102,26 @@ def test_first_instance_wins_when_the_model_returns_several(monkeypatch: pytest.
     result = AttributeExtractionAgent().extract(request())
 
     assert [item["value"] for item in result["values"] if item["key"] == "customer_id"] == ["first"]
+
+
+def test_multiple_returns_one_record_per_instance(monkeypatch: pytest.MonkeyPatch):
+    install_stub(monkeypatch, payload([
+        {"label": "CNT-1", "attributes": [
+            {"key": "contract_number", "value": "CNT-1", "evidenceReferences": ["section:7/block:9"]}]},
+        {"label": "CNT-2", "attributes": [
+            {"key": "contract_number", "value": "CNT-2", "evidenceReferences": ["section:7/block:9"]},
+            {"key": "title", "value": "Lease", "evidenceReferences": ["section:7/block:9"]}]},
+    ]))
+
+    result = AttributeExtractionAgent().extract({**request(), "multiple": True})
+
+    assert [[(v["key"], v["value"]) for v in record["values"]] for record in result["records"]] == [
+        [("contract_number", "CNT-1")], [("contract_number", "CNT-2"), ("title", "Lease")]]
+    # The single-record answer is unchanged: the first value found for each field.
+    assert {item["key"]: item["value"] for item in result["values"]} == {"contract_number": "CNT-1", "title": "Lease"}
+
+
+def test_records_are_only_returned_when_asked(monkeypatch: pytest.MonkeyPatch):
+    install_stub(monkeypatch, payload([{"label": "CNT-1", "attributes": [
+        {"key": "contract_number", "value": "CNT-1", "evidenceReferences": ["section:7/block:9"]}]}]))
+    assert "records" not in AttributeExtractionAgent().extract(request())

@@ -7,7 +7,7 @@ export class CorrectedResponseComponentBuilder {
   build(
     original: MessageComponent[],
     originalSegments: ReliabilityAnswerSegment[],
-    correctedSegments: Array<{ text: string }>,
+    correctedSegments: { text: string }[],
   ): MessageComponent[] {
     if (correctedSegments.length !== originalSegments.length) throw new Error('Corrector changed the segment count');
     const correctedById = new Map(originalSegments.map((segment, index) => [segment.componentId, correctedSegments[index].text.trim()]));

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 from typing import Any
 
 import litellm
@@ -554,6 +555,28 @@ def _resolve_hitl_blockers(metadata: dict[str, Any], state: ExecutionState, node
     ]
 
 
+_TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
+
+
+def render_prompt_variables(prompt: str, context: dict[str, Any]) -> str:
+    """Resolve ``{{ dotted.path }}`` markers in an agent prompt using the merged
+    node input + trigger context. Unresolved markers are left untouched."""
+
+    def _resolve(match: re.Match[str]) -> str:
+        path = match.group(1).split(".")
+        current: Any = context
+        for part in path:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return match.group(0)
+        if isinstance(current, (dict, list)):
+            return json.dumps(current, ensure_ascii=False, default=str)
+        return str(current)
+
+    return _TEMPLATE_VAR_RE.sub(_resolve, prompt)
+
+
 async def run_step(
     node_id: str,
     node_config: dict[str, Any],
@@ -631,6 +654,14 @@ async def run_step(
     })
 
     input_context = node_inputs if node_inputs is not None else state.get("inputs", {})
+    prompt_vars: dict[str, Any] = {"input_context": {}, "target_answer": ""}
+    trigger = state.get("inputs", {})
+    if isinstance(trigger, dict):
+        prompt_vars["input_context"].update(trigger)
+    if isinstance(input_context, dict):
+        prompt_vars["input_context"].update(input_context)
+        prompt_vars["target_answer"] = input_context.get("target_answer", "")
+    system_prompt = render_prompt_variables(system_prompt, prompt_vars)
     hitl_policy = _resolve_hitl_policy(metadata, state)
     hitl_blockers = _resolve_hitl_blockers(metadata, state, node_id)
     hitl_active = needs_hitl(metadata) and hitl_policy.get("mode") != "off"

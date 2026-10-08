@@ -59,9 +59,9 @@ export interface IFlowTaskResultResponse {
   output?: unknown;
   displayText?: string;
   outputs?: Record<string, unknown>;
-  artifacts?: Array<Record<string, unknown>>;
-  components?: Array<Record<string, unknown>>;
-  iteratorIterations?: Array<Record<string, unknown>>;
+  artifacts?: Record<string, unknown>[];
+  components?: Record<string, unknown>[];
+  iteratorIterations?: Record<string, unknown>[];
   error?: string;
   startedAt?: Date;
   endedAt?: Date;
@@ -90,7 +90,7 @@ export interface IFlowTaskResultResponse {
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {
   taskResults: IFlowTaskResultResponse[];
   routerDecisions: IFlowRouterDecisionResponse[];
-  dynamicReasoningAttempts: Array<Record<string, unknown>>;
+  dynamicReasoningAttempts: Record<string, unknown>[];
 }
 
 export interface IFlowRouterDecisionResponse {

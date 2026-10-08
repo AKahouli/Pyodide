@@ -30,7 +30,7 @@ export class WidgetTokenGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithWidget>();
 
-    const authHeader = request.headers.authorization as string | undefined;
+    const authHeader = request.headers.authorization;
     const queryToken = request.query.token as string | undefined;
     const rawToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : queryToken;
 
@@ -52,8 +52,8 @@ export class WidgetTokenGuard implements CanActivate {
       throw new UnauthorizedException(ErrorCode.WIDGET_TOKEN_EXPIRED, 'Widget token has expired');
     }
 
-    const requestOrigin = request.headers.origin as string | undefined;
-    const referer = request.headers.referer as string | undefined;
+    const requestOrigin = request.headers.origin;
+    const referer = request.headers.referer;
     const origin = requestOrigin || (referer ? new URL(referer).origin : undefined);
 
     if (origin && widgetToken.allowedOrigins.length > 0) {
@@ -81,7 +81,7 @@ export class WidgetTokenGuard implements CanActivate {
     });
 
     const agent = await this.agentRepository.findById(widgetToken.agentId.toString());
-    if (!agent || !agent.isActive) {
+    if (!agent?.isActive) {
       throw new NotFoundException(ErrorCode.WIDGET_AGENT_NOT_FOUND, 'Agent not found or inactive');
     }
 

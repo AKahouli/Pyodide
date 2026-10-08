@@ -19,6 +19,9 @@ from .node_extractor import NodeExtractor
 # distinguishes revisions produced by different extractors.
 AI_EXTRACTOR_VERSION = "ai-attribute-v1"
 
+# Most records one document may give when a mapping reads several per document.
+MAX_RECORDS = 500
+
 
 class AttributeExtractionAgent:
     """Extract one instance's attributes from one document's evidence."""
@@ -68,25 +71,36 @@ class AttributeExtractionAgent:
             {"nodes": [node_type]}, search_tasks, LiteLLM(**llm_kwargs), normalize_text,
             concurrency=1, batch_size=1)
 
+        keys = [item["key"] for item in attributes]
         values: dict[str, dict[str, Any]] = {}
+        records: list[dict[str, Any]] = []
         for node in nodes:
+            own: dict[str, dict[str, Any]] = {}
             for attribute in node.get("attributes") or []:
                 key = attribute.get("key")
-                if not key or key in values:
+                if not key or key in own:
                     continue
-                values[key] = {
+                own[key] = {
                     "key": key,
                     "value": attribute.get("value"),
                     "evidenceReferences": [str(reference)
                                            for reference in attribute.get("evidenceReferences") or []
                                            if str(reference) in allowed_references],
                 }
-        return {
+                values.setdefault(key, own[key])
+            if own:
+                records.append({"label": node.get("label") or "",
+                                "values": [own[key] for key in keys if key in own]})
+        result: dict[str, Any] = {
             "model": model,
             "extractorVersion": AI_EXTRACTOR_VERSION,
-            "values": [values[item["key"]] for item in attributes if item["key"] in values],
-            "failed": [item["key"] for item in attributes if item["key"] not in values],
+            "values": [values[key] for key in keys if key in values],
+            "failed": [key for key in keys if key not in values],
         }
+        # Several records per document: every instance the model found, each with its own values.
+        if request.get("multiple"):
+            result["records"] = records[:MAX_RECORDS]
+        return result
 
     @staticmethod
     def _evidence(sections: list[Any]) -> list[dict[str, Any]]:
@@ -104,7 +118,7 @@ class AttributeExtractionAgent:
 
     @staticmethod
     def _empty(attributes: list[dict[str, Any]]) -> dict[str, Any]:
-        return {"extractorVersion": AI_EXTRACTOR_VERSION, "values": [],
+        return {"extractorVersion": AI_EXTRACTOR_VERSION, "values": [], "records": [],
                 "failed": [item["key"] for item in attributes]}
 
     @staticmethod

@@ -159,10 +159,6 @@ vi.mock('./components/ComposerSuggestionChips', () => ({
   ComposerSuggestionChips: () => <div>chips</div>,
 }));
 
-vi.mock('@/modules/playbook/components/playbook-swiper', () => ({
-  PlaybooksCarousel: () => <div>playbooks</div>,
-}));
-
 vi.mock('@/modules/governance/components/consumer/GovernedScopesCarousel', () => ({
   GovernedScopesCarousel: () => <div>governed-scopes</div>,
 }));

@@ -137,10 +137,11 @@ class SingleAgentService:
                             )
                             await queue.put(output)
 
-                    # Handle function calls
-                    if part.function_call:
+                    # Handle function calls. Skip partial events: ADK 2.11
+                    # re-carries the in-progress call on every streamed chunk.
+                    if part.function_call and not event.partial:
                         func_name = part.function_call.name
-                        func_args = dict(part.function_call.args)
+                        func_args = dict(part.function_call.args or {})
 
                         # Stream function call info to client
                         func_output = self.streaming_formatter.format_streaming_event(

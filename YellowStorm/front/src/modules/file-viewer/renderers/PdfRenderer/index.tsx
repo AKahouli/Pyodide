@@ -23,7 +23,7 @@ import { ZoomPluginPackage } from '@embedpdf/plugin-zoom/react';
 import { PrintPluginPackage } from '@embedpdf/plugin-print/react';
 import { ExportPluginPackage } from '@embedpdf/plugin-export/react';
 import { PanPluginPackage } from '@embedpdf/plugin-pan/react';
-import type { RendererProps } from '../../types';
+import type { PendingNavigation, RendererProps } from '../../types';
 import { useFileViewerPendingNavigation } from '../../store';
 import { HeadlessViewer } from './components/HeadlessViewer';
 import { useModuleTranslation } from '@/modules/localization';
@@ -32,14 +32,22 @@ const FALLBACK_PAGE = 1;
 
 interface PdfRendererInternalProps extends RendererProps {
   registryRef: MutableRefObject<Map<string, PluginRegistry>>;
+  /**
+   * Navigation driven by the host instead of the viewer store, for a viewer embedded outside the
+   * file window (e.g. a document preview). A new object re-runs the scroll and highlight.
+   */
+  navigation?: PendingNavigation | null;
+  /** Told the number of pages once the document is laid out. */
+  onPageCount?: (count: number) => void;
 }
 
 type PdfRendererProps = Readonly<PdfRendererInternalProps>;
 
-export function PdfRenderer({ tab, isActive, registryRef }: PdfRendererProps) {
+export function PdfRenderer({ tab, isActive, registryRef, navigation, onPageCount }: PdfRendererProps) {
   const initialPageRef = useRef<number>(FALLBACK_PAGE);
 
-  const pendingNavigation = useFileViewerPendingNavigation();
+  const storeNavigation = useFileViewerPendingNavigation();
+  const pendingNavigation = navigation === undefined ? storeNavigation : navigation;
   const { engine, isLoading: isEngineLoading, error } = usePdfiumEngine();
   const { t } = useModuleTranslation('file-viewer');
 
@@ -90,7 +98,7 @@ export function PdfRenderer({ tab, isActive, registryRef }: PdfRendererProps) {
 
   return (
     <EmbedPDF key={`${tab.id}:${tab.url}`} engine={engine} plugins={plugins} autoMountDomElements={false}>
-      <HeadlessViewer tabId={tab.id} isActive={isActive} pendingNavigation={pendingNavigation} registryRef={registryRef} initialPage={initialPageRef.current} />
+      <HeadlessViewer tabId={tab.id} isActive={isActive} pendingNavigation={pendingNavigation} registryRef={registryRef} initialPage={initialPageRef.current} onPageCount={onPageCount} />
     </EmbedPDF>
   );
 }

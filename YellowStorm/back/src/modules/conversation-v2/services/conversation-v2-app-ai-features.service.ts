@@ -1,33 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { detectRevisionUsesAi } from '../utils/conversation-v2-revision-ai-usage';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
 
-/** Import / call sites that mean the generated app actually uses Approach B AI. */
-const AI_USAGE_RE =
-  /from\s+['"][^'"]*yellowmind-ai['"]|import\s*\(\s*['"][^'"]*yellowmind-ai['"]\s*\)|require\(\s*['"][^'"]*yellowmind-ai['"]\s*\)|createAIClient\s*\(|\bchatCompletion\s*\(|\bstreamChatCompletion\s*\(/;
-
-const SOURCE_EXT_RE = /\.(tsx?|jsx?|mts|cts)$/i;
-const MAX_FILES_PER_REVISION = 40;
 /** Bound catalog rescans so a large hub page stays responsive. */
 const MAX_DETECT_PER_LIST = 48;
-
-function isAiLibraryPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/');
-  return (
-    normalized === 'src/lib/yellowmind-ai.ts'
-    || normalized.endsWith('/yellowmind-ai.ts')
-    || normalized === 'src/lib/ym-diag.ts'
-    || normalized.endsWith('/ym-diag.ts')
-  );
-}
-
-function isScannableSourcePath(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/');
-  if (!SOURCE_EXT_RE.test(normalized)) return false;
-  if (normalized.includes('node_modules/')) return false;
-  if (isAiLibraryPath(normalized)) return false;
-  return true;
-}
 
 export interface AppAiFeaturesCatalogInput {
   sessionId: string;
@@ -130,22 +107,6 @@ export class ConversationV2AppAiFeaturesService {
   }
 
   async detectInRevision(workspaceId: string, revisionId: string): Promise<boolean> {
-    const { files } = await this.revisions.listFiles(workspaceId, revisionId);
-    const candidates = files
-      .map((file) => file.path)
-      .filter(isScannableSourcePath)
-      .slice(0, MAX_FILES_PER_REVISION);
-
-    for (const path of candidates) {
-      const text = await this.revisions.readRevisionFileText(
-        workspaceId,
-        revisionId,
-        path,
-      );
-      if (text && AI_USAGE_RE.test(text)) {
-        return true;
-      }
-    }
-    return false;
+    return detectRevisionUsesAi(this.revisions, workspaceId, revisionId);
   }
 }

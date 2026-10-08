@@ -53,15 +53,15 @@ export function RightPanel() {
 
   const runtimePreview = isRuntimePreviewVisible(runtimeStatus);
   const hasCode = !!selectedToolCallId;
-  const hasPreview =
-    !!applicationComponent || !!appBuildProgress || runtimePreview;
+  const hasPreview = !!applicationComponent || !!appBuildProgress || runtimePreview;
   if (!hasCode && !hasPreview) return null;
 
   const showBuildProgress =
     !!appBuildProgress && !applicationComponent && !runtimePreview;
   const showNodepod = !!applicationComponent || runtimePreview;
-  const showAppPanel = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
-  const showDataTab = showAppPanel && appTab === 'data';
+  const showAppPanel =
+    (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
+  const showDataTab = showAppPanel && showNodepod && appTab === 'data';
   const showPreviewTab = showAppPanel && appTab !== 'data';
   const canToggle = hasCode && hasPreview;
 
@@ -88,10 +88,10 @@ export function RightPanel() {
       handlePosition='left'
       withHandle
       resizeHandleLabel={t('rightPanel.resizeHandle')}
-      className='border-l bg-card/40'
+      className='border-l border-border/50 bg-background/40 shadow-[-12px_0_40px_-28px_rgba(0,0,0,0.28)]'
     >
       <aside className='@container/right-panel flex h-full min-w-0 flex-col overflow-hidden'>
-        <header className='grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 @max-[620px]/right-panel:gap-1 @max-[620px]/right-panel:px-2'>
+        <header className='grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-border/50 bg-background/75 px-3 backdrop-blur-md @max-[620px]/right-panel:gap-1 @max-[620px]/right-panel:px-2'>
           <div className='flex min-w-0 items-center justify-self-start overflow-hidden'>
             {canToggle || showAppPanel ? (
               <div className='inline-flex max-w-full items-center overflow-x-auto rounded-lg border bg-muted/40 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'>
@@ -123,18 +123,20 @@ export function RightPanel() {
                         {t('rightPanel.tabPreview')}
                       </span>
                     </button>
-                    <button
-                      type='button'
-                      onClick={() => setRightPanelView('data')}
-                      className={tabClass(showDataTab)}
-                      aria-label={t('rightPanel.tabData')}
-                      title={t('rightPanel.tabData')}
-                    >
-                      <DatabaseIcon className='size-3.5 shrink-0' />
-                      <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
-                        {t('rightPanel.tabData')}
-                      </span>
-                    </button>
+                    {showNodepod ? (
+                      <button
+                        type='button'
+                        onClick={() => setRightPanelView('data')}
+                        className={tabClass(showDataTab)}
+                        aria-label={t('rightPanel.tabData')}
+                        title={t('rightPanel.tabData')}
+                      >
+                        <DatabaseIcon className='size-3.5 shrink-0' />
+                        <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
+                          {t('rightPanel.tabData')}
+                        </span>
+                      </button>
+                    ) : null}
                   </>
                 )}
               </div>

@@ -17,8 +17,11 @@ import {
 } from '@/components/ui/tooltip';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { useSearchParams } from 'react-router-dom';
+import { isCloneDraftSearch } from '../../template-clone-draft';
 import { buildAppRegisterInviteUrl } from '../../utils/app-register-invite-url';
 import { ShareDeployDialog } from './ShareDeployDialog';
+import { deployError, deployLog } from '../../utils/deploy-log';
 
 const modeTabClass = (active: boolean) =>
   cn(
@@ -83,6 +86,7 @@ export function AppViewModeToggle() {
  */
 export function DeployControls() {
   const { t } = useConversationV2Translation();
+  const [searchParams] = useSearchParams();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
   const ownerInviteToken = useConversationV2Store((s) => s.ownerInviteToken);
@@ -93,6 +97,9 @@ export function DeployControls() {
   const finalizedVersions = useConversationV2Store((s) => s.finalizedVersions);
   const setAppViewMode = useConversationV2Store((s) => s.setAppViewMode);
   const [shareOpen, setShareOpen] = useState(false);
+
+  // Clone draft (`?action=clone`): hide publish until the first message commits the session.
+  if (isCloneDraftSearch(searchParams)) return null;
 
   const isDeploying = deployStatus === 'deploying';
   const isDeployed = deployStatus === 'deployed' && !!deployedUrl;
@@ -105,14 +112,24 @@ export function DeployControls() {
       : t('deploy.publish');
 
   const handleDeploy = async () => {
+    const deployRevisionId =
+      previewRevisionId ??
+      finalizedVersions[0]?.revisionId ??
+      undefined;
+    deployLog('ui:click', {
+      sessionId,
+      deployRevisionId: deployRevisionId ?? null,
+      previewRevisionId,
+      latestFinalizedRevisionId: finalizedVersions[0]?.revisionId ?? null,
+      previousStatus: deployStatus,
+      previousUrl: deployedUrl,
+    });
     try {
-      const deployRevisionId =
-        previewRevisionId ??
-        finalizedVersions[0]?.revisionId ??
-        undefined;
       await deploy(deployRevisionId);
+      deployLog('ui:success', { sessionId, deployRevisionId: deployRevisionId ?? null });
       showSuccess(t('toasts.deploy.success'));
-    } catch {
+    } catch (err) {
+      deployError('ui:error', err, { sessionId, deployRevisionId: deployRevisionId ?? null });
       showError(t('toasts.deploy.error'));
     }
   };
@@ -206,6 +223,14 @@ export function DeployControls() {
             {deployLabel}
           </TooltipContent>
         </Tooltip>
+        {deployStatus === 'error' && (
+          <p
+            role='status'
+            className='shrink-0 text-xs text-fail @max-[620px]/right-panel:hidden'
+          >
+            {t('deploy.error')}
+          </p>
+        )}
       </div>
     </TooltipProvider>
   );

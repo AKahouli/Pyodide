@@ -35,17 +35,26 @@ logger = get_logger("api.routers.agentic_rag")
 async def run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Queue[dict]) -> None:
     """Serialize workflows that write the same persisted ADK session."""
     trace = get_current_conversation_latency_trace()
+    session_app_name = PERSISTED_SESSION_APP_NAME
+    if user_request.session_service is not None:
+        from src.root_runtime.background_sessions import validate_background_request
+        if user_request.agent_mode != 'mono':
+            raise ValueError('Owned background workflows require fenced mono-agent execution')
+        validate_background_request(user_request.session_service, user_request.execution_scope,
+            user_request.user_id, user_request.session_id)
+        await user_request.session_service.validate_owner()
+        session_app_name = user_request.session_service.grant.app_name
     if trace is not None:
         trace.mark_session_lock_wait_start()
 
     async with session_execution_lock(
-        PERSISTED_SESSION_APP_NAME,
+        session_app_name,
         user_request.user_id,
         user_request.session_id,
     ):
         if trace is not None:
             trace.mark_session_lock_acquired()
-        await _run_agent_team_logic(user_request, q)
+        return await _run_agent_team_logic(user_request, q)
 
 
 async def _run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Queue[dict]) -> None:
@@ -78,11 +87,14 @@ async def _run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Qu
             trace.mark_orchestration_ready()
 
         logger.info(f"[ORCHESTRATOR] Team initialized, executing workflow - session_id: {user_request.session_id}")
-        await execute_workflow(team, user_request, q)
+        result = await execute_workflow(team, user_request, q)
 
         logger.info(f"[ORCHESTRATOR] Agent team orchestration completed successfully - session_id: {user_request.session_id}")
+        return result
 
     except Exception as e:
+        if user_request.session_service is not None:
+            raise
         logger.error(f"[ORCHESTRATOR] Error in agent team orchestration - session_id: {user_request.session_id}: {str(e)}")
         await team._message_helper._send_error_message(q, user_request.session_id, str(e))
 
@@ -103,7 +115,7 @@ async def execute_workflow(team: AutoAgentGenerationTeam,
     elif user_request.agent_mode=="manual":
         await handle_agents_provided_workflow(team, user_request, q)
     elif user_request.agent_mode=="mono":
-        await handle_single_agent_workflow(team, user_request, q)
+        return await handle_single_agent_workflow(team, user_request, q)
     elif user_request.agent_mode=="hierarchical":
         await handle_hierarchical_agents_workflow(team, user_request, q)
     else:

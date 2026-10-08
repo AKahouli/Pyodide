@@ -1,0 +1,7 @@
+{
+  "name": "circular-reference",
+  "description": "Attribute value contains a circular object reference. SDKs must not throw and must not hang.",
+  "input": null,
+  "input_note": "Constructed programmatically: const a = {}; a.self = a; passed as an attribute value.",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192, "emits": "safe_event_or_invalid_counter" }
+}

@@ -1,0 +1,147 @@
+{
+  "button": {
+    "label": "Évaluation Recherche Logique"
+  },
+  "page": {
+    "title": "Évaluation Recherche Logique",
+    "subtitle": "Importez un jeu de données benchmark, exécutez-le contre un agent, puis consultez les scores."
+  },
+  "common": {
+    "loading": "Chargement…"
+  },
+  "upload": {
+    "title": "Importer un jeu de données benchmark",
+    "dropzone": "Glissez-déposez votre fichier Excel/CSV ici, ou parcousez",
+    "accept": "Formats acceptés : .xlsx, .csv",
+    "uploading": "Envoi en cours…",
+    "success": "Jeu de données analysé avec succès",
+    "error": "Échec de l'envoi"
+  },
+  "preview": {
+    "title": "Aperçu du jeu de données",
+    "questions": "{{count}} questions extraites",
+    "skipped": "{{count}} lignes ignorées",
+    "sheet": "Feuille : {{name}}",
+    "queryId": "ID",
+    "question": "Question",
+    "answer": "Réponse",
+    "files": "Fichiers requis"
+  },
+  "select": {
+    "agent": "Sélectionner un agent",
+    "agentPlaceholder": "Choisir un agent…",
+    "playbook": "Sélectionner un playbook",
+    "playbookPlaceholder": "Choisir un playbook…",
+    "workspace": "Sélectionner un espace de travail",
+    "workspacePlaceholder": "Choisir un espace de travail…",
+    "execution": "Sélectionner une exécution",
+    "executionPlaceholder": "Choisir une exécution…",
+    "search": "Rechercher…",
+    "noResults": "Aucun résultat"
+  },
+  "actions": {
+    "prepare": "Préparer l'évaluation",
+    "preparing": "Préparation en cours…",
+    "prepareTarget": "Évaluation cible : {{name}}",
+    "run": "Lancer l'évaluation",
+    "running": "Exécution en cours…",
+    "resume": "Reprendre",
+    "stop": "Arrêter",
+    "stopping": "Arrêt…",
+    "export": "Exporter les résultats",
+    "delete": "Supprimer",
+    "deleting": "Suppression…",
+    "done": "Prêt pour l'évaluation",
+    "newEval": "Nouvelle évaluation"
+  },
+  "status": {
+    "dataset_ready": "Jeu de données prêt",
+    "prepared": "Préparé",
+    "running": "En cours",
+    "completed": "Terminé",
+    "failed": "Échoué"
+  },
+  "history": {
+    "title": "Évaluations précédentes",
+    "empty": "Aucune évaluation pour le moment",
+    "createdAt": "Créé",
+    "queries": "{{count}} questions",
+    "questionsRatio": "{{done}}/{{total}} questions",
+    "questionsEvaluated": "{{done}}/{{total}} questions évaluées",
+    "view": "Voir",
+    "paginationLabel": "Pagination de l'historique",
+    "confirmDelete": "Supprimer l'évaluation « {{name}} » et ses résultats ? Action irréversible."
+  },
+  "adhoc": {
+    "title": "Configuration directe",
+    "benchmark": "Benchmark (jeu de données)",
+    "benchmarkPlaceholder": "Sélectionner un benchmark existant…",
+    "benchmarkHelp": "Réutilise un jeu de données déjà importé. Le lancement crée une nouvelle évaluation à partir de celui-ci.",
+    "agent": "Agent Cible",
+    "agentPlaceholder": "Sélectionner l'agent cible…",
+    "workspace": "Workspace",
+    "workspacePlaceholder": "Sélectionner un workspace…",
+    "evaluatorAgent": "Agent Évaluateur (LLM Judge)",
+    "evaluatorAgentPlaceholder": "Sélectionner l'agent évaluateur…",
+    "launch": "Lancer l'évaluation",
+    "launching": "Lancement…",
+    "target": "Évaluation cible : {{name}}",
+    "stage": {
+      "preparing": "Préparation des entrées de l'évaluateur…",
+      "running": "Exécution des questions…"
+    }
+  },
+  "targeted": {
+    "title": "Cibler des questions",
+    "help": "Laissez vide pour exécuter toutes les questions. Sélectionnez une ou plusieurs questions pour n'exécuter que celles-ci ; les résultats et l'export ne contiennent que les questions choisies.",
+    "all": "Toutes les questions"
+  },
+  "results": {
+    "title": "Résultats · {{name}}",
+    "close": "Fermer",
+    "loading": "Chargement des résultats…",
+    "empty": "Aucun résultat pour le moment. Lancez d'abord l'évaluation.",
+    "error": "Impossible de charger les résultats",
+    "kpi": {
+      "correctness": "Exactitude",
+      "semantic": "Similarité sémantique",
+      "factRecall": "Rappel des faits",
+      "fileRecall": "Rappel des fichiers",
+      "retrievalSuccess": "Succès de la recherche",
+      "completed": "Terminées"
+    },
+    "table": {
+      "id": "ID",
+      "question": "Question",
+      "status": "Statut",
+      "score": "Score juge",
+      "fileRecall": "Rappel fichiers",
+      "duration": "Durée",
+      "tokens": "Tokens"
+    },
+    "detail": {
+      "expectedAnswer": "Réponse attendue",
+      "generatedAnswer": "Réponse générée",
+      "expectedFiles": "Fichiers attendus",
+      "retrievedFiles": "Fichiers récupérés",
+      "judgeReasoning": "Raisonnement du juge",
+      "error": "Erreur"
+    },
+    "citations": {
+      "page": "Page {{page}}",
+      "openError": "Impossible d'ouvrir le document source."
+    },
+    "narrative": {
+      "title": "Analyse",
+      "help": "Rédigée par un agent interpréteur à partir des métriques calculées ci-dessus.",
+      "agent": "Agent interpréteur",
+      "agentPlaceholder": "Sélectionner un agent interpréteur…",
+      "generate": "Générer l'analyse",
+      "regenerate": "Régénérer l'analyse",
+      "generating": "Génération…",
+      "loading": "Chargement de l'analyse…",
+      "empty": "Aucune analyse pour le moment. Générez-la pour obtenir une synthèse rédigée.",
+      "unavailable": "L'analyse est disponible une fois l'évaluation terminée."
+    }
+  }
+}

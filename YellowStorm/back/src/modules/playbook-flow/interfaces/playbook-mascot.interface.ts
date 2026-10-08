@@ -1,6 +1,6 @@
 export type MascotExecutionStatus = 'running' | 'failed' | 'completed' | 'waiting' | 'cancelled';
 
-export type PlaybookUiTarget = {
+export interface PlaybookUiTarget {
   surface:
     | 'playbook.list'
     | 'playbook.editor'
@@ -14,11 +14,9 @@ export type PlaybookUiTarget = {
     /** Shown on the button ("Open CV screening"), never an id. */
     playbookName?: string;
   };
-  effects?: Array<
-    | { type: 'highlightTask'; taskId: string }
-    | { type: 'focusExecutionStatus' }
-  >;
-};
+  effects?: (| { type: 'highlightTask'; taskId: string }
+    | { type: 'focusExecutionStatus' })[];
+}
 
 export type ExecutionDiagnosticCategory =
   | 'missing_input'
@@ -46,14 +44,14 @@ export interface ExecutionDiagnostics {
     message: string;
     retryable: boolean;
   };
-  missingInputs?: Array<{
+  missingInputs?: {
     name: string;
     expectedType?: string;
     sourceTaskId?: string;
-  }>;
-  recommendedNextActions: Array<{
+  }[];
+  recommendedNextActions: {
     type: 'open_execution' | 'open_task' | 'wait_for_human' | 'contact_admin';
     label: string;
-  }>;
+  }[];
   uiTarget: PlaybookUiTarget;
 }

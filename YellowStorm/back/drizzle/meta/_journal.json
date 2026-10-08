@@ -189,6 +189,7 @@
       "version": "7",
       "when": 1790019745486,
       "tag": "0025_cross_schema_fks",
+      "breakpoints": true,
       "statements": []
     },
     {
@@ -301,6 +302,139 @@
       "version": "7",
       "when": 1791600000000,
       "tag": "0041_classifier_runs_playbook_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791700000000,
+      "tag": "0042_root_execution_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0043_root_work_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0044_root_background_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0045_root_model_capacity",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792100000000,
+      "tag": "0042_yellowmind_semantic_model_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0047_connector_worker_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0030_conversation_v2_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792310000000,
+      "tag": "0031_template_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792320000000,
+      "tag": "0042_template_platform_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792330000000,
+      "tag": "0043_yellowmind_linked_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792340000000,
+      "tag": "0044_yellowmind_answer_completeness",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792340001000,
+      "tag": "0012_third_silver_sable",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792340001001,
+      "tag": "0013_wonderful_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792340001002,
+      "tag": "0014_evaluation_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792340001003,
+      "tag": "0015_lonely_rage",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792340001004,
+      "tag": "0029_evaluation_result_token_split",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792340001005,
+      "tag": "0030_evaluation_run_narrative",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792340001006,
+      "tag": "0043_evaluation_result_payload",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792340001007,
+      "tag": "0044_evaluation_run_state",
       "breakpoints": true
     }
   ]

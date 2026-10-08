@@ -28,7 +28,7 @@ interface IWorkyGovernancePolicyResponse {
   workspaceId: string;
   scope: string;
   defaultLevel: string;
-  categories: Array<{ category: string; level: string }>;
+  categories: { category: string; level: string }[];
   allowStreamOwnerOverride: boolean;
   maxOwnerRelaxLevel: string;
 }

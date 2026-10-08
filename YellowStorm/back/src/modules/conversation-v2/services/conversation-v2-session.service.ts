@@ -80,8 +80,9 @@ export class ConversationV2SessionService {
   async createDraft(
     ownerId: string,
     workspaceIds: string[] = [],
+    starterRevisionId?: string,
   ): Promise<ConversationV2SessionRecord> {
-    return this.store.createDraft(ownerId, workspaceIds);
+    return this.store.createDraft(ownerId, workspaceIds, starterRevisionId);
   }
 
   /**
@@ -115,12 +116,12 @@ export class ConversationV2SessionService {
     return docs.map((doc) => ({
       sessionId: doc.id,
       title: doc.deployedAppTitle ?? doc.title ?? '',
-      deployedUrl: doc.deployedUrl as string,
+      deployedUrl: doc.deployedUrl!,
       lastDeployedAt: doc.lastDeployedAt ? doc.lastDeployedAt.toISOString() : null,
       source: 'owned' as const,
       shareId: null,
       canOpenConversation: true,
-      hasAiFeatures: doc.hasAiFeatures === true,
+      hasAiFeatures: doc.hasAiFeatures,
       ...EMPTY_REVISION_CATALOG,
     }));
   }
@@ -137,7 +138,7 @@ export class ConversationV2SessionService {
       title: doc.deployedAppTitle ?? doc.title ?? '',
       lastUpdatedAt: doc.lastEventAt.toISOString(),
       deployStatus: (doc.deployStatus as DraftAppSummary['deployStatus']) ?? 'idle',
-      hasAiFeatures: doc.hasAiFeatures === true,
+      hasAiFeatures: doc.hasAiFeatures,
       ...EMPTY_REVISION_CATALOG,
     }));
   }
@@ -162,7 +163,7 @@ export class ConversationV2SessionService {
             doc.lastDeployedRevisionId.trim()
               ? doc.lastDeployedRevisionId.trim()
               : null,
-          hasAiFeatures: doc.hasAiFeatures === true,
+          hasAiFeatures: doc.hasAiFeatures,
           aiFeaturesCheckedRevisionId:
             typeof doc.aiFeaturesCheckedRevisionId === 'string' &&
             doc.aiFeaturesCheckedRevisionId.trim()

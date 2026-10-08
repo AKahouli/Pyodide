@@ -30,7 +30,7 @@ export function isCompleteDataBinding(binding: DataBinding): boolean {
     case 'expression':
       return isNonEmptyString(binding.expression);
     case 'constant':
-      return Object.prototype.hasOwnProperty.call(binding, 'constantValue') && binding.constantValue !== undefined;
+      return binding.constantValue !== undefined;
     default:
       return false;
   }

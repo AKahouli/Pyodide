@@ -235,7 +235,7 @@ export class PlaybookInputContractService {
     };
   }
 
-  private inferScope(...values: Array<string | undefined | DataBinding>): PlaybookInputScope {
+  private inferScope(...values: (string | undefined | DataBinding)[]): PlaybookInputScope {
     const binding = values.find((value): value is DataBinding => typeof value === 'object');
     const constant = binding?.sourceKind === 'constant' && binding.constantValue && typeof binding.constantValue === 'object'
       ? binding.constantValue as Record<string, unknown>
@@ -248,7 +248,7 @@ export class PlaybookInputContractService {
   private acceptedSources(
     artifactKind: PlaybookInputDescriptor['artifactKind'],
     scope: PlaybookInputScope,
-    ...semanticValues: Array<string | undefined>
+    ...semanticValues: (string | undefined)[]
   ): PlaybookInputSourceKind[] {
     if (scope === 'configuration') {
       const text = semanticValues.filter(Boolean).join(' ').toLowerCase();

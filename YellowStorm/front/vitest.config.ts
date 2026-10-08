@@ -14,13 +14,15 @@ export default defineConfig({
     // Playwright e2e specs live under tests/e2e and must not run in Vitest.
     exclude: ['**/node_modules/**', '**/dist/**', '**/cypress/**', '**/tests/e2e/**'],
     // Cap concurrency to avoid vitest-worker RPC timeouts (fetch / resolveSnapshotPath)
-    // under heavy full-suite load on Windows.
+    // under heavy full-suite load on Windows. maxWorkers: 4 still flakes late in
+    // ~800s runs; keep this low enough that worker RPC stays responsive.
     pool: 'forks',
-    maxWorkers: 4,
+    maxWorkers: 2,
     minWorkers: 1,
     fileParallelism: true,
-    testTimeout: 15_000,
-    hookTimeout: 15_000,
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
+    teardownTimeout: 20_000,
     coverage: {
       provider: 'v8', // or 'istanbul'
       reporter: ['text', 'json', 'html', 'lcov'],

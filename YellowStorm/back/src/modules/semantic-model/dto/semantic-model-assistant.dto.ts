@@ -70,6 +70,13 @@ export class AssistantCreateModelDto {
   @ApiPropertyOptional({ maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) description?: string;
 }
 
+export class AssistantCloneModelDto {
+  @ApiPropertyOptional({ maxLength: 160 }) @IsOptional() @IsString() @MinLength(1) @MaxLength(160) name?: string;
+  @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean() includeSources?: boolean;
+  @ApiPropertyOptional({ default: false }) @IsOptional() @IsBoolean() includeData?: boolean;
+  @ApiPropertyOptional({ default: false }) @IsOptional() @IsBoolean() includeShares?: boolean;
+}
+
 export class AssistantListQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) search?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) folderId?: string;
@@ -96,11 +103,6 @@ export class AssistantMapDocumentsDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() wholeWorkspace?: boolean;
   @ApiPropertyOptional({ description: 'Concept field -> "ai" | "extract" | "document_name" | "ignore" | {"constant": "..."}' }) @IsOptional() @IsObject() fields?: Record<string, 'ai' | 'extract' | 'document_name' | 'ignore' | { constant: string }>;
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) keyFields?: string[];
-}
-
-export class AssistantRecordsQueryDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) q?: string;
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
 }
 
 export class AssistantChangesQueryDto {

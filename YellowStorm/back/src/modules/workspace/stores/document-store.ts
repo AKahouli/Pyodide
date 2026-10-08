@@ -71,6 +71,8 @@ export interface DocumentStore {
   findByIdsInWorkspace(workspaceId: string, ids: string[]): Promise<WorkspaceDocumentRecord[]>;
   /** Windows-Explorer-style name probe (files only, isFolder: false). */
   originalNameExists(workspaceId: string, originalName: string): Promise<boolean>;
+  /** The file (not folder) holding this exact originalName in the workspace, if any. */
+  findFileByName(workspaceId: string, originalName: string): Promise<WorkspaceDocumentRecord | null>;
   findFolderDuplicate(probe: FolderDuplicateProbe): Promise<WorkspaceDocumentRecord | null>;
   /** Direct child folders of `parentId`, id-only (circular-move guard). */
   findChildFolderIds(parentId: string): Promise<string[]>;
@@ -86,7 +88,7 @@ export interface DocumentStore {
   listFolders(workspaceId: string): Promise<WorkspaceDocumentRecord[]>;
   listFolderContents(workspaceId: string, folderId: string, params: DocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }>;
   /** URL-type documents for link re-checks (id, sourceUrl, status, indexingStatus). */
-  findUrlSources(workspaceId: string): Promise<Array<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>>>;
+  findUrlSources(workspaceId: string): Promise<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>[]>;
   /** findByIdAndUpdate $set semantics; returns the updated record or null. */
   updateById(id: string, patch: DocumentUpdatePatch): Promise<WorkspaceDocumentRecord | null>;
   /** Dotted metadata merge ($set: { 'metadata.<key>': value }), workspace-scoped. */

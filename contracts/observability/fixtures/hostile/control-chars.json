@@ -1,0 +1,7 @@
+{
+  "name": "control-chars",
+  "description": "NUL bytes, raw newlines and other control characters in message and attributes. Newlines must be JSON-escaped inside the single-line event; NUL stripped.",
+  "input": null,
+  "input_note": "message contains '\\u0000', '\\n', '\\r', '\\t' sequences.",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192, "output_is_single_json_line": true }
+}

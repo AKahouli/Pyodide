@@ -1,0 +1,6 @@
+{
+  "text": "{\"citations\":[{\"reference\":\"[1]\",\"source\":\"s3://vectorstore/fixture/approved/manual.pdf\",\"page_number\":10,\"highlight_text\":\"Fixture procedure\",\"highlight_bbox\":[1,2,3,4]}]}",
+  "citations": [
+    {"source":"s3://vectorstore/fixture/approved/manual.pdf","reference":"[1]","page_number":10,"highlight_bbox":[1,2,3,4],"highlight_text":"Fixture procedure"}
+  ]
+}

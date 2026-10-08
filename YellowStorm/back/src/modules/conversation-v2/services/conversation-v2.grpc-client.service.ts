@@ -50,7 +50,7 @@ interface RawProtoEvent {
     content: string;
     // proto `FileInfo` carries the Ceph object key in field `url` (field 4);
     // `path` is accepted too for forward-compat if the proto is ever renamed.
-    attachments?: Array<{ id: string; name: string; content_type: string; url?: string; path?: string }>;
+    attachments?: { id: string; name: string; content_type: string; url?: string; path?: string }[];
   };
   tool?: {
     tool_call_id: string;
@@ -63,20 +63,20 @@ interface RawProtoEvent {
       browser?: { screenshot_url: string; url?: string; title?: string };
       shell?: { command: string; output: string; exit_code: number; session_handle?: string };
       file?: { path: string; content: string; language?: string; operation?: string };
-      search?: { query: string; results?: Array<{ title: string; url: string; snippet: string }> };
+      search?: { query: string; results?: { title: string; url: string; snippet: string }[] };
       mcp?: { server: string; tool: string; result_json: string };
       webpage?: { url: string; title?: string };
       generic?: { json: string };
     };
   };
   step?: { id: string; status: string; description: string };
-  plan?: { steps: Array<{ id: string; status: string; description: string }> };
+  plan?: { steps: { id: string; status: string; description: string }[] };
   title?: { title: string };
   done?: Record<string, never>;
   wait?: {
     question_id?: string;
     question_text?: string;
-    options?: Array<{ label: string; description?: string }>;
+    options?: { label: string; description?: string }[];
   };
   error?: { error: string };
   application_component?: {
@@ -121,7 +121,7 @@ export class ConversationV2GrpcClientService
     const maxMsg = this.config.get<number>('conversationV2.grpcMaxMessageBytes')!;
     const { credentials, options: tlsOptions } = buildGrpcChannelCredentials(
       this.config,
-      (msg) => this.logger.warn(msg),
+      (msg) => { this.logger.warn(msg); },
       V2_GRPC_SECURITY_NS,
     );
     this.client = new proto.yellostorm.manus.v1.ConversationV2(url, credentials, {
@@ -213,7 +213,11 @@ export class ConversationV2GrpcClientService
     return { deadline: Date.now() + ms };
   }
 
-  async createSession(userId: string, workspaceIds: string[] = []): Promise<string> {
+  async createSession(
+    userId: string,
+    workspaceIds: string[] = [],
+    capability: 'web_app' | 'database_design' = 'web_app',
+  ): Promise<string> {
     // Translate workspaceIds → `{ownerUserId}/{storagePrefix}` paths. Note the
     // path root is the workspace OWNER, not the current user, so a session that
     // attaches a shared workspace points the AI service at the owner's prefix
@@ -221,11 +225,11 @@ export class ConversationV2GrpcClientService
     const workspacePaths = await this.workspaceService.getStoragePathsByIds(workspaceIds);
     return new Promise((resolve, reject) => {
       this.client.CreateSession(
-        { user_id: userId, workspace_paths: workspacePaths },
+        { user_id: userId, workspace_paths: workspacePaths, capability },
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string }) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve(response.session_id);
         },
       );
@@ -239,7 +243,7 @@ export class ConversationV2GrpcClientService
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: any) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             sessionId: response.session_id,
             title: response.title,
@@ -258,7 +262,7 @@ export class ConversationV2GrpcClientService
         { user_id: userId, session_id: sessionId },
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
-        (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
+        (err: grpc.ServiceError | null) => { err ? reject(err) : resolve(); },
       );
     });
   }
@@ -269,7 +273,7 @@ export class ConversationV2GrpcClientService
         { user_id: userId, session_id: sessionId },
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
-        (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
+        (err: grpc.ServiceError | null) => { err ? reject(err) : resolve(); },
       );
     });
   }
@@ -280,7 +284,7 @@ export class ConversationV2GrpcClientService
         { user_id: userId, session_id: sessionId },
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
-        (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
+        (err: grpc.ServiceError | null) => { err ? reject(err) : resolve(); },
       );
     });
   }
@@ -301,7 +305,7 @@ export class ConversationV2GrpcClientService
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string; accepted: boolean }) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({ sessionId: response.session_id, accepted: !!response.accepted });
         },
       );
@@ -326,11 +330,11 @@ export class ConversationV2GrpcClientService
               err.code === grpc.status.UNIMPLEMENTED ||
               err.code === grpc.status.NOT_FOUND
             ) {
-              return resolve(null);
+              resolve(null); return;
             }
-            return reject(err);
+            reject(err); return;
           }
-          if (!response.url) return resolve(null);
+          if (!response.url) { resolve(null); return; }
           resolve({ url: response.url, expiresAt: response.expires_at });
         },
       );
@@ -357,10 +361,10 @@ export class ConversationV2GrpcClientService
           response: { url: string; deployed_at: number },
         ) => {
           if (err) {
-            if (err.code === grpc.status.UNIMPLEMENTED) return resolve(null);
-            return reject(err);
+            if (err.code === grpc.status.UNIMPLEMENTED) { resolve(null); return; }
+            reject(err); return;
           }
-          if (!response.url) return resolve(null);
+          if (!response.url) { resolve(null); return; }
           resolve({ url: response.url, deployedAt: response.deployed_at });
         },
       );
@@ -381,6 +385,8 @@ export class ConversationV2GrpcClientService
     },
     skills?: IGrpcSkill[],
     connectors?: IGrpcConnector[],
+    /** Catalog model id for generated-app AI (Studio selection). */
+    appAiModel?: string,
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
       const request: Record<string, unknown> = {
@@ -389,6 +395,7 @@ export class ConversationV2GrpcClientService
         message,
       };
       if (model) request.model = model;
+      if (appAiModel) request.app_ai_model = appAiModel;
       if (connectorRepo) {
         request.connector_repo = {
           connector_id: connectorRepo.connectorId,
@@ -420,8 +427,8 @@ export class ConversationV2GrpcClientService
           subscriber.error(err);
         }
       });
-      call.on('end', () => subscriber.complete());
-      call.on('error', (err: Error) => subscriber.error(err));
+      call.on('end', () => { subscriber.complete(); });
+      call.on('error', (err: Error) => { subscriber.error(err); });
       return () => {
         try {
           call.cancel();

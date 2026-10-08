@@ -20,10 +20,27 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     graphExpand: jest.fn().mockResolvedValue({ status: 'found', nodes: [], edges: [] }),
     getGraphSearchIndex: jest.fn().mockResolvedValue({ index: { state: 'ready' } }),
     ensureGraphSearchIndex: jest.fn().mockResolvedValue({ jobId: 'job-1', index: { state: 'queued' } }),
+    recordsQuery: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
+    recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
   };
-  const service = new SemanticGraphSearchService(database as never, models as never, workspaceShares as never, runtime as never);
-  return { service, database, models, workspaceShares, runtime };
+  const graphs = { getGraph: jest.fn().mockResolvedValue(versionGraph) };
+  const searchSettings = { runtimePayload: jest.fn().mockResolvedValue({ index: {}, search: {} }) };
+  const service = new SemanticGraphSearchService(database as never, models as never, workspaceShares as never, runtime as never, graphs as never, searchSettings as never);
+  return { service, database, models, workspaceShares, runtime, graphs, searchSettings };
 }
+
+const versionGraph = {
+  modelId: 'model-1', versionId: 'published-1', revision: 0, records: [], recordRelations: [],
+  nodes: [
+    { id: 'n-1', key: 'invoice', label: 'Invoice', description: '', category: 'business_object', recordPolicy: 'optional', systemKey: null,
+      aliases: ['Bill'], position: { x: 0, y: 0 },
+      attributes: [{ key: 'amount', label: 'Amount', type: 'number', required: false, aliases: ['Total'], description: 'Incl. tax' }] },
+    { id: 'n-2', key: 'documents', label: 'Documents', description: '', category: 'business_object', recordPolicy: 'optional',
+      systemKey: 'workspace_documents', aliases: [], position: { x: 0, y: 0 }, attributes: [] },
+  ],
+  relations: [{ id: 'r-1', key: 'billed_to', label: 'billed to', inverseLabel: 'receives', description: '', sourceNodeTypeId: 'n-1',
+    targetNodeTypeId: 'n-1', cardinality: 'many_to_one', traversable: true, filterable: true, attributes: [] }],
+};
 
 describe('SemanticGraphSearchService', () => {
   it('searches the published data with the workspaces the person may read', async () => {
@@ -34,8 +51,22 @@ describe('SemanticGraphSearchService', () => {
     expect(workspaceShares.filterAccessible).toHaveBeenCalledWith('user-1', ['ws-1', 'ws-2']);
     expect(runtime.graphSearch).toHaveBeenCalledWith({
       actorUserId: 'user-1', modelId: 'model-1', environment: 'production', query: 'acme', concepts: ['Customer'], limit: 5,
-      allowedWorkspaceIds: ['ws-1'],
+      allowedWorkspaceIds: ['ws-1'], settings: { index: {}, search: {} },
     });
+  });
+
+  it('sends the admin search settings with the own settings of the fields of the bound version', async () => {
+    const { service, runtime, graphs, searchSettings } = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2' });
+    const settings = { index: { passageTargetChars: 800, fields: { invoice: { notes: { passageOverlapChars: 50 } } } }, search: { rrfK: 30 } };
+    searchSettings.runtimePayload.mockResolvedValue(settings);
+    await service.search('user-1', 'model-1', { environment: 'draft', query: 'acme' });
+    expect(graphs.getGraph).toHaveBeenCalledWith('model-1', 'draft-2', 0);
+    expect(searchSettings.runtimePayload).toHaveBeenCalledWith(versionGraph);
+    // No limit asked: the runtime applies the admin's default number of results.
+    expect(runtime.graphSearch).toHaveBeenCalledWith(expect.objectContaining({ settings }));
+    expect(runtime.graphSearch.mock.calls[0][0]).not.toHaveProperty('limit');
+    await service.ensureIndex('user-1', 'model-1', 'draft');
+    expect(runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', settings: { index: settings.index } });
   });
 
   it('sends an empty allow-list when the model takes data from no workspace the person can read', async () => {
@@ -74,15 +105,64 @@ describe('SemanticGraphSearchService', () => {
     expect(runtime.graphSearch).not.toHaveBeenCalled();
   });
 
-  it('expands with the steps given and the allow-list', async () => {
-    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+  it('expands with the steps given, the allow-list, the fields asked for and the model labels', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2' });
     await service.expand('user-1', 'model-1', {
-      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, expectedDataRevisionId: 'dr-1',
+      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20,
+      fields: ['Amount'], expectedDataRevisionId: 'dr-1',
     });
     expect(runtime.graphExpand).toHaveBeenCalledWith({
       actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', seedEntityIds: ['e-1'],
-      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, allowedWorkspaceIds: ['ws-1'], expectedDataRevisionId: 'dr-1',
+      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, fields: ['Amount'], allowedWorkspaceIds: ['ws-1'],
+      expectedDataRevisionId: 'dr-1',
+      catalog: {
+        concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+        relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+      },
     });
+  });
+
+  it('queries records with the published definitions, the allow-list and nothing else from the caller', async () => {
+    const { service, runtime, graphs } = setup({ id: 'model-1', role: 'viewer', status: 'published', currentDraftVersionId: 'draft-2', currentPublishedVersionId: 'published-1' });
+    const result = await service.queryRecords('user-1', 'model-1', {
+      environment: 'production', concept: 'Invoice', filters: [{ field: 'Total', op: 'gt', value: 10 }], limit: 5,
+    });
+    expect(graphs.getGraph).toHaveBeenCalledWith('model-1', 'published-1', 0);
+    expect(runtime.recordsQuery).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'],
+      concept: 'Invoice', filters: [{ field: 'Total', op: 'gt', value: 10 }], limit: 5,
+      catalog: {
+        concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+        relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+      },
+    });
+    expect(result.definitionsVersionId).toBe('published-1');
+  });
+
+  it('reads the draft definitions for draft data, which only editors may query', async () => {
+    const viewer = setup({ id: 'model-1', role: 'viewer', status: 'draft', currentDraftVersionId: 'draft-2' });
+    await expect(viewer.service.queryRecords('user-1', 'model-1', { environment: 'draft', concept: 'Invoice' })).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED,
+    });
+    expect(viewer.runtime.recordsQuery).not.toHaveBeenCalled();
+    const editor = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2', currentPublishedVersionId: null });
+    await editor.service.queryRecords('user-1', 'model-1', { environment: 'draft', concept: 'Invoice' });
+    expect(editor.graphs.getGraph).toHaveBeenCalledWith('model-1', 'draft-2', 0);
+    // Nothing published: no definitions to send, and the runtime says the data is not bound.
+    editor.runtime.recordsQuery.mockRejectedValue(new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'model_not_published'));
+    editor.graphs.getGraph.mockClear();
+    await expect(editor.service.queryRecords('user-1', 'model-1', { environment: 'production', concept: 'Invoice' })).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, message: 'Publish this semantic model to use it in chat',
+    });
+    expect(editor.graphs.getGraph).not.toHaveBeenCalled();
+  });
+
+  it('describes the bound data with its record counts and the definitions of its version', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'viewer', status: 'published', currentPublishedVersionId: 'published-1' });
+    const result = await service.dataOverview('user-1', 'model-1', 'production');
+    expect(runtime.recordsOverview).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'] });
+    expect(result.versionId).toBe('published-1');
+    expect(result.graph?.nodes).toHaveLength(2);
   });
 
   it('reads the index state for readers and builds it only for editors', async () => {
@@ -94,6 +174,6 @@ describe('SemanticGraphSearchService', () => {
     const editor = setup({ id: 'model-1', role: 'editor', status: 'published' });
     await expect(editor.service.ensureIndex('user-1', 'model-1', 'production')).resolves.toMatchObject({ jobId: 'job-1' });
     expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
-    expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production' });
+    expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production', settings: { index: {} } });
   });
 });

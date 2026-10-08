@@ -16,7 +16,7 @@ export const opsNotifications = opsSchema.table(
     title: varchar('title', { length: 200 }).notNull(),
     message: varchar('message', { length: 2000 }).notNull(),
     data: jsonb('data').$type<Record<string, unknown>>(),
-    actions: jsonb('actions').$type<Array<{ label?: string; url?: string; action?: string }>>().notNull().default([]),
+    actions: jsonb('actions').$type<{ label?: string; url?: string; action?: string }[]>().notNull().default([]),
     destination: varchar('destination', { length: 64 }).notNull().default('user'),
     status: varchar('status', { length: 16 }).notNull().default('pending'),
     sourceModule: varchar('source_module', { length: 100 }).notNull(),
@@ -118,7 +118,7 @@ export const opsIntegrationEventDeliveries = opsSchema.table(
 );
 
 /**
- * Application logs (roadmap P6): buffered by LogBufferService, read by the admin logs screen, swept by
+ * Application logs (roadmap P6): written by the retired P11 SQL path, read by the admin logs screen, swept by
  * the TTL sweeper once older than `logging.retentionDays`. `created_at` is the time the entry was
  * logged (not the flush time), so range filters and ordering follow the log line itself.
  */

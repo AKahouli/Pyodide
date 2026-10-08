@@ -21,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { AgentService } from '../agent.service';
+import { RootDelegateResolverService, RootDelegatePool } from '../services/root-delegate-resolver.service';
 import { AuditLogService } from '../../authorization/services/audit-log.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
@@ -36,6 +37,7 @@ import { RequireAgentPermission } from '../decorators/require-agent-permission.d
 export class AgentController {
   constructor(
     private readonly agentService: AgentService,
+    private readonly rootDelegateResolver: RootDelegateResolverService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -63,12 +65,22 @@ export class AgentController {
   @ApiResponse({ status: 200, description: 'Humain agents resolved' })
   async resolveHumain(
     @Query('ids') ids?: string,
-  ): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
+  ): Promise<{ id: string; name: string; slug: string; role: string }[]> {
     const list = (ids ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     return this.agentService.resolveHumainByIds(list);
+  }
+
+  @Get(':id/root-delegates/effective-pool')
+  @ApiOperation({ summary: 'Effective delegate pool of a root (WP02 resolution)' })
+  @ApiResponse({ status: 200, description: 'Flattened, authorized delegate catalog' })
+  async getEffectivePool(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<RootDelegatePool> {
+    return this.rootDelegateResolver.resolveForActor(id, user._id.toString());
   }
 
   @Get(':id')

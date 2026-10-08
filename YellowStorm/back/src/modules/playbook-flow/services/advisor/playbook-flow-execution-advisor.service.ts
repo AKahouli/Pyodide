@@ -76,7 +76,7 @@ export class PlaybookFlowExecutionAdvisorService {
       const scope = taskId ? 'task' as const : 'playbook' as const;
       const targetTaskId = taskId ?? null;
 
-      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean; blocking: boolean }> = [
+      const fieldMappings: { key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean; blocking: boolean }[] = [
         { key: 'missingFacts', category: 'structure', defaultSelected: true, blocking: false },
         { key: 'incoherences', category: 'prompt', defaultSelected: true, blocking: false },
         { key: 'unsupportedClaims', category: 'evidence', defaultSelected: true, blocking: true },
@@ -226,7 +226,7 @@ export class PlaybookFlowExecutionAdvisorService {
     const expectedResult = this.resolveExpectedResult(node);
     const outputFormatGuide = await this.loadOutputFormatGuide(execution.flowId, taskId);
     const baselineOutput = null;
-    const snapshotRecord = (execution.snapshot ?? null) as Record<string, unknown> | null;
+    const snapshotRecord = (execution.snapshot ?? null);
     const workflowGoal = typeof snapshotRecord?.description === 'string'
       ? snapshotRecord.description
       : typeof snapshotRecord?.name === 'string'
@@ -307,7 +307,7 @@ export class PlaybookFlowExecutionAdvisorService {
   }
 
   private resolveExpectedResult(node: FlowNode): string | null {
-    const metadata = (node.metadata ?? {}) as Record<string, unknown>;
+    const metadata = (node.metadata ?? {});
     const value = metadata.expectedResult;
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
   }

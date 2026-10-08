@@ -55,6 +55,18 @@ describe('SemanticModelAssistantService', () => {
     expect(database.query).not.toHaveBeenCalled();
   });
 
+  it('says which parts of an existing field an edit changed', async () => {
+    const { service } = setup();
+    const result = await service.applyChanges(actor, 'model-1', {
+      concepts: [{ concept: 'Customer', fields: [{ key: 'customer_number', label: 'Customer number', description: 'As printed on invoices' }] }],
+    }, true);
+    expect(result.summary.changed).toEqual(['Customer: changed field Customer number (description)']);
+    const unchanged = await service.applyChanges(actor, 'model-1', {
+      concepts: [{ concept: 'Customer', fields: [{ key: 'customer_number', label: 'Customer number' }] }],
+    }, true);
+    expect(unchanged.summary.changed).toEqual([]);
+  });
+
   it('applies the design as one graph change, saves key fields, and records how to undo it', async () => {
     const { service, graphService, crossSource, database } = setup();
     const result = await service.applyChanges(actor, 'model-1', {
@@ -74,7 +86,7 @@ describe('SemanticModelAssistantService', () => {
     expect(crossSource.saveIdentityRule).toHaveBeenCalledWith('user-1', 'model-1', created.id, { expectedRevision: 7, fields: ['contract_number'] });
     const insert = database.query.mock.calls.find(([sql]) => String(sql).includes('assistant_change_sets'))!;
     const params = (insert as unknown as [string, unknown[]])[1];
-    const undo = JSON.parse(params[7] as string) as Array<{ type: string; id?: string }>;
+    const undo = JSON.parse(params[7] as string) as { type: string; id?: string }[];
     expect(undo.map((operation) => operation.type)).toEqual(['relation_type.delete', 'node_type.delete', 'node_type.update']);
     expect(params[3]).toBe('agent-1');
   });
@@ -224,7 +236,8 @@ describe('SemanticModelAssistantService', () => {
     };
     const { service } = setup(undefined, { graphSearch });
     const result = await service.findRecords('user-1', 'model-1', { query: 'acme', concepts: ['Customer'] });
-    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: 10 });
+    // No limit asked: the admin's default number of results applies (the runtime fills it in).
+    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: undefined });
     expect(result).toMatchObject({
       model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'index_not_ready', searchMode: 'lexical_only', indexState: 'indexing',
       concepts: ['Customer'],
@@ -233,6 +246,36 @@ describe('SemanticModelAssistantService', () => {
     expect(result.records[0]).not.toHaveProperty('diagnostics');
     expect(result.notes.join(' ')).toMatch(/not ready.*4 of 10/);
     expect(result.notes.join(' ')).toMatch(/Search by meaning was unavailable/);
+  });
+
+  it('quotes the matching passage of a long field and uses it as the snippet when the match came from it', async () => {
+    const seed = (entityId: string, matchedIn: 'record' | 'passage', passages?: unknown[]) => ({
+      entityId, conceptId: 'c-1', conceptLabel: 'E-mail', label: `Mail ${entityId}`, keyFields: {}, snippet: 'Type: E-mail\nName: Mail',
+      matchClass: 'hybrid', matchedIn, rank: 1, diagnostics: {}, provenance: [], ...(passages ? { passages } : {}),
+    });
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'found', modeUsed: 'hybrid', index: { state: 'ready' }, concepts: [], unknownConcepts: [],
+        seeds: [
+          seed('e-1', 'passage', [{ fieldKey: 'corps', field: 'Corps', start: 850, end: 1850, text: '…the rack keys are at the front desk…' },
+            { fieldKey: 'corps', field: 'Corps', start: 0, end: 1000, text: 'Hello team' }]),
+          seed('e-2', 'record', [{ fieldKey: 'corps', field: 'Corps', start: 0, end: 900, text: 'keys' }]),
+          seed('e-3', 'record'),
+        ],
+        coverage: { expectedCount: 3, indexedCount: 3, exactOnlyCount: 0, passageCount: 12, passageIndexedCount: 12, passageTruncatedCount: 1 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'where are the rack keys' });
+    expect(result.records[0]).toEqual({
+      entityId: 'e-1', concept: 'E-mail', name: 'Mail e-1', keyFields: {}, snippet: 'Corps: …the rack keys are at the front desk…',
+      match: 'hybrid', matchedIn: 'passage', sourceCount: 0,
+      passages: [{ field: 'Corps', fieldKey: 'corps', text: '…the rack keys are at the front desk…' }, { field: 'Corps', fieldKey: 'corps', text: 'Hello team' }],
+    });
+    expect(result.records[1]).toMatchObject({ snippet: 'Type: E-mail\nName: Mail', matchedIn: 'record', passages: [{ field: 'Corps', text: 'keys' }] });
+    expect(result.records[2]).not.toHaveProperty('passages');
+    expect(result.notes.join(' ')).toMatch(/quote them as evidence.*query_records/);
+    expect(result.notes.join(' ')).toMatch(/1 records have fields too long/);
   });
 
   it('reports concepts the model does not hold as not represented', async () => {
@@ -279,6 +322,153 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/1 of the records asked for/);
   });
 
+  it('lists records of a concept with how the query was read and what was left out', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1',
+        concept: { conceptId: 'c-1', key: 'invoice', label: 'Invoice' }, total: 120, hiddenRecords: 3, unparsable: { issued: 2 },
+        appliedQuery: { filters: [{ field: 'issued', fieldLabel: 'Issue date', type: 'date', op: 'between', value: 'last_3_months',
+          range: { from: '2026-07-04T00:00:00Z', to: '2026-10-04T00:00:00Z' } }] },
+        records: [{ entityId: 'e-1', name: 'F-1', keyFields: { number: 'F-1' }, values: { notes: 'x…' }, truncated: true, truncatedFields: ['notes'] }],
+        returned: 1, offset: 0, nextOffset: 1, pageCutShort: false,
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', {
+      concept: 'Invoice', filters: [{ field: 'issued', op: 'between', value: 'last_3_months' }], limit: 1,
+    });
+    expect(graphSearch.queryRecords).toHaveBeenCalledWith('user-1', 'model-1', {
+      environment: 'production', concept: 'Invoice', filters: [{ field: 'issued', op: 'between', value: 'last_3_months' }], limit: 1,
+    });
+    expect(result).toMatchObject({
+      model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'ok', concept: 'Invoice', total: 120,
+      unparsable: { issued: 2 }, offset: 0, nextOffset: 1, truncated: true,
+      records: [{ entityId: 'e-1', name: 'F-1', values: { notes: 'x…' }, truncated: true }],
+    });
+    expect(result.appliedQuery.filters?.[0]).toMatchObject({ range: { from: '2026-07-04T00:00:00Z' } });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/2 values of "Issue date" could not be read as dates/);
+    expect(notes).toMatch(/3 records of this concept come from sources the user cannot open/);
+    expect(notes).toMatch(/Records 1 to 1 of 120 .* offset=1/);
+    expect(notes).toMatch(/cut at 1500 characters/);
+  });
+
+  it('returns groups, and says when only part of them came back', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-2', definitionsVersionId: 'v-1', concept: { label: 'Invoice' }, total: 900, hiddenRecords: 0,
+        unparsable: {}, appliedQuery: { groupBy: [{ name: 'issued:month', field: 'issued', label: 'Issue date', type: 'date', bucket: 'month' }] },
+        buckets: [{ 'issued:month': '2026-07', count: 12 }], bucketsTruncated: true,
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', groupBy: [{ field: 'issued', bucket: 'month' }], data: 'draft' });
+    expect(graphSearch.queryRecords).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ environment: 'draft' }));
+    expect(result).toMatchObject({ data: 'draft', total: 900, groups: [{ 'issued:month': '2026-07', count: 12 }], truncated: true });
+    expect(result).not.toHaveProperty('records');
+    expect(result).not.toHaveProperty('unparsable');
+    expect(result.notes.join(' ')).toMatch(/Only the first 1 groups/);
+    expect(result.notes.join(' ')).toMatch(/another version of the model/);
+  });
+
+  it('reads the records linked to a record with their values, and says how many exist in all', async () => {
+    const graphSearch = {
+      expand: jest.fn().mockResolvedValue({
+        status: 'partial', truncated: true, hiddenSeeds: 0, dataRevisionId: 'dr-1',
+        nodes: [
+          { entityId: 'mail', conceptId: 'c-mail', conceptLabel: 'Message', label: 'Relance', keyFields: {}, inclusionReason: 'seed', path: [], provenance: [] },
+          { entityId: 'f-1', conceptId: 'c-fact', conceptLabel: 'Fait', label: 'F1', keyFields: {}, inclusionReason: 'relationship', provenance: [],
+            values: { statement: 'Le contrat expire en juin' }, path: [{ fromEntityId: 'mail', relationId: 'r', relationKey: 'enonce', direction: 'outgoing', toEntityId: 'f-1' }] },
+        ],
+        edges: [], unknownFields: ['colour'],
+        linkCounts: [{ relationId: 'r', relationKey: 'enonce', direction: 'outgoing', conceptId: 'c-fact', conceptLabel: 'Fait', count: 60, hidden: 2 }],
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.relatedRecords('user-1', 'model-1', {
+      recordIds: ['mail'], relations: ['énonce'], direction: 'outgoing', fields: ['statement', 'colour'], maxRecords: 1,
+    });
+    expect(graphSearch.expand).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ fields: ['statement', 'colour'], maxNodes: 1 }));
+    expect(result.records[1]).toMatchObject({ name: 'F1', values: { statement: 'Le contrat expire en juin' } });
+    expect(result.linkCounts).toEqual([{ relation: 'enonce', direction: 'outgoing', concept: 'Fait', count: 60, hidden: 2 }]);
+    expect(result.completeness).toMatchObject({ complete: false, returned: 1, total: 60, hasMore: true, hiddenRecords: 2 });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/1 of the 60 linked records are returned/);
+    expect(notes).toMatch(/linked_to/);
+    expect(notes).toMatch(/counted in linkCounts as hidden/);
+    expect(notes).toMatch(/fields "colour"/);
+  });
+
+  it('explains an empty result: which condition left nothing, and the stored values a word may have meant', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1', concept: { label: 'Invoice' },
+        total: 0, hiddenRecords: 0, unparsable: {}, appliedQuery: {}, records: [], returned: 0, offset: 0, nextOffset: null,
+        diagnostics: { readableRecords: 6, checks: [
+          { part: 'filters[0]', field: 'Status', op: 'eq', matches: 0, didYouMean: ['Payée', 'payee'] },
+          { part: 'filters[1]', field: 'Amount', op: 'gt', matches: 3 }] },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', filters: [{ field: 'status', op: 'eq', value: 'payed' }] });
+    expect(result).toMatchObject({ total: 0, completeness: { complete: true, total: 0 }, diagnostics: { readableRecords: 6 } });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/out of 6 readable records/);
+    expect(notes).toMatch(/filters\[0\] \(Status eq\) 0; filters\[1\] \(Amount gt\) 3/);
+    expect(notes).toMatch(/"Payée", "payee"/);
+  });
+
+  it('hands back what is wrong in a query so the assistant can fix it', async () => {
+    const errors = [{ code: 'invalid_query', part: 'filters[0].field', reason: 'unknown_field', message: 'Invoice has no field "colour"', available: ['Amount'] }];
+    const graphSearch = { queryRecords: jest.fn()
+      .mockResolvedValueOnce({ status: 'invalid_query', errors, appliedQuery: { filters: [{ field: 'colour', op: 'eq' }] } })
+      .mockResolvedValueOnce({ status: 'not_represented', errors: [{ ...errors[0], part: 'concept', reason: 'unknown_concept', available: ['Invoice', 'Customer'] }], appliedQuery: {} }) };
+    const { service } = setup(undefined, { graphSearch });
+    const invalid = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', filters: [{ field: 'colour', op: 'eq', value: 'red' }] });
+    expect(invalid).toMatchObject({ status: 'invalid_query', errors, appliedQuery: { filters: [{ field: 'colour' }] } });
+    expect(invalid.notes[0]).toMatch(/fix the parts listed in errors/);
+    const missing = await service.queryRecords('user-1', 'model-1', { concept: 'Supplier' });
+    expect(missing.notes[0]).toBe('The model has no concept "Supplier": this information is not in the model. Its concepts: Invoice, Customer.');
+  });
+
+  it('describes the data to query: fields with types, key fields, relationships and record counts', async () => {
+    const invoice = { ...customer, id: 'n-inv', key: 'invoice', label: 'Invoice', description: 'A bill', aliases: ['Bill'],
+      attributes: [
+        { key: 'number', label: 'Invoice number', type: 'text' as const, required: true },
+        { key: 'status', label: 'Status', type: 'enum' as const, required: false, options: ['paid', 'sent'], description: 'Where it stands' },
+        { key: 'later', label: 'Added later', type: 'date' as const, required: false, aliases: ['New'] },
+      ] };
+    const graph = { modelId: 'model-1', versionId: 'v-1', revision: 0, records: [], recordRelations: [], nodes: [invoice, customer, documents],
+      relations: [{ id: 'r-1', key: 'billed_to', label: 'billed to', inverseLabel: 'receives', description: '', sourceNodeTypeId: 'n-inv',
+        targetNodeTypeId: customer.id, cardinality: 'many_to_one' as const, traversable: true, filterable: true, attributes: [] }] };
+    const graphSearch = {
+      dataOverview: jest.fn().mockResolvedValue({
+        versionId: 'v-1', graph,
+        overview: { modelVersionId: 'v-1', dataRevisionId: 'dr-1', relations: [],
+          concepts: [{ conceptId: 'c-1', key: 'invoice', label: 'Invoice', keyFields: ['number'], fields: ['number', 'status'], recordCount: 42, hiddenRecords: 2 }] },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.describeData('user-1', 'model-1');
+    expect(graphSearch.dataOverview).toHaveBeenCalledWith('user-1', 'model-1', 'production');
+    expect(result.concepts[0]).toEqual({
+      key: 'invoice', label: 'Invoice', description: 'A bill', aliases: ['Bill'], recordCount: 42, keyFields: ['number'],
+      fields: [
+        { key: 'number', label: 'Invoice number', type: 'text' },
+        { key: 'status', label: 'Status', type: 'enum', options: ['paid', 'sent'], description: 'Where it stands' },
+        { key: 'later', label: 'Added later', type: 'date', aliases: ['New'], inData: false },
+      ],
+    });
+    expect(result.concepts[1]).toMatchObject({ key: 'customer', recordCount: 0, keyFields: [] });
+    expect(result.concepts.map((concept) => concept.key)).not.toContain('documents');
+    expect(result.relations).toEqual([{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives', from: 'invoice', to: 'customer', cardinality: 'many_to_one' }]);
+    expect(result.howToQuery).toMatch(/query_records/);
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/"Customer" has no data yet/);
+    expect(notes).toMatch(/2 records of "Invoice" come from sources the user cannot open/);
+    expect(notes).toMatch(/inData: false/);
+  });
+
   it('follows every relationship of the records in one step when none is named', async () => {
     const graphSearch = { expand: jest.fn().mockResolvedValue({ status: 'no_match', truncated: false, hiddenSeeds: 0, nodes: [], edges: [] }) };
     const { service } = setup(undefined, { graphSearch });
@@ -287,5 +477,42 @@ describe('SemanticModelAssistantService', () => {
       environment: 'draft', seedEntityIds: ['e-1'], maxNodes: 5, steps: [{ direction: 'both', concepts: ['Invoice'] }],
     });
     expect(result.notes).toEqual(['These records have no links of the kind asked for.']);
+  });
+});
+
+describe('SemanticModelAssistantService deleteModel', () => {
+  it('refuses unless the exact model name is repeated', async () => {
+    const { service, models } = setup();
+    Object.assign(models, { deletePermanently: jest.fn() });
+    await expect(service.deleteModel('user-1', 'model-1', 'billing')).rejects.toMatchObject({ status: 400 });
+    await expect(service.deleteModel('user-1', 'model-1', undefined)).rejects.toMatchObject({ status: 400 });
+    expect((models as unknown as { deletePermanently: jest.Mock }).deletePermanently).not.toHaveBeenCalled();
+  });
+
+  it('deletes the model when the name matches', async () => {
+    const { service, models } = setup();
+    const deletePermanently = jest.fn().mockResolvedValue(undefined);
+    Object.assign(models, { deletePermanently });
+    await expect(service.deleteModel('user-1', 'model-1', 'Billing')).resolves.toEqual({ deleted: true, modelId: 'model-1', name: 'Billing' });
+    expect(deletePermanently).toHaveBeenCalledWith('user-1', 'model-1');
+  });
+});
+
+describe('SemanticModelAssistantService cloneModel', () => {
+  it('names the copy after the source and passes the include options', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-1', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'copied', records: 5 } });
+    Object.assign(models, { clone });
+    const result = await service.cloneModel(actor, 'model-1', { includeData: true });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: true, data: true, shares: false });
+    expect(result).toMatchObject({ modelId: 'copy-1', sourceModelId: 'model-1', dataCopy: { status: 'copied' } });
+  });
+
+  it('keeps a given name and leaves out what is not asked', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-2', name: 'Lean', status: 'draft', role: 'owner', dataCopy: { status: 'skipped' } });
+    Object.assign(models, { clone });
+    await service.cloneModel(actor, 'model-1', { name: ' Lean ', includeSources: false });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Lean', { sources: false, data: false, shares: false });
   });
 });

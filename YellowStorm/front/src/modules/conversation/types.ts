@@ -646,6 +646,10 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SendMessagePayload {
+  rootContinuation?: {
+    executionId: string;
+    inputResponses: Array<{ inputId: string; inputVersion?: number; response: Record<string, unknown> }>;
+  };
   requestId?: string;
   playbookHandoffId?: string;
   content: string;
@@ -673,6 +677,37 @@ export interface SendMessagePayload {
   interaction?: ChoiceInteractionMetadata;
   interactions?: ChoiceInteractionMetadata[];
   clientContext?: ConversationClientContextV1;
+}
+
+export interface NativeInputSchema {
+  type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean';
+  properties?: Record<string, NativeInputSchema>;
+  required?: string[];
+  items?: NativeInputSchema;
+  enum?: Array<string | number | boolean>;
+  minLength?: number;
+  maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
+  minimum?: number;
+  maximum?: number;
+}
+
+export interface PendingRootInput {
+  executionId: string;
+  epoch: number;
+  mode?: 'foreground' | 'background';
+  inputs: Array<{ inputId: string; inputVersion?: number; kind: 'confirmation' | 'input'; message?: string;
+    responseSchema?: NativeInputSchema; responseSchemaUnsupported?: boolean }>;
+}
+
+export interface RootWorkSnapshot {
+  epoch: number;
+  watermark: string;
+  stopRequestId: string;
+  jobs: Array<{ executionId: string; parentExecutionId: string; role: 'library_worker' | 'temporary_worker' | 'fanout_driver' | 'followup';
+    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled';
+    createdAt: string; deadline: string; publicationMessageId?: string }>;
 }
 
 export interface ConversationClientContextV1 {
@@ -826,4 +861,19 @@ export interface PublicShareMessage {
   components?: MessageComponent[];
   modelId?: string;
   createdAt: string;
+}
+export interface RootExecutionTextResult {
+  executionId: string;
+  text: string;
+  complete: boolean;
+}
+
+export interface RootExecutionEvidenceLocation {
+  page?: number;
+  mimeType?: string;
+  evidenceId: string;
+  kind: 'citation' | 'artifact';
+  producerAgentId: string | null;
+  url: string;
+  fileName: string;
 }

@@ -278,6 +278,24 @@ def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
                       headers=AUTH).status_code == 422
 
 
+def test_concept_records_are_filtered_per_field(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    pool = RecordingPool([binding, 0, [], []])
+    _inject(client, pool)
+    filters = '{"__label__": "acme", "city": "Par", "empty": " "}'
+    response = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                          params={"filters": filters}, headers=AUTH)
+    assert response.status_code == 200
+    sql, params = next((sql, params) for sql, params in pool.calls if "count(*)" in sql)
+    # Blank filters are ignored; the name filters the label, a field its value or its key part.
+    assert params == ("dr_1", "c1", None, "%acme%", "%Par%", "city")
+    assert "label ILIKE $4" in sql and "attributes->>$6 ILIKE $5" in sql
+    for bad in ('["city"]', '{"city": 3}', "not json"):
+        rejected = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                              params={"filters": bad}, headers=AUTH)
+        assert rejected.status_code == 422
+
+
 def test_project_rejects_truncated_listing(client: TestClient):
     revision = {"id": "dr_9", "model_id": "m1", "validation_state": "valid",
                 "projection_ref": None, "correction_sequence": 0}
@@ -327,7 +345,7 @@ def test_project_rebuilds_legacy_unverified_reference(client: TestClient):
     response = client.post("/v1/semantic-model-population/revisions/dr_1/project",
                            headers=AUTH)
     assert response.status_code == 200
-    assert response.json()["projectionRef"] == "age:v1:pop_dr_1"
+    assert response.json()["projectionRef"] == "age:v2:pop_dr_1"  # rebuilt typed
 
 
 def test_activation_swaps_binding_only_on_expected_tuple(client: TestClient):
@@ -509,3 +527,256 @@ def test_revert_must_name_an_existing_correction(client: TestClient, monkeypatch
     response = client.post("/v1/semantic-model-population/corrections", headers=AUTH, json=body)
     assert response.status_code == 422
     assert response.json()["detail"] == "invalid_revert_target"
+
+
+class _GraphsPool:
+    """An AGE database holding the graphs named in ``existing``."""
+
+    def __init__(self, existing: set[str]) -> None:
+        self.existing = existing
+        self.dropped: list[str] = []
+
+    def acquire(self) -> AsyncContext:
+        return AsyncContext(self)
+
+    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        return params[0] in self.existing
+
+    async def execute(self, sql: str, *_params):  # type: ignore[no-untyped-def]
+        self.dropped.append(sql)
+
+
+def test_purge_clears_data_and_drops_its_graphs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: dict = {}
+
+    async def purge(pool, model_id, *, forget_document_reading, emit_signal):  # type: ignore[no-untyped-def]
+        seen.update(model=model_id, forget=forget_document_reading)
+        return {"modelId": model_id, "resetGeneration": 1, "revisions": 2, "keptRevisions": 0,
+                "reviewItems": 0, "jobs": 1, "documentReadings": 0,
+                "projections": ["age:v1:pop_dr_a", "age:v1:pop_dr_gone"]}
+
+    monkeypatch.setattr(store, "purge_model_data", purge)
+    graphs = _GraphsPool({"pop_dr_a"})
+    _inject(client, ScriptedPool([]), graphs)
+    response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH,
+                           json={"forgetDocumentReading": True})
+    assert response.status_code == 200
+    assert response.json()["projectionsDropped"] == 1
+    assert "projections" not in response.json()
+    assert seen == {"model": "m1", "forget": True}
+    assert len(graphs.dropped) == 1 and "pop_dr_a" in graphs.dropped[0]
+
+
+def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    async def purge(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.PopulationRunning("m1")
+
+    monkeypatch.setattr(store, "purge_model_data", purge)
+    _inject(client, ScriptedPool([]))
+    response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH, json={})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "population_running"
+
+
+def test_forget_readings_keeps_the_data_and_waits_for_a_running_build(client: TestClient,
+                                                                       monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[str] = []
+
+    async def forget(pool, model_id):  # type: ignore[no-untyped-def]
+        seen.append(model_id)
+        return 12
+
+    monkeypatch.setattr(store, "forget_document_readings", forget)
+    _inject(client, ScriptedPool([]))
+    response = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == ["m1"]
+
+    async def running(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.PopulationRunning("m1")
+
+    monkeypatch.setattr(store, "forget_document_readings", running)
+    refused = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert refused.status_code == 409 and refused.json()["detail"] == "population_running"
+
+
+def test_delete_model_drops_its_graphs_and_returns_no_content(client: TestClient,
+                                                              monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[str] = []
+
+    async def delete(pool, model_id):  # type: ignore[no-untyped-def]
+        seen.append(model_id)
+        return {"modelId": model_id, "deleted": {},
+                "projections": ["age:v1:pop_dr_a", "age:v1:pop_dr_gone"]}
+
+    monkeypatch.setattr(store, "delete_model", delete)
+    graphs = _GraphsPool({"pop_dr_a"})
+    _inject(client, ScriptedPool([]), graphs)
+    response = client.delete("/v1/semantic-model-population/models/m1", headers=AUTH)
+    assert response.status_code == 204
+    assert seen == ["m1"]
+    assert len(graphs.dropped) == 1 and "pop_dr_a" in graphs.dropped[0]
+
+
+def test_delete_model_refuses_while_a_job_runs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    async def delete(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.ModelJobsRunning("m1")
+
+    monkeypatch.setattr(store, "delete_model", delete)
+    _inject(client, ScriptedPool([]))
+    response = client.delete("/v1/semantic-model-population/models/m1", headers=AUTH)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "model_jobs_running"
+
+
+def test_delete_model_needs_the_service_key(client: TestClient):
+    _inject(client, ScriptedPool([]))
+    assert client.delete("/v1/semantic-model-population/models/m1").status_code in (401, 403)
+
+
+def _clone_body() -> dict:
+    return {"targetModelId": "m2", "targetModelVersionId": "v2",
+            "idMap": {"concepts": {"c1": "c2"}, "relations": {"r1": "r2"}}}
+
+
+def test_clone_data_projects_activates_and_requests_the_index(client: TestClient,
+                                                             monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+
+    calls: dict[str, object] = {}
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        calls["copy"] = kwargs
+        return {"copied": True, "revisionId": "dr_new", "correctionSequence": 0, "counts": {"entities": 2}}
+
+    async def project(pool, age_pool, revision_id):  # type: ignore[no-untyped-def]
+        calls["project"] = revision_id
+        return {"projectionRef": "age:v1:pop_dr_new"}
+
+    async def activate(pool, **kwargs):  # type: ignore[no-untyped-def]
+        calls["activate"] = kwargs
+
+    async def index(pool, admit, revision_id):  # type: ignore[no-untyped-def]
+        calls["index"] = revision_id
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(clone_store, "activate_cloned_revision", activate)
+    monkeypatch.setattr(routes, "ensure_revision_projection", project)
+    monkeypatch.setattr(routes, "request_index_quietly", index)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 200, response.text
+    assert response.json()["projectionRef"] == "age:v1:pop_dr_new"
+    assert calls["copy"] == {"source_model_id": "m1", "target_model_id": "m2",
+                             "target_model_version_id": "v2", "id_map": {"c1": "c2", "r1": "r2"},
+                             "planned": None}
+    assert calls["project"] == "dr_new" and calls["index"] == "dr_new"
+    assert calls["activate"]["projection_ref"] == "age:v1:pop_dr_new"  # type: ignore[index]
+
+
+def test_clone_data_refuses_while_a_source_job_runs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import model_clone_store as clone_store
+    from app.persistence import population_store as store
+
+    async def copy(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.ModelJobsRunning("m1")
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 409
+    assert response.json()["detail"] == "model_jobs_running"
+
+
+def test_clone_data_removes_the_copy_when_the_graph_fails(client: TestClient,
+                                                          monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+    from app.persistence import population_store as store
+    from app.population.age_projection import ProjectionUnavailable
+
+    removed: list[str] = []
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        return {"copied": True, "revisionId": "dr_new", "correctionSequence": 0, "counts": {}}
+
+    async def project(*_args):  # type: ignore[no-untyped-def]
+        raise ProjectionUnavailable("age_projection_failed")
+
+    async def delete(pool, model_id):  # type: ignore[no-untyped-def]
+        removed.append(model_id)
+        return {"projections": []}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(routes, "ensure_revision_projection", project)
+    monkeypatch.setattr(store, "delete_model", delete)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 503
+    assert removed == ["m2"]
+
+
+def test_clone_data_without_source_data_copies_nothing(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import model_clone_store as clone_store
+
+    async def copy(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return {"copied": False, "reason": "no_data"}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 200
+    assert response.json() == {"copied": False, "reason": "no_data"}
+
+
+def test_id_remapper_rewrites_mapped_uuids_in_text_and_json():
+    from app.persistence.model_clone_store import IdRemapper
+
+    old, new = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    other = "33333333-3333-4333-8333-333333333333"
+    remap = IdRemapper({old: new})
+    assert remap.text(f"typed:{old.upper()}:{other}") == f"typed:{new}:{other}"
+    assert remap.json({"conceptId": old, "list": [old, {"k": other}]}) == {
+        "conceptId": new, "list": [new, {"k": other}]}
+
+
+def test_clone_data_takes_the_clone_plan_only_when_its_hash_matches(client: TestClient,
+                                                                     monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+    from app.population.compiler import canonical_spec_hash
+
+    seen: dict[str, object] = {}
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return {"copied": False, "reason": "no_data"}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(routes, "ensure_revision_projection", None)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    spec = {"concepts": [], "relations": [], "sourceScope": []}
+    body = {**_clone_body(), "homeWorkspaceId": "ws1", "specification": spec, "specHash": "sha256:" + "0" * 64}
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH, json=body)
+    assert response.status_code == 422
+    body["specHash"] = canonical_spec_hash(spec)
+    body["executionFingerprint"] = "sha256:fp"
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH, json=body)
+    assert response.status_code == 200
+    assert seen["planned"] == {"homeWorkspaceId": "ws1", "specHash": body["specHash"], "specification": spec,
+                               "executionFingerprint": "sha256:fp"}

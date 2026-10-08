@@ -199,6 +199,8 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 | `ERR_3400`–`ERR_3409` | Widget chat (incl. citation not found) |
 | `ERR_3500`–`ERR_3530` | Worky |
 | `ERR_3600`–`ERR_3688` | Governance (incl. governed-conversation codes `ERR_3680`–`ERR_3688`) |
+| `ERR_3700`–`ERR_3710` | Semantic model |
+| `ERR_3800`–`ERR_3806` | Conversation V2 template catalog (incl. category codes `ERR_3800`–`ERR_3801` and template codes `ERR_3802`–`ERR_3806`) |
 
 Adding a code: pick the right range, add to backend enum, mirror it in `front/src/lib/error-codes.ts`, and add EN+FR messages in frontend `errors.json`. Frontend drift is easy to miss because unknown backend codes still reach the UI as generic errors.
 

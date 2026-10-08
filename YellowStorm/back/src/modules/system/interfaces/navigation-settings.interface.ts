@@ -13,6 +13,7 @@ export const NAVIGATION_TARGET_KEYS = [
   'connectedApps',
   'appMarketplace',
   'governance',
+  'evaluationLogicalSearch',
   'admin',
 ] as const;
 
@@ -62,6 +63,7 @@ export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
     { id: 'history', type: 'item', parentId: 'ask', position: 1, visible: true, labels: { en: 'History', fr: 'Historique' }, targetKey: 'history' },
     { id: 'govern', type: 'group', parentId: null, position: 4, visible: true, labels: { en: 'Govern', fr: 'Gouverner' } },
     { id: 'governance', type: 'item', parentId: 'govern', position: 0, visible: true, labels: { en: 'Governance', fr: 'Gouvernance' }, targetKey: 'governance' },
-    { id: 'admin', type: 'item', parentId: 'govern', position: 1, visible: true, labels: { en: 'Administration', fr: 'Administration' }, targetKey: 'admin' },
+    { id: 'evaluation-logical-search', type: 'item', parentId: 'govern', position: 1, visible: true, labels: { en: 'Logical search evaluation', fr: 'Evaluation recherche logique' }, targetKey: 'evaluationLogicalSearch' },
+    { id: 'admin', type: 'item', parentId: 'govern', position: 2, visible: true, labels: { en: 'Administration', fr: 'Administration' }, targetKey: 'admin' },
   ],
 };

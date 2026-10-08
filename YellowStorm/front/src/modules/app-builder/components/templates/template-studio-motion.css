@@ -1,0 +1,94 @@
+@keyframes ts-boot-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes ts-boot-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes ts-boot-orbit {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ts-boot-bar {
+  0% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(160%);
+  }
+}
+
+@keyframes ts-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--ok) 45%, transparent);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+@keyframes ts-capture-flash {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.ts-boot-shimmer {
+  background: linear-gradient(
+    110deg,
+    color-mix(in oklch, var(--muted) 40%, transparent) 20%,
+    color-mix(in oklch, var(--background) 92%, transparent) 42%,
+    color-mix(in oklch, var(--muted) 40%, transparent) 64%
+  );
+  background-size: 200% 100%;
+  animation: ts-boot-shimmer 2.4s ease-in-out infinite;
+}
+
+.ts-boot-progress-indeterminate {
+  animation: ts-boot-bar 1.6s ease-in-out infinite;
+}
+
+.ts-live-dot {
+  animation: ts-live-pulse 1.8s ease-out infinite;
+}
+
+.ts-capture-flash {
+  animation: ts-capture-flash 0.7s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-boot-shimmer,
+  .ts-boot-progress-indeterminate,
+  .ts-live-dot,
+  .ts-capture-flash {
+    animation: none !important;
+  }
+}

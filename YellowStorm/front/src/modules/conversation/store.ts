@@ -2513,7 +2513,6 @@ const EMPTY_CONVERSATIONS: Conversation[] = [];
 const EMPTY_CONVERSATION_SUMMARIES: ConversationSummary[] = [];
 const EMPTY_MESSAGES: Message[] = [];
 
-export const useConversations = () => useConversationStore((s) => (s.conversationSummaries.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : s.conversationSummaries));
 
 export const useHistoryConversations = () =>
   useConversationStore(
@@ -2531,7 +2530,6 @@ export const useConversationsByProject = (projectId: string) =>
     }),
   );
 
-export const useProjectConversationsLoading = (projectId: string) => useConversationStore((s) => !!s.projectConversationsLoading[projectId]);
 
 // ===== Project list helpers =====
 
@@ -2575,9 +2573,7 @@ export const useConversationsLoading = () => useConversationStore((s) => s.conve
 
 export const useConversationsHasMore = () => useConversationStore((s) => s.conversationsHasMore);
 
-export const useHistoryPanelOpen = () => useConversationStore((s) => s.historyPanelOpen);
 
-export const useToggleHistoryPanel = () => useConversationStore((s) => s.toggleHistoryPanel);
 
 export const useCurrentConversation = () => useConversationStore((s) => s.currentConversation);
 
@@ -2623,11 +2619,8 @@ export const useMessagesHasMore = () => useConversationStore((s) => s.messagesHa
 
 export const useSSEError = () => useConversationStore((s) => s.sseError);
 
-export const useSSEStatus = () => useConversationStore((s) => s.sseStatus);
 
-export const useMessagesLoading = () => useConversationStore((s) => s.messagesLoading);
 
-export const useIsInitialLoading = () => useConversationStore((s) => s.conversationLoading || s.messagesLoading);
 
 export const useSelectedModelId = () => useConversationStore((s) => s.selectedModelId);
 
@@ -2653,7 +2646,6 @@ export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.s
 
 export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSearchEnabled);
 
-export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
 
 export const useWebConnectorAccessEnabled = () => useConversationStore((s) => s.webConnectorAccessEnabled);
 
@@ -2663,7 +2655,6 @@ export const useSelectedSkillIds = () => useConversationStore((s) => s.selectedS
 
 export const useToggleSelectedSkill = () => useConversationStore((s) => s.toggleSelectedSkill);
 
-export const useSetSelectedSkillIds = () => useConversationStore((s) => s.setSelectedSkillIds);
 
 export const useBranchCache = () => useConversationStore(useShallow((s) => s.branchCache));
 

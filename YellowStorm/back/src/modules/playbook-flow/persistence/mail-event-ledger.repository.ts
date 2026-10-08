@@ -96,7 +96,7 @@ export class MailEventLedgerRepository {
         fromParticipant: castMailParticipant(input.from) as unknown as Record<string, unknown>,
         toParticipants: castMailParticipants(input.to) as unknown as Record<string, unknown>[],
         ccParticipants: castMailParticipants(input.cc) as unknown as Record<string, unknown>[],
-        hasAttachments: input.hasAttachments === true,
+        hasAttachments: input.hasAttachments,
         attachments: castMailAttachments(input.attachments) as unknown as Record<string, unknown>[],
         error: textOrNull(input.error),
         executionId: null,

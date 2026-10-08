@@ -46,7 +46,7 @@ export class PlaybookFlowQueueService {
    * Recompute queue positions for all queued executions belonging to owner.
    * Returns the changed { executionId, queuePosition } pairs for SSE updates.
    */
-  async refreshPositions(ownerId: string): Promise<Array<{ executionId: string; queuePosition: number }>> {
+  async refreshPositions(ownerId: string): Promise<{ executionId: string; queuePosition: number }[]> {
     return this.executions.renumberQueue(ownerId);
   }
 

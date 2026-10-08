@@ -2,7 +2,7 @@ export type WorkyStreamAccess = 'owner' | 'write' | 'read' | null;
 
 interface StreamAccessShape {
   ownerUserId: string;
-  shares?: Array<{ userId: string; permission: 'read' | 'write' }>;
+  shares?: { userId: string; permission: 'read' | 'write' }[];
 }
 
 export function getWorkyStreamAccess(

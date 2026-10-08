@@ -51,7 +51,7 @@ const makeService = (options: MakeOptions = {}) => {
         : [{ id: assigneeId, email: 'john@example.com', firstName: 'John', lastName: 'Doe' }],
     ),
   };
-  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const emitted: { type: string; payload: unknown }[] = [];
   const events = {
     emit: jest.fn((_userId: string, _streamId: string, e: { type: string; payload: unknown }) => {
       emitted.push({ type: e.type, payload: e.payload });

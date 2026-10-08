@@ -1,6 +1,6 @@
 export function pLimit(concurrency: number) {
   let active = 0;
-  const queue: Array<() => void> = [];
+  const queue: (() => void)[] = [];
   return <T>(fn: () => Promise<T>): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const run = () => {

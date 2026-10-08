@@ -244,7 +244,7 @@ export class AiProxyUsageService {
       try {
         const status = await this.appDataClient.getStatus(appDataId);
         const fromRemote = this.pickWorkspaceId(
-          status.app as Record<string, unknown> | undefined,
+          status.app,
         );
         if (fromRemote) return fromRemote;
       } catch (error) {

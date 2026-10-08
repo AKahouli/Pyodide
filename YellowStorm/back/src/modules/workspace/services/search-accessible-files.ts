@@ -27,10 +27,10 @@ export async function searchAccessibleFiles(
   if (term.length < MIN_FILE_SEARCH) return { files: [], page: 1, totalPages: 1 };
   const [own, shared] = await Promise.all([
     services.workspaces.findAllByUser(userId, { page: 1, limit: 100 }),
-    services.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 } as never).catch(() => ({ workspaces: [] })),
+    services.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 }).catch(() => ({ workspaces: [] })),
   ]);
   const names = new Map<string, string>();
-  for (const workspace of [...own.workspaces, ...(shared.workspaces as Array<{ id: string; name: string }>)]) names.set(workspace.id, workspace.name);
+  for (const workspace of [...own.workspaces, ...(shared.workspaces as { id: string; name: string }[])]) names.set(workspace.id, workspace.name);
   if (!names.size) return { files: [], page: 1, totalPages: 1 };
   const result = await services.documents.findByMultipleWorkspaces([...names.keys()], { page, limit: 50, search: term, sortBy: 'originalName', sortOrder: 'asc' } as never);
   const files = result.documents.filter((document) => !document.isFolder);

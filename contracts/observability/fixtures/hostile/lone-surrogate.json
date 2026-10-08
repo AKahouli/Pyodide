@@ -1,0 +1,7 @@
+{
+  "name": "lone-surrogate",
+  "description": "Malformed Unicode (unpaired surrogate) in message/attributes. Must not throw and must not emit invalid UTF-8 downstream.",
+  "input": null,
+  "input_note": "message contains '\\ud800' unpaired.",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192 }
+}

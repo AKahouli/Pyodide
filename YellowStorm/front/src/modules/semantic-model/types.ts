@@ -35,6 +35,9 @@ export interface SemanticModel {
   currentDraftVersionId: string | null;
   currentPublishedVersionId: string | null;
   role?: 'owner' | 'editor' | 'viewer';
+  /** Who owns a model shared with the user; absent on models the user owns. */
+  ownerName?: string | null;
+  ownerEmail?: string | null;
   workspaceCount?: number;
   nodeCount?: number;
   relationCount?: number;
@@ -45,6 +48,13 @@ export interface SemanticModel {
   updatedAt: string;
 }
 
+/** What a clone copies besides the structure; data needs the sources. */
+export interface SemanticModelCloneInclude { sources: boolean; data: boolean; shares: boolean }
+
+export type SemanticModelCloneResult = SemanticModel & {
+  dataCopy?: { status: 'copied' | 'skipped' | 'failed'; reason?: string; records?: number; links?: number };
+};
+
 export interface AttributeDefinition {
   key: string;
   label: string;
@@ -54,6 +64,19 @@ export interface AttributeDefinition {
   options?: string[];
   /** Business synonyms for this field. */
   aliases?: string[];
+  /** Text fields: how the search index cuts this field into passages; absent = the global settings. */
+  searchIndex?: FieldSearchIndex;
+}
+
+/** A text field's own search index settings, over the global ones. */
+export interface FieldSearchIndex {
+  passages?: boolean;
+  longFieldChars?: number;
+  passageTargetChars?: number;
+  passageMinChars?: number;
+  passageMaxChars?: number;
+  passageOverlapChars?: number;
+  maxPassagesPerField?: number;
 }
 
 export interface CanvasPosition { x: number; y: number }
@@ -220,16 +243,31 @@ export interface SheetProfile {
 /** Rules alone, AI alone, or the rules first and the AI only for what they did not find. */
 export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
 
-export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
+
+export type ExtractionTakeUnit = 'characters' | 'words' | 'lines';
+
+/** Keep only the first or last `count` characters, words or lines of the text found (1..20000). */
+export interface ExtractionTake {
+  from: 'start' | 'end';
+  count: number;
+  unit: ExtractionTakeUnit;
+}
 
 /** Where a document value is and what it looks like. Without rules: `Label: value`, or a table row. */
 export interface ExtractionRules {
   /** Labels the value follows; empty means the field's name. */
   labels?: string[];
   location?: ExtractionLocation;
+  /** after_label: where the passage stops; before_label: where it starts. Empty: the end/start of the section. */
+  boundaryLabels?: string[];
+  /** location 'pages' only: the pages read whole (at most 50). */
+  pages?: { from: number; to?: number };
+  /** Part of the text found to keep, before the pattern and clean-up; absent keeps everything. */
+  take?: ExtractionTake;
   /** A regular expression the value must match; its first group is kept when it has one. */
   pattern?: string;
-  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso';
   /** Keep a value only when every match agrees, or keep the first one. */
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;
@@ -238,19 +276,91 @@ export interface ExtractionRules {
 export interface SourceFieldMapping {
   sourceField: string | null;
   targetAttribute: string;
-  mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+  mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
   constantValue?: unknown;
+  /**
+   * mode='computed': a value taken from the file name (documents), a column (sheets) or another field.
+   * mode='direct' (sheets, mappings saved before the field modes): the column's recipe; absent reads it as is.
+   */
+  computed?: ComputedFieldRule;
   // Only meaningful for mode='extract'; absent means deterministic.
   extractionStrategy?: SourceExtractionStrategy;
+  /** AI reading only: what the value means and what to look for; empty uses the attribute's description. */
+  semanticDefinition?: string;
+  /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
+  agentId?: string;
   rules?: ExtractionRules;
 }
 
+/** One input a recipe reads: the file name (documents), another field, or a column (sheets; a source field for records). */
+export type ComputedInputRef = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string } | { kind: 'column'; name: string };
+/** One part of a joined input: an input, or a fixed text. */
+export type ComputedJoinPart = ComputedInputRef | { kind: 'text'; value: string };
+/** Several parts joined into one text; `separator` defaults to ' ', `skipEmpty` (default true) leaves an empty part out. */
+export interface ComputedJoinInput { kind: 'join'; parts: ComputedJoinPart[]; separator?: string; skipEmpty?: boolean }
+export type ComputedFieldInput = ComputedInputRef | ComputedJoinInput;
+/** 'whole' keeps the input as it is (no cut). */
+export type ComputedFieldMethod = 'whole' | 'split' | 'between' | 'regex';
+export type ComputedFieldTransform = 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
+
+/** How a computed field is cut out of its input, e.g. `ACME_2023_8K.pdf` split by `_`, 2nd part → `2023`. */
+export interface ComputedFieldRule {
+  input: ComputedFieldInput;
+  method: ComputedFieldMethod;
+  /** split: separator (1..10 characters) and position, non-zero, negative counts from the end. */
+  delimiter?: string;
+  part?: number;
+  /** between: the text the value follows and/or precedes. */
+  after?: string;
+  before?: string;
+  /** regex: a pattern with a group, and an optional output template (`{name}` / `{1}`). */
+  pattern?: string;
+  template?: string;
+  stripExtension?: boolean;
+  /** After the cut: keep only the first or last characters, words or lines, as the reading rules do. */
+  take?: ExtractionTake;
+  /** After the take: what the value looks like (a regular expression, first group kept). Distinct from `pattern`, the advanced cut. */
+  valuePattern?: string;
+  transform?: ComputedFieldTransform;
+}
+
+export interface ComputedPreviewResult {
+  input: string | null;
+  value: string | null;
+  reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
+  /** The value after each step that ran; null where the recipe stopped. */
+  steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
+}
+
 /** How much of a document the AI reads. */
+/** How much one population run may read and keep, set by an admin for every model. */
+export interface RunLimits {
+  maxRunSources: number;
+  maxRecordsPerSource: number;
+  maxRecordsPerRun: number;
+  maxValuesPerRun: number;
+  maxAiRowsPerSource: number;
+  maxAiParallelCalls: number;
+  maxArchiveEmails: number;
+  maxArchiveMb: number;
+  parserMemoryMb: number;
+  archiveTimeoutSeconds: number;
+}
+
+export interface RunLimitsDefaults {
+  runLimits: RunLimits;
+  configured: Partial<RunLimits>;
+}
+
 export interface AiExtractionSettings {
   maxBlocks: number;
   maxCharacters: number;
   longDocumentCharacters: number;
   blocksPerField: number;
+  /** AI calls made at once (one per record), never above the admin ceiling. Absent: 4. */
+  parallelCalls?: number;
+  /** One document gives several records, one per item the AI finds. Set on a mapping only. */
+  manyRecords?: boolean;
 }
 
 /** The admin defaults with every limit filled in, and which ones the admin set. */
@@ -261,11 +371,21 @@ export interface AiExtractionDefaults {
 
 /** How one extracted field was read in a preview, or why it was not. */
 export interface DocumentFieldReading {
-  method: 'rules' | 'ai';
-  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  /** `direct`: a sheet column read as it is. */
+  method: 'rules' | 'ai' | 'computed' | 'direct';
+  /** Sheets: the column whose cell the value was read from, and where in its text. */
+  column?: string;
+  span?: { start: number; end: number } | null;
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'no_page' | 'ai_not_found' | 'ai_failed' | 'no_input' | 'not_transformable';
+  /** Computed fields: the text the value was taken from. */
+  input?: string | null;
   value?: unknown;
   values?: string[];
   page?: number | null;
+  /** Last page of a passage that runs over several pages. */
+  pageEnd?: number | null;
+  /** The text the place found, before the part kept, the pattern and clean-up (up to 3000 characters). */
+  raw?: string | null;
   quote?: string | null;
   detail?: string;
   /** For a field the rules missed before the AI was asked: why the rules missed it. */
@@ -344,14 +464,101 @@ export interface SourceSuggestionsPage {
 export type DerivedConflictRule = 'most_frequent' | 'latest' | 'longest' | 'leave_empty';
 
 /** A concept filled from another concept's records: one record per distinct key value they carry. */
+/** How a concept is read from documents: what a preset holds and a new mapping can start from. */
+export interface MappingSettings {
+  fieldMappings: SourceFieldMapping[];
+  aiSettings: Partial<AiExtractionSettings>;
+  identityFields: string[];
+}
+
+/** Named settings for reading a concept from documents, copied into a mapping when applied. */
+export interface MappingPreset extends MappingSettings {
+  id: string;
+  conceptId: string;
+  name: string;
+  description: string | null;
+  updatedAt: string;
+}
+
+/** The document mapping of a concept saved most recently, possibly in a workspace unlinked since. */
+export interface LastDocumentMapping extends MappingSettings {
+  mappingId: string;
+  scope: 'document' | 'workspace';
+  /** Null when its workspace is no longer linked. */
+  sourceName: string | null;
+  workspaceLinked: boolean;
+  updatedAt: string;
+}
+
+/**
+ * A field of a concept filled from another concept's records, filled as a sheet field is from a row: copied
+ * from a source field as it is (no `mode`, the shape every derived field had before), read out of a source
+ * field's text with rules and/or AI (`extract`), taken by a recipe (`computed`; a `column` input names a
+ * field of the source record), or fixed (`constant`).
+ */
+export interface DerivedFieldMapping {
+  sourceAttribute?: string;
+  targetAttribute: string;
+  mode?: 'extract' | 'computed' | 'constant';
+  extractionStrategy?: SourceExtractionStrategy;
+  rules?: ExtractionRules;
+  semanticDefinition?: string;
+  agentId?: string;
+  computed?: ComputedFieldRule;
+  constantValue?: string | number | boolean;
+}
+
+/** How one value is split into items: a list (or JSON array), e-mail addresses, lines or delimiters; `auto` finds out. */
+export type DerivedExpandSplit = 'auto' | 'list' | 'emails' | 'delimiters' | 'lines';
+
+/**
+ * Several records per source record: one field of the source concept (the recipients of a message, as text
+ * or a JSON array) expanded into items, each read as a record. Fields then read `@item`, or `@item.<path>`.
+ */
+export interface DerivedExpand {
+  field: string;
+  split: DerivedExpandSplit;
+  delimiters?: string[];
+  /** The list inside a JSON object ("to", "data.recipients[*]"). */
+  path?: string;
+  maxItems?: number;
+  /** The relationship linking each source record to the records its items made. */
+  relationId?: string;
+}
+
+/** Sample records of the source concept read with a derived source's fields, as a run would. */
+export interface DerivedFieldPreviewRequest {
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: DerivedFieldMapping[];
+  records: Array<{ entityId: string; values: Record<string, string | number | boolean | null> }>;
+  aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
+}
+
+export interface DerivedFieldPreviewResponse {
+  /**
+   * For each record (each of its items, when a field is expanded), how each field was read (or why not);
+   * `column` is the source field read.
+   */
+  records: Array<{ entityId: string; fields: Record<string, DocumentFieldReading>; item?: number; itemText?: string }>;
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** When a field is expanded: the `@item…` fields its items offer, and whether some items were left out. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
+}
+
 export interface DerivedSource {
   id: string;
   conceptId: string;
   sourceConceptId: string;
-  fieldMappings: Array<{ sourceAttribute: string; targetAttribute: string }>;
+  fieldMappings: DerivedFieldMapping[];
   conflictRule: DerivedConflictRule;
   /** The source field ordering records for the most recent rule. */
   orderBy: string | null;
+  /** How much the AI reads for this source, where it differs from the admin's defaults. */
+  aiSettings?: Partial<AiExtractionSettings> | null;
+  expand?: DerivedExpand | null;
   updatedAt: string;
 }
 
@@ -362,6 +569,8 @@ export interface DerivedSourceDraft {
   identityFields: string[];
   conflictRule: DerivedConflictRule;
   orderBy?: string;
+  aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
 }
 
 export interface ConceptSourceMapping {
@@ -388,6 +597,8 @@ export interface ConceptSourceMapping {
   /** Workspace mappings: the picked folders and files, or null for the whole workspace. */
   /** This mapping's own AI reading limits; each one left out uses the admin default. */
   aiSettings?: Partial<AiExtractionSettings> | null;
+  /** Several records per row: the column split into items (sheets only). */
+  expand?: DerivedExpand | null;
   selection?: { folderIds: string[]; documentIds: string[] } | null;
   /** Workspace mappings: files it covers today, and files still being indexed. */
   fileCount?: number;
@@ -425,6 +636,37 @@ export interface PopulationRefreshResponse {
   waitingFiles?: number;
 }
 
+/** A rebuild from scratch: what was cleared, then the build it started. */
+/** The graph one environment serves, what it holds compared with the stored data, and its search index. */
+export interface ServedGraph {
+  environment: 'draft' | 'production';
+  dataRevisionId: string;
+  modelVersionId: string;
+  projectionRef: string;
+  graphSchema: string | null;
+  layout: 'typed' | 'entity';
+  builtAt: string | null;
+  stored: { records: number; links: number };
+  graph: { vertices: number; edges: number; conceptLabels: number; relationLabels: number } | null;
+  state: 'ok' | 'mismatch' | 'missing';
+  index: { state: string; expectedCount?: number; indexedCount?: number; completedAt?: string | null };
+}
+
+export interface GraphStatus {
+  modelId: string;
+  environments: ServedGraph[];
+}
+
+/** The graphs rebuilt from the records already stored, one per data revision in use (draft, published). */
+export interface PopulationReprojectResponse {
+  modelId: string;
+  revisions: Array<{ revisionId: string; projectionRef: string; reprojected: boolean; vertices?: number; edges?: number }>;
+}
+
+export interface PopulationRebuildResponse extends PopulationRefreshResponse {
+  cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
+}
+
 export interface PopulationJob {
   jobId: string;
   jobType: string;
@@ -434,10 +676,13 @@ export interface PopulationJob {
   progress?: Partial<PopulationProgress>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  createdAt?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface PopulationProgress {
-  phase: 'starting' | 'reading' | 'linking' | 'saving';
+  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'projecting';
   total: number;
   done: number;
   /** Files whose earlier result was reused because nothing about them changed. */
@@ -449,6 +694,28 @@ export interface PopulationProgress {
   startedAt: string;
   /** What the saved result changed in the data in use; absent until saved, or when there was no data before. */
   changes?: PopulationChanges;
+  /** How far the current step is: rows of a sheet, files sent for indexing; no total while an archive opens. */
+  step?: { unit: 'rows' | 'files' | 'opening' | string; done: number; total: number | null };
+  /** AI calls of the whole run so far. */
+  ai?: { planned: number; answered: number; reused: number; skipped: number; failed: number };
+}
+
+/** The search index of a model's data: built in the background after each run. */
+export interface SearchIndexStatus {
+  modelId: string;
+  environment: 'draft' | 'production';
+  dataRevisionId: string | null;
+  index: {
+    state: 'missing' | 'queued' | 'indexing' | 'ready' | 'failed' | 'unavailable' | string;
+    expectedCount?: number;
+    indexedCount?: number;
+    exactOnlyCount?: number;
+    failedCount?: number;
+    reusedCount?: number;
+    passageCount?: number;
+    passageIndexedCount?: number;
+    lastErrorCode?: string | null;
+  };
 }
 
 export interface PopulationChanges {
@@ -503,7 +770,9 @@ export interface SourceMappingPreviewResponse {
     values: Record<string, unknown>;
     provenance: {
       rowNumber?: number;
-      fields?: Record<string, { method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value'; page?: string; quote?: string; reference?: string; confidence?: number }>;
+      /** A row making several records: which item of the row this record was read from. */
+      item?: number;
+      fields?: Record<string, ValueReading>;
     };
   }>;
   stats: { scannedRows: number; resolvedEntities: number; duplicateKeysSkipped: number; nullIdentitySkipped: number };
@@ -511,8 +780,49 @@ export interface SourceMappingPreviewResponse {
   warnings: string[];
   /** Documents only: how each extracted field was read, or why it was not. */
   fields?: Record<string, DocumentFieldReading>;
+  /** Documents only: whether the whole document was read. */
+  complete?: boolean;
+  /** Documents only: 'read', or why the document could not be read (e.g. 'index_unavailable'). */
+  documentStatus?: string;
   /** Documents only: what the AI was sent. */
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
+/** How one value was read: the method, where (page, quote, column), and what it was built from. */
+export interface ValueReading {
+  method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value' | 'computed_field';
+  page?: string;
+  quote?: string;
+  reference?: string;
+  confidence?: number;
+  /** A recipe: the columns or fields it read, in order. */
+  sources?: string[];
+  /** Taken from another concept's record: that concept, the record, the field(s) read and how. */
+  derivedFrom?: { conceptId?: string; label?: string; attribute?: string; attributes?: string[]; method?: string; records?: number };
+}
+
+/** A few picked sheet rows, read as a run would read them. */
+export interface SheetFieldPreviewRequest {
+  conceptId: string;
+  workspaceId: string;
+  documentId: string;
+  fieldMappings: SourceFieldMapping[];
+  rows: Array<{ rowNumber: number; values: Record<string, string | number | boolean | null> }>;
+  aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
+}
+
+export interface SheetFieldPreviewResponse {
+  /**
+   * For each row (each of its items, when a column is expanded), how each field was read (or why not):
+   * as is, out of its cell (rules, AI), or by its recipe.
+   */
+  rows: Array<{ rowNumber: number; fields: Record<string, DocumentFieldReading>; item?: number; itemText?: string }>;
+  /** How many rows the AI was asked about. */
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** When a column is expanded: the `@item…` fields its items offer, and whether some items were left out. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
 }
 
 export interface SourceMappingDraft {
@@ -524,6 +834,26 @@ export interface SourceMappingDraft {
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
   aiSettings?: Partial<AiExtractionSettings>;
+  /** Several records per row: one column split into items (sheets only). */
+  expand?: DerivedExpand;
+  /** Point this existing mapping at the file instead of adding one. */
+  mappingId?: string;
+}
+
+/** Labels and section headings that recur across a few documents of a source. */
+export interface DocumentLabelSuggestion {
+  label: string;
+  kind: 'heading' | 'label';
+  /** How many of the documents read hold it. */
+  documents: number;
+  page: number | null;
+  example: string;
+}
+
+export interface DocumentLabelsResponse {
+  documentsRead: number;
+  unread: Array<{ assetId: string; status: string }>;
+  labels: DocumentLabelSuggestion[];
 }
 
 export interface SourceMappingPreviewDraft {
@@ -536,6 +866,8 @@ export interface SourceMappingPreviewDraft {
   identityFields: string[];
   limit?: number;
   aiSettings?: Partial<AiExtractionSettings>;
+  /** Several records per row: one column split into items (sheets only). */
+  expand?: DerivedExpand;
 }
 
 export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';
@@ -717,7 +1049,9 @@ export type ReviewQueueAction =
   | { kind: 'check_links'; relationId: string }
   | { kind: 'open_sources'; conceptId: string }
   | { kind: 'review_rows'; conceptId: string }
-  | { kind: 'view_data' };
+  | { kind: 'view_data' }
+  | { kind: 'open_run_history' }
+  | { kind: 'choose_label_field'; conceptId: string };
 
 export interface ReviewQueueItem {
   key: string;

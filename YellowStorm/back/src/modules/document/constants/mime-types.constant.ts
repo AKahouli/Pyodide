@@ -47,4 +47,12 @@ export const EXTENSION_MIME_TYPES: Record<string, string> = {
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  // E-mail sources: a .zip of .eml files, or one .eml, read by the semantic model e-mail reader.
+  '.zip': 'application/zip',
+  '.eml': 'message/rfc822',
+};
+
+/** Other MIME types browsers send for the same extension (Windows labels a zip x-zip-compressed). */
+export const EXTENSION_MIME_ALIASES: Record<string, readonly string[]> = {
+  '.zip': ['application/x-zip-compressed'],
 };

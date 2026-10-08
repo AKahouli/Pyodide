@@ -17,8 +17,8 @@ type CreateBindingChange = Extract<Change, { type: 'create_data_binding' }>;
 
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
-  inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
-  outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
+  inputPortsByTaskId: [string, [string, string][]][];
+  outputPortsByTaskId: [string, [string, string][]][];
 }> = {}): IntentWorkflowValidationContext {
   return {
     existingTaskIds: new Set(overrides.existingTaskIds || []),

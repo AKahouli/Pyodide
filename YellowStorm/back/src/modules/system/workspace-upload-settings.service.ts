@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnApplicationBootstrap, BadRequestException } from '@nestjs/common';
 import { LoggerService } from '../logger';
 import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
-import { EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
+import { EXTENSION_MIME_ALIASES, EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
   WORKSPACE_UPLOAD_SETTINGS_KEY,
@@ -55,7 +55,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     if (setting && this.isUploadSettingsValue(setting.value)) {
       this.cache = { allowedExtensions: [...setting.value.allowedExtensions] };
       this.cacheLoadedAt = Date.now();
-      return this.buildSettingsResponse(this.cache, setting.updatedAt as Date | undefined);
+      return this.buildSettingsResponse(this.cache, setting.updatedAt);
     }
 
     if (setting) {
@@ -94,7 +94,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     const normalized = extension.toLowerCase();
     if (!isValidUploadExtension(normalized)) return [];
     const mime = EXTENSION_MIME_TYPES[normalized];
-    return mime ? [mime] : [];
+    return mime ? [mime, ...(EXTENSION_MIME_ALIASES[normalized] ?? [])] : [];
   }
 
   async updateSettings(rawExtensions: string[], actorId?: string): Promise<WorkspaceUploadSettings> {

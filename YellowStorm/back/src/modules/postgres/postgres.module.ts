@@ -1,4 +1,4 @@
-import { Global, Module, OnModuleDestroy, Inject, Optional } from '@nestjs/common';
+import { Global, Module, OnModuleDestroy, Inject } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -8,7 +8,7 @@ import { PostgresConnectionService } from './postgres-connection.service';
 import { PgTtlSweeper } from './ttl/pg-ttl-sweeper.service';
 import { PgTtlRegistrationService } from './ttl/pg-ttl-registration.service';
 import { attachCheckedOutClientErrorHandler, buildPgSslOptions } from './pg-pool-options';
-import { LogBufferService, LoggerService } from '../logger';
+import { LoggerService } from '../logger';
 import * as schema from './schema';
 
 @Global()
@@ -58,14 +58,9 @@ import * as schema from './schema';
   exports: [PostgresConnectionService, PgTtlSweeper, PG_POOL, DRIZZLE_DB],
 })
 export class PostgresModule implements OnModuleDestroy {
-  constructor(
-    @Inject(PG_POOL) private readonly pool: Pool,
-    @Optional() private readonly logBuffer?: LogBufferService,
-  ) {}
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   async onModuleDestroy(): Promise<void> {
-    // The buffered logs are written through this pool: flush them before it closes, whatever the hook order.
-    await this.logBuffer?.flush();
     await this.pool.end();
   }
 }

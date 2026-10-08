@@ -3,15 +3,20 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
-import { AiExtractionSettingsDto } from '../dto/semantic-model.dto';
+import { AiExtractionSettingsDto, RunLimitsDto } from '../dto/semantic-model.dto';
 import { SemanticExtractionSettingsService } from '../services/semantic-extraction-settings.service';
+import { SearchIndexSettingsDto, SearchQuerySettingsDto } from '../dto/semantic-search-settings.dto';
+import { SemanticSearchSettingsService } from '../services/semantic-search-settings.service';
 
 @ApiTags('Semantic Model Settings')
 @ApiBearerAuth()
 @UseGuards(PermissionsGuard)
 @Controller()
 export class SemanticExtractionSettingsController {
-  constructor(private readonly settings: SemanticExtractionSettingsService) {}
+  constructor(
+    private readonly settings: SemanticExtractionSettingsService,
+    private readonly searchSettings: SemanticSearchSettingsService,
+  ) {}
 
   @Get('admin/semantic-model-settings')
   @ApiOperation({ summary: 'How much of a document the AI reads, for every model' })
@@ -24,6 +29,53 @@ export class SemanticExtractionSettingsController {
   @RequirePermissions(Permissions.ADMIN_ALL)
   updateAdminSettings(@CurrentUser() user: AuthUser, @Body() input: AiExtractionSettingsDto) {
     return this.settings.updateDefaults(user._id.toString(), input);
+  }
+
+  @Get('admin/semantic-model-settings/run-limits')
+  @ApiOperation({ summary: 'How much one population run may read and keep, for every model' })
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  getRunLimits() {
+    return this.settings.getRunLimits();
+  }
+
+  @Put('admin/semantic-model-settings/run-limits')
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  updateRunLimits(@CurrentUser() user: AuthUser, @Body() input: RunLimitsDto) {
+    return this.settings.updateRunLimits(user._id.toString(), input);
+  }
+
+  @Get('admin/semantic-model-settings/search-index')
+  @ApiOperation({ summary: 'How records are cut into searchable text (cards, passages), for every model' })
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  getSearchIndexSettings() {
+    return this.searchSettings.getIndexSettings();
+  }
+
+  @Put('admin/semantic-model-settings/search-index')
+  @ApiOperation({ summary: 'Change them: search indexes are rebuilt on the next search' })
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  updateSearchIndexSettings(@CurrentUser() user: AuthUser, @Body() input: SearchIndexSettingsDto) {
+    return this.searchSettings.updateIndexSettings(user._id.toString(), input);
+  }
+
+  @Get('admin/semantic-model-settings/search')
+  @ApiOperation({ summary: 'How a search request is matched (candidates, fusion, stop words, sizes), for every model' })
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  getSearchQuerySettings() {
+    return this.searchSettings.getQuerySettings();
+  }
+
+  @Put('admin/semantic-model-settings/search')
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  updateSearchQuerySettings(@CurrentUser() user: AuthUser, @Body() input: SearchQuerySettingsDto) {
+    return this.searchSettings.updateQuerySettings(user._id.toString(), input);
+  }
+
+  @Get('semantic-model-settings/search')
+  @ApiOperation({ summary: 'The search settings in force, over which a field shows its own' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL], 'any')
+  getEffectiveSearchSettings() {
+    return this.searchSettings.getEffective();
   }
 
   @Get('semantic-model-settings/extraction')

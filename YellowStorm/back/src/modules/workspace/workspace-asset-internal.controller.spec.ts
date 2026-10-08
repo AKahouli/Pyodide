@@ -24,6 +24,7 @@ const document = {
   createdBy: query.actorUserId,
 };
 const config = { get: jest.fn((_key: string, fallback: unknown) => fallback) };
+const writer = { storeDerivedFile: jest.fn() };
 
 function responseSink() {
   const chunks: Buffer[] = [];
@@ -45,7 +46,7 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { openReadStream: jest.fn() };
     const result = await new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any,
+      shares as any, documents as any, storage as any, config as any, writer as any,
     ).metadata(query);
 
     expect(result).toMatchObject({
@@ -66,7 +67,7 @@ describe('WorkspaceAssetInternalController', () => {
     }) };
     const { response, chunks } = responseSink();
 
-    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any)
+    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
       .content(query, response as any);
 
     expect(shares.assertUserHasAccess).toHaveBeenCalledWith(query.actorUserId, [query.workspaceId]);
@@ -83,7 +84,7 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn() };
     const storage = { openReadStream: jest.fn() };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any)
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
       .content(query, responseSink().response as any)).rejects.toBe(denied);
     expect(documents.findById).not.toHaveBeenCalled();
     expect(storage.openReadStream).not.toHaveBeenCalled();
@@ -94,7 +95,7 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue({ ...document, size: 50 * 1024 * 1024 + 1 }) };
     const storage = { openReadStream: jest.fn() };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any)
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
       .content(query, responseSink().response as any)).rejects.toBeInstanceOf(PayloadTooLargeException);
     expect(storage.openReadStream).not.toHaveBeenCalled();
   });
@@ -105,7 +106,7 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { openReadStream: jest.fn().mockResolvedValue({ body, contentLength: 8 }) };
 
-    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any)
+    await expect(new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
       .content(query, responseSink().response as any)).rejects.toBeInstanceOf(ConflictException);
     expect(body.destroyed).toBe(true);
   });
@@ -121,7 +122,7 @@ describe('WorkspaceAssetInternalController', () => {
     const hash = 'a'.repeat(64);
 
     const result = await new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, configured as any,
+      shares as any, documents as any, storage as any, configured as any, writer as any,
     ).putDataset({ ...query, datasetId }, '4', hash, request);
 
     expect(storage.putStream).toHaveBeenCalledWith(
@@ -143,7 +144,7 @@ describe('WorkspaceAssetInternalController', () => {
     const documents = { findById: jest.fn().mockResolvedValue(document) };
     const storage = { putStream: jest.fn() };
     const controller = new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any,
+      shares as any, documents as any, storage as any, config as any, writer as any,
     );
     await expect(controller.putDataset(
       { ...query, datasetId: 'ds_0123456789abcdef01234567' },
@@ -167,7 +168,7 @@ describe('WorkspaceAssetInternalController', () => {
     }) };
     const { response, chunks } = responseSink();
 
-    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any)
+    await new WorkspaceAssetInternalController(shares as any, documents as any, storage as any, config as any, writer as any)
       .dataset({ ...query, datasetId }, response as any);
 
     expect(storage.openReadStream).toHaveBeenCalledWith(
@@ -186,7 +187,7 @@ describe('WorkspaceAssetInternalController', () => {
       body, contentType: 'application/octet-stream', contentLength: 4, metadata: {},
     }) };
     const controller = new WorkspaceAssetInternalController(
-      shares as any, documents as any, storage as any, config as any,
+      shares as any, documents as any, storage as any, config as any, writer as any,
     );
 
     await expect(controller.dataset(
@@ -199,7 +200,62 @@ describe('WorkspaceAssetInternalController', () => {
     const invalid = { get: jest.fn((key: string, fallback: unknown) =>
       key === 'storage.semanticDatasetMaxSizeMb' ? Number.NaN : fallback) };
     expect(() => new WorkspaceAssetInternalController(
-      {} as any, {} as any, {} as any, invalid as any,
+      {} as any, {} as any, {} as any, invalid as any, writer as any,
     )).toThrow('SEMANTIC_DATASET_MAX_SIZE_MB');
+  });
+
+  describe('semantic-derived-file', () => {
+    const archive = { ...document, mimeType: 'application/zip', originalName: 'boite.zip' };
+    const body = Buffer.from('Objet : test');
+    const sha = require('crypto').createHash('sha256').update(body).digest('hex');
+    const derivedQuery = { ...query, fileName: 'msg_abc-message.txt' };
+
+    function controller(source: unknown, store = jest.fn()) {
+      const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
+      const documents = { findById: jest.fn().mockResolvedValue(source) };
+      return new WorkspaceAssetInternalController(
+        shares as any, documents as any, {} as any, config as any, { storeDerivedFile: store } as any,
+      );
+    }
+
+    it('stores a verified derived file next to its archive and reports whether it is new', async () => {
+      const store = jest.fn().mockResolvedValue({
+        document: { id: 'doc-1', originalName: 'msg_abc-message.txt', indexingStatus: 'pending' }, created: true,
+      });
+      const result = await controller(archive, store).putDerivedFile(
+        derivedQuery, 'text/plain; charset=utf-8', String(body.length), sha, Readable.from([body]) as any,
+      );
+
+      expect(store).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceId: query.workspaceId, userId: query.actorUserId, sourceDocumentId: archive.id,
+        sourceName: 'boite.zip', fileName: 'msg_abc-message.txt', mimeType: 'text/plain',
+      }));
+      expect(store.mock.calls[0][0].file.equals(body)).toBe(true);
+      expect(result).toEqual({ documentId: 'doc-1', originalName: 'msg_abc-message.txt', created: true,
+        indexingStatus: 'pending' });
+    });
+
+    it('refuses sources that are not e-mail archives and bodies that do not match their hash', async () => {
+      await expect(controller(document).putDerivedFile(
+        derivedQuery, 'text/plain', String(body.length), sha, Readable.from([body]) as any,
+      )).rejects.toThrow('e-mail archive');
+      await expect(controller(archive).putDerivedFile(
+        derivedQuery, 'text/plain', String(body.length), '0'.repeat(64), Readable.from([body]) as any,
+      )).rejects.toThrow('hash');
+    });
+
+    it('lets the runtime read e-mail archives above the ordinary preview limit', async () => {
+      const big = { ...archive, size: 200 * 1024 * 1024 };
+      const storage = { openReadStream: jest.fn().mockResolvedValue({
+        body: Readable.from([]), contentType: 'application/zip', contentLength: 1,
+      }) };
+      const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
+      const documents = { findById: jest.fn().mockResolvedValue(big) };
+      const { response } = responseSink();
+      await expect(new WorkspaceAssetInternalController(
+        shares as any, documents as any, storage as any, config as any, writer as any,
+      ).content(query, response as any)).rejects.toBeInstanceOf(ConflictException);
+      expect(storage.openReadStream).toHaveBeenCalled();
+    });
   });
 });

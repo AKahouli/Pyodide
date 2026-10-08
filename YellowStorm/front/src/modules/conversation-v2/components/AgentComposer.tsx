@@ -43,7 +43,11 @@ import { useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
 
 export interface AgentComposerProps {
-  onSubmit: (message: PromptInputMessage, workspaceIds: string[], modelId: string | null) => void;
+  onSubmit: (
+    message: PromptInputMessage,
+    workspaceIds: string[],
+    modelId: string | null,
+  ) => void;
   disabled?: boolean;
   /** Override the textarea placeholder (defaults to conversation-v2 agent copy). */
   placeholder?: string;
@@ -150,6 +154,89 @@ export function AgentComposer({
   return (
     <PromptInputProvider>
       <AgentComposerPrefill text={prefillText} nonce={prefillNonce} />
+      <AgentComposerInner
+        disabled={disabled}
+        placeholder={placeholder}
+        selectedWorkspaceIds={selectedWorkspaceIds}
+        setSelectedWorkspaceIds={setSelectedWorkspaceIds}
+        skills={skills}
+        skillsLoading={skillsLoading}
+        manageSkillsOpen={manageSkillsOpen}
+        setManageSkillsOpen={setManageSkillsOpen}
+        selectedSkillIds={selectedSkillIds}
+        toggleSelectedSkill={toggleSelectedSkill}
+        connectors={connectors}
+        connectorsLoading={connectorsLoading}
+        manageConnectorsOpen={manageConnectorsOpen}
+        setManageConnectorsOpen={setManageConnectorsOpen}
+        selectedConnectorIds={selectedConnectorIds}
+        toggleSelectedConnector={toggleSelectedConnector}
+        models={models}
+        chefs={chefs}
+        activeModel={activeModel}
+        modelSelectorOpen={modelSelectorOpen}
+        setModelSelectorOpen={setModelSelectorOpen}
+        handlePickModel={handlePickModel}
+        handleSubmit={handleSubmit}
+        t={t}
+      />
+    </PromptInputProvider>
+  );
+}
+
+function AgentComposerInner({
+  disabled,
+  placeholder,
+  selectedWorkspaceIds,
+  setSelectedWorkspaceIds,
+  skills,
+  skillsLoading,
+  manageSkillsOpen,
+  setManageSkillsOpen,
+  selectedSkillIds,
+  toggleSelectedSkill,
+  connectors,
+  connectorsLoading,
+  manageConnectorsOpen,
+  setManageConnectorsOpen,
+  selectedConnectorIds,
+  toggleSelectedConnector,
+  models,
+  chefs,
+  activeModel,
+  modelSelectorOpen,
+  setModelSelectorOpen,
+  handlePickModel,
+  handleSubmit,
+  t,
+}: {
+  disabled: boolean;
+  placeholder?: string;
+  selectedWorkspaceIds: string[];
+  setSelectedWorkspaceIds: (ids: string[]) => void;
+  skills: SkillOption[];
+  skillsLoading: boolean;
+  manageSkillsOpen: boolean;
+  setManageSkillsOpen: (open: boolean) => void;
+  selectedSkillIds: string[];
+  toggleSelectedSkill: (id: string) => void;
+  connectors: ConnectorOption[];
+  connectorsLoading: boolean;
+  manageConnectorsOpen: boolean;
+  setManageConnectorsOpen: (open: boolean) => void;
+  selectedConnectorIds: string[];
+  toggleSelectedConnector: (id: string) => void;
+  models: ReturnType<typeof useModels>;
+  chefs: ReturnType<typeof useChefs>;
+  activeModel: ReturnType<typeof useModels>[number] | null;
+  modelSelectorOpen: boolean;
+  setModelSelectorOpen: (open: boolean) => void;
+  handlePickModel: (modelId: string) => void;
+  handleSubmit: (message: PromptInputMessage) => void;
+  t: ReturnType<typeof useConversationV2Translation>['t'];
+}) {
+  return (
+    <>
       <PromptInput onSubmit={handleSubmit}>
         <PromptInputBody>
           <PromptInputTextarea
@@ -247,6 +334,6 @@ export function AgentComposer({
         selectedIds={selectedSkillIds}
         onToggleSkill={(skill) => toggleSelectedSkill(skill.id)}
       />
-    </PromptInputProvider>
+    </>
   );
 }

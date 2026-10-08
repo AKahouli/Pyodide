@@ -11,6 +11,7 @@ import {
   Query,
   Req,
   Inject,
+  Optional,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -20,6 +21,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
+import { isTrustedMcpServerUrl } from './utils/trusted-mcp-server.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
@@ -53,6 +56,7 @@ export class AdminConnectorController {
     private readonly connectorAdminAuthService: ConnectorAdminAuthService,
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   @Get()
@@ -106,12 +110,9 @@ export class AdminConnectorController {
     const connector = body.connectorId
       ? await this.connectorService.findById(body.connectorId)
       : undefined;
-    const isTrustedPlaybookConnector = connector
-      ? this.isTrustedPlaybookConnector(connector)
-      : false;
-    const runtimeAuthConfig = isTrustedPlaybookConnector
-      ? connector!.runtimeAuthConfig
-      : body.runtimeAuthConfig;
+    // An internal MCP server (trusted by URL) authorizes tool listing as a user, like a tool call.
+    const trustedServer = isTrustedMcpServerUrl(this.configService, connector?.mcpServerUrl ?? body.serverUrl);
+    const runtimeAuthConfig = body.runtimeAuthConfig;
     const resolvedAuth = connector
       ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
           authSourceType: connector.authSourceType,
@@ -124,7 +125,7 @@ export class AdminConnectorController {
       ? this.resolveDraftStaticHeaders(body.runtimeAuthConfig)
       : undefined;
     const resolvedAuthHeaders = resolvedAuth?.headers ?? draftStaticHeaders;
-    const inspectionHeaders = isTrustedPlaybookConnector
+    const inspectionHeaders = trustedServer
       ? {
           ...resolvedAuthHeaders,
           'X-YellowStorm-User-Id': user._id.toString(),
@@ -144,13 +145,6 @@ export class AdminConnectorController {
       resolvedToken,
       inspectionHeaders,
     );
-  }
-
-  private isTrustedPlaybookConnector(connector: IConnectorResponse): boolean {
-    return connector.isSystem === true
-      && connector.slug === 'playbook-mcp'
-      && connector.authSourceType === 'server_config'
-      && connector.runtimeAuthConfig?.secretKey === 'playbook_mcp_ingress';
   }
 
   private resolveDraftStaticHeaders(runtimeAuthConfig?: Record<string, unknown>): Record<string, string> | undefined {

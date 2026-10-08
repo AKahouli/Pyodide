@@ -2,6 +2,7 @@ import { isUUID } from 'class-validator';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { attributeTypes, nodeCategories, recordPolicies, SemanticGraphOperation } from './semantic-model.types';
+import { fieldSearchIndexProblems } from './semantic-search-settings.types';
 
 type JsonObject = Record<string, unknown>;
 
@@ -53,7 +54,7 @@ function attributes(value: unknown): void {
   if (!Array.isArray(value)) invalid('attributes must be an array');
   for (const entry of value) {
     const item = object(entry,'attribute');
-    only(item,['key','label','type','required','description','options','aliases'],'attribute');
+    only(item,['key','label','type','required','description','options','aliases','searchIndex'],'attribute');
     if (!/^[a-z][a-z0-9_]*$/.test(text(item.key,'attribute.key'))) invalid('attribute.key is invalid');
     text(item.label,'attribute.label');
     if (!attributeTypes.includes(item.type as never)) invalid('attribute.type is invalid');
@@ -61,6 +62,10 @@ function attributes(value: unknown): void {
     if (item.description !== undefined) text(item.description,'attribute.description',true);
     if (item.options !== undefined) stringArray(item.options,'attribute.options');
     if (item.aliases !== undefined) stringArray(item.aliases,'attribute.aliases');
+    if (item.searchIndex !== undefined && item.searchIndex !== null) {
+      const problems = fieldSearchIndexProblems(item.searchIndex, undefined, 'attribute.searchIndex: ');
+      if (problems.length) invalid(problems.join('; '));
+    }
   }
 }
 

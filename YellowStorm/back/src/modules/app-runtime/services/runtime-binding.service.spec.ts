@@ -1,10 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import {
+  RUNTIME_SESSION_SEED_SOURCE,
+  type RuntimeSessionSeedSource,
+} from '../ports/runtime-session-seed.port';
 import { type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
+import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 
 const MCP_URL = 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
 const STARTER = 'starter_react_vite_v1';
@@ -19,9 +24,13 @@ describe('RuntimeBindingService', () => {
   const updateHeartbeat = jest.fn().mockResolvedValue(undefined);
   const updateRevision = jest.fn().mockResolvedValue(undefined);
 
-  const ensureStarterRevision = jest.fn().mockResolvedValue({
+  const ensureWorkspaceRevision = jest.fn().mockResolvedValue({
     revisionId: STARTER,
   });
+  const revisionExists = jest.fn().mockResolvedValue(true);
+
+  const findSeedByAiSessionId = jest.fn();
+  const applyBaseline = jest.fn();
 
   const store: RuntimeBindingStore = {
     upsertByWorkspaceId,
@@ -42,7 +51,12 @@ describe('RuntimeBindingService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    ensureStarterRevision.mockResolvedValue({ revisionId: STARTER });
+    ensureWorkspaceRevision.mockResolvedValue({ revisionId: STARTER });
+    findSeedByAiSessionId.mockResolvedValue(null);
+    applyBaseline.mockResolvedValue({
+      revisionId: 'rev_1',
+      plan: { files: [], violations: [], warnings: [] },
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -52,8 +66,16 @@ describe('RuntimeBindingService', () => {
           provide: PgRuntimeBindingStore,
           useValue: store,
         },
-        { provide: RuntimeRevisionService, useValue: { ensureStarterRevision } },
+        {
+          provide: RuntimeRevisionService,
+          useValue: { ensureWorkspaceRevision, revisionExists },
+        },
+        { provide: PlatformBaselineService, useValue: { applyBaseline } },
         { provide: ConfigService, useValue: config },
+        {
+          provide: RUNTIME_SESSION_SEED_SOURCE,
+          useValue: { findSeedByAiSessionId } as unknown as RuntimeSessionSeedSource,
+        },
       ],
     }).compile();
 
@@ -81,7 +103,7 @@ describe('RuntimeBindingService', () => {
       mcpToken: expect.any(String),
     });
     expect(result.mcpToken).not.toHaveLength(0);
-    expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', STARTER);
 
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.workspaceId).toBe('sess_1');
@@ -158,10 +180,104 @@ describe('RuntimeBindingService', () => {
     const binding = await svc.ensureForSession('sess_1', 'user_1');
 
     expect(binding.latestRevisionId).toBe('rev_5');
-    expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'rev_5');
 
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.mcpTokenHash).toBeNull();
+  });
+
+  it('seeds the binding revision from the session template revision', async () => {
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'template_tpl_1',
+    });
+
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(findSeedByAiSessionId).toHaveBeenCalledWith('sess_1');
+    const call = upsertByWorkspaceId.mock.calls[0][0];
+    expect(call.latestRevisionId).toBe('template_tpl_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+
+    // The browser must boot on the template normalized with the Platform Kit.
+    expect(applyBaseline).toHaveBeenCalledWith({
+      workspaceId: 'sess_1',
+      baseRevisionId: 'template_tpl_1',
+      newRevisionId: 'rev_1',
+      mode: 'seed',
+    });
+    expect(updateRevision).toHaveBeenCalledWith('sess_1', 'rev_1');
+    expect(result.latestRevisionId).toBe('rev_1');
+  });
+
+  it('leaves the raw template revision when the Platform Kit reports violations', async () => {
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'template_tpl_1',
+    });
+    applyBaseline.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      plan: { files: [], violations: ['src/App.jsx: data router'], warnings: [] },
+    });
+
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(applyBaseline).toHaveBeenCalled();
+    // A blocked normalization must not bind the browser to a half-built revision.
+    expect(updateRevision).not.toHaveBeenCalledWith('sess_1', 'rev_1');
+    expect(result.latestRevisionId).toBe('template_tpl_1');
+  });
+
+  it('promotes a stale system-starter binding to the session template seed', async () => {
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    // Conflict upsert keeps the previous starter revision (by design).
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: STARTER,
+    });
+
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(updateRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(applyBaseline).toHaveBeenCalledWith({
+      workspaceId: 'sess_1',
+      baseRevisionId: 'template_tpl_1',
+      newRevisionId: 'rev_1',
+      mode: 'seed',
+    });
+    expect(result.latestRevisionId).toBe('rev_1');
+  });
+
+  it('does not promote when the agent already owns a workspace revision', async () => {
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'rev_4',
+    });
+
+    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(updateRevision).not.toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(applyBaseline).not.toHaveBeenCalled();
+  });
+
+  it('does not normalize a workspace revision the agent already owns', async () => {
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'rev_4',
+    });
+
+    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(applyBaseline).not.toHaveBeenCalled();
   });
 
   it('propagates non-duplicate persistence errors', async () => {

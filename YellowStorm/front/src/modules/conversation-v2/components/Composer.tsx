@@ -46,9 +46,14 @@ import { useAuth } from '@/modules/auth/useAuth';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void | Promise<void>;
+  /**
+   * Disables only the Send button (and Enter-to-send). Typing / model / tools
+   * stay available — used while NodePod preview is still booting.
+   */
+  sendDisabled?: boolean;
 }
 
-export function Composer({ onSend }: ComposerProps) {
+export function Composer({ onSend, sendDisabled = false }: ComposerProps) {
   const { user } = useAuth();
   const streaming = useConversationV2Store((s) => s.streaming);
   const events = useConversationV2Store((s) => s.events);
@@ -126,11 +131,13 @@ export function Composer({ onSend }: ComposerProps) {
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';
   const turnOpen = isTurnOpen(events);
+  // Full input lock (streaming / open turn / quota) vs Send-only lock (preview boot).
   const inputLocked = streaming || turnOpen || isLimitExceeded;
+  const submitLocked = inputLocked || sendDisabled;
 
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';
-    if (!value || inputLocked || isLimitExceeded) return;
+    if (!value || submitLocked || isLimitExceeded) return;
     onSend(value, activeModel?.litellmModel || undefined);
   };
 
@@ -140,11 +147,17 @@ export function Composer({ onSend }: ComposerProps) {
   };
 
   return (
-    <div className='shrink-0 z-10 border-t border-border/50 bg-background/80 p-4 backdrop-blur-xs'>
+    <div className='z-10 shrink-0 border-t border-border/60 bg-background/90 p-3 backdrop-blur-md sm:p-4'>
       {isLimitExceeded ? <UsageLimitBanner /> : null}
       <div className='mx-auto w-full max-w-3xl'>
-        <PromptInputProvider key={`${user?.id ?? 'anonymous'}:${sessionId ?? 'new'}`} draftKey={`${user?.id ?? 'anonymous'}:conversation-v2:${sessionId ?? 'new'}`}>
-          <PromptInput onSubmit={handleSubmit}>
+        <PromptInputProvider
+          key={`${user?.id ?? 'anonymous'}:${sessionId ?? 'new'}`}
+          draftKey={`${user?.id ?? 'anonymous'}:studio:${sessionId ?? 'new'}`}
+        >
+          <PromptInput
+            onSubmit={handleSubmit}
+            className='rounded-2xl border-border/70 bg-card/80 shadow-sm ring-1 ring-border/40 transition-[box-shadow,border-color] focus-within:border-primary/35 focus-within:ring-2 focus-within:ring-primary/15'
+          >
             <PromptInputBody>
               <PromptInputTextarea
                 placeholder={limitPlaceholder ?? t('composer.placeholder')}
@@ -233,7 +246,8 @@ export function Composer({ onSend }: ComposerProps) {
                 )}
               </PromptInputTools>
               <PromptInputSubmit
-                status={inputLocked ? 'streaming' : status}
+                status={status}
+                disabled={submitLocked && !streaming}
                 onStop={() => void stop()}
               />
             </PromptInputFooter>

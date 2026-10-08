@@ -5,17 +5,24 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "assets": [
-      "**/*.proto",
+      {
+        "include": "**/*.proto",
+        "outDir": "dist/src"
+      },
       "**/*.pem",
       "**/*.crt",
       "**/*.cert",
       {
         "include": "modules/app-data/templates/assets/**/*",
-        "outDir": "dist/src"
+        "outDir": "dist"
+      },
+      {
+        "include": "modules/app-data/templates/sources/**/*",
+        "outDir": "dist"
       },
       {
         "include": "modules/conversation-v2/templates/assets/**/*",
-        "outDir": "dist/src"
+        "outDir": "dist"
       },
       "**/*.html",
       "**/*.png",

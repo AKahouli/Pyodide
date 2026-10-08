@@ -216,7 +216,7 @@ export class PgSkillStore implements SkillStore {
     const [row] = await this.q
       .select()
       .from(schema.catalogSkills)
-      .where(and(eq(schema.catalogSkills.createdBy, createdBy), or(eq(schema.catalogSkills.name, name), eq(schema.catalogSkills.slug, slug))!))
+      .where(and(eq(schema.catalogSkills.createdBy, createdBy), or(eq(schema.catalogSkills.name, name), eq(schema.catalogSkills.slug, slug))))
       .limit(1);
     return row ? skillToRow(row, []) : null;
   }

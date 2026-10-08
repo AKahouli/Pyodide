@@ -73,7 +73,7 @@ export function toAssistantRequestRecord(row: RequestRow): PlaybookAssistantRequ
 }
 
 const json = <T>(value: T | null | undefined): Record<string, unknown> | null =>
-  value == null ? null : (stripNul(value) as unknown as Record<string, unknown>);
+  value == null ? null : (stripNul(value));
 
 /**
  * PostgreSQL playbook.assistant_requests repository (roadmap P5). Rows are keyed by the string

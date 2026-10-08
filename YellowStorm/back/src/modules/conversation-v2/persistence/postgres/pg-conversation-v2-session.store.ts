@@ -24,7 +24,7 @@ export class PgConversationV2SessionStore implements ConversationV2SessionStore 
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): NodePgDatabase<typeof schema> {
-    return resolveQueryable(this.db) as NodePgDatabase<typeof schema>;
+    return resolveQueryable(this.db);
   }
 
   private static toRecord(row: SessionRow): ConversationV2SessionRecord {
@@ -51,12 +51,17 @@ export class PgConversationV2SessionStore implements ConversationV2SessionStore 
       eventSequence: row.eventSequence,
       eventCount: row.eventCount,
       systemWorkspaceId: row.systemWorkspaceId ?? null,
+      starterRevisionId: row.starterRevisionId ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
   }
 
-  async createDraft(ownerId: string, workspaceIds: string[]): Promise<ConversationV2SessionRecord> {
+  async createDraft(
+    ownerId: string,
+    workspaceIds: string[],
+    starterRevisionId?: string,
+  ): Promise<ConversationV2SessionRecord> {
     const id = newObjectId();
     const [row] = await this.q
       .insert(schema.conversationV2Sessions)
@@ -78,6 +83,7 @@ export class PgConversationV2SessionStore implements ConversationV2SessionStore 
         eventSequence: 0,
         eventCount: 0,
         systemWorkspaceId: null,
+        starterRevisionId: starterRevisionId ?? null,
       })
       .returning();
     return PgConversationV2SessionStore.toRecord(row);

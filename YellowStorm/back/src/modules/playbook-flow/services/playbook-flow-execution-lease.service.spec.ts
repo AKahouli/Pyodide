@@ -83,7 +83,7 @@ describe('PlaybookFlowExecutionLeaseService', () => {
     service = module.get<PlaybookFlowExecutionLeaseService>(PlaybookFlowExecutionLeaseService);
   });
 
-  afterEach(() => service.onModuleDestroy());
+  afterEach(() => { service.onModuleDestroy(); });
 
   it('acquires one slot per scope for the first execution', async () => {
     const before = Date.now();

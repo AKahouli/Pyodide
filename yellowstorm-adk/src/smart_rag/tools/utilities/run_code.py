@@ -108,9 +108,16 @@ def create_run_code_tool(runtime_context: dict[str, Any]):
             context=context,
         )
         files = result.get("written_files")
+        if result.get('ok') is True and isinstance(files, list) and files:
+            from src.smart_rag.run_code_artifacts import build_run_code_artifacts
+            from src.root_runtime.evidence_capture import capture_evidence
+            for artifact in build_run_code_artifacts(result, {'agent_params': runtime_context},
+                    getattr(tool_context, 'function_call_id', '') or ''):
+                capture_evidence('artifact', artifact['file_path'], artifact)
         if tool_context is not None and isinstance(files, list) and files:
             existing = tool_context.state.get("_run_code_written_files", [])
             tool_context.state["_run_code_written_files"] = [*existing, *files]
         return result
 
-    return run_code
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    return register_tool_execution_kind(run_code, "leaf")

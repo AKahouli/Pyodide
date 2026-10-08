@@ -47,7 +47,6 @@ import { PlaybookFlowValidatorService } from './services/playbook-flow-validator
 import { PlaybookFlowBuilderService } from './services/playbook-flow-builder.service';
 import { PlaybookFlowExecutionService } from './services/playbook-flow-execution.service';
 import { PlaybookFlowArtifactService } from './services/playbook-flow-artifact.service';
-import { PlaybookFlowResultsService } from './services/playbook-flow-results.service';
 import { PlaybookFlowQueueService } from './services/playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './services/playbook-flow-idempotency.service';
 import { PlaybookFlowNodeTemplateService } from './services/playbook-flow-node-template.service';
@@ -132,7 +131,6 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
 import { PlaybookAssistantContextService } from './assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from './assistant/playbook-assistant.service';
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
-import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-validation-client.service';
 import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-request.service';
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
 import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
@@ -204,7 +202,7 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
     PlaybookFlowBuilderService,
     PlaybookFlowExecutionService,
     PlaybookFlowArtifactService,
-    PlaybookFlowResultsService,
+
     PlaybookFlowQueueService,
     PlaybookFlowIdempotencyService,
     PlaybookFlowNodeTemplateService,
@@ -275,7 +273,7 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
     PlaybookAssistantContextService,
     PlaybookAssistantService,
     PlaybookAssistantOperationService,
-    PlaybookPlanValidationClientService,
+
     PlaybookAssistantRequestService,
     PlaybookAssistantHistoryService,
     PlaybookAssistantActorGuard,
@@ -293,7 +291,7 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
     PlaybookFlowExecutionService,
     PlaybookFlowBuilderService,
     PlaybookFlowValidatorService,
-    PlaybookFlowResultsService,
+
     PlaybookFlowNodeTemplateService,
     PlaybookFlowPromptTemplateService,
     PlaybookFlowPromptRendererService,
@@ -305,7 +303,6 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
     PlaybookFlowEvaluationService,
     PlaybookFlowRepeatabilityService,
     PlaybookFlowObservabilityService,
-    PlaybookPlanValidationClientService,
   ],
 })
 export class PlaybookFlowModule {}

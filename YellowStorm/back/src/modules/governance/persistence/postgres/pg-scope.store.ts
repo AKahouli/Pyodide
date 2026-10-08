@@ -184,7 +184,7 @@ export class PgScopeStore implements ScopeStore {
     return rows[0]?.count ?? 0;
   }
 
-  async listHierarchy(programId: string): Promise<Array<{ id: string; parentScopeId: string | null }>> {
+  async listHierarchy(programId: string): Promise<{ id: string; parentScopeId: string | null }[]> {
     return this.q.select({ id: SCOPES.id, parentScopeId: SCOPES.parentScopeId }).from(SCOPES).where(eq(SCOPES.programId, programId));
   }
 
