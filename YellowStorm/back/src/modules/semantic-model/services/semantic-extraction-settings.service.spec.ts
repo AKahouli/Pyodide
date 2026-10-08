@@ -50,6 +50,13 @@ describe('run limits', () => {
     expect(pickRunLimits({ saveBatchRows: 50001, saveStatementSeconds: 601 })).toEqual({});
   });
 
+  it('keeps the graph projection batch between 100 and 20000 rows', () => {
+    expect(pickRunLimits({ projectionBatchRows: 20000 })).toEqual({ projectionBatchRows: 20000 });
+    expect(pickRunLimits({ projectionBatchRows: 100 })).toEqual({ projectionBatchRows: 100 });
+    expect(pickRunLimits({ projectionBatchRows: 99 })).toEqual({});
+    expect(pickRunLimits({ projectionBatchRows: 20001 })).toEqual({});
+  });
+
   it('keeps the index build limits only inside their ranges', () => {
     const inRange = { embeddingBatchSize: 256, embeddingParallelCalls: 16, embeddingTimeoutSeconds: 600, indexReadPageRows: 500 };
     expect(pickRunLimits(inRange)).toEqual(inRange);
@@ -69,7 +76,7 @@ describe('run limits', () => {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
       maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
       parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300,
-      saveBatchRows: 2000, saveStatementSeconds: 10,
+      saveBatchRows: 2000, saveStatementSeconds: 10, projectionBatchRows: 5000,
       embeddingBatchSize: 32, embeddingParallelCalls: 4, embeddingTimeoutSeconds: 30, indexReadPageRows: 5000 } });
   });
 });

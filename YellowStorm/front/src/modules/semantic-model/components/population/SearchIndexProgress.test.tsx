@@ -30,6 +30,25 @@ describe('SearchIndexProgress', () => {
     expect(bar).toHaveAttribute('aria-valuemax', '8400');
   });
 
+  it('does not pass a finished read at 100% for a live build', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'documents', expectedCount: 8400, loadedCount: 8400, indexedCount: 0, passageCount: 40 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.preparing')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.reading')).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.queryByText(/population\.progress\.index\.percent/)).not.toBeInTheDocument();
+  });
+
+  it('says it reuses earlier vectors while the cache is filled', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'reusing', expectedCount: 8400, loadedCount: 8400, indexedCount: 300, exactOnlyCount: 0, passageCount: 0 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.reusing')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.index.countsRecords')).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
   it('shows the percent and the records indexed so far while embedding', async () => {
     api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
       index: { state: 'indexing', stage: 'embedding', expectedCount: 8400, loadedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 0, passageIndexedCount: 0 } });
@@ -65,6 +84,17 @@ describe('SearchIndexProgress after a stop', () => {
     expect(await screen.findByText('population.progress.index.stopped')).toBeInTheDocument();
     expect(screen.queryByText('cancelled')).not.toBeInTheDocument();
     expect(screen.queryByText('population.progress.index.failed')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('population.progress.index.buildAgain'));
+    await vi.waitFor(() => expect(api.ensureSearchIndex).toHaveBeenCalledWith('model-1'));
+  });
+
+  it('shows an interrupted build as such and builds it again on request', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'failed', lastErrorCode: 'index_interrupted', expectedCount: 200, indexedCount: 50 } });
+    api.ensureSearchIndex.mockResolvedValue({});
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.interrupted')).toBeInTheDocument();
+    expect(screen.queryByText('index_interrupted')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('population.progress.index.buildAgain'));
     await vi.waitFor(() => expect(api.ensureSearchIndex).toHaveBeenCalledWith('model-1'));
   });

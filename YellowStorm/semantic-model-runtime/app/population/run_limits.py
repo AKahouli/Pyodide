@@ -25,6 +25,8 @@ DEFAULT_RUN_LIMITS = {
     # The "saving" step: rows written per batch, and seconds one batch may take.
     "saveBatchRows": 2000,
     "saveStatementSeconds": 10,
+    # The "projecting" step: graph elements (records or links) written per statement.
+    "projectionBatchRows": 5000,
 }
 RUN_LIMIT_RANGES = {
     "maxRunSources": (1, 50000),
@@ -39,9 +41,10 @@ RUN_LIMIT_RANGES = {
     "archiveTimeoutSeconds": (60, 7200),
     "saveBatchRows": (100, 50000),
     "saveStatementSeconds": (5, 600),
+    "projectionBatchRows": (100, 20000),
 }
-# How a run is saved, not what it builds: never part of its fingerprint or its admission hash.
-SAVE_LIMIT_KEYS = ("saveBatchRows", "saveStatementSeconds")
+# How a run is saved and projected, not what it builds: never part of its fingerprint or its admission hash.
+SAVE_LIMIT_KEYS = ("saveBatchRows", "saveStatementSeconds", "projectionBatchRows")
 # How the search index is built (embedding calls and pages), set by the same admin and carried by a
 # run so the index it requests is built with them. Pure performance knobs: like the save limits they
 # never enter a fingerprint. Absent: the environment's value, else the built-in one.

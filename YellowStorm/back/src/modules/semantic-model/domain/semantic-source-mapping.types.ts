@@ -151,6 +151,8 @@ export interface RunLimits {
   saveBatchRows: number;
   /** Time one save batch may take, in seconds. Travels with the run but is not part of its identity. */
   saveStatementSeconds: number;
+  /** Graph elements (records or links) written per statement when a run's graph is built. Travels with the run but is not part of its identity. */
+  projectionBatchRows: number;
   /** Texts sent per embedding call when a search index is built. Not part of a run's identity. */
   embeddingBatchSize: number;
   /** Embedding calls in flight at once when a search index is built. Not part of a run's identity. */
@@ -162,7 +164,7 @@ export interface RunLimits {
 }
 
 /** Limits of how a run is saved, not of what it builds: they never change the run's fingerprint. */
-export const SAVE_LIMIT_KEYS = ['saveBatchRows', 'saveStatementSeconds'] as const satisfies readonly (keyof RunLimits)[];
+export const SAVE_LIMIT_KEYS = ['saveBatchRows', 'saveStatementSeconds', 'projectionBatchRows'] as const satisfies readonly (keyof RunLimits)[];
 
 /**
  * How a search index is built, not what it holds: they travel with the run and with index requests, and
@@ -183,6 +185,7 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   purgeTimeoutSeconds: 300,
   saveBatchRows: 2000,
   saveStatementSeconds: 10,
+  projectionBatchRows: 5000,
   embeddingBatchSize: 32,
   embeddingParallelCalls: 4,
   embeddingTimeoutSeconds: 30,
@@ -201,6 +204,7 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   purgeTimeoutSeconds: [30, 3600],
   saveBatchRows: [100, 50000],
   saveStatementSeconds: [5, 600],
+  projectionBatchRows: [100, 20000],
   embeddingBatchSize: [1, 256],
   embeddingParallelCalls: [1, 16],
   embeddingTimeoutSeconds: [5, 600],

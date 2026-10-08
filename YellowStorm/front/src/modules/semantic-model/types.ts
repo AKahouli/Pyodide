@@ -450,6 +450,8 @@ export interface RunLimits {
   saveBatchRows: number;
   /** Seconds one save batch may take. */
   saveStatementSeconds: number;
+  /** Graph elements (records or links) written per statement when a run builds its graph. Never part of a run's identity. */
+  projectionBatchRows: number;
   /** Texts sent per embedding call when a search index is built. Never part of a run's identity. */
   embeddingBatchSize: number;
   /** Embedding calls in flight at once when a search index is built. */
@@ -835,8 +837,8 @@ export interface SearchIndexStatus {
     reusedCount?: number;
     passageCount?: number;
     passageIndexedCount?: number;
-    /** While indexing: 'documents' (records read into search cards, counted by loadedCount) or 'embedding'. */
-    stage?: 'documents' | 'embedding' | null;
+    /** While indexing: 'documents' (records read into search cards, counted by loadedCount), 'reusing' (earlier vectors taken from the cache) or 'embedding'. */
+    stage?: 'documents' | 'reusing' | 'embedding' | null;
     loadedCount?: number;
     lastErrorCode?: string | null;
   };

@@ -11,6 +11,7 @@ import pytest_asyncio
 
 from app.jobs.models import IdempotencyConflict, JobCommand, SourceEvent, StaleLease
 from app.jobs.service import JobService
+from app.persistence import graph_search_store as search_store
 from app.persistence.postgres_jobs import PostgresJobRepository
 from app.persistence.ui_signal_outbox import UiSignalOutboxRepository, enqueue_ui_signal
 
@@ -1043,3 +1044,123 @@ async def test_a_restarted_search_worker_hands_back_the_generation_lease_with_it
     assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}old:") == 0
     assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new:") == 1
     assert (await _generation(pool, index_id))["lease_until"] < await pool.fetchval("SELECT now()")
+
+
+@pytest.mark.asyncio
+async def test_recovery_fails_a_generation_no_live_job_will_build(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    await pool.execute("UPDATE semantic_jobs.jobs SET state = 'completed' WHERE id = $1::uuid", admitted.job_id)
+
+    # Its lease is live: the owner may still be writing it.
+    await _recover(repository)
+    assert (await _generation(pool, index_id))["state"] == "indexing"
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 second' WHERE index_id = $1::uuid", index_id)
+    await _recover(repository)
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "index_interrupted"
+    assert generation["owner"] is None and generation["lease_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_leaves_an_expired_generation_whose_job_is_still_to_run(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    _, index_id = await _admit_index(repository)
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 second' WHERE index_id = $1::uuid", index_id)
+
+    # The job is queued: its next attempt claims the expired generation and resumes it.
+    await _recover(repository)
+    assert (await _generation(pool, index_id))["state"] == "indexing"
+    assert await search_store.claim_generation(pool, index_id, "search-worker:node:new:run", 600)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_of_the_job_takes_the_generation_its_crashed_attempt_held(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+
+    # Held under a live lease by the earlier attempt's owner: not claimable by the next one...
+    assert not await search_store.claim_generation(pool, index_id, "search-worker:node:new:run", 600)
+    # ...until the retry, which holds the job's exclusive task lease, adopts it.
+    assert not await search_store.adopt_generation(pool, index_id, admitted.job_id, "search-worker:node:old:run")
+    other_job = "00000000-0000-0000-0000-000000000001"
+    assert not await search_store.adopt_generation(pool, index_id, other_job, "search-worker:node:new:run")
+    assert await search_store.adopt_generation(pool, index_id, admitted.job_id, "search-worker:node:new:run")
+    assert await search_store.claim_generation(pool, index_id, "search-worker:node:new:run", 600)
+    assert (await _generation(pool, index_id))["owner"] == "search-worker:node:new:run"
+
+
+async def _generation_with_documents(pool: asyncpg.Pool, hashes: list[str], passages_per_document: int = 0) -> str:
+    """A generation holding one pending record per hash (and its passages), written without its revision."""
+    import uuid
+
+    from app.persistence.partitions import ensure_generation_partitions
+
+    index_id = str(uuid.uuid4())
+    async with _WithoutForeignKeys(pool) as connection:
+        await ensure_generation_partitions(connection, index_id)
+        await connection.execute(
+            "INSERT INTO semantic_graph_search.index_generations "
+            "(index_id, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, state) "
+            "VALUES ($1::uuid, 'm-1', 'dr-1', 'p', 's', 'fp', 'indexing')", index_id)
+    documents = [{"entityId": f"e{n:04d}", "conceptId": "c", "label": "l", "labelKey": "l", "sourceWorkspaces": [],
+                  "searchText": f"text {n}", "lexicalText": f"text {n}", "contentHash": content_hash,
+                  "exactOnly": False, "diagnostics": {},
+                  "passages": [{"ordinal": ordinal, "fieldKey": "f", "fieldLabel": "f", "start": 0, "end": 5,
+                                "text": "hello", "searchText": "hello", "lexicalText": "hello",
+                                "contentHash": content_hash}
+                               for ordinal in range(passages_per_document)]}
+                 for n, content_hash in enumerate(hashes)]
+    await search_store.insert_documents(pool, index_id, documents)
+    await search_store.insert_passages(pool, index_id, documents)
+    return index_id
+
+
+async def _cache(pool: asyncpg.Pool, hashes: list[str]) -> None:
+    vector = "[" + ",".join(["0.5"] * 2560) + "]"
+    await pool.executemany(
+        "INSERT INTO semantic_graph_search.embedding_cache (model_id, embedding_fingerprint, content_hash, embedding) "
+        "VALUES ('m-1', 'vfp', $1, $2::text::halfvec)", [(content_hash, vector) for content_hash in hashes])
+
+
+@pytest.mark.asyncio
+async def test_the_vector_cache_fills_a_generation_chunk_by_chunk(pool: asyncpg.Pool):
+    hashes = ["sha256:" + f"{n:064x}" for n in range(11)]
+    index_id = await _generation_with_documents(pool, hashes, passages_per_document=2)
+    await _cache(pool, hashes[:9:2] + hashes[10:])  # records 0, 2, 4, 6, 8 and 10 are cached
+    seen: list[int] = []
+
+    async def chunk_done(count: int) -> bool:
+        seen.append(count)
+        return True
+
+    reused = await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], chunk_rows=3, on_chunk=chunk_done)
+
+    # 11 records in chunks of 3: four chunks, the running total after each.
+    assert reused == 6 and seen == [2, 3, 5, 6]
+    counts = await search_store.generation_counts(pool, index_id)
+    assert counts["ready"] == 6 and counts["pending"] == 5
+    assert await pool.fetchval("SELECT reused_count FROM semantic_graph_search.index_generations "
+                               "WHERE index_id = $1::uuid", index_id) == 6
+    # Passages follow in their own chunks (a record's passages together); the cached ones are filled.
+    assert await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], kind="passages", chunk_rows=3) == 12
+    assert (await search_store.generation_counts(pool, index_id))["passages_ready"] == 12
+    # Nothing cached is left to reuse the second time.
+    assert await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], chunk_rows=3) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_cache_fill_keeps_what_it_reused(pool: asyncpg.Pool):
+    hashes = ["sha256:" + f"{n:064x}" for n in range(8)]
+    index_id = await _generation_with_documents(pool, hashes)
+    await _cache(pool, hashes)
+
+    async def stop(_count: int) -> bool:
+        return False
+
+    assert await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], chunk_rows=3, on_chunk=stop) == 3
+    assert (await search_store.generation_counts(pool, index_id))["ready"] == 3
+    # A later attempt carries on with the rest.
+    assert await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], chunk_rows=3) == 5

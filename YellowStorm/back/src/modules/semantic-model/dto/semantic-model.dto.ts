@@ -686,6 +686,10 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
   saveStatementSeconds?: number;
 
+  @ApiPropertyOptional({ minimum: 100, maximum: 20000, description: 'Graph elements (records or links) written per statement when a run builds its graph' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(20000)
+  projectionBatchRows?: number;
+
   @ApiPropertyOptional({ minimum: 1, maximum: 256, description: 'Texts sent per embedding call when a search index is built' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(256)
   embeddingBatchSize?: number;

@@ -757,11 +757,11 @@ export class SemanticPopulationRefreshService {
     if (!sources.filter(inRun).length && !madeFromAnother) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
-    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save and index
-    // build limits travel too but stay out of the fingerprint: how a run is written, or how the search index of
-    // its data is built, never changes what it builds.
-    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, embeddingBatchSize, embeddingParallelCalls,
-      embeddingTimeoutSeconds, indexReadPageRows, ...limits } = await this.adminRunLimits();
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save, projection and
+    // index build limits travel too but stay out of the fingerprint: how a run is written, how its graph is loaded, or
+    // how the search index of its data is built, never changes what it builds.
+    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, projectionBatchRows, embeddingBatchSize,
+      embeddingParallelCalls, embeddingTimeoutSeconds, indexReadPageRows, ...limits } = await this.adminRunLimits();
     const saveLimits: Partial<RunLimits> = {
       ...(saveBatchRows !== undefined ? { saveBatchRows } : {}),
       ...(saveStatementSeconds !== undefined ? { saveStatementSeconds } : {}),
@@ -787,6 +787,7 @@ export class SemanticPopulationRefreshService {
     const relations: RelationSpec[] = [];
     const relationBindings: { relationId: string; referenceField: string; targetField: string }[] = [];
     for (const relation of relationRows.filter(
+      ...(projectionBatchRows !== undefined ? { projectionBatchRows } : {}),
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {
       const rule = relationRules.find((candidate) => candidate.relationId === relation.id);

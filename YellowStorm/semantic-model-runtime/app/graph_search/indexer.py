@@ -229,6 +229,43 @@ async def _embed_pending(pool: Any, *, index_id: str, owner: str, model_id: str,
     return None
 
 
+async def _reuse_cached(pool: Any, *, index_id: str, owner: str, model_id: str, profile: EmbeddingProfile,
+                        lease_seconds: int, loaded: int, expected: int, passages: int,
+                        report: Callable[[dict[str, Any]], Awaitable[None]],
+                        should_stop: Callable[[], Awaitable[bool]] | None) -> dict[str, Any]:
+    """Fill what the vector cache already holds (records, then passages), chunk by chunk, so the build
+    shows ``reusing`` instead of a finished read it seems stuck at, keeps its lease, and can be stopped.
+    ``halt``: None, ``cancelled`` or ``lease_lost``."""
+    done = {"reused": 0, "passagesReused": 0, "halt": None}
+
+    async def after_chunk(kind: str, count: int) -> bool:
+        done["reused" if kind == "documents" else "passagesReused"] = count
+        if should_stop is not None and await should_stop():
+            done["halt"] = "cancelled"
+            return False
+        if not await search_store.renew_generation(pool, index_id, owner, lease_seconds, 0):
+            done["halt"] = "lease_lost"
+            return False
+        await search_store.record_progress(
+            pool, index_id, owner, stage="reusing", loaded=loaded, expected=expected,
+            indexed=done["reused"], passages=passages, passages_indexed=done["passagesReused"])
+        await report({"stage": "reusing", "expected": expected, "loaded": loaded, "reused": done["reused"],
+                      "passages": passages, "passagesReused": done["passagesReused"]})
+        return True
+
+    # Shown before the first chunk: finding what is cached may itself take a moment on a large revision.
+    await search_store.record_progress(pool, index_id, owner, stage="reusing", loaded=loaded, expected=expected,
+                                       passages=passages)
+    await report({"stage": "reusing", "expected": expected, "loaded": loaded, "reused": 0,
+                  "passages": passages, "passagesReused": 0})
+    for kind in ("documents", "passages"):
+        await search_store.fill_from_cache(pool, index_id, model_id, profile.cache_fingerprints, kind=kind,
+                                           on_chunk=partial(after_chunk, kind))
+        if done["halt"]:
+            break
+    return done
+
+
 async def build_index(pool: Any, *, index_id: str, owner: str,
                       report: Callable[[dict[str, Any]], Awaitable[None]],
                       profile: EmbeddingProfile | None = None,
@@ -288,9 +325,14 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         await search_store.fail_generation(pool, index_id, "revision_changed", owner)
         return {"state": "failed", "errorCode": "revision_changed"}
     model_id = generation["model_id"]
-    reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.cache_fingerprints)
-    passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.cache_fingerprints,
-                                                         kind="passages")
+    reuse = await _reuse_cached(pool, index_id=index_id, owner=owner, model_id=model_id, profile=profile,
+                                lease_seconds=lease_seconds, loaded=loaded, expected=expected, passages=passages,
+                                report=report, should_stop=should_stop)
+    if reuse["halt"] == "cancelled":
+        return await _stopped(pool, index_id, owner)
+    if reuse["halt"]:
+        return {"state": reuse["halt"]}
+    reused, passages_reused = reuse["reused"], reuse["passagesReused"]
     progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
                 "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
     await report(dict(progress))

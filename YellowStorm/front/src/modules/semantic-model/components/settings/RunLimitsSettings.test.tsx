@@ -98,6 +98,29 @@ describe('RunLimitsSettings start-over pane', () => {
   });
 });
 
+describe('RunLimitsSettings graph pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'graph-build': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { saveBatchRows: 5000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the graph batch size between 100 and 20000 with the other limits', async () => {
+    render(<RunLimitsSettings group='graph' />);
+    const rows = await screen.findByLabelText('settings.runLimits.projectionBatchRows');
+    expect(screen.queryByLabelText('settings.runLimits.saveBatchRows')).not.toBeInTheDocument();
+    expect(rows).toHaveAttribute('placeholder', '5000');
+
+    fireEvent.change(rows, { target: { value: '99' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20001' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20000' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ saveBatchRows: 5000, projectionBatchRows: 20000 }));
+  });
+});
+
 describe('RunLimitsSettings search index pane', () => {
   beforeEach(() => {
     localStorage.setItem(OPEN_KEY, JSON.stringify({ 'index-build': true }));

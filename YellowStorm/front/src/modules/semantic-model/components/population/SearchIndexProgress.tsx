@@ -11,6 +11,8 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 const BUILDING = new Set(['queued', 'indexing']);
 /** The runtime's error code of a build that was stopped on request. */
 export const INDEX_STOPPED_CODE = 'cancelled';
+/** The runtime's error code of a build whose worker vanished before it finished (it can be built again). */
+export const INDEX_INTERRUPTED_CODE = 'index_interrupted';
 
 /**
  * After a run: the search index of the new data, built in the background (cards, then passages of
@@ -41,9 +43,16 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
   const done = reading ? index.loadedCount ?? 0 : records.done + passages.done;
   const total = reading ? records.total : records.total + passages.total;
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  // Steps without a measurable end: all records read but the next step not begun, and the reuse of earlier
+  // vectors (its own count never reaches the total). A bar sitting at 100% would pass for a stuck build.
+  const reusing = state === 'indexing' && index.stage === 'reusing';
+  const readDone = reading && total > 0 && done >= total;
+  const unmeasured = reusing || readDone;
   const building = BUILDING.has(state) || state === 'missing';
   // A build stopped on request is not a failure; only an explicit request builds it again.
   const stopped = !stale && state === 'failed' && index.lastErrorCode === INDEX_STOPPED_CODE;
+  // A build whose worker vanished is a failure the administrator can retry.
+  const interrupted = !stale && state === 'failed' && index.lastErrorCode === INDEX_INTERRUPTED_CODE;
   const buildAgain = async () => {
     try {
       await semanticModelApi.ensureSearchIndex(modelId);
@@ -63,15 +72,18 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
       <span className='flex-1 font-medium'>{t('population.progress.index.title')}</span>
       <span className={cn('text-muted-foreground', state === 'failed' && !stopped && 'text-destructive')}>
         {stopped ? t('population.progress.index.stopped')
+          : interrupted ? t('population.progress.index.interrupted')
+          : reusing ? t('population.progress.index.reusing')
+          : readDone ? t('population.progress.index.preparing')
           : t(`population.progress.index.${(['queued', 'indexing', 'ready', 'failed', 'missing'].includes(state) ? state : 'missing') as 'queued' | 'indexing' | 'ready' | 'failed' | 'missing'}`)}
       </span>
-      {state === 'indexing' && total > 0 && <span className='tabular-nums text-muted-foreground'>{t('population.progress.index.percent', { percent })}</span>}
+      {state === 'indexing' && total > 0 && !unmeasured && <span className='tabular-nums text-muted-foreground'>{t('population.progress.index.percent', { percent })}</span>}
     </p>
-    {state === 'indexing' && total > 0 && <div className='h-1 overflow-hidden rounded-full bg-muted' role='progressbar'
+    {state === 'indexing' && total > 0 && !unmeasured && <div className='h-1 overflow-hidden rounded-full bg-muted' role='progressbar'
       aria-label={t('population.progress.index.title')} aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
       <div className='h-full rounded-full bg-primary/70 transition-[width] duration-500' style={{ width: `${percent}%` }} />
     </div>}
-    {!stale && total > 0 && <p className='text-[11px] text-muted-foreground'>
+    {!stale && total > 0 && !readDone && <p className='text-[11px] text-muted-foreground'>
       {reading
         ? t('population.progress.index.reading', { done: done.toLocaleString(), total: total.toLocaleString() })
         : passages.total > 0
@@ -79,9 +91,9 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
             passages: passages.done.toLocaleString(), passagesTotal: passages.total.toLocaleString() })
           : t('population.progress.index.countsRecords', { records: records.done.toLocaleString(), recordsTotal: records.total.toLocaleString() })}
     </p>}
-    {state === 'failed' && index.lastErrorCode && !stopped && <p className='text-[11px] text-destructive'>{index.lastErrorCode}</p>}
-    {stopped && <>
-      <p className='text-[11px] text-muted-foreground'>{t('population.progress.index.stoppedHint')}</p>
+    {state === 'failed' && index.lastErrorCode && !stopped && !interrupted && <p className='text-[11px] text-destructive'>{index.lastErrorCode}</p>}
+    {(stopped || interrupted) && <>
+      <p className='text-[11px] text-muted-foreground'>{t(stopped ? 'population.progress.index.stoppedHint' : 'population.progress.index.interruptedHint')}</p>
       <Button variant='outline' size='sm' className='w-full' onClick={() => void buildAgain()}>{t('population.progress.index.buildAgain')}</Button>
     </>}
   </div>;

@@ -1324,8 +1324,9 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
                          "idle_in_transaction_session_timeout": "30s"})
     try:
         # The graph is written on the AGE connection; progress reports on the worker's own pool.
-        return await finalize_draft_revision(pool, age_pool, revision_id,
-                                             progress.advance if progress is not None else None)
+        return await finalize_draft_revision(
+            pool, age_pool, revision_id, progress.advance if progress is not None else None,
+            batch_rows=run_limits(command_dump.get("payload"))["projectionBatchRows"])
     finally:
         await age_pool.close()
 

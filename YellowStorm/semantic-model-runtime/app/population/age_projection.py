@@ -14,8 +14,15 @@ so visibility can be checked inside a Cypher query. Graphs built before
 without labels so both serve until ``reproject_revision`` rebuilds them.
 
 Business labels render from the specification, never from mutable user labels
-in executable Cypher. Graph and label names are server-generated and checked;
-values travel as escaped literals inside allowlisted query shapes (P6.19).
+in executable SQL or Cypher. Graph and label names are server-generated and checked; values
+travel as bound parameters when loading and as escaped literals in allowlisted read queries (P6.19).
+
+Bulk load: records and links are inserted straight into AGE's label tables with
+``INSERT ... SELECT`` over arrays of agtype documents, in the shape ``CREATE`` /
+``SET n = row`` would give them (the column defaults allocate the graph ids, a
+property set to null is left out). A temporary table maps each record's
+``record_id`` to its graph id as the records go in, so links resolve their ends
+with a join instead of a ``MATCH`` per link. Reads still go through Cypher.
 """
 
 from __future__ import annotations
@@ -23,16 +30,21 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from typing import Any, Awaitable, Callable
 
 from .compiler import PopulationError
+from .run_limits import DEFAULT_RUN_LIMITS, RUN_LIMIT_RANGES
 
 # Tells a watcher how far a long step is: (unit, done, total), total None while unknown.
 StepReport = Callable[[str, int, int | None], Awaitable[None]]
 
-MAX_BATCH_VERTICES = 500
-MAX_BATCH_EDGES = 500
+DEFAULT_BATCH_ROWS = DEFAULT_RUN_LIMITS["projectionBatchRows"]
+MIN_BATCH_ROWS, MAX_BATCH_ROWS = RUN_LIMIT_RANGES["projectionBatchRows"]
+# Record id -> graph id of the records written so far, for resolving the ends of links.
+VERTEX_IDS_TABLE = "pg_temp.proj_vertex_ids"
+_INT64 = 2 ** 63
 MAX_PROJECTED_LINKS = 500_000
 # Records read to rebuild a graph from stored rows (the store's own default read stops at 50,000).
 MAX_PROJECTED_RECORDS = 500_000
@@ -118,8 +130,8 @@ def _check_graph(graph: str) -> str:
 
 
 def _escape(value: Any) -> str:
-    """A Cypher literal: scalars as themselves, a list of scalars as a list (so a vertex's
-    workspaces can be tested in a query), anything else as its text."""
+    """A Cypher literal for the read queries: scalars as themselves, a list of scalars as a list
+    (so a vertex's workspaces can be tested in a query), anything else as its text."""
     if value is None:
         return "null"
     if isinstance(value, (list, tuple)) and all(item is None or isinstance(item, (str, int, float, bool))
@@ -180,33 +192,82 @@ def compile_projection(entities: list[dict[str, Any]],
     return {"vertices": list(vertices.values()), "edges": list(edges.values())}
 
 
-def _map_literal(properties: dict[str, Any]) -> str:
-    return "{" + ", ".join(f"{name}: {_escape(value)}"
-                           for name, value in properties.items()) + "}"
+def _property_value(value: Any) -> Any:
+    """A property as agtype stores it: scalars as themselves (a number the type cannot hold is
+    left out, an integer beyond 64 bits becomes a float as a Cypher literal would), a list of
+    scalars as a list, anything else as its text."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        if -_INT64 <= value < _INT64:
+            return value
+        return float(value) if abs(value) < 10 ** 308 else str(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (list, tuple)) and all(item is None or isinstance(item, (str, int, float, bool))
+                                                for item in value):
+        return [_property_value(item) for item in value]
+    return str(value)
 
 
-def render_vertex_batch(graph: str, label: str, vertices: list[dict[str, Any]]) -> str:
-    """Records of one concept, created under its label (``compile_projection`` made them unique)."""
-    if not vertices or len(vertices) > MAX_BATCH_VERTICES:
+def agtype_document(properties: dict[str, Any]) -> str:
+    """The agtype map of a record's or link's properties, as JSON text. A property set to null is
+    left out, as ``SET n = row`` does."""
+    stored = {name: converted for name, value in properties.items()
+              if (converted := _property_value(value)) is not None}
+    return json.dumps(stored, ensure_ascii=False, allow_nan=False, separators=(", ", ": "))
+
+
+def _check_batch_rows(batch_rows: Any) -> int:
+    if (isinstance(batch_rows, bool) or not isinstance(batch_rows, int)
+            or not MIN_BATCH_ROWS <= batch_rows <= MAX_BATCH_ROWS):
         raise PopulationError("invalid_batch")
-    rows = ", ".join(_map_literal(vertex) for vertex in vertices)
-    return _cypher(graph, f"UNWIND [{rows}] AS row "
-                          f"CREATE (n:{_check_label(label)}) SET n = row", "v ag_catalog.agtype")
+    return batch_rows
 
 
-def render_edge_batch(graph: str, label: str, source_label: str, target_label: str,
-                      edges: list[dict[str, Any]]) -> str:
-    """Links of one relationship between records of two concepts; each end is found through
-    its label's record_id index."""
-    if not edges or len(edges) > MAX_BATCH_EDGES:
-        raise PopulationError("invalid_batch")
-    rows = ", ".join(_map_literal({"source": edge["source"], "target": edge["target"],
-                                   "relation": edge["relation"]}) for edge in edges)
-    return _cypher(graph, f"UNWIND [{rows}] AS row "
-                          f"MATCH (s:{_check_label(source_label)}), (t:{_check_label(target_label)}) "
-                          "WHERE s.record_id = row.source AND t.record_id = row.target "
-                          f"CREATE (s)-[:{_check_label(label)} {{relation_id: row.relation}}]->(t)",
-                   "e ag_catalog.agtype")
+def _label_table(graph: str, label: str) -> str:
+    return f'"{_check_graph(graph)}"."{_check_label(label)}"'
+
+
+def vertex_ids_table_sql() -> list[str]:
+    """(Re)create the record id -> graph id map; temporary, so it needs no cleanup after a failure."""
+    return [f"DROP TABLE IF EXISTS {VERTEX_IDS_TABLE}",
+            f"CREATE TEMP TABLE {VERTEX_IDS_TABLE.removeprefix('pg_temp.')} "
+            "(record_id text NOT NULL, id ag_catalog.graphid NOT NULL)"]
+
+
+def vertex_ids_index_sql() -> list[str]:
+    """Built after the records are in (cheaper than keeping it up to date), then analysed so the
+    links' joins look the ends up through it."""
+    return [f"CREATE UNIQUE INDEX proj_vertex_ids_record_id ON {VERTEX_IDS_TABLE} (record_id)",
+            f"ANALYZE {VERTEX_IDS_TABLE}"]
+
+
+def insert_vertices_sql(graph: str, label: str, *, track_ids: bool) -> str:
+    """Insert the records of $1 (agtype documents as text) into a concept's label table. The
+    table's default allocates each graph id; with ``track_ids`` the ids are kept in the map."""
+    insert = (f"INSERT INTO {_label_table(graph, label)} (properties) "
+              "SELECT doc::ag_catalog.agtype FROM unnest($1::text[]) AS docs(doc)")
+    if not track_ids:
+        return insert
+    return (f"WITH inserted AS ({insert} RETURNING id, properties) "
+            f"INSERT INTO {VERTEX_IDS_TABLE} (record_id, id) "
+            "SELECT properties::json ->> 'record_id', id FROM inserted")
+
+
+def insert_edges_sql(graph: str, label: str) -> str:
+    """Insert the links of $1 (source record ids), $2 (target record ids) and $3 (agtype documents
+    as text) into a relationship's label table; each end is resolved through the map. A link whose
+    end is not in the map is not inserted (the caller compares the count)."""
+    return (f"INSERT INTO {_label_table(graph, label)} (start_id, end_id, properties) "
+            "SELECT s.id, t.id, e.doc::ag_catalog.agtype "
+            "FROM unnest($1::text[], $2::text[], $3::text[]) AS e(source, target, doc) "
+            f"JOIN {VERTEX_IDS_TABLE} s ON s.record_id = e.source "
+            f"JOIN {VERTEX_IDS_TABLE} t ON t.record_id = e.target")
+
+
+def analyze_label_sql(graph: str, label: str) -> str:
+    return f"ANALYZE {_label_table(graph, label)}"
 
 
 def create_label_sql(graph: str, label: str, kind: str) -> str:
@@ -245,15 +306,25 @@ def _chunks(items: list[Any], size: int) -> list[list[Any]]:
     return [items[index:index + size] for index in range(0, len(items), size)]
 
 
-async def project_revision(connection: Any, *, graph: str,
-                           plan: dict[str, Any], report: StepReport | None = None) -> dict[str, Any]:
-    """Create the typed graph and stream inserts in bounded batches (P6.16, P6.29): a label
-    and its record_id index per concept, then the records, then a label per relationship and
-    the links; the label tables are analysed so the planner uses their indexes.
+def _inserted_rows(status: Any) -> int | None:
+    """Rows of an ``INSERT 0 n`` command tag (None for anything else, such as a test double's)."""
+    match = re.fullmatch(r"INSERT \d+ (\d+)", status) if isinstance(status, str) else None
+    return int(match.group(1)) if match else None
+
+
+async def project_revision(connection: Any, *, graph: str, plan: dict[str, Any],
+                           report: StepReport | None = None,
+                           batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
+    """Create the typed graph and bulk-load it in bounded batches (P6.16, P6.29): a label per
+    concept and the records of each (with ``batch_rows`` per statement), then the records' label
+    tables get their ``record_id`` index and are analysed, then a label per relationship and its
+    links, resolved against the ids of the records written, then the relationships' tables are
+    analysed.
 
     ``report(unit, done, total)`` is told after each batch how many graph elements (records, then
     links) are written of all of them; it runs on another connection than ``connection``."""
     _check_graph(graph)
+    batch_rows = _check_batch_rows(batch_rows)
     vertices = plan.get("vertices", [])
     edges = plan.get("edges", [])
     total, written = len(vertices) + len(edges), 0
@@ -261,31 +332,42 @@ async def project_revision(connection: Any, *, graph: str,
     by_concept: dict[str, list[dict[str, Any]]] = {}
     for vertex in vertices:
         by_concept.setdefault(concept_label(vertex.get("concept_id")), []).append(vertex)
+    if edges:
+        for statement in vertex_ids_table_sql():
+            await connection.execute(statement)
     for label, members in by_concept.items():
         await connection.execute(create_label_sql(graph, label, "vertex"))
+        sql = insert_vertices_sql(graph, label, track_ids=bool(edges))
+        for batch in _chunks(members, batch_rows):
+            await connection.execute(sql, [agtype_document(vertex) for vertex in batch])
+            written += len(batch)
+            if report is not None:
+                await report("elements", written, total)
+    # After the load: building an index over the rows is cheaper than updating it row by row.
+    for label in by_concept:
         await connection.execute(record_index_sql(graph, label))
-        for batch in _chunks(members, MAX_BATCH_VERTICES):
-            await connection.execute(render_vertex_batch(graph, label, batch))
-            written += len(batch)
-            if report is not None:
-                await report("elements", written, total)
-    by_relation: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        await connection.execute(analyze_label_sql(graph, label))
+    if edges:
+        for statement in vertex_ids_index_sql():
+            await connection.execute(statement)
+    by_relation: dict[str, list[dict[str, Any]]] = {}
     for edge in edges:
-        key = (relation_label(edge["relation"]), concept_label(edge.get("sourceConcept")),
-               concept_label(edge.get("targetConcept")))
-        by_relation.setdefault(key, []).append(edge)
-    created: set[str] = set()
-    for (label, source_label, target_label), members in by_relation.items():
-        if label not in created:
-            await connection.execute(create_label_sql(graph, label, "edge"))
-            created.add(label)
-        for batch in _chunks(members, MAX_BATCH_EDGES):
-            await connection.execute(render_edge_batch(graph, label, source_label, target_label, batch))
+        by_relation.setdefault(relation_label(edge["relation"]), []).append(edge)
+    for label, members in by_relation.items():
+        await connection.execute(create_label_sql(graph, label, "edge"))
+        sql = insert_edges_sql(graph, label)
+        for batch in _chunks(members, batch_rows):
+            status = await connection.execute(
+                sql, [str(edge["source"]) for edge in batch], [str(edge["target"]) for edge in batch],
+                [agtype_document({"relation_id": edge["relation"]}) for edge in batch])
+            if _inserted_rows(status) not in (None, len(batch)):
+                raise PopulationError("projection_incoherent")
             written += len(batch)
             if report is not None:
                 await report("elements", written, total)
-    for label in [*by_concept, *sorted(created)]:
-        await connection.execute(f'ANALYZE "{graph}"."{_check_label(label)}"')
+        await connection.execute(analyze_label_sql(graph, label))
+    if edges:
+        await connection.execute(f"DROP TABLE IF EXISTS {VERTEX_IDS_TABLE}")
     return {"graph": graph, "vertices": len(vertices), "edges": len(edges)}
 
 
@@ -376,7 +458,8 @@ async def drop_projection(connection: Any, graph: str) -> None:
 
 
 async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
-                                     report: StepReport | None = None) -> dict[str, Any]:
+                                     report: StepReport | None = None,
+                                     batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
     """Build, validate and record one immutable revision projection."""
     from app.persistence import population_store as store
 
@@ -399,13 +482,14 @@ async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
                 return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
                         "reused": True}
             return await _build_revision_projection(
-                pool, connection, revision_id, graph, current["projection_ref"], report)
+                pool, connection, revision_id, graph, current["projection_ref"], report, batch_rows)
         finally:
             await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
 
 
 async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, graph: str,
-                               report: StepReport | None = None) -> dict[str, int]:
+                               report: StepReport | None = None,
+                               batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, int]:
     """Build ``graph`` from the revision's stored records and links, and check its counts."""
     from app.persistence import population_store as store
 
@@ -430,7 +514,8 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
         async with connection.transaction():
             if await projection_exists(connection, graph):
                 await drop_projection(connection, graph)
-            await project_revision(connection, graph=graph, plan=plan, report=report)
+            await project_revision(connection, graph=graph, plan=plan, report=report,
+                                   batch_rows=batch_rows)
             if validate_projection(expected, await projection_counts(connection, graph)):
                 raise PopulationError("projection_validation_failed")
     except PopulationError:
@@ -444,10 +529,11 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
 
 async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
                                      graph: str, previous_ref: str | None,
-                                     report: StepReport | None = None) -> dict[str, Any]:
+                                     report: StepReport | None = None,
+                                     batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
     from app.persistence import population_store as store
 
-    expected = await _project_stored_rows(pool, connection, revision_id, graph, report)
+    expected = await _project_stored_rows(pool, connection, revision_id, graph, report, batch_rows)
     projection_ref = live_projection_ref(graph)
     try:
         recorded = await store.set_revision_projection(
@@ -523,11 +609,12 @@ async def _discard_projection(connection: Any, graph: str, revision_id: str) -> 
 
 
 async def finalize_draft_revision(pool: Any, age_pool: Any, revision_id: str,
-                                  report: StepReport | None = None) -> dict[str, Any]:
+                                  report: StepReport | None = None,
+                                  batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
     """Project and atomically move only the draft serving binding."""
     from app.persistence import population_store as store
 
-    projected = await ensure_revision_projection(pool, age_pool, revision_id, report)
+    projected = await ensure_revision_projection(pool, age_pool, revision_id, report, batch_rows)
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
@@ -157,6 +158,17 @@ async def claim_generation(pool: Any, index_id: str, owner: str, lease_seconds: 
     return row is not None
 
 
+async def adopt_generation(pool: Any, index_id: str, job_id: str, owner: str) -> bool:
+    """Take over a generation another attempt of the same job left held. The caller holds the job's
+    task lease, which is exclusive: whoever owned the generation under this job is gone (a crashed
+    attempt, a restarted worker), so waiting for its lease to run out only strands the build."""
+    row = await pool.fetchrow(
+        "UPDATE semantic_graph_search.index_generations SET owner = NULL, lease_until = NULL "
+        "WHERE index_id = $1::uuid AND state = 'indexing' AND job_id = $2::uuid "
+        "AND owner IS NOT NULL AND owner <> $3 RETURNING index_id", index_id, job_id, owner)
+    return row is not None
+
+
 async def renew_generation(pool: Any, index_id: str, owner: str, lease_seconds: int,
                            embedding_calls: int = 0) -> bool:
     row = await pool.fetchrow(
@@ -205,25 +217,51 @@ _VECTOR_TABLES = {"documents": "semantic_graph_search.entity_documents",
                   "passages": "semantic_graph_search.entity_passages"}
 
 
+# Rows reused per statement: each one is written into the vector index (HNSW), so a bounded chunk keeps
+# a statement well inside the worker's statement timeout, however large the revision.
+CACHE_FILL_CHUNK_ROWS = 500
+
+
 async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: str | list[str],
-                          kind: str = "documents") -> int:
+                          kind: str = "documents", *, chunk_rows: int = CACHE_FILL_CHUNK_ROWS,
+                          on_chunk: Callable[[int], Awaitable[bool]] | None = None) -> int:
     """Reuse vectors already computed for the same text: no model call. ``kind``: documents
     or passages (one cache: a vector depends only on the text and the vector space);
-    ``fingerprint``: the cache keys of that space."""
+    ``fingerprint``: the cache keys of that space.
+
+    Works ``chunk_rows`` records at a time, in record order (a record's passages go together), so no
+    statement outgrows the timeout on a revision of hundreds of thousands. ``on_chunk`` receives the
+    rows reused so far after each chunk and returns False to stop (the build was stopped, or lost its lease);
+    what was reused stays reused. Returns the rows reused."""
     fingerprints = [fingerprint] if isinstance(fingerprint, str) else list(fingerprint)
-    result = await pool.execute(
-        f"UPDATE {_VECTOR_TABLES[kind]} document "
-        "SET embedding = cache.embedding, status = 'ready' "
-        "FROM semantic_graph_search.embedding_cache cache "
-        "WHERE document.index_id = $1::uuid AND document.status = 'pending' "
-        "AND cache.model_id = $2 AND cache.embedding_fingerprint = ANY($3::text[]) "
-        "AND cache.content_hash = document.content_hash",
-        index_id, model_id, fingerprints)
-    reused = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
-    if reused:
-        await pool.execute(
-            "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
-            "WHERE index_id = $1::uuid", index_id, reused)
+    table = _VECTOR_TABLES[kind]
+    reused = 0
+    after = ""
+    while True:
+        row = await pool.fetchrow(
+            "WITH chunk AS ("
+            f"  SELECT DISTINCT entity_id FROM {table} "
+            "   WHERE index_id = $1::uuid AND status = 'pending' AND entity_id > $2 "
+            "   ORDER BY entity_id LIMIT $3), "
+            f"updated AS (UPDATE {table} document "
+            "  SET embedding = cache.embedding, status = 'ready' "
+            "  FROM semantic_graph_search.embedding_cache cache "
+            "  WHERE document.index_id = $1::uuid AND document.status = 'pending' "
+            "  AND document.entity_id IN (SELECT entity_id FROM chunk) "
+            "  AND cache.model_id = $4 AND cache.embedding_fingerprint = ANY($5::text[]) "
+            "  AND cache.content_hash = document.content_hash RETURNING 1) "
+            "SELECT (SELECT count(*) FROM updated) AS reused, (SELECT max(entity_id) FROM chunk) AS last_entity",
+            index_id, after, chunk_rows, model_id, fingerprints)
+        if row is None or row["last_entity"] is None:
+            break
+        after = row["last_entity"]
+        if row["reused"]:
+            reused += int(row["reused"])
+            await pool.execute(
+                "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
+                "WHERE index_id = $1::uuid", index_id, int(row["reused"]))
+        if on_chunk is not None and not await on_chunk(reused):
+            break
     return reused
 
 

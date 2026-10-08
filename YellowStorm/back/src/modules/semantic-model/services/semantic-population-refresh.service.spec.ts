@@ -415,8 +415,8 @@ describe('SemanticPopulationRefreshService', () => {
       return { payload: calls[0][0].payload, key: calls[0][1] };
     };
     const plain = await runWith({ maxRunSources: 40 });
-    const saved = await runWith({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120 });
-    expect(saved.payload.limits).toEqual({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120 });
+    const saved = await runWith({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120, projectionBatchRows: 8000 });
+    expect(saved.payload.limits).toEqual({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120, projectionBatchRows: 8000 });
     expect(saved.payload.populationExecutionFingerprint).toBe(plain.payload.populationExecutionFingerprint);
     expect(saved.key).toBe(plain.key);
     const onlySave = await runWith({ saveBatchRows: 5000 });

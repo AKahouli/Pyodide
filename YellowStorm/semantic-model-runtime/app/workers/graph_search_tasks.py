@@ -77,6 +77,11 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             await search_store.fail_generation(pool, index_id, "attempts_exhausted")
             return await finish("failed", None, "attempts_exhausted")
 
+        # An earlier attempt of this job (it crashed, or its worker restarted) may still hold the
+        # generation; this attempt owns the job now, so the build resumes instead of reporting "busy".
+        if await search_store.adopt_generation(pool, index_id, lease.job_id, lease_owner):
+            logger.info("Search index build resumed from an earlier attempt of the same job")
+
         # The administrator's build knobs ride on the job; unreadable ones count as absent.
         build = None
         given = lease.payload.get("payload", {}).get(INDEX_BUILD_PAYLOAD_KEY)

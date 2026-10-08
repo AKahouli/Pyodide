@@ -1116,6 +1116,21 @@ class PostgresJobRepository:
                       AND (g.lease_until IS NULL OR g.lease_until < now())
                     """
                 )
+                # A generation no live job will build (its lease ran out and its job ended, or never
+                # was set) must not read "indexing" for good: it fails, and a build can be asked again.
+                await connection.execute(
+                    """
+                    UPDATE semantic_graph_search.index_generations g
+                    SET state = 'failed', owner = NULL, lease_until = NULL,
+                        last_error_code = 'index_interrupted'
+                    WHERE g.state = 'indexing'
+                      AND (g.lease_until IS NULL OR g.lease_until < now())
+                      AND NOT EXISTS (
+                        SELECT 1 FROM semantic_jobs.jobs j
+                        WHERE j.id = g.job_id
+                          AND j.state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested'))
+                    """
+                )
                 expired = await connection.fetch(
                     """
                     SELECT t.id, t.attempt_count, t.job_id::text AS job_id,
