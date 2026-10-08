@@ -151,10 +151,25 @@ export interface RunLimits {
   saveBatchRows: number;
   /** Time one save batch may take, in seconds. Travels with the run but is not part of its identity. */
   saveStatementSeconds: number;
+  /** Texts sent per embedding call when a search index is built. Not part of a run's identity. */
+  embeddingBatchSize: number;
+  /** Embedding calls in flight at once when a search index is built. Not part of a run's identity. */
+  embeddingParallelCalls: number;
+  /** Time one embedding call may take, in seconds. Not part of a run's identity. */
+  embeddingTimeoutSeconds: number;
+  /** Records read per page when a search index is built. Not part of a run's identity. */
+  indexReadPageRows: number;
 }
 
 /** Limits of how a run is saved, not of what it builds: they never change the run's fingerprint. */
 export const SAVE_LIMIT_KEYS = ['saveBatchRows', 'saveStatementSeconds'] as const satisfies readonly (keyof RunLimits)[];
+
+/**
+ * How a search index is built, not what it holds: they travel with the run and with index requests, and
+ * never change a run's fingerprint or an index's identity. The runtime falls back to its environment for
+ * the ones not set.
+ */
+export const INDEX_BUILD_LIMIT_KEYS = ['embeddingBatchSize', 'embeddingParallelCalls', 'embeddingTimeoutSeconds', 'indexReadPageRows'] as const satisfies readonly (keyof RunLimits)[];
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxRunSources: 5000,
@@ -168,6 +183,10 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   purgeTimeoutSeconds: 300,
   saveBatchRows: 2000,
   saveStatementSeconds: 10,
+  embeddingBatchSize: 32,
+  embeddingParallelCalls: 4,
+  embeddingTimeoutSeconds: 30,
+  indexReadPageRows: 5000,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
@@ -182,6 +201,10 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   purgeTimeoutSeconds: [30, 3600],
   saveBatchRows: [100, 50000],
   saveStatementSeconds: [5, 600],
+  embeddingBatchSize: [1, 256],
+  embeddingParallelCalls: [1, 16],
+  embeddingTimeoutSeconds: [5, 600],
+  indexReadPageRows: [500, 50000],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

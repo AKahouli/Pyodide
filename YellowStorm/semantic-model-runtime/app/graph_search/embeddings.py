@@ -13,12 +13,13 @@ import hashlib
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
 
 from .documents import FIELD_POLICY_VERSION, SERIALIZER_VERSION
+from .settings import IndexBuildSettings
 
 # The column type in migration 022; another size needs its own storage.
 STORAGE_DIMENSION = 2560
@@ -45,6 +46,19 @@ class EmbeddingProfile:
     dimension: int
     timeout_seconds: float = 30.0
     batch_size: int = 32
+    # Embedding calls in flight at once while an index is built. Like the two above, a performance
+    # knob: none of the three enters a fingerprint.
+    parallel_calls: int = 1
+
+    def with_build(self, build: "IndexBuildSettings | None") -> "EmbeddingProfile":
+        """This profile with the administrator's build knobs over the environment's (same fingerprints)."""
+        if build is None:
+            return self
+        return replace(
+            self,
+            batch_size=build.embedding_batch_size or self.batch_size,
+            parallel_calls=build.embedding_parallel_calls or self.parallel_calls,
+            timeout_seconds=float(build.embedding_timeout_seconds or self.timeout_seconds))
 
     def _named(self, serializer: str | None) -> str:
         body: dict[str, Any] = {"provider": "litellm", "model": self.model, "dimension": self.dimension,
@@ -85,6 +99,7 @@ def profile_from_env() -> EmbeddingProfile | None:
         dimension=int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", str(STORAGE_DIMENSION))),
         timeout_seconds=float(os.environ.get("SEMANTIC_EMBEDDING_TIMEOUT_SECONDS", "30")),
         batch_size=max(1, min(128, int(os.environ.get("SEMANTIC_EMBEDDING_BATCH_SIZE", "32")))),
+        parallel_calls=max(1, min(16, int(os.environ.get("SEMANTIC_EMBEDDING_PARALLEL_CALLS", "4")))),
     )
 
 

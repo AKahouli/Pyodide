@@ -105,6 +105,8 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   dataPreview: 'evidence-read',
   conceptRecords: 'evidence-read',
   searchIndexStatus: 'evidence-read',
+  ensureSearchIndex: 'command',
+  stopSearchIndex: 'command',
   assistantChanges: 'curated-read',
   undoAssistantChange: 'command',
   redoAssistantChange: 'command',

@@ -190,8 +190,16 @@ export class SemanticGraphSearchService {
   /** Building an index costs embedding calls, so only the people who edit the model can start one. */
   async ensureIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment) {
     const model = await this.models.requireActiveRole(userId, modelId, EDIT_ROLES);
-    const request = { actorUserId: userId, modelId: model.id, environment, settings: { index: (await this.settingsFor(model, environment)).index } };
+    const { index, build } = await this.settingsFor(model, environment);
+    // How the index is built (batch size, parallel calls…) goes with the request; it never changes the index's identity.
+    const request = { actorUserId: userId, modelId: model.id, environment, settings: { index, ...(build ? { build } : {}) } };
     return this.bound(environment, () => this.runtime.ensureGraphSearchIndex(request));
+  }
+
+  /** Stopping a build is as restricted as starting one: it is the people who edit the model who spend the embedding calls. */
+  async stopIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment) {
+    const model = await this.models.requireActiveRole(userId, modelId, EDIT_ROLES);
+    return this.bound(environment, () => this.runtime.stopGraphSearchIndex({ actorUserId: userId, modelId: model.id, environment }));
   }
 
   /** The search settings sent to the runtime: the admin's, and each field's own from the bound version's definitions. */

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
-import { PopulationStartedPanel, populationServing } from './PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing, runCanStop } from './PopulationStartedPanel';
 
 const mappings = [
   { id: 'mapping-1', documentName: 'master-agreement-0041.pdf' },
@@ -127,5 +127,44 @@ describe('PopulationStartedPanel', () => {
       serving={populationServing({ servingDecision: 'activate', blockingGapKinds: [] })} />);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(populationServing({ dataRevisionId: 'r' })).toBeUndefined();
+  });
+});
+
+describe('PopulationStartedPanel stop', () => {
+  const running = { jobId: 'job-1', status: 'running', skipped: [], reused: false };
+
+  it('stops a run that is still reading', () => {
+    const onStop = vi.fn();
+    render(<PopulationStartedPanel outcome={running} sourceMappings={mappings} progress={{ phase: 'reading', total: 2, done: 1 }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    fireEvent.click(screen.getByRole('button', { name: 'runStop.stop' }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Stop disabled, saying why, once the data is being saved', () => {
+    const onStop = vi.fn();
+    render(<PopulationStartedPanel outcome={running} sourceMappings={mappings} progress={{ phase: 'saving', total: 2, done: 2, cancellable: false }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    const button = screen.getByRole('button', { name: /runStop\.stop/ });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleName('runStop.stop: runStop.notNow');
+    fireEvent.click(button);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it('knows a run can no longer be stopped from its phase or its flag', () => {
+    expect(runCanStop(undefined)).toBe(true);
+    expect(runCanStop({ phase: 'reading' })).toBe(true);
+    expect(runCanStop({ phase: 'linking', cancellable: true })).toBe(true);
+    for (const phase of ['saving', 'comparing', 'projecting'] as const) expect(runCanStop({ phase })).toBe(false);
+    expect(runCanStop({ phase: 'reading', cancellable: false })).toBe(false);
+  });
+  it('tells when a stop takes long: the worker may be gone and the run ends when its lease runs out', () => {
+    const outcome = { jobId: 'job-1', status: 'cancel_requested', skipped: [], reused: false };
+    const { rerender } = render(<PopulationStartedPanel outcome={outcome} sourceMappings={mappings} stopping onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByText('runStop.stoppingHint')).toBeInTheDocument();
+
+    rerender(<PopulationStartedPanel outcome={outcome} sourceMappings={mappings} stopping stoppingSlow onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByText('runStatus.stoppingSlowHint')).toBeInTheDocument();
   });
 });

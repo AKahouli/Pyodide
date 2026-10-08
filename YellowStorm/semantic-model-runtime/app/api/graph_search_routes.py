@@ -27,11 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.connect import MAX_LINKS, MAX_PATHS, connect
 from app.graph_search.embeddings import profile_from_env
-from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
-                                      settings_for_revision)
+from app.graph_search.indexer import (CANCELLED_CODE, IndexUnavailable, SYSTEM_ACTOR, request_index,
+                                      request_index_quietly, settings_for_revision)
 from app.graph_search.record_query import compile_query, diagnose, field_keys_by_concept, overview, run_query
 from app.graph_search.retrieval import describe_entity, find_seeds, is_visible, resolve_concepts, resolve_relations
-from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
+from app.graph_search.settings import IndexBuildSettings, IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
 from app.persistence import population_store as store
@@ -62,6 +62,8 @@ class RequestSettings(BaseModel):
 
     index: IndexSettings | None = None
     search: SearchSettings | None = None
+    # How an index is built (performance only; never part of an index's identity).
+    build: IndexBuildSettings | None = None
 
 
 class SearchQuery(_Pinned):
@@ -310,8 +312,9 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         index_settings = await settings_for_revision(pool, revision_id, profile, settings.index)
         fingerprint = index_fingerprint(profile.fingerprint, index_settings)
         generation = await search_store.get_generation(pool, revision_id, fingerprint)
-        if generation is None or generation["state"] == "failed":
-            await request_index_quietly(pool, _admit(request), revision_id, index_settings)
+        if generation is None or (generation["state"] == "failed"
+                                  and generation.get("last_error_code") != CANCELLED_CODE):
+            await request_index_quietly(pool, _admit(request), revision_id, index_settings, settings.build)
             generation = await search_store.get_generation(pool, revision_id, fingerprint)
     index = search_store.public_generation(generation)
     if profile is None:
@@ -617,7 +620,8 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
     binding = await _pin(pool, command.model_id, command.environment, None)
     try:
         requested = await request_index(pool, admit, revision_id=binding["data_revision_id"],
-                                        settings=command.settings.index if command.settings else None)
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
     except IndexUnavailable as exc:
         raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
                             detail=exc.code) from exc
@@ -625,6 +629,42 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
             "dataRevisionId": binding["data_revision_id"],
             "index": search_store.public_generation(requested["generation"]),
             "jobId": requested["jobId"]}
+
+
+class IndexStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    model_id: str = Field(alias="modelId", min_length=1, max_length=200)
+    environment: Environment = "draft"
+
+
+@router.post("/indexes/stop", status_code=status.HTTP_200_OK)
+async def stop_search_index(command: IndexStop, request: Request) -> dict[str, object]:
+    """Stop the build of the search index of the bound data (queued or indexing). A build not yet
+    picked up ends at once; a running one ends at its next batch. The generation then fails with the
+    code ``cancelled``, keeping what is embedded: only an explicit index request builds it again."""
+    pool = _pool(request)
+    service = getattr(request.app.state, "job_service", None)
+    if service is None or os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") != "true":
+        raise HTTPException(status_code=503, detail="runtime_writes_disabled")
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    base = {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"]}
+    if generation is None or generation["state"] not in ("queued", "indexing"):
+        return {**base, "stopped": False, "index": search_store.public_generation(generation)}
+    job = (await service.repository.request_cancel(generation["job_id"], SYSTEM_ACTOR)
+           if generation.get("job_id") else None)
+    if job is None or job["state"] != "cancel_requested":
+        # No live worker holds it (not started, or its lease ran out): the generation ends here.
+        # A worker holding it live ends it itself at its next batch.
+        await search_store.fail_generation(pool, generation["index_id"], CANCELLED_CODE)
+    generation = await search_store.get_generation_by_id(pool, generation["index_id"])
+    return {**base, "stopped": True, "index": search_store.public_generation(generation),
+            "jobId": job["jobId"] if job else None}
 
 
 @router.get("/models/{model_id}/index", status_code=status.HTTP_200_OK)

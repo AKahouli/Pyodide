@@ -9,6 +9,9 @@ embeds only what is left.
 from __future__ import annotations
 
 import logging
+import uuid
+
+from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 
@@ -16,6 +19,18 @@ from .celery_app import SEARCH_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
 TASK_LEASE_SECONDS = 600
+
+# Changes each time a worker process starts: a lease under another boot id of the same node
+# was left by a process that is gone (see release_abandoned_leases).
+WORKER_BOOT_ID = uuid.uuid4().hex
+
+
+def node_lease_prefix(hostname: str | None) -> str:
+    return f"search-worker:{hostname or 'unknown'}:"
+
+
+def lease_owner_for(hostname: str | None) -> str:
+    return f"{node_lease_prefix(hostname)}{WORKER_BOOT_ID}:{uuid.uuid4().hex}"
 
 
 async def _run_task(task_id: int, lease_owner: str) -> dict:
@@ -25,6 +40,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 
     from app.graph_search.embeddings import EmbeddingError
     from app.graph_search.indexer import build_index
+    from app.graph_search.settings import IndexBuildSettings, ValidationError
+    from app.jobs.service import INDEX_BUILD_PAYLOAD_KEY
     from app.jobs.models import StaleLease
     from app.persistence import graph_search_store as search_store
     from app.persistence.postgres_jobs import PostgresJobRepository
@@ -60,20 +77,42 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             await search_store.fail_generation(pool, index_id, "attempts_exhausted")
             return await finish("failed", None, "attempts_exhausted")
 
+        # The administrator's build knobs ride on the job; unreadable ones count as absent.
+        build = None
+        given = lease.payload.get("payload", {}).get(INDEX_BUILD_PAYLOAD_KEY)
+        if given:
+            try:
+                build = IndexBuildSettings.model_validate(given)
+            except ValidationError:
+                logger.warning("Unreadable search index build settings; the environment's used")
+        # An embedding call may take up to its timeout: the task lease must outlast one wave.
+        lease_seconds = max(TASK_LEASE_SECONDS, (build.embedding_timeout_seconds or 0) + 300 if build else 0)
+
         async def report(progress: dict) -> None:
             if not await repository.checkpoint(task_id=task_id, lease_owner=lease_owner,
                                                lease_epoch=lease.lease_epoch, progress=progress,
-                                               lease_seconds=TASK_LEASE_SECONDS):
+                                               lease_seconds=lease_seconds):
                 raise StaleLease("search index lease lost while reporting progress")
 
+        async def should_stop() -> bool:
+            return await repository.cancel_requested(lease.job_id)
+
         try:
-            outcome = await build_index(pool, index_id=index_id, owner=lease_owner, report=report)
+            outcome = await build_index(pool, index_id=index_id, owner=lease_owner, report=report,
+                                        build=build, should_stop=should_stop)
         except EmbeddingError as exc:
             if exc.retryable and lease.attempt_count < max_attempts:
                 raise
             await search_store.fail_generation(pool, index_id, exc.code, lease_owner)
             return await finish("failed", {"indexId": index_id}, exc.code)
         result = {"indexId": index_id, **outcome}
+        if outcome.get("state") == "cancelled":
+            try:
+                await repository.cancel_task(task_id=task_id, lease_owner=lease_owner,
+                                             lease_epoch=lease.lease_epoch)
+            except StaleLease:
+                return {"ok": False, "errorCode": "stale_lease"}
+            return {"ok": False, "errorCode": "cancelled", "jobState": "cancelled", **result}
         # Busy: another live job owns this generation and will finish it.
         if outcome.get("state") == "ready" or outcome.get("busy"):
             return await finish("completed", result)
@@ -93,18 +132,56 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         await pool.close()
 
 
+async def _release_abandoned_leases(hostname: str) -> int:
+    import os
+
+    import asyncpg
+
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    pool = await asyncpg.create_pool(os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=1,
+                                     command_timeout=10)
+    try:
+        prefix = node_lease_prefix(hostname)
+        return await PostgresJobRepository(pool).release_abandoned_leases(
+            node_prefix=prefix, boot_prefix=f"{prefix}{WORKER_BOOT_ID}:")
+    finally:
+        await pool.close()
+
+
+@worker_ready.connect
+def release_abandoned_leases(sender=None, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+    """A restarted worker hands back the builds its previous process was running.
+
+    Without this, a build asked to stop while its worker was restarted shows "Stopping" until
+    its lease runs out (up to ten minutes), and an unstopped one waits as long to be built again.
+    """
+    import asyncio
+
+    hostname = getattr(sender, "hostname", None)
+    if not hostname:
+        return
+    try:
+        released = asyncio.run(_release_abandoned_leases(str(hostname)))
+        if released:
+            logger.info("Released builds left by this worker's previous process",
+                        extra={"released": released})
+    except Exception as exc:  # recovery still ends them when their lease runs out
+        logger.warning("Releasing abandoned search index leases failed",
+                       extra={"error_code": type(exc).__name__[:100]})
+
+
 @celery_app.task(bind=True, name="semantic-model-search.index", queue=SEARCH_QUEUES[0])
 def index_graph_search(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
     import asyncio
     import os
-    import uuid
 
     if isinstance(task_id, bool) or not isinstance(task_id, int):
         return {"ok": False, "errorCode": "invalid_task_reference"}
     max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
     retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
     try:
-        return asyncio.run(_run_task(task_id, f"search-worker:{uuid.uuid4().hex}"))
+        return asyncio.run(_run_task(task_id, lease_owner_for(self.request.hostname)))
     except Exception as exc:
         logger.warning("Search index task failed, scheduling bounded retry",
                        extra={"error_code": type(exc).__name__[:100]})

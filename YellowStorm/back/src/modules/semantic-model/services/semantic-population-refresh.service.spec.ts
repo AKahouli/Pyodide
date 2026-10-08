@@ -134,6 +134,14 @@ describe('SemanticPopulationRefreshService', () => {
     expect(job.progress.done).toBe(2);
   });
 
+  it('hands the step of a saving or graph-building run to the caller as the runtime sent it', async () => {
+    const { runtime, service } = setup();
+    const progress = { phase: 'projecting', total: 3, done: 3, step: { unit: 'elements', done: 1200, total: 5000 } };
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'running', progress } as any);
+    const job = await service.getJob('u-1', 'model-1', 'j-1') as any;
+    expect(job.progress).toEqual(progress);
+  });
+
   it('shapes bound runtime entities as the existing Records contract', async () => {
     const { service } = setup();
     const result = await service.boundRecords('u-1', 'model-1', 25);
@@ -414,6 +422,25 @@ describe('SemanticPopulationRefreshService', () => {
     const onlySave = await runWith({ saveBatchRows: 5000 });
     expect(onlySave.payload.limits).toEqual({ saveBatchRows: 5000 });
     expect(onlySave.payload.populationExecutionFingerprint).toBe((await runWith({})).payload.populationExecutionFingerprint);
+  });
+
+  it('sends the index build limits with the run without changing its fingerprint or key', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({ maxRunSources: 40 });
+    const tuned = await runWith({ maxRunSources: 40, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 90, indexReadPageRows: 1000 });
+    expect(tuned.payload.limits).toEqual({ maxRunSources: 40, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 90, indexReadPageRows: 1000 });
+    expect(tuned.payload.populationExecutionFingerprint).toBe(plain.payload.populationExecutionFingerprint);
+    expect(tuned.key).toBe(plain.key);
   });
 
   it('rebuilds only the graph: no run is started and no source is read', async () => {

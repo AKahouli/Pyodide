@@ -412,13 +412,18 @@ class PostgresJobRepository:
         return await self.get_job(job_id, actor_user_id) if job_id else None
 
     async def request_cancel(self, job_id: str, actor_user_id: str) -> dict[str, Any] | None:
-        """Stop a job. One that has not started ends at once; a running one is asked to stop
-        and its worker ends it at its next progress report, keeping nothing it read."""
+        """Stop a job. One nobody is working on ends at once: not started, or whose worker's lease
+        has run out (it is gone, and could not be asked). One a worker holds is asked to stop and the
+        worker ends it at its next progress report, keeping nothing it read. Asking again after the
+        lease ran out ends it, so a stop never waits on a worker that no longer answers.
+
+        A run past its last chance to stop (``progress.cancellable`` false: the new data is being
+        saved) is left as it is; it finishes, or recovery runs it again if its worker died."""
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 job = await connection.fetchrow(
                     """
-                    SELECT id::text, state FROM semantic_jobs.jobs
+                    SELECT id::text, state, progress FROM semantic_jobs.jobs
                     WHERE id = $1::uuid AND actor_user_id = $2
                     FOR UPDATE
                     """,
@@ -427,32 +432,38 @@ class PostgresJobRepository:
                 )
                 if job is None:
                     return None
-                if job["state"] not in TERMINAL_JOB_STATES and job["state"] != "cancel_requested":
-                    running = await connection.fetchval(
-                        "SELECT count(*) FROM semantic_jobs.tasks WHERE job_id = $1::uuid AND state = 'running'",
+                if job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
+                    live = await connection.fetchval(
+                        """
+                        SELECT count(*) FROM semantic_jobs.tasks
+                        WHERE job_id = $1::uuid AND state = 'running' AND lease_expires_at > now()
+                        """,
                         job_id,
                     )
-                    if running:
-                        await connection.execute(
-                            """
-                            UPDATE semantic_jobs.jobs SET state = 'cancel_requested', updated_at = now()
-                            WHERE id = $1::uuid
-                            """,
-                            job_id,
-                        )
-                        await connection.execute(
-                            """
-                            INSERT INTO semantic_jobs.events (job_id, event_type, payload)
-                            VALUES ($1::uuid, 'job.cancel_requested', '{}'::jsonb)
-                            """,
-                            job_id,
-                        )
+                    if live:
+                        if job["state"] != "cancel_requested":
+                            await connection.execute(
+                                """
+                                UPDATE semantic_jobs.jobs SET state = 'cancel_requested', updated_at = now()
+                                WHERE id = $1::uuid
+                                """,
+                                job_id,
+                            )
+                            await connection.execute(
+                                """
+                                INSERT INTO semantic_jobs.events (job_id, event_type, payload)
+                                VALUES ($1::uuid, 'job.cancel_requested', '{}'::jsonb)
+                                """,
+                                job_id,
+                            )
                     else:
                         await connection.execute(
                             """
                             UPDATE semantic_jobs.tasks
-                            SET state = 'cancelled', completed_at = now(), updated_at = now()
-                            WHERE job_id = $1::uuid AND state = 'queued'
+                            SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
+                                lease_expires_at = NULL, updated_at = now()
+                            WHERE job_id = $1::uuid
+                              AND (state = 'queued' OR (state = 'running' AND lease_expires_at <= now()))
                             """,
                             job_id,
                         )
@@ -493,12 +504,22 @@ class PostgresJobRepository:
             SET state = 'cancelled', error_code = 'cancelled', completed_at = now(), updated_at = now()
             WHERE id = $1::uuid AND state NOT IN ('completed', 'completed_with_gaps', 'failed',
                                                   'cancelled', 'superseded')
-            RETURNING model_id
+            RETURNING model_id, job_type
             """,
             job_id,
         )
         if job is None:
             return
+        # Tasks that never ran must not wait for a delivery of a job that is over.
+        await connection.execute(
+            """
+            UPDATE semantic_jobs.tasks SET state = 'cancelled', completed_at = now(), updated_at = now()
+            WHERE job_id = $1::uuid AND state = 'queued'
+            """,
+            job_id,
+        )
+        if job["job_type"].startswith("graph_search."):
+            await self._fail_cancelled_generations(connection, job_id)
         await connection.execute(
             """
             INSERT INTO semantic_jobs.events (job_id, task_id, event_type, payload)
@@ -512,6 +533,19 @@ class PostgresJobRepository:
                 connection, model_id=job["model_id"], event_type="population-status-changed",
                 resource=job_id, payload={"resource": job_id, "status": "cancelled", "reason": "job_terminal"},
             )
+
+    @staticmethod
+    async def _fail_cancelled_generations(connection: Any, job_id: str) -> None:
+        """A search index build stopped for good leaves its generation ``failed`` / ``cancelled``
+        (what is embedded stays), whatever happened to the worker that held it."""
+        await connection.execute(
+            """
+            UPDATE semantic_graph_search.index_generations
+            SET state = 'failed', owner = NULL, lease_until = NULL, last_error_code = 'cancelled'
+            WHERE job_id = $1::uuid AND state IN ('queued', 'indexing')
+            """,
+            job_id,
+        )
 
     async def list_events(
         self, job_id: str, actor_user_id: str, after: int, limit: int
@@ -1031,6 +1065,18 @@ class PostgresJobRepository:
             node_prefix,
             boot_prefix,
         )
+        # A search index build owns its generation under the same lease owner: that lease goes
+        # too, or the next worker would find the generation still held.
+        await self.pool.execute(
+            """
+            UPDATE semantic_graph_search.index_generations
+            SET lease_until = now() - interval '1 second'
+            WHERE state = 'indexing' AND lease_until > now()
+              AND starts_with(owner, $1) AND NOT starts_with(owner, $2)
+            """,
+            node_prefix,
+            boot_prefix,
+        )
         return int(result.split()[-1]) if result else 0
 
     async def recover_stalled_tasks(
@@ -1058,6 +1104,18 @@ class PostgresJobRepository:
         """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                # A build stopped while its worker was gone (or by an earlier version) must not
+                # leave its generation "indexing" for good: once the lease ran out it is failed.
+                await connection.execute(
+                    """
+                    UPDATE semantic_graph_search.index_generations g
+                    SET state = 'failed', owner = NULL, lease_until = NULL, last_error_code = 'cancelled'
+                    FROM semantic_jobs.jobs j
+                    WHERE g.job_id = j.id AND j.state = 'cancelled'
+                      AND g.state IN ('queued', 'indexing')
+                      AND (g.lease_until IS NULL OR g.lease_until < now())
+                    """
+                )
                 expired = await connection.fetch(
                     """
                     SELECT t.id, t.attempt_count, t.job_id::text AS job_id,

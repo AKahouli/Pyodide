@@ -42,11 +42,34 @@ RUN_LIMIT_RANGES = {
 }
 # How a run is saved, not what it builds: never part of its fingerprint or its admission hash.
 SAVE_LIMIT_KEYS = ("saveBatchRows", "saveStatementSeconds")
+# How the search index is built (embedding calls and pages), set by the same admin and carried by a
+# run so the index it requests is built with them. Pure performance knobs: like the save limits they
+# never enter a fingerprint. Absent: the environment's value, else the built-in one.
+INDEX_BUILD_LIMIT_RANGES = {
+    "embeddingBatchSize": (1, 256),
+    "embeddingParallelCalls": (1, 16),
+    "embeddingTimeoutSeconds": (5, 600),
+    "indexReadPageRows": (500, 50000),
+}
+INDEX_BUILD_LIMIT_KEYS = tuple(INDEX_BUILD_LIMIT_RANGES)
+NON_IDENTITY_LIMIT_KEYS = SAVE_LIMIT_KEYS + INDEX_BUILD_LIMIT_KEYS
 
 
 def identity_limits(limits: dict[str, Any] | None) -> dict[str, Any]:
     """The limits that decide what a run builds (the core hashes the same ones)."""
-    return {key: value for key, value in (limits or {}).items() if key not in SAVE_LIMIT_KEYS}
+    return {key: value for key, value in (limits or {}).items() if key not in NON_IDENTITY_LIMIT_KEYS}
+
+
+def index_build_limits(limits: Any) -> dict[str, int]:
+    """The valid index build limits among a run's limits (none when the admin set none)."""
+    if not isinstance(limits, dict):
+        return {}
+    picked = {}
+    for key, (low, high) in INDEX_BUILD_LIMIT_RANGES.items():
+        value = limits.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
+            picked[key] = value
+    return picked
 
 
 def run_limits(payload: Any) -> dict[str, int]:

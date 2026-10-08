@@ -163,6 +163,22 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/indexes');
     });
 
+    it('stops an index build through the runtime, which needs writes on', async () => {
+      const disabled = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      await expect(disabled.stopGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ stopped: true, index: { state: 'indexing' } }), { status: 200 }));
+      const client = new SemanticRuntimeClientService(config() as any);
+      await expect(client.stopGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .resolves.toMatchObject({ stopped: true });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://runtime:8000/v1/semantic-model-search/indexes/stop');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' });
+    });
+
     it('maps refused requests, missing bindings, revision changes and outages', async () => {
       const client = new SemanticRuntimeClientService(config() as any);
       fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'unknown_relation' }), { status: 422 }));

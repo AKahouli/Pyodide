@@ -28,7 +28,8 @@ from app.population.computed_fields import (apply_row_recipes, check_inputs, nor
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
-from app.population.run_limits import ai_pacing, identity_limits, run_limits, source_limits, source_record_cap
+from app.population.run_limits import (ai_pacing, identity_limits, index_build_limits, run_limits,
+                                        source_limits, source_record_cap)
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
@@ -139,11 +140,17 @@ class PopulationProgress:
         # AI calls of the whole run: planned, answered, reused from an earlier run, skipped over
         # the cap, failed.
         self.ai = {"planned": 0, "answered": 0, "reused": 0, "skipped": 0, "failed": 0}
+        # False once the new data is being saved: a stop request is then not acted on (the run
+        # finishes), so a report must not raise it into the middle of a save.
+        self.cancellable = True
 
     def snapshot(self) -> dict:
         snapshot = {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
                     "records": self.records, "gaps": self.gaps, "current": self.current,
                     "recent": list(self.recent), "startedAt": self.started_at}
+        if not self.cancellable:
+            # Past the last chance to stop: a stop request changes nothing, so the UI does not offer it.
+            snapshot["cancellable"] = False
         if self.changes is not None:
             snapshot["changes"] = self.changes
         if self.step is not None:
@@ -168,7 +175,11 @@ class PopulationProgress:
         if not force and now - self._last_sent < self._min_interval:
             return
         self._last_sent = now
-        await self._report(self.snapshot())
+        try:
+            await self._report(self.snapshot())
+        except RunCancelled:
+            if self.cancellable:
+                raise
 
     async def begin(self, total: int) -> None:
         self.phase, self.total = "reading", total
@@ -1294,7 +1305,7 @@ async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[n
 
 
 async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
-                                     revision_id: str) -> dict | None:
+                                     revision_id: str, progress: PopulationProgress | None = None) -> dict | None:
     if not is_whole_model_build(command_dump):
         return None
     import asyncpg
@@ -1312,7 +1323,9 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
                          "statement_timeout": "30s", "lock_timeout": "5s",
                          "idle_in_transaction_session_timeout": "30s"})
     try:
-        return await finalize_draft_revision(pool, age_pool, revision_id)
+        # The graph is written on the AGE connection; progress reports on the worker's own pool.
+        return await finalize_draft_revision(pool, age_pool, revision_id,
+                                             progress.advance if progress is not None else None)
     finally:
         await age_pool.close()
 
@@ -1387,8 +1400,24 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
     }
 
 
-async def persist_population_revision(pool, command_dump: dict, outcome: dict) -> str:
+def saved_rows_reporter(progress: PopulationProgress, total: int):  # type: ignore[no-untyped-def]
+    """A ``SaveBudget.on_rows`` that reports the rows stored so far of ``total`` as one step."""
+    saved = 0
+
+    async def on_rows(count: int) -> None:
+        nonlocal saved
+        saved += count
+        await progress.advance("entries", saved, total)
+
+    return on_rows
+
+
+async def persist_population_revision(pool, command_dump: dict, outcome: dict,
+                                      progress: PopulationProgress | None = None) -> str:
     """Persist a computed population as an inert data revision (P6A, P6.16).
+
+    ``progress`` is told after each written batch how many of all the rows (records, values and
+    links) are stored; it reports on the worker's pool, outside the save connection's writes.
 
     Idempotent (ON CONFLICT DO NOTHING): a retried task re-stores the same
     revision without duplicates. The revision is inert until an explicit
@@ -1437,12 +1466,20 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                                coverage=coverage)
     # The admin's batch size and time per batch; the pool's own 10 s limit would cut a large run short.
     limits = run_limits(payload)
-    budget = SaveBudget(rows=limits["saveBatchRows"], seconds=limits["saveStatementSeconds"])
+    entities = outcome.get("entities", [])
+    split = on_rows = None
+    if progress is not None:
+        from app.persistence.population_store import split_assertions
+
+        split = split_assertions(outcome.get("assertions", []))
+        on_rows = saved_rows_reporter(
+            progress, len(entities) + len(split[0]) + len(split[1]) + len(outcome.get("relationships", [])))
+    budget = SaveBudget(rows=limits["saveBatchRows"], seconds=limits["saveStatementSeconds"], on_rows=on_rows)
     async with save_connection(pool, budget) as connection:
         await store_entities(connection, model_id=model_id, revision_id=revision_id,
-                             entities=outcome.get("entities", []), budget=budget)
+                             entities=entities, budget=budget)
         await store_assertions(connection, model_id=model_id, revision_id=revision_id,
-                               assertions=outcome.get("assertions", []), budget=budget)
+                               assertions=outcome.get("assertions", []), budget=budget, split=split)
         await store_relationships(connection, model_id=model_id, revision_id=revision_id,
                                   relationships=outcome.get("relationships", []), budget=budget)
     from app.persistence.index_observations import record_index_observation
@@ -1517,6 +1554,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 await progress.enter("saving")
             if await repository.cancel_requested(lease.job_id):
                 raise RunCancelled()
+            # Past the last chance to stop: the saving reports below never end the run.
+            progress.cancellable = False
         except RunCancelled:
             try:
                 await repository.cancel_task(task_id=task_id, lease_owner=lease_owner,
@@ -1543,11 +1582,13 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             # the summary.
             from app.persistence.population_store import count_revision_rows
 
-            revision_id = await persist_population_revision(pool, lease.payload, outcome)
+            revision_id = await persist_population_revision(pool, lease.payload, outcome, progress)
             persisted = await count_revision_rows(pool, revision_id)
             result = summarize_job_result(revision_id, outcome, persisted)
             # Measured against the data in use before this result can replace it.
             if is_whole_model_build(lease.payload):
+                # Loads both revisions' records to compare them: a phase of its own, with no count.
+                await progress.enter("comparing")
                 try:
                     changes = await changes_from_data_in_use(
                         pool, lease.payload, revision_id,
@@ -1576,16 +1617,20 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                         await progress.enter("projecting")
                     except RunCancelled:
                         pass  # Already saved: a late stop request changes nothing.
-                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
+                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id, progress)
                 if finalized is not None:
                     result.update({"projectionRef": finalized["projectionRef"],
                                    "boundEnvironment": finalized["environment"]})
                     # The new draft data gets its search index in its own job; a failure
                     # here never fails the build (reads request it again).
                     from app.graph_search.indexer import request_index_quietly
+                    from app.graph_search.settings import IndexBuildSettings
                     from app.jobs.service import JobService
 
-                    await request_index_quietly(pool, JobService(repository).admit, revision_id)
+                    # The admin's index build knobs ride on the run (they never enter its fingerprint).
+                    build = index_build_limits((lease.payload.get("payload") or {}).get("limits"))
+                    await request_index_quietly(pool, JobService(repository).admit, revision_id,
+                                                build=IndexBuildSettings.model_validate(build) if build else None)
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

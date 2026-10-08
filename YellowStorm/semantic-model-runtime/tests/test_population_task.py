@@ -455,6 +455,96 @@ async def test_persist_population_revision_saves_with_the_run_limits():
     assert calls == ["SET statement_timeout = '90s'", "write", "write", "write", "RESET statement_timeout"]
 
 
+@pytest.mark.asyncio
+async def test_saving_reports_the_rows_stored_of_all_of_them_as_one_step():
+    from app.workers.population_tasks import PopulationProgress, persist_population_revision
+
+    class FakePool:
+        async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return 0
+
+        async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return {"id": "row-1", "sequence": 1}
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
+            pass
+
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return []
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            pass
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    limited = command()
+    limited["payload"]["limits"] = {"saveBatchRows": 100, "saveStatementSeconds": 90}
+    outcome = {
+        "specHash": canonical_spec_hash(base_spec()),
+        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
+        "entities": [{"entityId": f"e{n}", "conceptId": "c1"} for n in range(150)],
+        "assertions": [{"entityId": f"e{n}", "attribute": "a", "value": "v"} for n in range(60)],
+        "relationships": [{"relationId": "r", "sourceEntityId": f"e{n}", "targetEntityId": "e0"} for n in range(40)],
+        "gaps": [], "counts": {}, "datasetFingerprints": [],
+    }
+    progress = PopulationProgress(report, min_interval=0)
+    progress.phase = "saving"
+    await persist_population_revision(FakePool(), limited, outcome, progress)
+    steps = [snapshot["step"] for snapshot in reports]
+    # Records, then values, then links: one growing count, so the bar never hits 100% before the end.
+    assert steps == [{"unit": "entries", "done": done, "total": 250} for done in (100, 150, 210, 250)]
+    assert {snapshot["phase"] for snapshot in reports} == {"saving"}
+
+
+@pytest.mark.asyncio
+async def test_a_stop_request_met_while_saving_does_not_end_the_run():
+    from app.workers.population_tasks import PopulationProgress, RunCancelled
+
+    async def report(_snapshot: dict) -> None:
+        raise RunCancelled()
+
+    progress = PopulationProgress(report, min_interval=0)
+    with pytest.raises(RunCancelled):
+        await progress.advance("rows", 1, 10)
+    progress.cancellable = False
+    await progress.advance("entries", 1, 10)
+
+
+@pytest.mark.asyncio
+async def test_progress_says_it_can_no_longer_be_stopped_only_once_that_is_so():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    progress = PopulationProgress(report, min_interval=0)
+    await progress.advance("rows", 1, 10)
+    progress.cancellable = False
+    await progress.advance("entries", 1, 10)
+    assert "cancellable" not in reports[0]
+    assert reports[1]["cancellable"] is False
+
+
 def test_preview_result_carries_output_without_revision():
     from app.workers.population_tasks import preview_job_result
 

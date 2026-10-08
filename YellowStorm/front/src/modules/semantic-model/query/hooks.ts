@@ -85,6 +85,18 @@ export function usePopulationFreshness(id: string | undefined, enabled = true) {
 export function useGraphStatus(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.graphStatus(id ?? 'none'), queryFn: () => semanticModelApi.graphStatus(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
 }
+const INDEX_BUILDING = new Set(['queued', 'indexing']);
+/** Whether a search index state is a build under way (queued or indexing). */
+export const isIndexBuilding = (state: string | undefined): boolean => INDEX_BUILDING.has(state ?? '');
+/** The search index of the model's draft data, followed every few seconds while it builds (and slowly otherwise, to notice a build that starts). */
+export function useSearchIndexStatus(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: semanticModelQueryKeys.searchIndex(id ?? 'none'),
+    queryFn: () => semanticModelApi.searchIndexStatus(id ?? ''),
+    enabled: Boolean(id) && enabled,
+    refetchInterval: (query) => isIndexBuilding(query.state.data?.index.state) ? 3000 : 15000,
+  });
+}
 export function useCanvasPositions(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.canvasPositions(id ?? 'none'), queryFn: () => semanticModelApi.canvasPositions(id ?? ''), enabled: Boolean(id) });
 }

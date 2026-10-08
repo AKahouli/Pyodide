@@ -14,6 +14,7 @@ import { ListOrdered,
   ListChecks,
   Loader2,
   Network,
+  PanelRightOpen,
   Play,
   Plus,
   Redo2,
@@ -21,6 +22,7 @@ import { ListOrdered,
   Sheet,
   Sparkles,
   Spline,
+  StopCircle,
   Table2,
   Undo2,
   Workflow,
@@ -28,7 +30,9 @@ import { ListOrdered,
   Trash2,
   Copy,
 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import {
   Dialog,
@@ -44,6 +48,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { showError, showSuccess } from "@/lib/notifications";
 import { parseApiError } from "@/lib/api-error";
 import { useModuleTranslation } from "@/modules/localization";
+import { cn } from '@/lib/utils';
 import { announceUndoable, isTextEntry } from '../utils/undo-notice';
 import { semanticModelApi } from "../api";
 import {
@@ -67,13 +72,15 @@ import { SemanticDataPreview, type DataPreviewFocus } from '../components/previe
 import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
-import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing, runCanStop, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
+import { SearchIndexPanel } from '../components/population/SearchIndexPanel';
+import { useAfterDelay } from '../hooks/use-after-delay';
 import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
-import { useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
+import { isIndexBuilding, useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, usePopulationFreshness, useSearchIndexStatus, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { ConceptSourceMapping, ReviewQueueItem } from "../types";
@@ -89,6 +96,8 @@ function mappingTarget_(mapping: ConceptSourceMapping): SourceMappingTarget {
 }
 
 const POPULATION_TERMINAL_STATES = new Set(['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded']);
+/** A stop pending this long is told apart from a normal one: its worker may be gone, and ends only when its lease runs out. */
+const STOP_SLOW_MS = 60_000;
 
 export function SemanticModelEditorPage() {
   const { modelId } = useParams();
@@ -183,7 +192,16 @@ export function SemanticModelEditorPage() {
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [trustOpen, setTrustOpen] = useState(false);
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
+  // The last update followed on this page, kept when its panel is closed so its result can be shown again.
+  const [lastRun, setLastRun] = useState<PopulationOutcome | null>(null);
+  // The panel of a search index build that no update is attached to.
+  const [indexPanelOpen, setIndexPanelOpen] = useState(false);
+  const runPanelOpen = Boolean(population) || indexPanelOpen;
+  const closeRunPanel = () => { setPopulation(null); setIndexPanelOpen(false); };
   const [stoppingRun, setStoppingRun] = useState(false);
+  // What the person is asked to confirm stopping: the data update, or the build of the search index.
+  const [confirmStop, setConfirmStop] = useState<'run' | 'index' | null>(null);
+  const [stoppingIndex, setStoppingIndex] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   // The review item being fixed, and the records to show for a missing value.
   const [reviewFocus, setReviewFocus] = useState<ReviewQueueItem | null>(null);
@@ -220,10 +238,13 @@ export function SemanticModelEditorPage() {
     const finalProgress = populationJob.data.progress;
     const finalServing = populationServing(populationJob.data.result);
     const finalError = populationJob.data.errorCode;
-    setPopulation((current) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current);
+    const finished = (current: PopulationOutcome | null) => current && current.jobId === populationJobId
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current;
+    setPopulation(finished);
+    setLastRun(finished);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
+  useEffect(() => { if (population) { setLastRun(population); setIndexPanelOpen(false); } }, [population]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
   const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); if (knowledgeOpen) closeKnowledge(); setDerivedTarget(target); };
@@ -325,6 +346,28 @@ export function SemanticModelEditorPage() {
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
   const canValidate = canEdit && isSemanticGraphSaved({ graph, pending, saveStatus });
+  // Anything the model is busy with shows in the header as Stop: a data update (every phase) or the search index being built.
+  const indexStatus = useSearchIndexStatus(modelId, canEdit);
+  const indexBuilding = canEdit && isIndexBuilding(indexStatus.data?.index.state);
+  useEffect(() => { if (!indexBuilding) setStoppingIndex(false); }, [indexBuilding]);
+  const runProgress = populationJob.data?.jobId === populationJobId ? populationJob.data?.progress : population?.progress;
+  const runStoppable = runCanStop(runProgress);
+  const runStopRequested = stoppingRun || populationJob.data?.state === 'cancel_requested';
+  const stopPending = populationJobId ? runStopRequested : stoppingIndex;
+  const stopSlow = useAfterDelay(Boolean(stopPending), STOP_SLOW_MS);
+  // What the status button opens: the update being followed, else the index being built, else the last update seen.
+  const statusTarget: 'run' | 'index' | 'last' | null = populationJobId ? 'run' : indexBuilding ? 'index' : lastRun || population || indexPanelOpen ? 'last' : null;
+  const busy = Boolean(populationJobId) || indexBuilding;
+  const openRunStatus = () => {
+    setTrustOpen(false); setSuggestionsOpen(false); setVersionsOpen(false); setRunHistoryOpen(false); setMappingTarget(null);
+    if (populationJobId) {
+      setPopulation((current) => current ?? { jobId: populationJobId, status: populationJob.data?.state ?? 'running', skipped: [], reused: false, progress: populationJob.data?.progress });
+    } else if (indexBuilding || !lastRun) {
+      setIndexPanelOpen(true);
+    } else {
+      setPopulation(lastRun);
+    }
+  };
   useEffect(() => {
     if (
       !graphQuery.data ||
@@ -347,7 +390,7 @@ export function SemanticModelEditorPage() {
   useEffect(() => {
     if (!selectedId) return;
     setTrustOpen(false);
-    setPopulation(null);
+    closeRunPanel();
     setSuggestionsOpen(false);
     setVersionsOpen(false);
     setMappingTarget(null);
@@ -514,7 +557,26 @@ export function SemanticModelEditorPage() {
       setStoppingRun(false);
     }
   };
-  const openSuggestions = () => { setKnowledgeOpen(false); setTrustOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(true); };
+  const stopIndex = async () => {
+    if (!modelId) return;
+    setStoppingIndex(true);
+    try {
+      const stopped = await semanticModelApi.stopSearchIndex(modelId);
+      // Nothing was building any more: the button follows the index status again.
+      if (!stopped.stopped) setStoppingIndex(false);
+      await queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.searchIndex(modelId).slice(0, 3) });
+    } catch (error) {
+      setStoppingIndex(false);
+      showError(t('runStop.indexError'), { description: parseApiError(error).message });
+    }
+  };
+  const confirmedStop = () => {
+    const kind = confirmStop;
+    setConfirmStop(null);
+    if (kind === 'run') void stopRun();
+    else if (kind === 'index') void stopIndex();
+  };
+  const openSuggestions = () => { setKnowledgeOpen(false); setTrustOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(true); };
   const suggestionConcept = (suggestion: SourceSuggestion) =>
     graph?.nodes.find((node) => node.id === suggestion.conceptId) ?? graph?.nodes.find((node) => node.key === suggestion.conceptKey);
   // Using a suggestion opens the source picker with its files already picked: the person checks, then saves.
@@ -620,10 +682,10 @@ export function SemanticModelEditorPage() {
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
   };
-  const openVersions = () => { setKnowledgeOpen(false); setTrustOpen(false); setPopulation(null); setSuggestionsOpen(false); setMappingTarget(null); setVersionsOpen(true); };
+  const openVersions = () => { setKnowledgeOpen(false); setTrustOpen(false); closeRunPanel(); setSuggestionsOpen(false); setMappingTarget(null); setVersionsOpen(true); };
   const startSwitch = (source: DesignerSource) => {
     if (!source.mappings.length) return;
-    setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); setMappingTarget(null);
+    setTrustOpen(false); setVersionsOpen(false); closeRunPanel(); setSuggestionsOpen(false); setMappingTarget(null);
     setSwitching({ label: source.label, mappings: source.mappings });
     openKnowledge(source.mappings[0].conceptId);
   };
@@ -687,9 +749,9 @@ export function SemanticModelEditorPage() {
     if (!next) switchQueue.current = null;
     setMappingTarget(next);
   };
-  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); setRunHistoryOpen(false); };
-  const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setTrustOpen(true); };
-  const openRunHistory = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(false); setRunHistoryOpen(true); };
+  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); closeRunPanel(); setSuggestionsOpen(false); setRunHistoryOpen(false); };
+  const openReview = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setTrustOpen(true); };
+  const openRunHistory = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(false); setRunHistoryOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
   const fieldKey = (conceptId: string, label: unknown) => {
     const wanted = String(label ?? '').trim().toLocaleLowerCase().replaceAll(/[\s_-]+/g, ' ');
@@ -825,18 +887,39 @@ export function SemanticModelEditorPage() {
           <Button variant='ghost' size='sm' className={runHistoryOpen ? 'bg-muted' : undefined} aria-pressed={runHistoryOpen} onClick={() => (runHistoryOpen ? setRunHistoryOpen(false) : openRunHistory())} aria-label={t('runHistory.title')} title={t('runHistory.title')}><ListOrdered className='h-4 w-4' /></Button>
           {model.data && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-primary' onClick={() => setCloneModelOpen(true)} aria-label={t('clone.button')} title={t('clone.button')}><Copy className='h-4 w-4' /></Button>}
           {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
-          {canEdit && <Button variant='outline' size='sm' disabled={!populationJobId && !canValidate}
-            // While a run goes on, the button shows it (with Stop) instead of starting another one.
-            onClick={() => populationJobId
-              ? (setTrustOpen(false), setSuggestionsOpen(false), setPopulation((current) => current ?? { jobId: populationJobId, status: populationJob.data?.state ?? 'running', skipped: [], reused: false }))
-              : setValidateOpen(true)}
+          {/* Always the way back to the run's side panel: while an update or the search index build runs, and after the last update ended. */}
+          {canEdit && statusTarget && <Button variant='outline' size='sm' aria-pressed={runPanelOpen}
+            className={cn(runPanelOpen && 'bg-muted', busy && 'border-primary/50 text-primary')}
+            aria-label={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
+            title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
+            onClick={() => (runPanelOpen ? closeRunPanel() : openRunStatus())}>
+            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:mr-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:mr-1.5' />}
+            <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? 'runStatus.index' : 'runStatus.last')}</span>
+          </Button>}
+          {/* While the model is busy (a data update in any phase, or its search index being built) the button is Stop, not Run. */}
+          {canEdit && (populationJobId || indexBuilding) && <div className='flex items-center gap-1'>
+            <TooltipProvider><Tooltip>
+              <TooltipTrigger asChild><span tabIndex={populationJobId && !runStoppable ? 0 : undefined}>
+                <Button variant='outline' size='sm' aria-label={t('runStop.stop')}
+                  disabled={populationJobId ? runStopRequested || !runStoppable : stoppingIndex}
+                  onClick={() => setConfirmStop(populationJobId ? 'run' : 'index')}>
+                  {(populationJobId ? runStopRequested : stoppingIndex) ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+                  {(populationJobId ? runStopRequested : stoppingIndex) ? t('runStop.stopping') : t('runStop.stop')}
+                </Button>
+              </span></TooltipTrigger>
+              <TooltipContent>{stopPending && stopSlow ? t('runStatus.stoppingSlowHint')
+                : populationJobId ? (runStoppable ? t('runStop.running') : t('runStop.notNow')) : t('runStop.indexBuilding')}</TooltipContent>
+            </Tooltip></TooltipProvider>
+          </div>}
+          {canEdit && !populationJobId && !indexBuilding && <Button variant='outline' size='sm' disabled={!canValidate}
+            onClick={() => setValidateOpen(true)}
             title={freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined}
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
-            className={!populationJobId && (freshnessState === 'outdated' || freshnessState === 'never_run') ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
-            {populationJobId ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <Play className='mr-1.5 h-4 w-4' />}
+            className={freshnessState === 'outdated' || freshnessState === 'never_run' ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
+            <Play className='mr-1.5 h-4 w-4' />
             {/* The status line is hidden on narrower screens; the dot keeps telling whether the data is current. */}
-            {!populationJobId && freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first mr-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
-            {populationJobId ? t('designer.running') : freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
+            {freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first mr-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
+            {freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
           </Button>}
           {canEdit && <Button size='sm' className='relative' onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())}
             title={hasUnpublished ? (publishedVersionId ? t('publishState.changes', { count: unpublishedChanges }) : t('publishState.never')) : t('publishState.none')}>
@@ -916,19 +999,22 @@ export function SemanticModelEditorPage() {
           sourceMappings={sourceMappings.data ?? []}
           progress={populationJob.data?.jobId === population.jobId ? populationJob.data?.progress : undefined}
           conceptLabels={conceptLabels}
-          onClose={() => setPopulation(null)}
-          onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}
-          onStop={canEdit ? () => void stopRun() : undefined}
-          stopping={stoppingRun}
+          onClose={() => closeRunPanel()}
+          onOpenHealth={() => { closeRunPanel(); setTrustOpen(true); }}
+          onStop={canEdit ? () => setConfirmStop('run') : undefined}
+          stopping={runStopRequested}
+          stoppingSlow={stopSlow}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
           modelId={modelId}
           dataRevisionId={populationJob.data?.jobId === population.jobId && typeof populationJob.data?.result?.dataRevisionId === 'string' ? populationJob.data.result.dataRevisionId : undefined}
         />}
-        {runHistoryOpen && modelId && !population && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
+        {indexPanelOpen && !population && modelId && <SearchIndexPanel modelId={modelId} building={indexBuilding} onClose={() => setIndexPanelOpen(false)}
+          onStop={canEdit ? () => setConfirmStop('index') : undefined} stopping={stoppingIndex} stoppingSlow={stopSlow} />}
+        {runHistoryOpen && modelId && !runPanelOpen && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
           onOpenRun={(job) => { setRunHistoryOpen(false); setRunConceptIds(null); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
-        {suggestionsOpen && modelId && !population && !trustOpen && <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl' aria-label={t('assistantSources.panelTitle')}>
+        {suggestionsOpen && modelId && !runPanelOpen && !trustOpen && <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl' aria-label={t('assistantSources.panelTitle')}>
           <header className='flex items-start gap-3 border-b px-4 py-3'>
             <div className='min-w-0 flex-1'>
               <h2 className='font-semibold'>{t('assistantSources.panelTitle')}</h2>
@@ -942,7 +1028,7 @@ export function SemanticModelEditorPage() {
               : <p className='text-sm text-muted-foreground'>{t('assistantSources.empty')}</p>}
           </div>
         </aside>}
-        {trustOpen && modelId && !population && <SemanticTrustPanel
+        {trustOpen && modelId && !runPanelOpen && <SemanticTrustPanel
           modelId={modelId}
           canEdit={canEdit && pending.length === 0}
           validation={validation}
@@ -953,7 +1039,7 @@ export function SemanticModelEditorPage() {
           activeKey={reviewFocus?.key}
           onOpenIssue={openIssue}
         />}
-        {versionsOpen && modelId && !population && !trustOpen && !suggestionsOpen && <VersionsPanel
+        {versionsOpen && modelId && !runPanelOpen && !trustOpen && !suggestionsOpen && <VersionsPanel
           modelId={modelId}
           canEdit={canEdit}
           canPublish={canEdit && saveStatus === "saved"}
@@ -964,7 +1050,7 @@ export function SemanticModelEditorPage() {
             void model.refetch();
           }}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !runPanelOpen && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
         {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={mappingClosed} onSaved={mappingSaved} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
@@ -1072,6 +1158,21 @@ export function SemanticModelEditorPage() {
       {model.data && <CloneSemanticModelDialog model={model.data} open={cloneModelOpen} onOpenChange={setCloneModelOpen} />}
       {model.data?.role === 'owner' && <DeleteSemanticModelDialog model={model.data} open={deleteModelOpen} onOpenChange={setDeleteModelOpen}
         onDeleted={() => navigate('/semantic-models', { replace: true })} />}
+      {/* Stopping asks first: a stopped update keeps nothing it read; a stopped index build is built again on request. */}
+      <AlertDialog open={confirmStop !== null} onOpenChange={(open) => { if (!open) setConfirmStop(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmStop === 'index' ? t('runStop.indexConfirmTitle') : t('runStop.confirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmStop === 'index' ? t('runStop.indexConfirmDescription') : t('runStop.confirmDescription')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('runStop.keepGoing')}</AlertDialogCancel>
+            <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={confirmedStop}>
+              {confirmStop === 'index' ? t('runStop.indexConfirmAction') : t('runStop.confirmAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

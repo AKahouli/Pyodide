@@ -255,6 +255,14 @@ export const semanticModelApi = {
   async searchIndexStatus(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
     return unwrap(await apiClient.get<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { params: { environment } }));
   },
+  /** Build (or build again, after a stop) the search index of the model's data, in the background. */
+  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment }));
+  },
+  /** Stop the build of the search index. A running build ends at its next batch; what it embedded is kept. */
+  async stopSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus & { stopped: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus & { stopped: boolean }>>(API_ENDPOINTS.semanticModels.searchIndexStop(id), { environment }));
+  },
   async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number; filters?: Record<string, string> } = {}): Promise<ConceptRecordsPage> {
     return unwrap(await apiClient.get<ApiResponse<ConceptRecordsPage>>(API_ENDPOINTS.semanticModels.conceptRecords(id, conceptId), {
       params: {

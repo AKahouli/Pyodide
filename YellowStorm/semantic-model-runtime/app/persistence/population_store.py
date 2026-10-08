@@ -13,8 +13,8 @@ import hashlib
 import json
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from app.persistence.partitions import (drop_generation_partitions, drop_revision_partitions,
                                         ensure_revision_partitions, with_partition_locks)
@@ -110,9 +110,11 @@ WRITE_CHUNK_ROWS = 2000
 class SaveBudget:
     """How the saving step writes: rows per call, and the seconds one call may take.
 
-    ``seconds`` of None leaves the connection's own limit in force."""
+    ``seconds`` of None leaves the connection's own limit in force. ``on_rows`` is told how many
+    rows each written call carried, so a long save can report how far it is."""
     rows: int = WRITE_CHUNK_ROWS
     seconds: int | None = None
+    on_rows: Callable[[int], Awaitable[None]] | None = field(default=None, compare=False)
 
 
 @asynccontextmanager
@@ -140,7 +142,10 @@ async def _executemany_chunked(pool: Any, sql: str, rows: list[tuple[Any, ...]],
     # The client-side limit is only passed when set: the pool's own applies otherwise.
     options = {} if budget.seconds is None else {"timeout": budget.seconds}
     for start in range(0, len(rows), budget.rows):
-        await pool.executemany(sql, rows[start:start + budget.rows], **options)
+        chunk = rows[start:start + budget.rows]
+        await pool.executemany(sql, chunk, **options)
+        if budget.on_rows is not None:
+            await budget.on_rows(len(chunk))
 
 
 async def store_entities(pool: Any, *, model_id: str, revision_id: str,
@@ -216,10 +221,12 @@ def split_assertions(assertions: list[dict[str, Any]]) -> tuple[list[dict[str, A
 
 
 async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
-                           assertions: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
+                           assertions: list[dict[str, Any]], budget: SaveBudget = SaveBudget(),
+                           split: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None) -> int:
+    """``split`` is ``split_assertions(assertions)`` when the caller already made it (to count the rows)."""
     if not assertions:
         return 0
-    served, candidates = split_assertions(assertions)
+    served, candidates = split if split is not None else split_assertions(assertions)
     rows = [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
              assertion.get("value"), assertion.get("origin", "source"),
              _json(assertion.get("evidence", {})),

@@ -50,6 +50,14 @@ describe('run limits', () => {
     expect(pickRunLimits({ saveBatchRows: 50001, saveStatementSeconds: 601 })).toEqual({});
   });
 
+  it('keeps the index build limits only inside their ranges', () => {
+    const inRange = { embeddingBatchSize: 256, embeddingParallelCalls: 16, embeddingTimeoutSeconds: 600, indexReadPageRows: 500 };
+    expect(pickRunLimits(inRange)).toEqual(inRange);
+    expect(pickRunLimits({ embeddingBatchSize: 0, embeddingParallelCalls: 17, embeddingTimeoutSeconds: 4, indexReadPageRows: 499 })).toEqual({});
+    expect(pickRunLimits({ embeddingBatchSize: 257, indexReadPageRows: 50001 })).toEqual({});
+    expect(pickRunLimits({ embeddingParallelCalls: 2.5 })).toEqual({});
+  });
+
   it('saves what the admin set and fills the rest with the built-in limits', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [] })
@@ -61,6 +69,7 @@ describe('run limits', () => {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
       maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
       parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300,
-      saveBatchRows: 2000, saveStatementSeconds: 10 } });
+      saveBatchRows: 2000, saveStatementSeconds: 10,
+      embeddingBatchSize: 32, embeddingParallelCalls: 4, embeddingTimeoutSeconds: 30, indexReadPageRows: 5000 } });
   });
 });

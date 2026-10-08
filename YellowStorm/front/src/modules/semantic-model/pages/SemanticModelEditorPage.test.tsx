@@ -10,13 +10,19 @@ const apiMocks = vi.hoisted(() => ({
   applyOperations: vi.fn(),
   connectWorkspace: vi.fn(),
   getPopulationJob: vi.fn(),
+  stopPopulationJob: vi.fn(),
+  stopSearchIndex: vi.fn(),
 }));
+// The state of the search index the page follows; undefined: nothing is being built.
+const indexMock = vi.hoisted(() => ({ state: undefined as string | undefined }));
 
 vi.mock("../api", () => ({
   semanticModelApi: {
     applyOperations: apiMocks.applyOperations,
     connectWorkspace: apiMocks.connectWorkspace,
     getPopulationJob: apiMocks.getPopulationJob,
+    stopPopulationJob: apiMocks.stopPopulationJob,
+    stopSearchIndex: apiMocks.stopSearchIndex,
   },
 }));
 
@@ -71,6 +77,8 @@ vi.mock("../query/hooks", () => ({
   useVersionComparison: () => ({ data: undefined, isLoading: false }),
   usePopulationFreshness: () => ({ data: undefined, isLoading: false }),
   useGraphStatus: () => ({ data: undefined, isLoading: false, isError: false }),
+  isIndexBuilding: (state?: string) => state === 'queued' || state === 'indexing',
+  useSearchIndexStatus: () => ({ data: indexMock.state ? { index: { state: indexMock.state } } : undefined }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
@@ -108,6 +116,7 @@ vi.mock('../components/editor/SemanticModelValidateDialog', () => ({
   SemanticModelValidateDialog: ({ onPopulationStarted }: { onPopulationStarted: (outcome: { jobId: string; status: string; skipped: []; reused: boolean }) => void }) =>
     <button onClick={() => onPopulationStarted({ jobId: 'dialog-job', status: 'queued', skipped: [], reused: false })}>start-dialog-population</button>,
 }));
+vi.mock('../components/population/SearchIndexProgress', () => ({ SearchIndexProgress: () => <div>index-progress</div> }));
 vi.mock("../components/versions/VersionsPanel", () => ({
   VersionsPanel: () => null,
 }));
@@ -135,6 +144,9 @@ describe("SemanticModelEditorPage", () => {
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
+    apiMocks.stopPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'cancel_requested' });
+    apiMocks.stopSearchIndex.mockResolvedValue({ stopped: true, index: { state: 'indexing' } });
+    indexMock.state = undefined;
     useSemanticModelEditorStore.getState().reset();
   });
 
@@ -266,5 +278,98 @@ describe("SemanticModelEditorPage", () => {
     await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'dialog-job'])).toMatchObject({ state: 'completed' }));
     act(() => useSemanticModelEditorStore.getState().setMode('records'));
     expect(await screen.findByText('revision:none')).toBeInTheDocument();
+  });
+
+  const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><SemanticModelEditorPage /></QueryClientProvider>);
+  const stopButtons = () => screen.getAllByRole('button', { name: /runStop\.stop/ });
+
+  it('turns Run into Stop while a data update runs, and asks before stopping it', async () => {
+    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
+    renderPage();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+
+    await waitFor(() => expect(screen.queryByText('designer.run')).not.toBeInTheDocument());
+    const header = stopButtons()[0];
+    expect(header).toBeEnabled();
+    fireEvent.click(header);
+    // Nothing is stopped until the person confirms.
+    expect(await screen.findByText('runStop.confirmTitle')).toBeInTheDocument();
+    expect(apiMocks.stopPopulationJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('runStop.confirmAction'));
+    await waitFor(() => expect(apiMocks.stopPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+  });
+
+  it('keeps Stop, disabled, once the data is being saved', async () => {
+    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'saving', total: 3, done: 3, cancellable: false } });
+    renderPage();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+
+    await waitFor(() => expect(stopButtons().length).toBeGreaterThan(1));
+    for (const button of stopButtons()) expect(button).toBeDisabled();
+    expect(apiMocks.stopPopulationJob).not.toHaveBeenCalled();
+  });
+
+  it('turns Run into Stop while the search index is built, and stops that build after a confirmation', async () => {
+    indexMock.state = 'indexing';
+    renderPage();
+    await screen.findByText('semantic-model-canvas');
+    expect(screen.queryByText('designer.run')).not.toBeInTheDocument();
+    fireEvent.click(stopButtons()[0]);
+    expect(await screen.findByText('runStop.indexConfirmTitle')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('runStop.indexConfirmAction'));
+    await waitFor(() => expect(apiMocks.stopSearchIndex).toHaveBeenCalledWith('model-1'));
+    expect(apiMocks.stopPopulationJob).not.toHaveBeenCalled();
+  });
+
+  it('brings the progress panel back from the header while an update runs, whatever closed it', async () => {
+    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
+    renderPage();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    expect(await screen.findByText('population.started')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'action.close' }));
+    expect(screen.queryByText('population.started')).not.toBeInTheDocument();
+    const show = screen.getByRole('button', { name: 'runStatus.showRun' });
+    fireEvent.click(show);
+    expect(await screen.findByText('population.started')).toBeInTheDocument();
+    // Pressed again, it hides the panel.
+    fireEvent.click(screen.getByRole('button', { name: 'runStatus.hide' }));
+    expect(screen.queryByText('population.started')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'runStatus.showRun' })).toBeInTheDocument();
+  });
+
+  it('keeps the last result one click away after the update ended and its panel was closed', async () => {
+    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'completed' });
+    renderPage();
+    expect(screen.queryByRole('button', { name: /runStatus\./ })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    expect(await screen.findByText('population.done')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'action.close' }));
+    expect(screen.queryByText('population.done')).not.toBeInTheDocument();
+    // Run is back, and the result stays reachable.
+    expect(screen.getByText('designer.run')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'runStatus.showLast' }));
+    expect(await screen.findByText('population.done')).toBeInTheDocument();
+  });
+
+  it('shows the search index build in its own panel when no update is attached to it', async () => {
+    indexMock.state = 'indexing';
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'runStatus.showIndex' }));
+
+    expect(await screen.findByText('index-progress')).toBeInTheDocument();
+    expect(screen.getByText('runStatus.indexTitle')).toBeInTheDocument();
+    // Stop is in the panel too, and asks first.
+    fireEvent.click(stopButtons()[stopButtons().length - 1]);
+    expect(await screen.findByText('runStop.indexConfirmTitle')).toBeInTheDocument();
+  });
+
+  it('shows Run when nothing is running', async () => {
+    renderPage();
+    expect(await screen.findByText('designer.run')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /runStop\.stop/ })).not.toBeInTheDocument();
   });
 });

@@ -97,3 +97,39 @@ describe('RunLimitsSettings start-over pane', () => {
     await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxAiParallelCalls: 12, purgeTimeoutSeconds: 900 }));
   });
 });
+
+describe('RunLimitsSettings search index pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'index-build': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { saveBatchRows: 5000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the embedding batch, parallel calls, call time and records per step with the other limits', async () => {
+    render(<RunLimitsSettings group='index' />);
+    const batch = await screen.findByLabelText('settings.runLimits.embeddingBatchSize');
+    const calls = screen.getByLabelText('settings.runLimits.embeddingParallelCalls');
+    const seconds = screen.getByLabelText('settings.runLimits.embeddingTimeoutSeconds');
+    const rows = screen.getByLabelText('settings.runLimits.indexReadPageRows');
+    expect(screen.queryByLabelText('settings.runLimits.saveBatchRows')).not.toBeInTheDocument();
+    // The built-in values are the placeholders; nothing is saved for a field left empty.
+    expect(batch).toHaveAttribute('placeholder', '32');
+    expect(calls).toHaveAttribute('placeholder', '4');
+
+    fireEvent.change(batch, { target: { value: '257' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(batch, { target: { value: '64' } });
+    fireEvent.change(calls, { target: { value: '17' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(calls, { target: { value: '8' } });
+    fireEvent.change(seconds, { target: { value: '4' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(seconds, { target: { value: '120' } });
+    fireEvent.change(rows, { target: { value: '499' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20000' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({
+      saveBatchRows: 5000, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 120, indexReadPageRows: 20000 }));
+  });
+});

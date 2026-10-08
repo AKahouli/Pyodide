@@ -244,6 +244,15 @@ export class SemanticModelController {
     return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment);
   }
 
+  @Post(':modelId/search-index/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Stop the build of the search index of the data in use; it is built again on the next explicit request' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index-stop' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  stopSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.stopIndex(user._id.toString(),modelId,dto.environment);
+  }
+
   @Get(':modelId/workspaces')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   listWorkspaces(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {

@@ -884,3 +884,162 @@ async def test_a_restarted_worker_hands_back_its_previous_processs_runs(pool: as
     assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new-boot:") == 1
     await _recover(repository)
     assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancelled"
+
+
+INDEX_QUEUE = "semantic-model-search.index"
+
+
+class _WithoutForeignKeys:
+    """A connection that skips foreign keys (the revision a generation hangs off is out of scope)."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool
+
+    async def __aenter__(self) -> asyncpg.Connection:
+        self.connection = await self.pool.acquire()
+        await self.connection.execute("SET session_replication_role = replica")
+        return self.connection
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.connection.execute("SET session_replication_role = DEFAULT")
+        await self.pool.release(self.connection)
+
+
+async def _admit_index(repository: PostgresJobRepository, key: str = "gsi:1"):
+    """A search index job and the generation it builds."""
+    admitted = await JobService(repository).admit(
+        job_type="graph_search.index",
+        command=JobCommand.model_validate({"actorUserId": "system", "modelId": "m-1",
+                                           "payload": {"indexId": "x"}}),
+        idempotency_key=key, task_name="semantic-model-search.index", queue_name=INDEX_QUEUE)
+    async with _WithoutForeignKeys(repository.pool) as connection:
+        index_id = await connection.fetchval(
+            "INSERT INTO semantic_graph_search.index_generations "
+            "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, state, "
+            " owner, lease_until, job_id) "
+            "VALUES ('m-1', $2, 'p', 's', $2, 'indexing', 'search-worker:node:old:run', "
+            "        now() + interval '5 minutes', $1::uuid) RETURNING index_id::text",
+            admitted.job_id, key)
+    return admitted, index_id
+
+
+async def _generation(pool: asyncpg.Pool, index_id: str):
+    return await pool.fetchrow(
+        "SELECT state, owner, lease_until, last_error_code FROM semantic_graph_search.index_generations "
+        "WHERE index_id = $1::uuid", index_id)
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_run_whose_worker_lease_ran_out_ends_it_at_once(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="gone", lease_seconds=30)
+    await _expire_lease(pool, task_id)
+
+    stopped = await repository.request_cancel(admitted.job_id, "user-1")
+    assert stopped["state"] == "cancelled"
+    row = await pool.fetchrow("SELECT state, lease_owner FROM semantic_jobs.tasks WHERE id = $1", task_id)
+    assert row["state"] == "cancelled" and row["lease_owner"] is None
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w", lease_seconds=30) is None
+
+
+@pytest.mark.asyncio
+async def test_asking_again_to_stop_ends_a_run_whose_lease_ran_out_after_the_first_ask(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w", lease_seconds=30)
+    assert (await repository.request_cancel(admitted.job_id, "user-1"))["state"] == "cancel_requested"
+    # Still held and live: asking again changes nothing (and adds no second event).
+    assert (await repository.request_cancel(admitted.job_id, "user-1"))["state"] == "cancel_requested"
+    assert await pool.fetchval(
+        "SELECT count(*) FROM semantic_jobs.events WHERE event_type = 'job.cancel_requested'") == 1
+
+    await _expire_lease(pool, task_id)
+    assert (await repository.request_cancel(admitted.job_id, "user-1"))["state"] == "cancelled"
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_run_past_its_last_chance_to_stop_is_left_to_finish(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    lease = await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w", lease_seconds=30)
+    assert await repository.checkpoint(task_id=task_id, lease_owner="w", lease_epoch=lease.lease_epoch,
+                                       progress={"phase": "saving", "cancellable": False}, lease_seconds=30)
+
+    job = await repository.request_cancel(admitted.job_id, "user-1")
+    assert job["state"] == "running" and job["progress"]["cancellable"] is False
+    # Even with its worker gone the run is not cancelled: recovery runs it again.
+    await _expire_lease(pool, task_id)
+    assert (await repository.request_cancel(admitted.job_id, "user-1"))["state"] == "running"
+    assert await _recover(repository) == {"exhausted": 0, "requeued": 1}
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "queued"
+
+
+@pytest.mark.asyncio
+async def test_stopping_an_index_build_fails_its_generation_whatever_its_worker_does(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="foreign",
+                                       lease_seconds=600)
+    # A live worker is asked and ends the generation itself.
+    assert (await repository.request_cancel(admitted.job_id, "system"))["state"] == "cancel_requested"
+    assert (await _generation(pool, index_id))["state"] == "indexing"
+
+    # Its lease runs out without it ever answering: recovery ends the task, the job and the generation.
+    await _expire_lease(pool, task_id)
+    await _recover(repository)
+    assert (await repository.get_job(admitted.job_id, "system"))["state"] == "cancelled"
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "cancelled"
+    assert generation["owner"] is None and generation["lease_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_stopping_an_index_build_whose_lease_ran_out_ends_its_generation_in_the_same_call(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="foreign",
+                                       lease_seconds=600)
+    await _expire_lease(pool, task_id)
+
+    assert (await repository.request_cancel(admitted.job_id, "system"))["state"] == "cancelled"
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_recovery_ends_the_generation_of_a_build_stopped_by_an_earlier_version(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    await pool.execute("UPDATE semantic_jobs.jobs SET state = 'cancelled' WHERE id = $1::uuid", admitted.job_id)
+
+    # The generation's own lease is still live: its worker may be about to end it itself.
+    await _recover(repository)
+    assert (await _generation(pool, index_id))["state"] == "indexing"
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 second' WHERE index_id = $1::uuid", index_id)
+    await _recover(repository)
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_search_worker_hands_back_the_generation_lease_with_its_task_lease(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    node = "search-worker:node:"
+    await pool.execute("UPDATE semantic_graph_search.index_generations SET owner = $2 WHERE index_id = $1::uuid",
+                       index_id, f"{node}old:run")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner=f"{node}old:run",
+                                       lease_seconds=600)
+
+    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}old:") == 0
+    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new:") == 1
+    assert (await _generation(pool, index_id))["lease_until"] < await pool.fetchval("SELECT now()")

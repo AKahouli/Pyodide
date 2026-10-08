@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { SearchIndexProgress } from './SearchIndexProgress';
 
-const api = vi.hoisted(() => ({ searchIndexStatus: vi.fn() }));
+const api = vi.hoisted(() => ({ searchIndexStatus: vi.fn(), ensureSearchIndex: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
 const renderIndex = (dataRevisionId?: string) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -53,5 +53,27 @@ describe('SearchIndexProgress', () => {
     const { container } = renderIndex('dr-1');
     await vi.waitFor(() => expect(api.searchIndexStatus).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('SearchIndexProgress after a stop', () => {
+  it('shows a build stopped on request as stopped, not failed, and builds it again on request', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'failed', lastErrorCode: 'cancelled', expectedCount: 200, indexedCount: 50 } });
+    api.ensureSearchIndex.mockResolvedValue({});
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.stopped')).toBeInTheDocument();
+    expect(screen.queryByText('cancelled')).not.toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.failed')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('population.progress.index.buildAgain'));
+    await vi.waitFor(() => expect(api.ensureSearchIndex).toHaveBeenCalledWith('model-1'));
+  });
+
+  it('still shows a real failure with its code', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'failed', lastErrorCode: 'embedding_timeout' } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('embedding_timeout')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.buildAgain')).not.toBeInTheDocument();
   });
 });

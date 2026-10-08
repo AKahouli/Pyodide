@@ -450,6 +450,14 @@ export interface RunLimits {
   saveBatchRows: number;
   /** Seconds one save batch may take. */
   saveStatementSeconds: number;
+  /** Texts sent per embedding call when a search index is built. Never part of a run's identity. */
+  embeddingBatchSize: number;
+  /** Embedding calls in flight at once when a search index is built. */
+  embeddingParallelCalls: number;
+  /** Seconds one embedding call may take. */
+  embeddingTimeoutSeconds: number;
+  /** Records read per page when a search index is built. */
+  indexReadPageRows: number;
 }
 
 export interface RunLimitsDefaults {
@@ -793,7 +801,7 @@ export interface PopulationJob {
 }
 
 export interface PopulationProgress {
-  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'projecting';
+  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'comparing' | 'projecting';
   total: number;
   done: number;
   /** Files whose earlier result was reused because nothing about them changed. */
@@ -805,8 +813,10 @@ export interface PopulationProgress {
   startedAt: string;
   /** What the saved result changed in the data in use; absent until saved, or when there was no data before. */
   changes?: PopulationChanges;
-  /** How far the current step is: rows of a sheet, files sent for indexing; no total while an archive opens. */
-  step?: { unit: 'rows' | 'files' | 'opening' | string; done: number; total: number | null };
+  /** How far the current step is: rows of a sheet, files sent for indexing, entries saved, graph elements written; no total while an archive opens or the stored records load. */
+  step?: { unit: 'rows' | 'files' | 'opening' | 'entries' | 'elements' | 'loading' | string; done: number; total: number | null };
+  /** False once the new data is being saved: a stop request is then not acted on. Absent while the run can still be stopped. */
+  cancellable?: boolean;
   /** AI calls of the whole run so far. */
   ai?: { planned: number; answered: number; reused: number; skipped: number; failed: number };
 }

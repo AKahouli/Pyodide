@@ -40,7 +40,7 @@ export interface RuntimeJob {
   jobType: string;
   modelId: string | null;
   state: string;
-  /** What a running job has done so far (population runs report it source by source). */
+  /** What a running job has done so far (population runs report it source by source, then step by step: `step` = { unit, done, total } while saving and building the graph). */
   progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
@@ -1302,6 +1302,15 @@ export class SemanticRuntimeClientService {
   async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
     Promise<RuntimeGraphSearchIndexStatus & { jobId: string | null }> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes', body.actorUserId, body, undefined, true);
+  }
+
+  /**
+   * Stops the build of the search index of one environment (queued or indexing). A build that is not
+   * running ends at once; a running one ends at its next batch. `stopped` is false when nothing was building.
+   */
+  async stopGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
+    Promise<RuntimeGraphSearchIndexStatus & { stopped: boolean; jobId?: string | null }> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes/stop', body.actorUserId, body, undefined, true);
   }
 
   async getGraphSearchIndex(modelId: string, environment: RuntimeSearchEnvironment, actorUserId: string): Promise<RuntimeGraphSearchIndexStatus> {

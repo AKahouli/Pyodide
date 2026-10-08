@@ -4,21 +4,34 @@ import hashlib
 import json
 from typing import Protocol
 
-from app.population.run_limits import SAVE_LIMIT_KEYS, identity_limits
+from app.population.run_limits import NON_IDENTITY_LIMIT_KEYS, identity_limits
 
 from .models import Admission, JobCommand
 
 
+# Search index jobs carry how to build (embedding batch size, parallel calls…) under this payload key.
+INDEX_BUILD_PAYLOAD_KEY = "indexBuild"
+
+
 def _identity_command(dump: dict) -> dict:
-    """The command without the limits that only decide how a run is saved: changing them
-    must not make the same run, under the same idempotency key, a different payload."""
+    """The command without what only decides how a job is performed (the save and index build
+    limits of a run, the build settings of an index job): changing them must not make the same
+    job, under the same idempotency key, a different payload."""
     payload = dump.get("payload")
-    limits = payload.get("limits") if isinstance(payload, dict) else None
-    if not isinstance(limits, dict) or not any(key in limits for key in SAVE_LIMIT_KEYS):
+    if not isinstance(payload, dict):
         return dump
-    kept = identity_limits(limits)
-    return {**dump, "payload": {**{k: v for k, v in payload.items() if k != "limits"},
-                                **({"limits": kept} if kept else {})}}
+    limits = payload.get("limits")
+    has_limits = isinstance(limits, dict) and any(key in limits for key in NON_IDENTITY_LIMIT_KEYS)
+    if not has_limits and INDEX_BUILD_PAYLOAD_KEY not in payload:
+        return dump
+    kept = {k: v for k, v in payload.items() if k not in ("limits", INDEX_BUILD_PAYLOAD_KEY)}
+    if has_limits:
+        remaining = identity_limits(limits)
+        if remaining:
+            kept["limits"] = remaining
+    elif "limits" in payload:
+        kept["limits"] = payload["limits"]
+    return {**dump, "payload": kept}
 
 
 class JobRepository(Protocol):

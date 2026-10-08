@@ -128,6 +128,55 @@ async def test_project_revision_batches_and_drops():
 
 
 @pytest.mark.asyncio
+async def test_project_revision_reports_the_elements_written_of_all_of_them():
+    told: list[tuple] = []
+
+    async def report(unit, done, total):  # type: ignore[no-untyped-def]
+        told.append((unit, done, total))
+
+    plan = {"vertices": [{"record_id": f"e{i}", "concept_id": "c"} for i in range(600)],
+            "edges": [{"source": "e1", "target": "e2", "relation": "r", "sourceConcept": "c", "targetConcept": "c"}]}
+    await project_revision(FakeConnection(), graph="pop_dr_1", plan=plan, report=report)
+    # Two vertex batches, then the one edge batch: links count with the records in one bar.
+    assert told == [("elements", 500, 601), ("elements", 600, 601), ("elements", 601, 601)]
+
+
+@pytest.mark.asyncio
+async def test_finalize_passes_its_report_to_the_projection(monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+    from app.population import age_projection
+
+    seen = {}
+
+    async def projected(_pool, _age_pool, _revision_id, report=None):  # type: ignore[no-untyped-def]
+        seen["report"] = report
+        return {"projectionRef": "age:v1:pop_dr_1", "reused": False}
+
+    async def get_revision(_pool, _revision_id):  # type: ignore[no-untyped-def]
+        return {"model_id": "m1", "model_version_id": "v1", "spec_hash": "h", "correction_sequence": 0}
+
+    async def sequence(_pool, _model_id):  # type: ignore[no-untyped-def]
+        return 0
+
+    async def binding(_pool, _model_id, environment):  # type: ignore[no-untyped-def]
+        return None
+
+    async def swap(_pool, **kwargs):  # type: ignore[no-untyped-def]
+        return True
+
+    async def report(unit, done, total):  # type: ignore[no-untyped-def]
+        pass
+
+    monkeypatch.setattr(age_projection, "ensure_revision_projection", projected)
+    monkeypatch.setattr(store, "get_data_revision", get_revision)
+    monkeypatch.setattr(store, "model_correction_sequence", sequence)
+    monkeypatch.setattr(store, "get_active_binding", binding)
+    monkeypatch.setattr(store, "cas_active_binding", swap)
+    await finalize_draft_revision(object(), object(), "dr_1", report)
+    assert seen["report"] is report
+
+
+@pytest.mark.asyncio
 async def test_projection_counts_reads_live_graph_counts():
     assert await projection_counts(FakeConnection(), "pop_dr_1") == {"vertices": 2, "edges": 1}
 
@@ -146,7 +195,7 @@ async def test_finalize_moves_only_the_draft_binding(monkeypatch: pytest.MonkeyP
                 "spec_hash": "sha256:" + "a" * 64, "correction_sequence": 2}
     captured = {}
 
-    async def projected(_pool, _age_pool, _revision_id):  # type: ignore[no-untyped-def]
+    async def projected(_pool, _age_pool, _revision_id, _report=None):  # type: ignore[no-untyped-def]
         return {"projectionRef": "age:v1:pop_dr_1", "reused": False}
 
     async def get_revision(_pool, _revision_id):  # type: ignore[no-untyped-def]

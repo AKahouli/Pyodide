@@ -20,6 +20,7 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     graphExpand: jest.fn().mockResolvedValue({ status: 'found', nodes: [], edges: [] }),
     getGraphSearchIndex: jest.fn().mockResolvedValue({ index: { state: 'ready' } }),
     ensureGraphSearchIndex: jest.fn().mockResolvedValue({ jobId: 'job-1', index: { state: 'queued' } }),
+    stopGraphSearchIndex: jest.fn().mockResolvedValue({ stopped: true, index: { state: 'indexing' } }),
     recordsQuery: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
     recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
     traverseRecords: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
@@ -201,5 +202,23 @@ describe('SemanticGraphSearchService', () => {
     await expect(editor.service.ensureIndex('user-1', 'model-1', 'production')).resolves.toMatchObject({ jobId: 'job-1' });
     expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
     expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production', settings: { index: {} } });
+  });
+
+  it('sends the index build limits with an index request, apart from the index settings', async () => {
+    const { service, runtime, searchSettings } = setup({ id: 'model-1', role: 'editor', status: 'published' });
+    searchSettings.runtimePayload.mockResolvedValue({ index: {}, search: {}, build: { embeddingParallelCalls: 8 } });
+    await service.ensureIndex('user-1', 'model-1', 'production');
+    expect(runtime.ensureGraphSearchIndex).toHaveBeenCalledWith(expect.objectContaining({ settings: { index: {}, build: { embeddingParallelCalls: 8 } } }));
+  });
+
+  it('stops an index build only for the people who edit the model', async () => {
+    const viewer = setup();
+    await expect(viewer.service.stopIndex('user-1', 'model-1', 'draft')).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
+    expect(viewer.runtime.stopGraphSearchIndex).not.toHaveBeenCalled();
+
+    const editor = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+    await expect(editor.service.stopIndex('user-1', 'model-1', 'draft')).resolves.toMatchObject({ stopped: true });
+    expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(editor.runtime.stopGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft' });
   });
 });

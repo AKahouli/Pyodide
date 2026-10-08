@@ -685,6 +685,22 @@ export class RunLimitsDto {
   @ApiPropertyOptional({ minimum: 5, maximum: 600, description: 'Time one save batch may take, in seconds' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
   saveStatementSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 256, description: 'Texts sent per embedding call when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(256)
+  embeddingBatchSize?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 16, description: 'Embedding calls in flight at once when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(16)
+  embeddingParallelCalls?: number;
+
+  @ApiPropertyOptional({ minimum: 5, maximum: 600, description: 'Time one embedding call may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
+  embeddingTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 500, maximum: 50000, description: 'Records read per page when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(500) @Max(50000)
+  indexReadPageRows?: number;
 }
 
 export class DerivedFieldMappingDto {

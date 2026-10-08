@@ -1,10 +1,16 @@
-import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Loader2, Search, StopCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { parseApiError } from '@/lib/api-error';
+import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
+import { semanticModelQueryKeys } from '../../query/queryKeys';
 
 const BUILDING = new Set(['queued', 'indexing']);
+/** The runtime's error code of a build that was stopped on request. */
+export const INDEX_STOPPED_CODE = 'cancelled';
 
 /**
  * After a run: the search index of the new data, built in the background (cards, then passages of
@@ -12,8 +18,9 @@ const BUILDING = new Set(['queued', 'indexing']);
  */
 export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ modelId: string; dataRevisionId?: string | null }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const queryClient = useQueryClient();
   const status = useQuery({
-    queryKey: ['semantic-model', modelId, 'search-index', dataRevisionId ?? 'current'],
+    queryKey: semanticModelQueryKeys.searchIndex(modelId, dataRevisionId),
     queryFn: () => semanticModelApi.searchIndexStatus(modelId),
     refetchInterval: (query) => {
       const data = query.state.data;
@@ -35,16 +42,28 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
   const total = reading ? records.total : records.total + passages.total;
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const building = BUILDING.has(state) || state === 'missing';
+  // A build stopped on request is not a failure; only an explicit request builds it again.
+  const stopped = !stale && state === 'failed' && index.lastErrorCode === INDEX_STOPPED_CODE;
+  const buildAgain = async () => {
+    try {
+      await semanticModelApi.ensureSearchIndex(modelId);
+      await queryClient.invalidateQueries({ queryKey: ['semantic-model', modelId, 'search-index'] });
+    } catch (error) {
+      showError(t('population.progress.index.buildError'), { description: parseApiError(error).message });
+    }
+  };
 
   return <div className='space-y-1.5 rounded-lg border p-2.5' aria-label={t('population.progress.index.title')}>
     <p className='flex items-center gap-2 text-xs'>
       {building ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin text-primary' />
         : state === 'ready' ? <CheckCircle2 className='h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+        : stopped ? <StopCircle className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />
         : state === 'failed' ? <AlertTriangle className='h-3.5 w-3.5 shrink-0 text-destructive' />
         : <Search className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
       <span className='flex-1 font-medium'>{t('population.progress.index.title')}</span>
-      <span className={cn('text-muted-foreground', state === 'failed' && 'text-destructive')}>
-        {t(`population.progress.index.${(['queued', 'indexing', 'ready', 'failed', 'missing'].includes(state) ? state : 'missing') as 'queued' | 'indexing' | 'ready' | 'failed' | 'missing'}`)}
+      <span className={cn('text-muted-foreground', state === 'failed' && !stopped && 'text-destructive')}>
+        {stopped ? t('population.progress.index.stopped')
+          : t(`population.progress.index.${(['queued', 'indexing', 'ready', 'failed', 'missing'].includes(state) ? state : 'missing') as 'queued' | 'indexing' | 'ready' | 'failed' | 'missing'}`)}
       </span>
       {state === 'indexing' && total > 0 && <span className='tabular-nums text-muted-foreground'>{t('population.progress.index.percent', { percent })}</span>}
     </p>
@@ -60,6 +79,10 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
             passages: passages.done.toLocaleString(), passagesTotal: passages.total.toLocaleString() })
           : t('population.progress.index.countsRecords', { records: records.done.toLocaleString(), recordsTotal: records.total.toLocaleString() })}
     </p>}
-    {state === 'failed' && index.lastErrorCode && <p className='text-[11px] text-destructive'>{index.lastErrorCode}</p>}
+    {state === 'failed' && index.lastErrorCode && !stopped && <p className='text-[11px] text-destructive'>{index.lastErrorCode}</p>}
+    {stopped && <>
+      <p className='text-[11px] text-muted-foreground'>{t('population.progress.index.stoppedHint')}</p>
+      <Button variant='outline' size='sm' className='w-full' onClick={() => void buildAgain()}>{t('population.progress.index.buildAgain')}</Button>
+    </>}
   </div>;
 }

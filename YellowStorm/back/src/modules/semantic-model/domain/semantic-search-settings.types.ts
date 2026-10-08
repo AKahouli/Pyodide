@@ -6,6 +6,7 @@
  * Index settings shape the text that is indexed: changing them builds new search indexes on the next
  * search. Search settings apply to each request and never rebuild anything.
  */
+import type { INDEX_BUILD_LIMIT_KEYS, RunLimits } from './semantic-source-mapping.types';
 
 export interface SearchIndexSettings {
   cardValueChars: number;
@@ -226,4 +227,6 @@ export function fieldSearchIndexProblems(input: unknown, global: SearchIndexSett
 export interface RuntimeSearchSettingsPayload {
   index: Partial<SearchIndexSettings> & { fields?: Record<string, Record<string, FieldSearchIndexSettings>> };
   search: Partial<SearchQuerySettings>;
+  /** How an index is built (the admin's run limits for it); only the ones set. Never part of an index's identity. */
+  build?: Partial<Pick<RunLimits, typeof INDEX_BUILD_LIMIT_KEYS[number]>>;
 }

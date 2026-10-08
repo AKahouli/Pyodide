@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bot, Database, Gauge, Mail, RotateCcw } from 'lucide-react';
+import { Bot, Database, Gauge, Mail, RotateCcw, SearchCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { parseApiError } from '@/lib/api-error';
@@ -11,7 +11,7 @@ import { FormField, INPUT } from '../form/FormParts';
 import type { RunLimits } from '../../types';
 import { SettingsPane } from './SettingsPane';
 
-type RunLimitGroup = 'size' | 'ai' | 'archive' | 'rebuild' | 'save';
+type RunLimitGroup = 'size' | 'ai' | 'archive' | 'rebuild' | 'save' | 'index';
 
 /** Built-in limits and the ranges the back end and the runtime accept. */
 export const RUN_LIMIT_FIELDS: ReadonlyArray<{ key: keyof RunLimits; builtIn: number; min: number; max: number; group: RunLimitGroup }> = [
@@ -26,6 +26,11 @@ export const RUN_LIMIT_FIELDS: ReadonlyArray<{ key: keyof RunLimits; builtIn: nu
   { key: 'purgeTimeoutSeconds', builtIn: 300, min: 30, max: 3600, group: 'rebuild' },
   { key: 'saveBatchRows', builtIn: 2000, min: 100, max: 50000, group: 'save' },
   { key: 'saveStatementSeconds', builtIn: 10, min: 5, max: 600, group: 'save' },
+  // Built-in values of the back end; the runtime's environment applies when none is set and differs.
+  { key: 'embeddingBatchSize', builtIn: 32, min: 1, max: 256, group: 'index' },
+  { key: 'embeddingParallelCalls', builtIn: 4, min: 1, max: 16, group: 'index' },
+  { key: 'embeddingTimeoutSeconds', builtIn: 30, min: 5, max: 600, group: 'index' },
+  { key: 'indexReadPageRows', builtIn: 5000, min: 500, max: 50000, group: 'index' },
 ];
 
 const GROUPS: Record<RunLimitGroup, { id: string; title: string; description: string; icon: ReactNode }> = {
@@ -34,10 +39,12 @@ const GROUPS: Record<RunLimitGroup, { id: string; title: string; description: st
   archive: { id: 'email-archives', title: 'settings.archives.title', description: 'settings.archives.description', icon: <Mail className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   rebuild: { id: 'rebuild', title: 'settings.rebuild.title', description: 'settings.rebuild.description', icon: <RotateCcw className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   save: { id: 'save-data', title: 'settings.saveBatch.title', description: 'settings.saveBatch.description', icon: <Database className='h-4 w-4 text-muted-foreground' aria-hidden /> },
+  index: { id: 'index-build', title: 'settings.indexBuild.title', description: 'settings.indexBuild.description', icon: <SearchCheck className='h-4 w-4 text-muted-foreground' aria-hidden /> },
 };
 
-const NOTES: Record<RunLimitGroup, 'settings.runLimits.note' | 'settings.aiCalls.note' | 'settings.archives.note' | 'settings.rebuild.note' | 'settings.saveBatch.note'> = {
+const NOTES: Record<RunLimitGroup, 'settings.runLimits.note' | 'settings.aiCalls.note' | 'settings.archives.note' | 'settings.rebuild.note' | 'settings.saveBatch.note' | 'settings.indexBuild.note'> = {
   size: 'settings.runLimits.note', ai: 'settings.aiCalls.note', archive: 'settings.archives.note', rebuild: 'settings.rebuild.note', save: 'settings.saveBatch.note',
+  index: 'settings.indexBuild.note',
 };
 
 function invalid(key: keyof RunLimits, value: number | undefined): boolean {
@@ -48,7 +55,8 @@ function invalid(key: keyof RunLimits, value: number | undefined): boolean {
 /**
  * Admin > Semantic models: how much one run may read and keep (`size`), how it calls the AI (`ai`), how long
  * it reads a mail archive (`archive`), how long "Start over from scratch" may take (`rebuild`) and how a run writes
- * its data (`save`), for every model.
+ * its data (`save`), how the search index is built (`index`: embedding batch size, parallel calls, call timeout, records
+ * per page; performance only, never part of a run's or an index's identity), for every model.
  * All groups are saved in the same run limits: a pane saves only its own fields.
  */
 export function RunLimitsSettings({ group = 'size' }: Readonly<{ group?: RunLimitGroup }>) {

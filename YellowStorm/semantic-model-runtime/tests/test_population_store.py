@@ -263,6 +263,24 @@ async def test_every_write_uses_the_batch_size_and_time_of_the_budget():
                           ("relationships", 100, options)]
 
 
+@pytest.mark.asyncio
+async def test_the_budget_is_told_the_rows_of_each_written_batch():
+    from app.persistence.population_store import SaveBudget, store_entities
+
+    class Pool:
+        async def executemany(self, _sql, rows, **options):  # type: ignore[no-untyped-def]
+            pass
+
+    told: list[int] = []
+
+    async def on_rows(count: int) -> None:
+        told.append(count)
+
+    await store_entities(Pool(), model_id="m", revision_id="r", budget=SaveBudget(rows=100, on_rows=on_rows),
+                         entities=[{"entityId": f"e{n}"} for n in range(250)])
+    assert told == [100, 100, 50]
+
+
 class Connection:
     def __init__(self, fail_reset: bool = False):  # type: ignore[no-untyped-def]
         self.statements: list[str] = []

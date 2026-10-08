@@ -24,9 +24,12 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .compiler import PopulationError
+
+# Tells a watcher how far a long step is: (unit, done, total), total None while unknown.
+StepReport = Callable[[str, int, int | None], Awaitable[None]]
 
 MAX_BATCH_VERTICES = 500
 MAX_BATCH_EDGES = 500
@@ -243,13 +246,17 @@ def _chunks(items: list[Any], size: int) -> list[list[Any]]:
 
 
 async def project_revision(connection: Any, *, graph: str,
-                           plan: dict[str, Any]) -> dict[str, Any]:
+                           plan: dict[str, Any], report: StepReport | None = None) -> dict[str, Any]:
     """Create the typed graph and stream inserts in bounded batches (P6.16, P6.29): a label
     and its record_id index per concept, then the records, then a label per relationship and
-    the links; the label tables are analysed so the planner uses their indexes."""
+    the links; the label tables are analysed so the planner uses their indexes.
+
+    ``report(unit, done, total)`` is told after each batch how many graph elements (records, then
+    links) are written of all of them; it runs on another connection than ``connection``."""
     _check_graph(graph)
     vertices = plan.get("vertices", [])
     edges = plan.get("edges", [])
+    total, written = len(vertices) + len(edges), 0
     await connection.execute(create_graph_sql(graph))
     by_concept: dict[str, list[dict[str, Any]]] = {}
     for vertex in vertices:
@@ -259,6 +266,9 @@ async def project_revision(connection: Any, *, graph: str,
         await connection.execute(record_index_sql(graph, label))
         for batch in _chunks(members, MAX_BATCH_VERTICES):
             await connection.execute(render_vertex_batch(graph, label, batch))
+            written += len(batch)
+            if report is not None:
+                await report("elements", written, total)
     by_relation: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for edge in edges:
         key = (relation_label(edge["relation"]), concept_label(edge.get("sourceConcept")),
@@ -271,6 +281,9 @@ async def project_revision(connection: Any, *, graph: str,
             created.add(label)
         for batch in _chunks(members, MAX_BATCH_EDGES):
             await connection.execute(render_edge_batch(graph, label, source_label, target_label, batch))
+            written += len(batch)
+            if report is not None:
+                await report("elements", written, total)
     for label in [*by_concept, *sorted(created)]:
         await connection.execute(f'ANALYZE "{graph}"."{_check_label(label)}"')
     return {"graph": graph, "vertices": len(vertices), "edges": len(edges)}
@@ -362,8 +375,8 @@ async def drop_projection(connection: Any, graph: str) -> None:
     await connection.execute(drop_graph_sql(_check_graph(graph)))
 
 
-async def ensure_revision_projection(pool: Any, age_pool: Any,
-                                     revision_id: str) -> dict[str, Any]:
+async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
+                                     report: StepReport | None = None) -> dict[str, Any]:
     """Build, validate and record one immutable revision projection."""
     from app.persistence import population_store as store
 
@@ -386,15 +399,19 @@ async def ensure_revision_projection(pool: Any, age_pool: Any,
                 return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
                         "reused": True}
             return await _build_revision_projection(
-                pool, connection, revision_id, graph, current["projection_ref"])
+                pool, connection, revision_id, graph, current["projection_ref"], report)
         finally:
             await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
 
 
-async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, graph: str) -> dict[str, int]:
+async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, graph: str,
+                               report: StepReport | None = None) -> dict[str, int]:
     """Build ``graph`` from the revision's stored records and links, and check its counts."""
     from app.persistence import population_store as store
 
+    if report is not None:
+        # Reading a large revision back takes a while and has no count to show.
+        await report("loading", 0, None)
     stored = await store.count_revision_rows(pool, revision_id)
     entities = await store.list_revision_entities(pool, revision_id, limit=MAX_PROJECTED_RECORDS)
     relationships = await store.list_revision_relationships(pool, revision_id, limit=MAX_PROJECTED_LINKS)
@@ -413,7 +430,7 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
         async with connection.transaction():
             if await projection_exists(connection, graph):
                 await drop_projection(connection, graph)
-            await project_revision(connection, graph=graph, plan=plan)
+            await project_revision(connection, graph=graph, plan=plan, report=report)
             if validate_projection(expected, await projection_counts(connection, graph)):
                 raise PopulationError("projection_validation_failed")
     except PopulationError:
@@ -426,10 +443,11 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
 
 
 async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
-                                     graph: str, previous_ref: str | None) -> dict[str, Any]:
+                                     graph: str, previous_ref: str | None,
+                                     report: StepReport | None = None) -> dict[str, Any]:
     from app.persistence import population_store as store
 
-    expected = await _project_stored_rows(pool, connection, revision_id, graph)
+    expected = await _project_stored_rows(pool, connection, revision_id, graph, report)
     projection_ref = live_projection_ref(graph)
     try:
         recorded = await store.set_revision_projection(
@@ -504,12 +522,12 @@ async def _discard_projection(connection: Any, graph: str, revision_id: str) -> 
                      revision_id, type(exc).__name__)
 
 
-async def finalize_draft_revision(pool: Any, age_pool: Any,
-                                  revision_id: str) -> dict[str, Any]:
+async def finalize_draft_revision(pool: Any, age_pool: Any, revision_id: str,
+                                  report: StepReport | None = None) -> dict[str, Any]:
     """Project and atomically move only the draft serving binding."""
     from app.persistence import population_store as store
 
-    projected = await ensure_revision_projection(pool, age_pool, revision_id)
+    projected = await ensure_revision_projection(pool, age_pool, revision_id, report)
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")

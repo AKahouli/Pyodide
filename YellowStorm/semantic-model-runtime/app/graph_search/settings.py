@@ -21,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-__all__ = ["FieldIndexSettings", "IndexSettings", "SearchSettings", "SettingsPayload",
+__all__ = ["FieldIndexSettings", "IndexBuildSettings", "IndexSettings", "SearchSettings", "SettingsPayload",
            "ValidationError", "index_fingerprint"]
 
 
@@ -170,6 +170,23 @@ class SearchSettings(BaseModel):
 
     def limit(self, asked: int | None) -> int:
         return min(asked if asked is not None else self.default_limit, self.max_limit)
+
+
+class IndexBuildSettings(BaseModel):
+    """How an index is built: embedding calls and record pages. Performance knobs only, so they are
+    not part of ``IndexSettings`` and never of a fingerprint: a value left out uses the environment's
+    (then the built-in one). Names and ranges are those of the admin's run limits
+    (``app.population.run_limits.INDEX_BUILD_LIMIT_RANGES``)."""
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, frozen=True)
+
+    embedding_batch_size: int | None = Field(default=None, alias="embeddingBatchSize", ge=1, le=256)
+    embedding_parallel_calls: int | None = Field(default=None, alias="embeddingParallelCalls", ge=1, le=16)
+    embedding_timeout_seconds: int | None = Field(default=None, alias="embeddingTimeoutSeconds", ge=5, le=600)
+    index_read_page_rows: int | None = Field(default=None, alias="indexReadPageRows", ge=500, le=50000)
+
+    def given(self) -> dict[str, int]:
+        """Only the values set, under their wire names (the job payload)."""
+        return self.model_dump(by_alias=True, exclude_none=True)
 
 
 class SettingsPayload(BaseModel):

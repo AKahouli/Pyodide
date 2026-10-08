@@ -757,12 +757,18 @@ export class SemanticPopulationRefreshService {
     if (!sources.filter(inRun).length && !madeFromAnother) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
-    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save limits
-    // travel too but stay out of the fingerprint: how a run is written never changes what it builds.
-    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, ...limits } = await this.adminRunLimits();
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save and index
+    // build limits travel too but stay out of the fingerprint: how a run is written, or how the search index of
+    // its data is built, never changes what it builds.
+    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, embeddingBatchSize, embeddingParallelCalls,
+      embeddingTimeoutSeconds, indexReadPageRows, ...limits } = await this.adminRunLimits();
     const saveLimits: Partial<RunLimits> = {
       ...(saveBatchRows !== undefined ? { saveBatchRows } : {}),
       ...(saveStatementSeconds !== undefined ? { saveStatementSeconds } : {}),
+      ...(embeddingBatchSize !== undefined ? { embeddingBatchSize } : {}),
+      ...(embeddingParallelCalls !== undefined ? { embeddingParallelCalls } : {}),
+      ...(embeddingTimeoutSeconds !== undefined ? { embeddingTimeoutSeconds } : {}),
+      ...(indexReadPageRows !== undefined ? { indexReadPageRows } : {}),
     };
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
     if (sources.filter(inRun).length > maxRunSources) {

@@ -70,6 +70,7 @@ export function SemanticModelSettingsPage() {
     <RunLimitsSettings group='archive' />
     <RunLimitsSettings group='rebuild' />
     <RunLimitsSettings group='save' />
+    <RunLimitsSettings group='index' />
     <SearchIndexSettings />
     <SearchQuerySettings />
   </div>;
