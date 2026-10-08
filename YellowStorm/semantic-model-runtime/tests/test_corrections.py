@@ -105,6 +105,8 @@ async def test_persist_applies_corrections_and_records_watermark():
             return 0 if "model_data_resets" in sql else 4
 
         async def fetch(self, sql, *params):  # type: ignore[no-untyped-def]
+            if "FROM pg_class" in sql:
+                return []
             return [{"sequence": 4, "model_version_id": "v1", "actor_user_id": "u9",
                      "reason": "", "target_identity": {"entityId": "e2"},
                      "action": "remove_entity", "payload": {}, "created_at": None}]
@@ -114,9 +116,27 @@ async def test_persist_applies_corrections_and_records_watermark():
                 stored["correction_sequence"] = params[6]
             return {"id": "row-1", "sequence": 1}
 
-        async def executemany(self, sql, rows):  # type: ignore[no-untyped-def]
+        async def executemany(self, sql, rows, timeout=None):  # type: ignore[no-untyped-def]
             if "semantic_population.entities" in sql:
                 stored["entities"] = [row[0] for row in rows]
+
+        async def execute(self, sql, *params):  # type: ignore[no-untyped-def]
+            return None
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
 
     base = outcome()
     base.update({"specHash": canonical_spec_hash(base_spec()), "gaps": [], "counts": {},

@@ -147,7 +147,14 @@ export interface RunLimits {
   archiveTimeoutSeconds: number;
   /** Time "Start over from scratch" may take to clear a model's data, in seconds. Not part of a run. */
   purgeTimeoutSeconds: number;
+  /** Rows the "saving" step writes per batch. Travels with the run but is not part of its identity. */
+  saveBatchRows: number;
+  /** Time one save batch may take, in seconds. Travels with the run but is not part of its identity. */
+  saveStatementSeconds: number;
 }
+
+/** Limits of how a run is saved, not of what it builds: they never change the run's fingerprint. */
+export const SAVE_LIMIT_KEYS = ['saveBatchRows', 'saveStatementSeconds'] as const satisfies readonly (keyof RunLimits)[];
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxRunSources: 5000,
@@ -159,6 +166,8 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   parserMemoryMb: 512,
   archiveTimeoutSeconds: 900,
   purgeTimeoutSeconds: 300,
+  saveBatchRows: 2000,
+  saveStatementSeconds: 10,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
@@ -171,6 +180,8 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   parserMemoryMb: [256, 16384],
   archiveTimeoutSeconds: [60, 7200],
   purgeTimeoutSeconds: [30, 3600],
+  saveBatchRows: [100, 50000],
+  saveStatementSeconds: [5, 600],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

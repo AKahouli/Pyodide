@@ -331,6 +331,7 @@ async def test_persist_population_revision_writes_canonical_rows():
     from app.workers.population_tasks import persist_population_revision
 
     calls: list = []
+    timeouts: list = []
 
     class FakePool:
         async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
@@ -341,8 +342,31 @@ async def test_persist_population_revision_writes_canonical_rows():
             calls.append(("fetchrow", sql, params))
             return {"id": "row-1", "sequence": 1}
 
-        async def executemany(self, sql: str, rows):  # type: ignore[no-untyped-def]
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            calls.append(("fetch", sql, params))
+            return []
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
             calls.append(("executemany", sql, list(rows)))
+            timeouts.append(timeout)
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            calls.append(("execute", sql, params))
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
 
     spec_hash = canonical_spec_hash(base_spec())
     outcome = {
@@ -363,10 +387,72 @@ async def test_persist_population_revision_writes_canonical_rows():
     statements = [sql for _, sql, *_ in calls]
     assert any("semantic_runtime.specifications" in sql for sql in statements)
     assert any("semantic_population.data_revisions" in sql for sql in statements)
+    # The revision's partitions are made, then the revision row, then the rows go into them.
+    created = [i for i, sql in enumerate(statements) if sql.startswith("CREATE TABLE")]
+    inserted = next(i for i, sql in enumerate(statements) if "INSERT INTO semantic_population.data_revisions" in sql)
+    assert len(created) == 5 and max(created) < inserted
     assert any("semantic_population.entities" in sql for sql in statements)
     assert any("semantic_population.assertions" in sql for sql in statements)
     assert any("semantic_population.relationships" in sql for sql in statements)
     assert any("validation_state" in sql for sql in statements)
+    # Without an admin setting the writes keep today's limits: 10 s on the server and on each call.
+    assert [sql for kind, sql, _ in calls if kind == "execute" and "statement_timeout" in sql] == [
+        "SET statement_timeout = '10s'", "RESET statement_timeout"]
+    assert timeouts and set(timeouts) == {10}
+
+
+@pytest.mark.asyncio
+async def test_persist_population_revision_saves_with_the_run_limits():
+    from app.workers.population_tasks import persist_population_revision
+
+    calls: list = []
+    batches: list = []
+
+    class FakePool:
+        async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return 0
+
+        async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return {"id": "row-1", "sequence": 1}
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
+            if "semantic_population.entities" in sql:
+                batches.append((len(list(rows)), timeout))
+                calls.append("write")
+
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return []
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            if "statement_timeout" in sql:
+                calls.append(sql)
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
+
+    limited = command()
+    limited["payload"]["limits"] = {"saveBatchRows": 100, "saveStatementSeconds": 90}
+    outcome = {
+        "specHash": canonical_spec_hash(base_spec()),
+        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
+        "entities": [{"entityId": f"e{n}", "conceptId": "c1"} for n in range(250)],
+        "assertions": [], "relationships": [], "gaps": [], "counts": {}, "datasetFingerprints": [],
+    }
+    await persist_population_revision(FakePool(), limited, outcome)
+    assert batches == [(100, 90), (100, 90), (50, 90)]
+    assert calls == ["SET statement_timeout = '90s'", "write", "write", "write", "RESET statement_timeout"]
 
 
 def test_preview_result_carries_output_without_revision():

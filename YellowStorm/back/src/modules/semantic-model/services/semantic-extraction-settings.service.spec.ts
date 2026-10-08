@@ -44,6 +44,12 @@ describe('run limits', () => {
     expect(pickRunLimits({ purgeTimeoutSeconds: 4000 })).toEqual({});
   });
 
+  it('keeps the save batch between 100 and 50000 rows and its time between 5 and 600 seconds', () => {
+    expect(pickRunLimits({ saveBatchRows: 5000, saveStatementSeconds: 120 })).toEqual({ saveBatchRows: 5000, saveStatementSeconds: 120 });
+    expect(pickRunLimits({ saveBatchRows: 99, saveStatementSeconds: 4 })).toEqual({});
+    expect(pickRunLimits({ saveBatchRows: 50001, saveStatementSeconds: 601 })).toEqual({});
+  });
+
   it('saves what the admin set and fills the rest with the built-in limits', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [] })
@@ -54,6 +60,7 @@ describe('run limits', () => {
     expect(saved).toEqual({ configured: { maxRecordsPerRun: 50000 }, runLimits: {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
       maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
-      parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300 } });
+      parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300,
+      saveBatchRows: 2000, saveStatementSeconds: 10 } });
   });
 });

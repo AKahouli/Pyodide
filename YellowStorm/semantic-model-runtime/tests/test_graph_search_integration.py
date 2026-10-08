@@ -160,6 +160,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert status["index"]["indexedCount"] + status["index"]["exactOnlyCount"] == 5
         assert status["index"]["passageCount"] == status["index"]["passageIndexedCount"] == outcome["passages"]
         assert status["index"]["passageTruncatedCount"] == 0
+        assert status["index"]["stage"] is None and status["index"]["loadedCount"] == 5
         embedded_once = sum(calls)
 
         # 3. Asking again is free: the generation is ready and reused.

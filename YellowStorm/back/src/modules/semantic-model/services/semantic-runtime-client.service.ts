@@ -515,6 +515,13 @@ export interface RuntimeGraphSearchIndex {
   failedCount: number;
   reusedCount: number;
   embeddingCalls: number;
+  passageCount?: number;
+  passageIndexedCount?: number;
+  passageTruncatedCount?: number;
+  /** While the state is 'indexing': 'documents' (records being read into cards) or 'embedding'; null otherwise. */
+  stage?: 'documents' | 'embedding' | null;
+  /** Records whose search card is written so far (builds: counts of the other fields are live too). */
+  loadedCount?: number;
   lastErrorCode: string | null;
   completedAt: string | null;
   embeddingFingerprint: string | null;

@@ -106,6 +106,13 @@ class _PurgeConnection:
             self.timeouts.append(timeout)
         if "FROM semantic_runtime.active_bindings" in sql:
             return [{"data_revision_id": "dr_published"}]
+        if "SELECT id, projection_ref FROM semantic_population.data_revisions" in sql:
+            return [{"id": "dr_a", "projection_ref": "age:v1:pop_dr_a"},
+                    {"id": "dr_b", "projection_ref": None}]
+        if "FROM semantic_graph_search.index_generations" in sql:
+            return [{"index_id": "00000000-0000-4000-8000-00000000000a"}]
+        if "FROM pg_class" in sql:
+            return [{"relname": name} for name in params[1]]
         if "DELETE FROM semantic_population.data_revisions" in sql:
             return [{"id": "dr_a", "projection_ref": "age:v1:pop_dr_a"},
                     {"id": "dr_b", "projection_ref": None}]
@@ -140,13 +147,40 @@ async def test_purge_keeps_published_data_and_settings():
     assert "environment = 'draft'" in sql
     # Clearing a large model outlasts the API pool's few-second statement limit.
     assert connection.statements[0][0].startswith("SET LOCAL statement_timeout = '300s'")
+    # The revisions to clear are those no environment serves; only those are deleted.
+    doomed = next(params for statement, params in connection.statements
+                  if "SELECT id, projection_ref FROM semantic_population.data_revisions" in statement)
+    assert doomed == ("m1", ["dr_published"])
     revisions = next(params for statement, params in connection.statements
                      if "DELETE FROM semantic_population.data_revisions" in statement)
-    assert revisions == ("m1", ["dr_published"])
+    assert revisions == (["dr_a", "dr_b"],)
     # Settings and human fixes are never touched; the AI readings stay unless asked.
     for kept in ("semantic_population.corrections", "semantic_runtime.specifications",
                  "manual_", "document_extractions"):
         assert kept not in sql
+
+
+@pytest.mark.asyncio
+async def test_purge_drops_the_partitions_of_the_cleared_revisions_before_their_rows():
+    from app.persistence.partitions import partition_name
+    from app.persistence.population_store import purge_model_data
+
+    connection = _PurgeConnection()
+    await purge_model_data(connection, "m1")
+    sql = [statement for statement, _ in connection.statements]
+    dropped = [i for i, statement in enumerate(sql) if statement.startswith("DROP TABLE")]
+    deleted = next(i for i, statement in enumerate(sql)
+                   if "DELETE FROM semantic_population.data_revisions" in statement)
+    # The search generations' tables, then the revisions' ones, all before the small rows go.
+    assert len(dropped) == 4 and max(dropped) < deleted
+    assert "entity_passages_" in sql[dropped[0]] and "entity_documents_" in sql[dropped[1]]
+    for table in ("assertions", "relationships"):
+        for revision in ("dr_a", "dr_b"):
+            assert partition_name(table, revision) in sql[dropped[2]]
+    for revision in ("dr_a", "dr_b"):
+        assert '"' + partition_name("entities", revision) + '"' in sql[dropped[3]]
+    # The published revision's partitions stay.
+    assert partition_name("entities", "dr_published") not in "\n".join(sql)
 
 
 @pytest.mark.asyncio
@@ -158,6 +192,7 @@ async def test_purge_uses_the_time_it_is_given():
     assert connection.statements[0][0] == "SET LOCAL statement_timeout = '900s'"
     # The heavy deletes wait as long as the statement may run.
     assert connection.timeouts == [900, 900]
+    assert "SET LOCAL lock_timeout" in connection.statements[1][0]
 
 
 @pytest.mark.asyncio
@@ -179,3 +214,105 @@ async def test_purge_refuses_while_a_build_runs():
     with pytest.raises(PopulationRunning):
         await purge_model_data(connection, "m1")
     assert not any("DELETE" in statement for statement, _ in connection.statements)
+
+
+@pytest.mark.asyncio
+async def test_large_writes_go_in_chunks_each_within_the_statement_limit():
+    from app.persistence.population_store import WRITE_CHUNK_ROWS, store_entities
+
+    class Pool:
+        def __init__(self):  # type: ignore[no-untyped-def]
+            self.calls: list[tuple[int, dict]] = []
+
+        async def executemany(self, _sql, rows, **options):  # type: ignore[no-untyped-def]
+            self.calls.append((len(rows), options))
+
+    pool = Pool()
+    entities = [{"entityId": f"e{index}", "conceptId": "c"} for index in range(WRITE_CHUNK_ROWS * 2 + 5)]
+    assert await store_entities(pool, model_id="m1", revision_id="r1", entities=entities) == len(entities)
+    # No budget given: today's chunk size, and the pool's own timeout is left alone.
+    assert pool.calls == [(WRITE_CHUNK_ROWS, {}), (WRITE_CHUNK_ROWS, {}), (5, {})]
+
+
+@pytest.mark.asyncio
+async def test_every_write_uses_the_batch_size_and_time_of_the_budget():
+    from app.persistence.population_store import (SaveBudget, store_assertions, store_entities,
+                                                  store_entity_aliases, store_relationships)
+
+    class Pool:
+        def __init__(self):  # type: ignore[no-untyped-def]
+            self.calls: list[tuple[str, int, dict]] = []
+
+        async def executemany(self, sql, rows, **options):  # type: ignore[no-untyped-def]
+            self.calls.append((sql.split("semantic_population.")[1].split()[0], len(rows), options))
+
+    pool = Pool()
+    budget = SaveBudget(rows=100, seconds=120)
+    await store_entities(pool, model_id="m", revision_id="r", budget=budget,
+                         entities=[{"entityId": f"e{n}"} for n in range(250)])
+    await store_entity_aliases(pool, revision_id="r", budget=budget, aliases=[
+        {"entityId": "e", "aliasNamespace": "n", "aliasKey": str(n)} for n in range(101)])
+    await store_assertions(pool, model_id="m", revision_id="r", budget=budget, assertions=[
+        {"entityId": f"e{n}", "attribute": "a", "value": "v"} for n in range(150)])
+    await store_relationships(pool, model_id="m", revision_id="r", budget=budget, relationships=[
+        {"relationId": "x", "sourceEntityId": f"s{n}", "targetEntityId": "t"} for n in range(100)])
+    options = {"timeout": 120}
+    assert pool.calls == [("entities", 100, options), ("entities", 100, options), ("entities", 50, options),
+                          ("entity_identities", 100, options), ("entity_identities", 1, options),
+                          ("assertions", 100, options), ("assertions", 50, options),
+                          ("relationships", 100, options)]
+
+
+class Connection:
+    def __init__(self, fail_reset: bool = False):  # type: ignore[no-untyped-def]
+        self.statements: list[str] = []
+        self.fail_reset = fail_reset
+        self.terminated = False
+
+    async def execute(self, sql):  # type: ignore[no-untyped-def]
+        self.statements.append(sql)
+        if self.fail_reset and sql.startswith("RESET"):
+            raise OSError("connection lost")
+
+    def terminate(self):  # type: ignore[no-untyped-def]
+        self.terminated = True
+
+
+class PoolOf:
+    def __init__(self, connection):  # type: ignore[no-untyped-def]
+        self.connection = connection
+
+    def acquire(self):  # type: ignore[no-untyped-def]
+        connection = self.connection
+
+        class Held:
+            async def __aenter__(self):  # type: ignore[no-untyped-def]
+                return connection
+
+            async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                return False
+
+        return Held()
+
+
+@pytest.mark.asyncio
+async def test_the_save_connection_allows_the_budget_time_then_gives_the_pool_limit_back():
+    from app.persistence.population_store import SaveBudget, save_connection
+
+    connection = Connection()
+    with pytest.raises(RuntimeError):
+        async with save_connection(PoolOf(connection), SaveBudget(seconds=300)) as held:
+            assert held is connection
+            raise RuntimeError("a write failed")
+    assert connection.statements == ["SET statement_timeout = '300s'", "RESET statement_timeout"]
+    assert connection.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_a_connection_that_cannot_be_reset_is_closed_not_returned_with_the_longer_limit():
+    from app.persistence.population_store import SaveBudget, save_connection
+
+    connection = Connection(fail_reset=True)
+    async with save_connection(PoolOf(connection), SaveBudget(seconds=300)):
+        pass
+    assert connection.terminated is True

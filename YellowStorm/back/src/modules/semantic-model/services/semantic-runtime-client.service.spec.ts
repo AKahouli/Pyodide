@@ -143,6 +143,11 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       expect(url).toBe('http://runtime:8000/v1/semantic-model-search/models/m%2F1/index?environment=draft');
       expect(init.method).toBe('GET');
       expect(init.body).toBeUndefined();
+
+      // The progress of a build (camelCase, optional) reaches the caller as the runtime sent it.
+      const building = { state: 'indexing', stage: 'embedding', expectedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 300, passageIndexedCount: 20, loadedCount: 8400 };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ index: building }));
+      await expect(client.getGraphSearchIndex('m1', 'draft', 'u1')).resolves.toEqual({ index: building });
     });
 
     it('builds an index only when runtime writes are on', async () => {

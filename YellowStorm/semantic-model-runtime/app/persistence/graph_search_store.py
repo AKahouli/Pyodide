@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025 and 028).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030 and 031).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -8,13 +8,18 @@ delivery never writes alongside a live one; ``ready`` is final.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
+
+from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
+                                        with_partition_locks)
 
 _GENERATION_COLUMNS = (
     "index_id::text, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
     "state, attempt, owner, job_id::text, expected_count, indexed_count, exact_only_count, "
     "failed_count, reused_count, embedding_calls, last_error_code, created_at, completed_at, "
-    "passage_count, passage_indexed_count, passage_truncated_count, index_settings, vector_fingerprint")
+    "passage_count, passage_indexed_count, passage_truncated_count, index_settings, vector_fingerprint, "
+    "progress_stage, loaded_count")
 
 # Word index of a text: its words as written, and their French and English stems.
 _LEXICAL_CONFIGS = ("simple", "french", "english")
@@ -52,6 +57,8 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
             "passageCount": generation.get("passage_count", 0),
             "passageIndexedCount": generation.get("passage_indexed_count", 0),
             "passageTruncatedCount": generation.get("passage_truncated_count", 0),
+            "stage": generation.get("progress_stage") if generation["state"] == "indexing" else None,
+            "loadedCount": generation.get("loaded_count", 0),
             "completedAt": completed.isoformat() if hasattr(completed, "isoformat") else completed}
 
 
@@ -87,17 +94,38 @@ async def get_generation_by_id(pool: Any, index_id: str) -> dict[str, Any] | Non
         "WHERE index_id = $1::uuid", index_id))
 
 
+class _GenerationExists(Exception):
+    """Another caller created the generation first; the partitions made for this attempt are undone."""
+
+
 async def create_generation(pool: Any, *, model_id: str, data_revision_id: str, projection_ref: str,
                             spec_hash: str, fingerprint: str,
                             index_settings: dict[str, Any] | None = None,
                             vector_fingerprint: str | None = None) -> dict[str, Any]:
-    await pool.execute(
-        "INSERT INTO semantic_graph_search.index_generations "
-        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, index_settings, "
-        " vector_fingerprint) "
-        "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
-        model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
-        json.dumps(index_settings, sort_keys=True) if index_settings is not None else None, vector_fingerprint)
+    """The generation of this revision and embedding profile, created with its partitions (migration
+    031) when it does not exist. The id is chosen here so the partitions exist before the row: attaching
+    them locks the generations table, and that must not upgrade a row lock."""
+    if await get_generation(pool, data_revision_id, fingerprint) is None:
+        index_id = str(uuid.uuid4())
+
+        async def create(connection: Any) -> None:
+            await ensure_generation_partitions(connection, index_id)
+            row = await connection.fetchrow(
+                "INSERT INTO semantic_graph_search.index_generations "
+                "(index_id, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
+                " index_settings, vector_fingerprint) "
+                "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8) "
+                "ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING RETURNING index_id",
+                index_id, model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
+                json.dumps(index_settings, sort_keys=True) if index_settings is not None else None,
+                vector_fingerprint)
+            if row is None:
+                raise _GenerationExists()
+
+        try:
+            await with_partition_locks(pool, create)
+        except _GenerationExists:
+            pass
     generation = await get_generation(pool, data_revision_id, fingerprint)
     assert generation is not None
     return generation
@@ -251,9 +279,8 @@ async def store_vectors(pool: Any, *, index_id: str, model_id: str, fingerprint:
                  for _, content_hash, vector in vectors])
 
 
-async def finish_generation(pool: Any, index_id: str, owner: str, expected_count: int) -> str:
-    """``ready`` when every record of the revision has a vector or is key-only, and every
-    passage has a vector."""
+async def generation_counts(pool: Any, index_id: str) -> dict[str, int]:
+    """What the generation holds now, counted in its tables: records by status, passages."""
     row = await pool.fetchrow(
         "SELECT count(*) AS total, count(*) FILTER (WHERE status = 'ready') AS ready, "
         "count(*) FILTER (WHERE status = 'exact_only') AS exact_only, "
@@ -263,19 +290,42 @@ async def finish_generation(pool: Any, index_id: str, owner: str, expected_count
     passages = await pool.fetchrow(
         "SELECT count(*) AS total, count(*) FILTER (WHERE status = 'ready') AS ready "
         "FROM semantic_graph_search.entity_passages WHERE index_id = $1::uuid", index_id)
-    complete = (int(row["total"]) == expected_count and int(row["pending"]) == 0
-                and int(passages["ready"]) == int(passages["total"]))
+    return {"total": int(row["total"]), "ready": int(row["ready"]), "exact_only": int(row["exact_only"]),
+            "pending": int(row["pending"]), "truncated": int(row["truncated"]),
+            "passages": int(passages["total"]), "passages_ready": int(passages["ready"])}
+
+
+async def record_progress(pool: Any, index_id: str, owner: str, *, stage: str, loaded: int, expected: int,
+                          indexed: int = 0, exact_only: int = 0, passages: int = 0,
+                          passages_indexed: int = 0) -> None:
+    """Where the build is, for whoever follows it: one cheap update per batch, not per record. The
+    final counts are set by ``finish_generation``."""
+    await pool.execute(
+        "UPDATE semantic_graph_search.index_generations "
+        "SET progress_stage = $3, loaded_count = $4, expected_count = $5, indexed_count = $6, "
+        "exact_only_count = $7, passage_count = $8, passage_indexed_count = $9 "
+        "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2",
+        index_id, owner, stage, loaded, expected, indexed, exact_only, passages, passages_indexed)
+
+
+async def finish_generation(pool: Any, index_id: str, owner: str, expected_count: int) -> str:
+    """``ready`` when every record of the revision has a vector or is key-only, and every
+    passage has a vector."""
+    counts = await generation_counts(pool, index_id)
+    complete = (counts["total"] == expected_count and counts["pending"] == 0
+                and counts["passages_ready"] == counts["passages"])
     state = "ready" if complete else "failed"
     updated = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
         "SET state = $3, owner = NULL, lease_until = NULL, expected_count = $4, "
         "indexed_count = $5, exact_only_count = $6, failed_count = $7, "
         "passage_count = $8, passage_indexed_count = $9, passage_truncated_count = $10, "
+        "progress_stage = NULL, loaded_count = $4, "
         "last_error_code = CASE WHEN $3 = 'ready' THEN NULL ELSE 'index_incomplete' END, "
         "completed_at = CASE WHEN $3 = 'ready' THEN now() ELSE NULL END "
         "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2 RETURNING state",
-        index_id, owner, state, expected_count, int(row["ready"]), int(row["exact_only"]),
-        int(row["pending"]), int(passages["total"]), int(passages["ready"]), int(row["truncated"]))
+        index_id, owner, state, expected_count, counts["ready"], counts["exact_only"], counts["pending"],
+        counts["passages"], counts["passages_ready"], counts["truncated"])
     return updated["state"] if updated else "lease_lost"
 
 
@@ -289,19 +339,28 @@ async def fail_generation(pool: Any, index_id: str, error_code: str, owner: str 
 
 
 async def prune_generations(pool: Any, model_id: str, keep_recent: int = 2) -> int:
-    """Drop generations no binding serves, beyond the most recent few ready ones."""
-    result = await pool.execute(
-        "DELETE FROM semantic_graph_search.index_generations generation "
-        "WHERE generation.model_id = $1 AND generation.state IN ('ready', 'failed') "
-        "AND NOT EXISTS (SELECT 1 FROM semantic_runtime.active_bindings binding "
-        "  WHERE binding.model_id = generation.model_id "
-        "  AND binding.data_revision_id = generation.data_revision_id) "
-        "AND generation.index_id NOT IN (SELECT recent.index_id "
-        "  FROM semantic_graph_search.index_generations recent "
-        "  WHERE recent.model_id = $1 AND recent.state = 'ready' "
-        "  ORDER BY recent.created_at DESC LIMIT $2)",
-        model_id, keep_recent)
-    return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+    """Drop generations no binding serves, beyond the most recent few ready ones: their partitions
+    first, then their rows."""
+    async def prune(connection: Any) -> int:
+        rows = await connection.fetch(
+            "SELECT generation.index_id::text AS index_id FROM semantic_graph_search.index_generations generation "
+            "WHERE generation.model_id = $1 AND generation.state IN ('ready', 'failed') "
+            "AND NOT EXISTS (SELECT 1 FROM semantic_runtime.active_bindings binding "
+            "  WHERE binding.model_id = generation.model_id "
+            "  AND binding.data_revision_id = generation.data_revision_id) "
+            "AND generation.index_id NOT IN (SELECT recent.index_id "
+            "  FROM semantic_graph_search.index_generations recent "
+            "  WHERE recent.model_id = $1 AND recent.state = 'ready' "
+            "  ORDER BY recent.created_at DESC LIMIT $2) "
+            "FOR UPDATE OF generation",
+            model_id, keep_recent)
+        index_ids = [row["index_id"] for row in rows]
+        await drop_generation_partitions(connection, index_ids)
+        result = await connection.execute(
+            "DELETE FROM semantic_graph_search.index_generations WHERE index_id = ANY($1::uuid[])", index_ids)
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+
+    return await with_partition_locks(pool, prune)
 
 
 # Reads ---------------------------------------------------------------------

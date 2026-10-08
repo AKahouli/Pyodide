@@ -446,6 +446,10 @@ export interface RunLimits {
   archiveTimeoutSeconds: number;
   /** Time "Start over from scratch" may take to clear a model's data, in seconds. */
   purgeTimeoutSeconds: number;
+  /** Rows a run writes per batch when it saves its data. */
+  saveBatchRows: number;
+  /** Seconds one save batch may take. */
+  saveStatementSeconds: number;
 }
 
 export interface RunLimitsDefaults {
@@ -821,6 +825,9 @@ export interface SearchIndexStatus {
     reusedCount?: number;
     passageCount?: number;
     passageIndexedCount?: number;
+    /** While indexing: 'documents' (records read into search cards, counted by loadedCount) or 'embedding'. */
+    stage?: 'documents' | 'embedding' | null;
+    loadedCount?: number;
     lastErrorCode?: string | null;
   };
 }

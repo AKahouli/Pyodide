@@ -307,7 +307,11 @@ ALTER TABLE index_generations ADD passage_count, passage_indexed_count, passage_
 ```
 
 Passages live and die with their generation (and their record's document): pruning, a revision
-delete and the model purge remove them by cascade; a model clone copies no index.
+delete and the model purge remove them; a model clone copies no index. Since migration `031`
+`entity_documents` and `entity_passages` are LIST-partitioned by `index_id` (one partition per
+generation, created with it by `app/persistence/partitions.py`), so removing a generation drops
+its partitions instead of deleting its rows; the ANN indexes are defined on the parent and
+inherited by each partition.
 
 Notes:
 - **Cache scope:** the cache is scoped per model, so it can't reveal anything across models. A correction or rebuild creates a new revision and a new generation, and unchanged entities reuse their vectors at **zero embedding calls**.

@@ -167,6 +167,7 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
     expected = (await population_store.count_revision_rows(pool, revision_id))["entities"]
     # A page of records at a time: a large mailbox gives hundreds of thousands of them.
     loaded = passages = 0
+    await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=0, expected=expected)
     async for entities in population_store.iter_revision_entities(pool, revision_id, ENTITY_PAGE_SIZE):
         # The names of their linked records go on their cards (only those read from no other workspace).
         linked = await search_store.linked_names(pool, revision_id, [entity["entityId"] for entity in entities],
@@ -180,6 +181,8 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         loaded += len(entities)
         if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 0):
             return {"state": "lease_lost"}
+        await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=loaded,
+                                           expected=expected, passages=passages)
         await report({"stage": "documents", "expected": expected, "loaded": loaded, "passages": passages})
     if expected != loaded:
         # The revision changed under the build: a later request builds it again.
@@ -192,6 +195,17 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
     progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
                 "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
     await report(dict(progress))
+    # What is already embedded (this attempt's cache hits, an earlier attempt's batches), counted once;
+    # each batch then adds its own size.
+    done = await search_store.generation_counts(pool, index_id)
+
+    async def record_embedding() -> None:
+        await search_store.record_progress(
+            pool, index_id, owner, stage="embedding", loaded=loaded, expected=expected,
+            indexed=done["ready"] + progress["embedded"], exact_only=done["exact_only"],
+            passages=done["passages"], passages_indexed=done["passages_ready"] + progress["passagesEmbedded"])
+
+    await record_embedding()
     # Records first (the cards answer most requests), then the passages of long fields.
     for kind in ("documents", "passages"):
         while True:
@@ -216,6 +230,7 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
                 progress["passagesEmbedded"] += len(batch)
             if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 1):
                 return {"state": "lease_lost"}
+            await record_embedding()
             await report(dict(progress))
     state = await search_store.finish_generation(pool, index_id, owner, expected)
     if state == "ready":

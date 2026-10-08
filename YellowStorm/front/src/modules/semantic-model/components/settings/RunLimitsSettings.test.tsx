@@ -54,6 +54,30 @@ describe('RunLimitsSettings AI calls pane', () => {
   });
 });
 
+describe('RunLimitsSettings saving pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'save-data': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { purgeTimeoutSeconds: 600 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the batch size and the time per batch with the other limits, and refuses values out of range', async () => {
+    render(<RunLimitsSettings group='save' />);
+    const rows = await screen.findByLabelText('settings.runLimits.saveBatchRows');
+    const seconds = screen.getByLabelText('settings.runLimits.saveStatementSeconds');
+    expect(screen.queryByLabelText('settings.runLimits.purgeTimeoutSeconds')).not.toBeInTheDocument();
+
+    fireEvent.change(rows, { target: { value: '99' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(seconds, { target: { value: '601' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '10000' } });
+    fireEvent.change(seconds, { target: { value: '120' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ purgeTimeoutSeconds: 600, saveBatchRows: 10000, saveStatementSeconds: 120 }));
+  });
+});
+
 describe('RunLimitsSettings start-over pane', () => {
   beforeEach(() => {
     localStorage.setItem(OPEN_KEY, JSON.stringify({ rebuild: true }));

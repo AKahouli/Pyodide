@@ -394,6 +394,28 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[0][0].payload.limits).toEqual({ maxRunSources: 40 });
   });
 
+  it('sends the save limits with the run without changing its fingerprint or key', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({ maxRunSources: 40 });
+    const saved = await runWith({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120 });
+    expect(saved.payload.limits).toEqual({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120 });
+    expect(saved.payload.populationExecutionFingerprint).toBe(plain.payload.populationExecutionFingerprint);
+    expect(saved.key).toBe(plain.key);
+    const onlySave = await runWith({ saveBatchRows: 5000 });
+    expect(onlySave.payload.limits).toEqual({ saveBatchRows: 5000 });
+    expect(onlySave.payload.populationExecutionFingerprint).toBe((await runWith({})).payload.populationExecutionFingerprint);
+  });
+
   it('rebuilds only the graph: no run is started and no source is read', async () => {
     const { models, runtime, service } = setup();
     const result = await service.reprojectGraphs('u-1', 'model-1');

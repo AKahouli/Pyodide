@@ -22,6 +22,9 @@ DEFAULT_RUN_LIMITS = {
     "maxArchiveMb": 1024,
     "parserMemoryMb": 512,
     "archiveTimeoutSeconds": 900,
+    # The "saving" step: rows written per batch, and seconds one batch may take.
+    "saveBatchRows": 2000,
+    "saveStatementSeconds": 10,
 }
 RUN_LIMIT_RANGES = {
     "maxRunSources": (1, 50000),
@@ -34,7 +37,16 @@ RUN_LIMIT_RANGES = {
     "maxArchiveMb": (10, 51200),
     "parserMemoryMb": (256, 16384),
     "archiveTimeoutSeconds": (60, 7200),
+    "saveBatchRows": (100, 50000),
+    "saveStatementSeconds": (5, 600),
 }
+# How a run is saved, not what it builds: never part of its fingerprint or its admission hash.
+SAVE_LIMIT_KEYS = ("saveBatchRows", "saveStatementSeconds")
+
+
+def identity_limits(limits: dict[str, Any] | None) -> dict[str, Any]:
+    """The limits that decide what a run builds (the core hashes the same ones)."""
+    return {key: value for key, value in (limits or {}).items() if key not in SAVE_LIMIT_KEYS}
 
 
 def run_limits(payload: Any) -> dict[str, int]:

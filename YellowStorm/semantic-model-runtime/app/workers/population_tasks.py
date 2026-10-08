@@ -28,7 +28,7 @@ from app.population.computed_fields import (apply_row_recipes, check_inputs, nor
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
-from app.population.run_limits import ai_pacing, run_limits, source_limits, source_record_cap
+from app.population.run_limits import ai_pacing, identity_limits, run_limits, source_limits, source_record_cap
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
@@ -98,9 +98,9 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
     if derivations:
         fingerprinted["derivations"] = derivations
     # Only the limits an admin set travel with the run (the core hashes the same object), so
-    # other runs keep their fingerprint.
-    if limits:
-        fingerprinted["limits"] = limits
+    # other runs keep their fingerprint. The save limits are left out: they only decide how it is written.
+    if identity_limits(limits):
+        fingerprinted["limits"] = identity_limits(limits)
     body = json.dumps(fingerprinted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
@@ -1395,10 +1395,11 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     activation swaps the serving binding, so a stored-but-uncompleted task
     leaves serving state untouched.
     """
-    from app.persistence.population_store import (create_data_revision, list_model_corrections,
+    from app.persistence.population_store import (SaveBudget, create_data_revision, list_model_corrections,
                                                   mirror_specification,
                                                   model_correction_sequence,
                                                   model_reset_generation, revision_id_for,
+                                                  save_connection,
                                                   set_revision_validation, store_assertions,
                                                   store_entities, store_relationships)
     from app.population.corrections import apply_corrections
@@ -1434,12 +1435,16 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                                source_observations=outcome.get("sourceObservations", []),
                                correction_sequence=correction_sequence,
                                coverage=coverage)
-    await store_entities(pool, model_id=model_id, revision_id=revision_id,
-                         entities=outcome.get("entities", []))
-    await store_assertions(pool, model_id=model_id, revision_id=revision_id,
-                           assertions=outcome.get("assertions", []))
-    await store_relationships(pool, model_id=model_id, revision_id=revision_id,
-                               relationships=outcome.get("relationships", []))
+    # The admin's batch size and time per batch; the pool's own 10 s limit would cut a large run short.
+    limits = run_limits(payload)
+    budget = SaveBudget(rows=limits["saveBatchRows"], seconds=limits["saveStatementSeconds"])
+    async with save_connection(pool, budget) as connection:
+        await store_entities(connection, model_id=model_id, revision_id=revision_id,
+                             entities=outcome.get("entities", []), budget=budget)
+        await store_assertions(connection, model_id=model_id, revision_id=revision_id,
+                               assertions=outcome.get("assertions", []), budget=budget)
+        await store_relationships(connection, model_id=model_id, revision_id=revision_id,
+                                  relationships=outcome.get("relationships", []), budget=budget)
     from app.persistence.index_observations import record_index_observation
     for observation in outcome.get("indexObservations", []):
         await record_index_observation(pool, observation)

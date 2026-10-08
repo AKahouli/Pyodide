@@ -677,6 +677,14 @@ export class RunLimitsDto {
   @ApiPropertyOptional({ minimum: 30, maximum: 3600, description: 'Time "Start over from scratch" may take to clear the data of a model, in seconds' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(30) @Max(3600)
   purgeTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 50000, description: 'Rows written per batch when a run saves its data' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(50000)
+  saveBatchRows?: number;
+
+  @ApiPropertyOptional({ minimum: 5, maximum: 600, description: 'Time one save batch may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
+  saveStatementSeconds?: number;
 }
 
 export class DerivedFieldMappingDto {

@@ -757,8 +757,13 @@ export class SemanticPopulationRefreshService {
     if (!sources.filter(inRun).length && !madeFromAnother) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
-    // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
-    const { purgeTimeoutSeconds: _purgeTime, ...limits } = await this.adminRunLimits();
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save limits
+    // travel too but stay out of the fingerprint: how a run is written never changes what it builds.
+    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, ...limits } = await this.adminRunLimits();
+    const saveLimits: Partial<RunLimits> = {
+      ...(saveBatchRows !== undefined ? { saveBatchRows } : {}),
+      ...(saveStatementSeconds !== undefined ? { saveStatementSeconds } : {}),
+    };
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
     if (sources.filter(inRun).length > maxRunSources) {
       throw new BadRequestException(
@@ -889,7 +894,7 @@ export class SemanticPopulationRefreshService {
       ...(derivations.length ? { derivations } : {}),
       ...(Object.keys(limits).length ? { limits } : {}),
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles };
   }
 
   /**
@@ -902,7 +907,7 @@ export class SemanticPopulationRefreshService {
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles }
       = await this.planRefresh(userId, modelId, input, 'run');
     // Forgotten only once the run is known to start, so a refused run keeps the readings.
     const rereadAt = input.rereadDocuments
@@ -951,7 +956,7 @@ export class SemanticPopulationRefreshService {
         relationBindings,
         ...(derivations.length ? { derivations } : {}),
         aiExtraction,
-        ...(Object.keys(limits).length ? { limits } : {}),
+        ...(Object.keys(limits).length || Object.keys(saveLimits).length ? { limits: { ...limits, ...saveLimits } } : {}),
       },
     }, idempotencyKey);
     return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };

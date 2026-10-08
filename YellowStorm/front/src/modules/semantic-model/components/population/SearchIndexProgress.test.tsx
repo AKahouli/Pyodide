@@ -20,6 +20,26 @@ describe('SearchIndexProgress', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
   });
 
+  it('shows how far the records are read while the cards are written', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'documents', expectedCount: 8400, loadedCount: 2100, indexedCount: 0, passageCount: 40 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.reading')).toBeInTheDocument();
+    const bar = screen.getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '2100');
+    expect(bar).toHaveAttribute('aria-valuemax', '8400');
+  });
+
+  it('shows the percent and the records indexed so far while embedding', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'embedding', expectedCount: 8400, loadedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 0, passageIndexedCount: 0 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.countsRecords')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.counts')).not.toBeInTheDocument();
+    expect(screen.getByText(/population\.progress\.index\.percent/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1200');
+  });
+
   it('waits while the index still belongs to the previous data', async () => {
     api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-1',
       index: { state: 'ready', expectedCount: 10, indexedCount: 10 } });

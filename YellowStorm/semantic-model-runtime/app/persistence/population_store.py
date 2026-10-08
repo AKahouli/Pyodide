@@ -11,9 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+import logging
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Any, AsyncIterator
 
+from app.persistence.partitions import (drop_generation_partitions, drop_revision_partitions,
+                                        ensure_revision_partitions, with_partition_locks)
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
+
+
+logger = logging.getLogger(__name__)
 
 
 def _json(value: Any) -> str:
@@ -73,26 +81,74 @@ async def create_data_revision(pool: Any, *, revision_id: str, model_id: str,
                                source_observations: list[dict[str, Any]],
                                correction_sequence: int,
                                coverage: dict[str, Any]) -> str:
-    row = await pool.fetchrow(
-        """
-        INSERT INTO semantic_population.data_revisions
-          (id, model_id, model_version_id, spec_hash, execution_fingerprint,
-           source_observations, correction_sequence, coverage)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
-        ON CONFLICT (id) DO NOTHING
-        RETURNING id
-        """,
-        revision_id, model_id, model_version_id, spec_hash, execution_fingerprint,
-        _json(source_observations), correction_sequence, _json(coverage),
-    )
+    """Create the revision and its partitions (migration 031) in one transaction. The partitions
+    come first: attaching them locks the revisions table, and that must not upgrade a row lock."""
+    async def create(connection: Any) -> Any:
+        await ensure_revision_partitions(connection, revision_id)
+        return await connection.fetchrow(
+            """
+            INSERT INTO semantic_population.data_revisions
+              (id, model_id, model_version_id, spec_hash, execution_fingerprint,
+               source_observations, correction_sequence, coverage)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            """,
+            revision_id, model_id, model_version_id, spec_hash, execution_fingerprint,
+            _json(source_observations), correction_sequence, _json(coverage),
+        )
+    row = await with_partition_locks(pool, create)
     return row["id"] if row else revision_id
 
 
+# Rows written per call: each call must finish within the worker pool's statement limit,
+# whatever the size of the run.
+WRITE_CHUNK_ROWS = 2000
+
+
+@dataclass(frozen=True)
+class SaveBudget:
+    """How the saving step writes: rows per call, and the seconds one call may take.
+
+    ``seconds`` of None leaves the connection's own limit in force."""
+    rows: int = WRITE_CHUNK_ROWS
+    seconds: int | None = None
+
+
+@asynccontextmanager
+async def save_connection(pool: Any, budget: SaveBudget) -> AsyncIterator[Any]:
+    """One connection whose server statement limit allows ``budget.seconds`` for the writes made on it.
+
+    The pool's limit is back when the connection is returned; a connection that cannot be
+    reset is closed instead of going back with the longer limit."""
+    async with pool.acquire() as connection:
+        if budget.seconds is not None:
+            await connection.execute(f"SET statement_timeout = '{int(budget.seconds)}s'")
+        try:
+            yield connection
+        finally:
+            if budget.seconds is not None:
+                try:
+                    await connection.execute("RESET statement_timeout")
+                except Exception:
+                    logger.warning("could not reset the statement timeout; closing the connection", exc_info=True)
+                    connection.terminate()
+
+
+async def _executemany_chunked(pool: Any, sql: str, rows: list[tuple[Any, ...]],
+                               budget: SaveBudget = SaveBudget()) -> None:
+    # The client-side limit is only passed when set: the pool's own applies otherwise.
+    options = {} if budget.seconds is None else {"timeout": budget.seconds}
+    for start in range(0, len(rows), budget.rows):
+        await pool.executemany(sql, rows[start:start + budget.rows], **options)
+
+
 async def store_entities(pool: Any, *, model_id: str, revision_id: str,
-                         entities: list[dict[str, Any]]) -> int:
+                         entities: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not entities:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.entities
           (id, model_id, data_revision_id, concept_id, namespace, identity_key,
@@ -105,15 +161,17 @@ async def store_entities(pool: Any, *, model_id: str, revision_id: str,
           _json(entity.get("identity", {})), entity.get("label", ""),
           _json(entity.get("attributes", {})), _json(entity.get("provenance", {})))
          for entity in entities],
+        budget,
     )
     return len(entities)
 
 
 async def store_entity_aliases(pool: Any, *, revision_id: str,
-                               aliases: list[dict[str, Any]]) -> int:
+                               aliases: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not aliases:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.entity_identities
           (entity_id, data_revision_id, alias_namespace, alias_key)
@@ -122,6 +180,7 @@ async def store_entity_aliases(pool: Any, *, revision_id: str,
         """,
         [(alias["entityId"], revision_id, alias["aliasNamespace"], alias["aliasKey"])
          for alias in aliases],
+        budget,
     )
     return len(aliases)
 
@@ -157,7 +216,7 @@ def split_assertions(assertions: list[dict[str, Any]]) -> tuple[list[dict[str, A
 
 
 async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
-                           assertions: list[dict[str, Any]]) -> int:
+                           assertions: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not assertions:
         return 0
     served, candidates = split_assertions(assertions)
@@ -166,7 +225,8 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
              _json(assertion.get("evidence", {})),
              (assertion.get("evidence", {}) or {}).get("mappingVersion"))
             for assertion in served]
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.assertions
           (model_id, data_revision_id, entity_id, attribute, value, origin,
@@ -175,9 +235,11 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
         ON CONFLICT (data_revision_id, entity_id, attribute) DO NOTHING
         """,
         rows,
+        budget,
     )
     if candidates:
-        await pool.executemany(
+        await _executemany_chunked(
+            pool,
             """
             INSERT INTO semantic_population.assertion_candidates
               (model_id, data_revision_id, entity_id, attribute, value, origin, evidence, mapping_version)
@@ -188,15 +250,17 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
               _json(assertion.get("evidence", {})),
               (assertion.get("evidence", {}) or {}).get("mappingVersion"))
              for assertion in candidates],
+            budget,
         )
     return len(rows)
 
 
 async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
-                              relationships: list[dict[str, Any]]) -> int:
+                              relationships: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not relationships:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.relationships
           (model_id, data_revision_id, relation_id, source_entity_id,
@@ -209,6 +273,7 @@ async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
           relationship["sourceEntityId"], relationship["targetEntityId"],
           relationship.get("matchingStrategy"))
          for relationship in relationships],
+        budget,
     )
     return len(relationships)
 
@@ -407,70 +472,84 @@ async def purge_model_data(pool: Any, model_id: str, *,
     (manual snapshots). Data served to another environment (published) stays
     until that environment moves on. Returns the projection graphs no longer
     referenced, for the caller to drop from the graph database. ``timeout_s`` is how long
-    the clearing may take (the admin's purge time)."""
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            # The API pool stops statements after a few seconds; clearing a large model
-            # cascades through every record, so the purge gets its own budget.
-            await connection.execute(f"SET LOCAL statement_timeout = '{int(timeout_s)}s'")
-            # One purge at a time per model, and none while a build runs.
-            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                                     f"purge:{model_id}")
-            running = await connection.fetchval(
-                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
-                model_id, list(_TERMINAL_JOB_STATES),
+    the clearing may take (the admin's purge time).
+
+    The rows of a revision and of its search generations live in partitions of their own
+    (migration 031): they are dropped with the partition, then the small revision and generation
+    rows go. Dropping takes brief exclusive locks on the partitioned tables, so a lock held by
+    another query is waited for a few seconds and the purge is tried again (``with_partition_locks``)."""
+    async def purge(connection: Any) -> dict[str, Any]:
+        # One purge at a time per model, and none while a build runs.
+        await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                 f"purge:{model_id}")
+        running = await connection.fetchval(
+            "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
+            model_id, list(_TERMINAL_JOB_STATES),
+        )
+        if running:
+            raise PopulationRunning(model_id)
+        await connection.execute(
+            "DELETE FROM semantic_runtime.active_bindings "
+            "WHERE model_id = $1 AND environment = 'draft'", model_id)
+        kept = {row["data_revision_id"] for row in await connection.fetch(
+            "SELECT data_revision_id FROM semantic_runtime.active_bindings "
+            "WHERE model_id = $1", model_id)}
+        doomed = await connection.fetch(
+            "SELECT id, projection_ref FROM semantic_population.data_revisions "
+            "WHERE model_id = $1 AND NOT (id = ANY($2::text[]))", model_id, sorted(kept))
+        doomed_ids = [row["id"] for row in doomed]
+        generations = await connection.fetch(
+            "SELECT index_id::text FROM semantic_graph_search.index_generations "
+            "WHERE data_revision_id = ANY($1::text[])", doomed_ids)
+        await drop_generation_partitions(connection, [row["index_id"] for row in generations],
+                                         timeout=timeout_s)
+        await drop_revision_partitions(connection, doomed_ids, timeout=timeout_s)
+        removed = await connection.fetch(
+            "DELETE FROM semantic_population.data_revisions "
+            "WHERE id = ANY($1::text[]) RETURNING id, projection_ref", doomed_ids, timeout=timeout_s)
+        review_items = await connection.fetchval(
+            "WITH gone AS (DELETE FROM semantic_population.review_items "
+            "WHERE model_id = $1 AND (data_revision_id IS NULL "
+            "OR NOT (data_revision_id = ANY($2::text[]))) RETURNING 1) "
+            "SELECT count(*) FROM gone", model_id, sorted(kept))
+        # Finished builds would otherwise be handed back as "already done".
+        jobs = await connection.fetchval(
+            "WITH gone AS (DELETE FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND job_type = 'population.run' AND state = ANY($2::text[]) RETURNING 1) "
+            "SELECT count(*) FROM gone", model_id, list(_TERMINAL_JOB_STATES))
+        readings = 0
+        if forget_document_reading:
+            readings = await connection.fetchval(
+                "WITH gone AS (DELETE FROM semantic_population.document_extractions "
+                "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
+                timeout=timeout_s)
+        generation = await connection.fetchval(
+            "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
+            "ON CONFLICT (model_id) DO UPDATE SET generation = "
+            "semantic_population.model_data_resets.generation + 1, reset_at = now() "
+            "RETURNING generation", model_id)
+        if emit_signal:
+            await enqueue_ui_signal(
+                connection, model_id=model_id, event_type="data-revision-changed",
+                resource="draft",
+                payload={"resource": "draft", "status": "cleared", "reason": "data_cleared"},
             )
-            if running:
-                raise PopulationRunning(model_id)
-            await connection.execute(
-                "DELETE FROM semantic_runtime.active_bindings "
-                "WHERE model_id = $1 AND environment = 'draft'", model_id)
-            kept = {row["data_revision_id"] for row in await connection.fetch(
-                "SELECT data_revision_id FROM semantic_runtime.active_bindings "
-                "WHERE model_id = $1", model_id)}
-            removed = await connection.fetch(
-                "DELETE FROM semantic_population.data_revisions "
-                "WHERE model_id = $1 AND NOT (id = ANY($2::text[])) "
-                "RETURNING id, projection_ref", model_id, sorted(kept), timeout=timeout_s)
-            review_items = await connection.fetchval(
-                "WITH gone AS (DELETE FROM semantic_population.review_items "
-                "WHERE model_id = $1 AND (data_revision_id IS NULL "
-                "OR NOT (data_revision_id = ANY($2::text[]))) RETURNING 1) "
-                "SELECT count(*) FROM gone", model_id, sorted(kept))
-            # Finished builds would otherwise be handed back as "already done".
-            jobs = await connection.fetchval(
-                "WITH gone AS (DELETE FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND job_type = 'population.run' AND state = ANY($2::text[]) RETURNING 1) "
-                "SELECT count(*) FROM gone", model_id, list(_TERMINAL_JOB_STATES))
-            readings = 0
-            if forget_document_reading:
-                readings = await connection.fetchval(
-                    "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
-                    timeout=timeout_s)
-            generation = await connection.fetchval(
-                "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
-                "ON CONFLICT (model_id) DO UPDATE SET generation = "
-                "semantic_population.model_data_resets.generation + 1, reset_at = now() "
-                "RETURNING generation", model_id)
-            if emit_signal:
-                await enqueue_ui_signal(
-                    connection, model_id=model_id, event_type="data-revision-changed",
-                    resource="draft",
-                    payload={"resource": "draft", "status": "cleared", "reason": "data_cleared"},
-                )
-    return {
-        "modelId": model_id,
-        "resetGeneration": int(generation),
-        "revisions": len(removed),
-        "keptRevisions": len(kept),
-        "reviewItems": int(review_items or 0),
-        "jobs": int(jobs or 0),
-        "documentReadings": int(readings or 0),
-        "projections": sorted({row["projection_ref"] for row in removed
-                               if row["projection_ref"]}),
-    }
+        return {
+            "modelId": model_id,
+            "resetGeneration": int(generation),
+            "revisions": len(removed),
+            "keptRevisions": len(kept),
+            "reviewItems": int(review_items or 0),
+            "jobs": int(jobs or 0),
+            "documentReadings": int(readings or 0),
+            "projections": sorted({row["projection_ref"] for row in removed
+                                   if row["projection_ref"]}),
+        }
+
+    # The API pool stops statements after a few seconds; clearing a large model
+    # gets its own budget.
+    return await with_partition_locks(pool, purge, statement_timeout_s=timeout_s)
 
 
 class ModelJobsRunning(Exception):
@@ -478,8 +557,9 @@ class ModelJobsRunning(Exception):
 
 
 # Every runtime table keyed by the model id, children before parents. Rows hanging off them
-# (entities -> identities, snapshots -> manual rows/links, generations -> entity documents,
-# jobs -> tasks/events/outbox) go with them by cascade.
+# (snapshots -> manual rows/links, jobs -> tasks/events/outbox) go with them by cascade. The big
+# per-revision tables are not here: their partitions are dropped first (``delete_model``), which
+# a ``DELETE ... WHERE model_id`` over every model's rows would only slow down.
 _MODEL_TABLES = (
     "semantic_jobs.ui_signal_outbox",
     "semantic_graph_search.embedding_cache",
@@ -487,10 +567,6 @@ _MODEL_TABLES = (
     "semantic_runtime.active_bindings",
     "semantic_population.review_items",
     "semantic_population.corrections",
-    "semantic_population.relationships",
-    "semantic_population.assertion_candidates",
-    "semantic_population.assertions",
-    "semantic_population.entities",
     "semantic_population.document_extractions",
     "semantic_population.data_revisions",
     "semantic_population.manual_snapshots",
@@ -507,31 +583,43 @@ async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
 
     Refuses while one of its jobs is not finished (the caller must wait or cancel it).
     Idempotent: a model with no rows deletes nothing. Returns the projection graphs
-    that were referenced, for the caller to drop from the graph database."""
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                                     f"purge:{model_id}")
-            running = await connection.fetchval(
-                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
-            if running:
-                raise ModelJobsRunning(model_id)
-            refs = await connection.fetch(
-                "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
-                "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
-                "UNION SELECT projection_ref FROM semantic_graph_search.index_generations "
-                "WHERE model_id = $1", model_id)
-            counts: dict[str, int] = {}
-            for table in _MODEL_TABLES:
-                # Two small tables key the model as a uuid; compare as text so any id is accepted.
-                column = "model_id::text" if table in _UUID_MODEL_TABLES else "model_id"
-                deleted = await connection.fetchval(
-                    f"WITH gone AS (DELETE FROM {table} WHERE {column} = $1 RETURNING 1) "
-                    "SELECT count(*) FROM gone", model_id)
-                counts[table] = int(deleted or 0)
-    return {"modelId": model_id, "deleted": counts,
-            "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
+    that were referenced, for the caller to drop from the graph database. ``deleted`` counts
+    the rows deleted per table, and for the partitioned tables the partitions dropped."""
+    async def delete(connection: Any) -> dict[str, Any]:
+        await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                 f"purge:{model_id}")
+        running = await connection.fetchval(
+            "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
+        if running:
+            raise ModelJobsRunning(model_id)
+        refs = await connection.fetch(
+            "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
+            "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
+            "UNION SELECT projection_ref FROM semantic_graph_search.index_generations "
+            "WHERE model_id = $1", model_id)
+        generations = await connection.fetch(
+            "SELECT index_id::text FROM semantic_graph_search.index_generations WHERE model_id = $1", model_id)
+        revisions = await connection.fetch(
+            "SELECT id FROM semantic_population.data_revisions WHERE model_id = $1", model_id)
+        counts: dict[str, int] = {}
+        for table, count in (await drop_generation_partitions(
+                connection, [row["index_id"] for row in generations])).items():
+            counts[f"semantic_graph_search.{table}"] = count
+        for table, count in (await drop_revision_partitions(
+                connection, [row["id"] for row in revisions])).items():
+            counts[f"semantic_population.{table}"] = count
+        for table in _MODEL_TABLES:
+            # Two small tables key the model as a uuid; compare as text so any id is accepted.
+            column = "model_id::text" if table in _UUID_MODEL_TABLES else "model_id"
+            deleted = await connection.fetchval(
+                f"WITH gone AS (DELETE FROM {table} WHERE {column} = $1 RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id)
+            counts[table] = int(deleted or 0)
+        return {"modelId": model_id, "deleted": counts,
+                "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
+
+    return await with_partition_locks(pool, delete)
 
 
 async def get_active_binding(pool: Any, model_id: str,

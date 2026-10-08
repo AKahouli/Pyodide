@@ -15,6 +15,7 @@ import json
 import re
 from typing import Any
 
+from app.persistence.partitions import ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning, _TERMINAL_JOB_STATES
 from app.population.compiler import canonical_spec_hash
 
@@ -148,6 +149,8 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
             included = [new for old, new in sequence_map.items() if old <= watermark]
             correction_sequence = max(included) if included else 0
 
+            # Its partitions first (migration 031): rows cannot be written for a revision without them.
+            await ensure_revision_partitions(connection, new_revision_id)
             await connection.execute(
                 "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash, "
                 "source_observations, correction_sequence, projection_ref, coverage, validation_state, "
