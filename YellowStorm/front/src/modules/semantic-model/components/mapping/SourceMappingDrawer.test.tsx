@@ -125,7 +125,8 @@ describe('Sheet mapping with the document field mapping', () => {
     api.updateDataConnection.mockResolvedValue({});
     renderDrawer({ ...target(), mimeType: 'application/zip' });
     const pane = await screen.findByRole('region', { name: 'mapping.pane.archiveTitle' });
-    expect(within(pane).getByRole('button', { expanded: false })).toHaveTextContent('mapping.pane.archiveOff · settings.runLimits.maxArchiveEmails 50,000 · settings.runLimits.maxArchiveMb 50');
+    // toLocaleString() groups with a comma or a (narrow) space per runner locale.
+    expect(within(pane).getByRole('button', { expanded: false })).toHaveTextContent(/mapping\.pane\.archiveOff · settings\.runLimits\.maxArchiveEmails 50[,\s]000 · settings\.runLimits\.maxArchiveMb 50/);
     fireEvent.click(within(pane).getByRole('button', { expanded: false }));
     fireEvent.click(await within(pane).findByRole('checkbox', { name: 'dataSources.dialog.indexLabel' }));
     await waitFor(() => expect(api.updateDataConnection).toHaveBeenCalledWith('model-1', 'c-1', { indexInWorkspace: true }));
@@ -247,7 +248,8 @@ describe('Sheet mapping with the document field mapping', () => {
     expect(within(fieldRow('ID')).getByRole('combobox', { name: 'mapping.strategyFor' })).toHaveTextContent('mapping.strategy.rules_then_ai');
     // What a run costs in AI is in sight beside Save.
     expect(screen.getByText('derived.aiFooter')).toBeInTheDocument();
-    // AI is slow and costly: the rows are only read with it on request.
+    // AI is slow and costly: turning it on does not read the rows by itself.
+    api.previewSheetFields.mockClear();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
     expect(api.previewSheetFields).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByRole('group', { name: 'mapping.readAll.label' })).getByRole('button', { name: /mapping\.cell\.readAllDirect/ }));
