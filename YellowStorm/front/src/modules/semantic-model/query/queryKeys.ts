@@ -11,6 +11,7 @@ export const semanticModelQueryKeys = {
   sourceAssetProfile: (id: string, documentId: string, sheetName?: string) => ['semantic-models','source-asset-profile',id,documentId,sheetName??''] as const,
   sourceMappings: (id: string) => ['semantic-models','source-mappings',id] as const,
   mappingPresets: (id: string, conceptId: string) => ['semantic-models','mapping-presets',id,conceptId] as const,
+  dataConnections: (id: string) => ['semantic-models','data-connections',id] as const,
   lastUsedMapping: (id: string, conceptId: string) => ['semantic-models','last-used-mapping',id,conceptId] as const,
   derivedSources: (id: string) => ['semantic-models','derived-sources',id] as const,
   relationRules: (id: string) => ['semantic-models','relation-rules',id] as const,

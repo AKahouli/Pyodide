@@ -11,6 +11,8 @@ export interface SourceMappingTarget {
   assetKind: 'excel_sheet' | 'csv' | 'document';
   mimeType?: string;
   path?: string;
+  /** The table to open with, when a table of a connection was picked rather than its file. */
+  sheetName?: string;
   conceptId?: string;
   mapping?: ConceptSourceMapping;
   bulkEdit?: boolean;
@@ -56,6 +58,7 @@ export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResou
     assetKind: resource.structured ? (resource.mimeType?.includes('csv') ? 'csv' : 'excel_sheet') : 'document',
     mimeType: resource.mimeType,
     path: resource.path,
+    sheetName: resource.sheetName,
     conceptId,
   };
 }

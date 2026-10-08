@@ -1,3 +1,4 @@
+import { isMailArchive } from './data-sources';
 import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, SemanticGraph } from '../types';
 
 /**
@@ -6,7 +7,7 @@ import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, SemanticGr
  */
 export interface DesignerSource {
   id: string;
-  kind: 'spreadsheet' | 'documents' | 'workspace' | 'typed';
+  kind: 'mail' | 'spreadsheet' | 'documents' | 'workspace' | 'typed';
   label: string;
   /** Rows, sheets or record count, whatever best describes what the box holds. */
   detail: string;
@@ -93,7 +94,7 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
     const wholeWorkspace = first.scope === 'workspace';
     sources.push({
       id,
-      kind: wholeWorkspace ? 'workspace' : structured ? 'spreadsheet' : 'documents',
+      kind: wholeWorkspace ? 'workspace' : structured ? (isMailArchive(first.mimeType) ? 'mail' : 'spreadsheet') : 'documents',
       label: first.documentName || first.documentId,
       // A workspace box says how many files it covers: the canvas turns the number into words.
       detail: wholeWorkspace ? String(first.fileCount ?? 0) : structured ? first.sheetName : '',

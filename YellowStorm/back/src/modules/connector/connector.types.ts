@@ -32,6 +32,8 @@ export enum ConnectorCitationMode {
   SOURCE_ONLY = 'source_only',
   TEXT_FRAGMENT = 'text_fragment',
   DOCUMENT_EVIDENCE = 'document_evidence',
+  /** The result lists records of a semantic model (citationSources): each is numbered and opens as a record. */
+  RECORD_EVIDENCE = 'record_evidence',
 }
 
 export enum ConnectorAuthType {

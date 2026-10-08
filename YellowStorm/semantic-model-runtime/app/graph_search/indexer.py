@@ -25,7 +25,7 @@ from app.population.age_projection import is_live_projection_ref
 from app.population.compiler import compile_specification
 from app.workers.celery_app import SEARCH_QUEUES
 
-from .documents import build_document
+from .documents import MAX_LINKED_NAMES, build_document
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, profile_from_env, vector_literal
 from .settings import IndexSettings, ValidationError, index_fingerprint
 
@@ -82,12 +82,12 @@ async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, 
         raise IndexUnavailable("embedding_not_configured")
     settings = await settings_for_revision(pool, revision_id, profile, settings)
     fingerprint = index_fingerprint(profile.fingerprint, settings)
-    requested = await _request(pool, admit, revision_id, settings, fingerprint)
+    requested = await _request(pool, admit, revision_id, settings, fingerprint, profile.vector_fingerprint)
     return {**requested, "fingerprint": fingerprint}
 
 
 async def _request(pool: Any, admit: Callable[..., Awaitable[Any]] | None, revision_id: str,
-                   settings: IndexSettings, fingerprint: str) -> dict[str, Any]:
+                   settings: IndexSettings, fingerprint: str, vector_fingerprint: str) -> dict[str, Any]:
     generation = await search_store.get_generation(pool, revision_id, fingerprint)
     if admit is None or (generation is not None and generation["state"] == "ready"):
         return {"generation": generation, "jobId": generation["job_id"] if generation else None}
@@ -100,7 +100,8 @@ async def _request(pool: Any, admit: Callable[..., Awaitable[Any]] | None, revis
         generation = await search_store.create_generation(
             pool, model_id=revision["model_id"], data_revision_id=revision_id,
             projection_ref=revision["projection_ref"], spec_hash=revision["spec_hash"],
-            fingerprint=fingerprint, index_settings=None if settings.is_default() else settings.canonical())
+            fingerprint=fingerprint, index_settings=None if settings.is_default() else settings.canonical(),
+            vector_fingerprint=vector_fingerprint)
     for _ in range(3):
         if generation["state"] == "failed":
             generation = await search_store.retry_generation(pool, generation["index_id"]) \
@@ -167,7 +168,13 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
     # A page of records at a time: a large mailbox gives hundreds of thousands of them.
     loaded = passages = 0
     async for entities in population_store.iter_revision_entities(pool, revision_id, ENTITY_PAGE_SIZE):
-        documents = [build_document(entity, concepts.get(entity["conceptId"]), settings) for entity in entities]
+        # The names of their linked records go on their cards (only those read from no other workspace).
+        linked = await search_store.linked_names(pool, revision_id, [entity["entityId"] for entity in entities],
+                                                 MAX_LINKED_NAMES)
+        documents = [build_document(entity, concepts.get(entity["conceptId"]), settings,
+                                    links=[{**link, "concept": (concepts.get(link["conceptId"]) or {}).get("label")}
+                                           for link in linked.get(entity["entityId"], [])])
+                     for entity in entities]
         await search_store.insert_documents(pool, index_id, documents)
         passages += await search_store.insert_passages(pool, index_id, documents)
         loaded += len(entities)
@@ -179,8 +186,8 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         await search_store.fail_generation(pool, index_id, "revision_changed", owner)
         return {"state": "failed", "errorCode": "revision_changed"}
     model_id = generation["model_id"]
-    reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint)
-    passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint,
+    reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.cache_fingerprints)
+    passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.cache_fingerprints,
                                                          kind="passages")
     progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
                 "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
@@ -197,13 +204,13 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
             vectors = await embedder(profile, [row["search_text"] for row in batch])
             if kind == "documents":
                 await search_store.store_vectors(
-                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.vector_fingerprint,
                     vectors=[(row["entity_id"], row["content_hash"], vector_literal(vector))
                              for row, vector in zip(batch, vectors)])
                 progress["embedded"] += len(batch)
             else:
                 await search_store.store_passage_vectors(
-                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.vector_fingerprint,
                     vectors=[(row["entity_id"], row["ordinal"], row["content_hash"], vector_literal(vector))
                              for row, vector in zip(batch, vectors)])
                 progress["passagesEmbedded"] += len(batch)

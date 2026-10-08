@@ -38,6 +38,12 @@ describe('run limits', () => {
       .toEqual({ maxRecordsPerRun: 50000 });
   });
 
+  it('keeps the purge time only between 30 s and one hour', () => {
+    expect(pickRunLimits({ purgeTimeoutSeconds: 900 })).toEqual({ purgeTimeoutSeconds: 900 });
+    expect(pickRunLimits({ purgeTimeoutSeconds: 10 })).toEqual({});
+    expect(pickRunLimits({ purgeTimeoutSeconds: 4000 })).toEqual({});
+  });
+
   it('saves what the admin set and fills the rest with the built-in limits', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [] })
@@ -47,7 +53,7 @@ describe('run limits', () => {
     expect(database.query.mock.calls[0][1]).toEqual(['{"maxRecordsPerRun":50000}', 'admin-1']);
     expect(saved).toEqual({ configured: { maxRecordsPerRun: 50000 }, runLimits: {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
-      maxAiRowsPerSource: 500, maxAiParallelCalls: 8, maxArchiveEmails: 50000, maxArchiveMb: 1024,
-      parserMemoryMb: 512, archiveTimeoutSeconds: 900 } });
+      maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
+      parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300 } });
   });
 });

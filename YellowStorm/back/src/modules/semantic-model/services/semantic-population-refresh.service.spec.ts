@@ -41,6 +41,7 @@ const setup = (
   records: unknown[] = [],
   recordRelations: unknown[] = [],
   labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
+  archives: Array<string | { documentId: string; indexInWorkspace?: boolean; limits?: unknown }> = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -60,6 +61,7 @@ const setup = (
         }
         return { rows: mappings };
       }
+      if (sql.includes('FROM semantic_model.data_connections')) return { rows: archives.map((archive) => typeof archive === 'string' ? { documentId: archive, indexInWorkspace: true, limits: null } : archive) };
       if (sql.includes('FROM semantic_model.records')) return { rows: records };
       if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
@@ -154,6 +156,28 @@ describe('SemanticPopulationRefreshService', () => {
     expect(models.requireRole).toHaveBeenCalled();
   });
 
+  it('asks the runtime to index an archive in its workspace only when its data source says so', async () => {
+    const sent = async (indexed: string[]) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, indexed);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent([])).not.toHaveProperty('indexInWorkspace');
+    expect(await sent(['d-1'])).toMatchObject({ assetId: 'd-1', indexInWorkspace: true });
+  });
+
+  it("sends an archive's own reading limits, read time and memory lowered to the built-in ceiling", async () => {
+    const sent = async (archive: { documentId: string; limits?: unknown }) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, [archive]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent({ documentId: 'd-1', limits: {} })).not.toHaveProperty('archiveLimits');
+    const source = await sent({ documentId: 'd-1', limits: { maxArchiveEmails: 200, maxArchiveMb: 5, archiveTimeoutSeconds: 5000, parserMemoryMb: 300 } });
+    expect(source).not.toHaveProperty('indexInWorkspace');
+    expect(source.archiveLimits).toEqual({ maxArchiveEmails: 200, archiveTimeoutSeconds: 900, parserMemoryMb: 300 });
+  });
+
   it('sends business synonyms in the specification only when there are some', async () => {
     const { database, runtime, service } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
@@ -213,6 +237,33 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.summary.unresolvedRelations).toBe(3);
   });
 
+  it("sends a sheet mapping's own record limit, never above the built-in records per source", async () => {
+    const sent = async (aiSettings: unknown) => {
+      const { runtime, service } = setup([MAPPING({ aiSettings })]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0];
+    };
+    expect(await sent(null)).not.toHaveProperty('readLimits');
+    expect(await sent({ maxRecords: 50 })).toMatchObject({ readLimits: { maxRecords: 50 } });
+    expect((await sent({ maxRecords: 50 })).options).not.toHaveProperty('aiSettings');
+    expect(await sent({ maxRecords: 90000 })).toMatchObject({ readLimits: { maxRecords: 5000 } });
+  });
+
+  it('reads only as many files of a workspace mapping as it chose, always the same ones', async () => {
+    const file = (id: string) => ({ id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
+      contentHash: `sha256:${id}`, updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 10, createdBy: 'u-9', indexingStatus: 'ready' });
+    const workspace = MAPPING({
+      scope: 'workspace', folderId: 'folder-1', documentId: 'workspace:ws-1:folder-1', sheetName: '', assetKind: 'document',
+      validatedSourceVersion: null, aiSettings: { maxFiles: 2 },
+      fieldMappings: [{ sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' }, { sourceField: 'Customer Id', targetAttribute: 'customer_id', mode: 'extract' }],
+    });
+    const { documents, runtime, service } = setup([workspace]);
+    (documents as any).listAllInWorkspace = jest.fn(async () => [file('c'), file('a'), file('b'), { id: 'folder-1', isFolder: true, mimeType: '', parentId: null }]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as any)[0].payload;
+    expect(payload.sources.map((source: any) => source.source.assetId)).toEqual(['a', 'b']);
+  });
+
   it('reads every readable file of a workspace mapping, and sees a new file as a change', async () => {
     const file = (id: string, overrides: Record<string, unknown> = {}) => ({
       id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
@@ -243,6 +294,9 @@ describe('SemanticPopulationRefreshService', () => {
     expect(first.specification.sourceScope).toEqual([{ workspaceId: 'ws-1', assetId: 'workspace:ws-1:folder-1' }]);
     expect(accepted).toMatchObject({ sourceCount: 2, waitingFiles: 1 });
     expect(documents.findById).not.toHaveBeenCalled();
+    // Freshness says the data covers the indexed files only while one is still waiting.
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: first.populationExecutionFingerprint });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current', waitingFiles: 1 });
 
     listing.push(file('c'));
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
@@ -299,10 +353,16 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true });
     expect(runtime.forgetDocumentReadings).toHaveBeenCalledTimes(1);
-    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', undefined);
     expect(runtime.purgeModelData).not.toHaveBeenCalled();
     const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
     expect(keys[0]).not.toEqual(keys[1]);
+  });
+
+  it('forgets only the readings of the refreshed concept when its refresh calls the AI again', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', 'c-customer');
   });
 
   it('keeps the readings when the run is refused', async () => {
@@ -314,11 +374,24 @@ describe('SemanticPopulationRefreshService', () => {
   it('clears the built data, then builds again from scratch', async () => {
     const { runtime, service } = setup();
     const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
-    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true, timeoutSeconds: 300 });
     expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
     const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
     expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it("clears with the admin's purge time, which never travels with the run", async () => {
+    const built = setup();
+    const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured: { purgeTimeoutSeconds: 900, maxRunSources: 40 } })) };
+    const service = new SemanticPopulationRefreshService(
+      built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+      built.aiExtractionAgent as any, extractionSettings as any,
+    );
+    await service.rebuildFromScratch('u-1', 'model-1');
+    expect(built.runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: false, timeoutSeconds: 900 });
+    const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][];
+    expect(calls[0][0].payload.limits).toEqual({ maxRunSources: 40 });
   });
 
   it('rebuilds only the graph: no run is started and no source is read', async () => {
@@ -1005,5 +1078,17 @@ describe('SemanticPopulationRefreshService', () => {
         correction: { sequence: 4, correctedByYou: true, originalValue: 'Acme' },
       });
     });
+  });
+  // The runtime hashes the same body (tests/test_population_fingerprint.py holds the same constant).
+  it('hashes the run with the admin limits as the runtime does', () => {
+    const body = {
+      specHash: 'h',
+      sources: [{ conceptId: 'c1', sourceKind: 'manual', source: { k: 1 }, mappingVersion: 'v1', columnMapping: null,
+        constantMapping: null, fieldMappings: null, options: {}, labelField: null }],
+      relationBindings: [], aiExtraction: null, populationEngineVersion: 'r1-mvp-8',
+      limits: { maxRunSources: 6000, maxRecordsPerRun: 20000 },
+    };
+    expect(new ModelSpecificationService().hashCanonical(body))
+      .toBe('sha256:ab3abd75d44f5015cbd71b617e7662c7f81db605e751cb0a2bf9575f0fdd1207');
   });
 });

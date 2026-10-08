@@ -503,7 +503,23 @@ class TestAgentRunner:
 
         # Mock Runner class
         async def mock_run_async(*args, **kwargs):
-            yield thought_event
+            for index, thought in enumerate(hidden_thoughts):
+                delta = MagicMock()
+                delta.content.parts = [thought]
+                delta.partial = True
+                delta.is_final_response.return_value = False
+                yield delta
+                if index == 1:
+                    unfinished_call = MagicMock()
+                    unfinished_call.content.parts = [function_call]
+                    unfinished_call.partial = True
+                    unfinished_call.is_final_response.return_value = False
+                    yield unfinished_call
+            snapshot = MagicMock()
+            snapshot.content.parts = [types.Part(text="Private chain of thought", thought=True)]
+            snapshot.partial = False
+            snapshot.is_final_response.return_value = False
+            yield snapshot
             yield function_event
             if narration_partial:
                 completed_call = MagicMock()

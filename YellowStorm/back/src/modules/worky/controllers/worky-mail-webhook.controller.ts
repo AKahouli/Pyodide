@@ -2,9 +2,14 @@ import { Controller, Get, HttpStatus, Post, Query, Req, Res } from '@nestjs/comm
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
+import { RateLimit } from '@modules/rate-limiter';
 import { Request, Response } from 'express';
 import { LoggerService } from '@modules/logger';
 import { WorkyMailWebhookService } from '../services/worky-mail-webhook.service';
+
+// Shared ceiling with the playbook mail webhook: Graph posts from a small set
+// of shared egress IPs, so stay far above normal traffic while bounding abuse.
+const MAIL_WEBHOOK_RATE = { limit: 600, windowMs: 60_000, keyPrefix: 'worky:mail:webhook' };
 
 @ApiExcludeController()
 @SkipResponseWrap()
@@ -28,6 +33,7 @@ export class WorkyMailWebhookController {
 
   @Post('webhook')
   @Public()
+  @RateLimit(MAIL_WEBHOOK_RATE)
   async receiveWebhook(
     @Query('validationToken') validationToken: string | undefined,
     @Req() req: Request,

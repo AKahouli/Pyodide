@@ -17,6 +17,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Public } from '../auth/decorators/public.decorator';
 import { RateLimit } from '../rate-limiter';
+import { timingSafeStringEquals } from '@common/utils';
 import { IndexingService } from './indexing.service';
 import { LoggerService } from '../logger';
 
@@ -75,8 +76,8 @@ export class IndexingWebhookController {
     @Headers('x-api-key') apiKey: string,
     @Body() body: Record<string, unknown>,
   ) {
-    // Validate API key
-    if (!this.apiKey || apiKey !== this.apiKey) {
+    // Validate API key (constant-time; fail closed when unconfigured)
+    if (!this.apiKey || !timingSafeStringEquals(apiKey, this.apiKey)) {
       this.logger.warn('Webhook called with invalid API key');
       throw new UnauthorizedException('Invalid API key');
     }

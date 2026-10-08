@@ -572,12 +572,29 @@ message WebSourceData {
     string evidence_origin = 8;
 }
 
+// A record of a semantic model an answer cites; the chat reads it again (values, origins) when opened.
+message RecordSourceData {
+    string type = 1;             // "record"
+    string reference = 2;        // Citation reference (e.g., "[1]")
+    string model_id = 3;
+    string model_name = 4;
+    string data = 5;             // "published" | "draft"
+    string data_revision_id = 6; // The data the record was read from
+    string entity_id = 7;
+    string concept = 8;          // Concept label (e.g., "Contract")
+    string name = 9;             // Record name
+    map<string, string> key_fields = 10;
+    string field = 11;           // Field the quote comes from, if any
+    string quote = 12;           // Passage or snippet the answer relied on
+}
+
 message CitationComponent {
     string parent_id = 1;        // ID of the parent text component
     oneof source_data {
         TextSourceData text_source = 2;
         ImageSourceData image_source = 3;
         WebSourceData web_source = 4;
+        RecordSourceData record_source = 5;
     }
 }
 

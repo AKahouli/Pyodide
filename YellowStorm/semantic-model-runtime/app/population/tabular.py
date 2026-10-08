@@ -233,8 +233,11 @@ def _match_side(entity: dict[str, Any], field: str) -> tuple[Any, bool]:
 
 def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str, Any]],
                         target_entities: list[dict[str, Any]], reference_field: str,
-                        target_field: str) -> dict[str, Any]:
+                        target_field: str, budget: int | None = None) -> dict[str, Any]:
     """Establish relationships through an approved reference role (P5.9).
+
+    ``budget`` bounds the links built: the matching stops once that many are made, so a key
+    many records share never builds millions of links the caller would cut afterwards.
 
     The fields come from an approved relation rule in the population payload.
     Multiple matching targets are valid only for to-many cardinalities; an
@@ -259,6 +262,8 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
     relationships: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
     for source in source_entities:
+        if budget is not None and len(relationships) >= budget:
+            break
         raw, from_identity = _match_side(source, reference_field)
         reference = match_value(raw, strategy)
         if reference is None:
@@ -283,9 +288,10 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
                          "sourceEntityId": source["entityId"],
                          "detail": f"{len(candidates)} targets share the normalized reference"})
         else:
+            room = None if budget is None else budget - len(relationships)
             relationships.extend({"relationId": compiled["relationId"],
                                   "sourceEntityId": source["entityId"],
                                   "targetEntityId": candidate["entityId"],
                                   "matchingStrategy": strategy}
-                                 for candidate in candidates)
+                                 for candidate in (candidates if room is None else candidates[:room]))
     return {"relationships": relationships, "gaps": gaps}

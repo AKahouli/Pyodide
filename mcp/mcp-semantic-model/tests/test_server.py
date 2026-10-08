@@ -52,6 +52,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
         "run_data_update", "get_run_status", "stop_data_update", "publish_semantic_model", "suggest_sources",
         "find_records", "get_related_records", "describe_model", "query_records", "delete_semantic_model", "clone_semantic_model",
+        "traverse_records", "connect_records",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -350,6 +351,74 @@ async def test_query_records_refuses_bad_input_without_calling_the_backend(monke
 
 
 @pytest.mark.asyncio
+async def test_traverse_records_sends_the_walk_step_by_step(monkeypatch, actor):
+    backend = Recorder({"status": "ok", "total": 4, "groups": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("traverse_records", {
+            "model_id": "Mail",
+            "start": '{"concept": "Correspondant", "filters": [{"field": "domaine", "op": "eq", "value": "acme.com"}]}',
+            "steps": ["désigné par", {"relation": "participe à"},
+                      {"relation": "énonce", "filters": [{"field": "texte", "op": "contains", "value": "pénalité"}]}],
+            "group_by": [{"field": "name", "step": 0}], "limit": 0,
+        }))
+        await client.call_tool("traverse_records", {
+            "model_id": "Mail", "start": {"concept": "Correspondant", "record_ids": ["corr:dan"]},
+            "steps": [{"relation": "rend compte à", "hops": "1..3", "direction": "outgoing"}], "data": "draft"})
+    assert result["ok"] is True
+    assert backend.calls == [
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-traverse", "user-1", {
+            "start": {"concept": "Correspondant", "filters": [{"field": "domaine", "op": "eq", "value": "acme.com"}], "match": "all"},
+            "steps": [{"relation": "désigné par"}, {"relation": "participe à"},
+                      {"relation": "énonce", "filters": [{"field": "texte", "op": "contains", "value": "pénalité"}], "match": "all"}],
+            "groupBy": [{"field": "name", "step": 0}], "limit": 0, "offset": 0, "data": "published",
+        }),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-traverse", "user-1", {
+            "start": {"concept": "Correspondant", "recordIds": ["corr:dan"]},
+            "steps": [{"relation": "rend compte à", "direction": "outgoing", "minHops": 1, "maxHops": 3}],
+            "limit": 50, "offset": 0, "data": "draft",
+        }),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_walk_tools_refuse_bad_input_without_calling_the_backend(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        walks = [result_dict(await client.call_tool("traverse_records", {"model_id": "m", **arguments})) for arguments in (
+            {"start": {"concept": " "}, "steps": ["a"]},
+            {"start": "not json", "steps": ["a"]},
+            {"start": {"concept": "X"}, "steps": []},
+            {"start": {"concept": "X"}, "steps": ["a", "b", "c", "d", "e", "f", "g"]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "hops": "3..1"}]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "hops": 5}]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "direction": "both"}]},
+            {"start": {"concept": "X"}, "steps": ["a"], "group_by": [{"field": "name", "step": -1}]},
+        )]
+        links = [result_dict(await client.call_tool("connect_records", {"model_id": "m", **arguments})) for arguments in (
+            {"from_record_id": " ", "to_record_id": "b"},
+            {"from_record_id": "a", "to_record_id": "b", "max_links": 7},
+            {"from_record_id": "a", "to_record_id": "b", "max_paths": 0},
+        )]
+    assert all(outcome["ok"] is False and outcome["error"]["category"] == "validation" for outcome in walks + links)
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_connect_records_asks_for_the_shortest_chains(monkeypatch, actor):
+    backend = Recorder({"status": "connected", "links": 2, "paths": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("connect_records", {
+            "model_id": "Mail", "from_record_id": "corr:alice", "to_record_id": "msg:3", "relations": '["désigne"]'}))
+    assert result["ok"] is True
+    assert backend.calls == [("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-connect", "user-1", {
+        "fromRecordId": "corr:alice", "toRecordId": "msg:3", "maxLinks": 4, "maxPaths": 5, "relations": ["désigne"],
+        "data": "published"})]
+
+
+@pytest.mark.asyncio
 async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
@@ -359,6 +428,10 @@ async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     assert "invalid_query" in query and "appliedQuery" in query and "unparsable" in query and "nextOffset" in query
     assert "first" in describe and "type" in describe and "inData" in describe
     assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
+    assert "traverse_records" in server.INSTRUCTIONS and "connect_records" in server.INSTRUCTIONS
+    walk = tools["traverse_records"].description
+    assert "step" in walk and "hops" in walk and "startRecords" in walk and "complete" in walk
+    assert "search_cut" in tools["connect_records"].description
     assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS
 
 

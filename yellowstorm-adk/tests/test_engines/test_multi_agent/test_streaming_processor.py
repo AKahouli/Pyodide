@@ -193,6 +193,7 @@ class TestStreamingEventProcessor:
       _usage_event("The", thought=True, partial=True),
       _usage_event(" user", thought=True, partial=True),
       _usage_event(" just", thought=True, partial=True),
+      _usage_event(None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "docs"}), partial=True),
       _usage_event(" said", thought=True, partial=True),
       _usage_event("Visible answer", partial=True),
       _usage_event("The user just said", thought=True, partial=False),

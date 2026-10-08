@@ -1,3 +1,4 @@
+import { buildRecordCitation, citationText } from './utils/message-citations';
 import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
 import type { CitationBBox, CitationData, MessageContentPart } from '@/components/ai-elements/ai-message-content';
@@ -176,6 +177,16 @@ function asCitationBBox(value: unknown): CitationBBox | undefined {
 }
 
 function buildCitationData(data: Record<string, unknown>): CitationData {
+  const record = buildRecordCitation(data);
+  if (record) {
+    return {
+      parentId: (data.parentId as string) || (data.parent_id as string) || '',
+      sourceType: 'record', sourceKind: 'record', source: record.name || record.entityId, externalId: '', page: '',
+      pageContent: record.quote ?? '', workspaceId: '',
+      reference: citationText(data.reference) || citationText((data.record_source as Record<string, unknown> | undefined)?.reference) || undefined,
+      record,
+    };
+  }
   const textSource = data.text_source as Record<string, unknown> | undefined;
   const imageSource = data.image_source as Record<string, unknown> | undefined;
   const webSource = data.web_source as Record<string, unknown> | undefined;

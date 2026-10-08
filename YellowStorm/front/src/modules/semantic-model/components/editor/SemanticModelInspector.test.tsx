@@ -19,13 +19,27 @@ const graph: SemanticGraph = {
   nodes:[{id:'customer',key:'customer',label:'Customer',description:'Customer account',category:'business_object',recordPolicy:'none',systemKey:null,aliases:[],attributes:[],position:{x:120,y:120}}],
 };
 const knowledge={bindings:[],workspaceLinks:[],countsByNode:{},draggedResource:null,isBusy:false,setDraggedResource:vi.fn(),hasBinding:vi.fn(),link:vi.fn(),remove:vi.fn()} as unknown as KnowledgeLinkingController;
-const renderInspector=(canEdit:boolean)=>render(
+const folded=()=>[...document.querySelectorAll<HTMLButtonElement>('button[aria-controls^="settings-pane-concept-"][aria-expanded="false"]')];
+/** The details with every part opened, as a person reading them all; folding is tried on its own. */
+const renderInspector=(canEdit:boolean,{open=true}:{open?:boolean}={})=>{
+  const view=render(
   <QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>
     <SemanticModelInspector modelId="model" canEdit={canEdit} knowledge={knowledge} knowledgeOpen={false} knowledgeTargetId={null} onKnowledgeClose={vi.fn()}/>
   </QueryClientProvider>);
+  if(open) folded().forEach((button)=>fireEvent.click(button));
+  return view;
+};
 
 describe('SemanticModelInspector', () => {
   beforeEach(() => { hookState.mappings=[];hookState.rules=[];hookState.labels=[];saveLabelField.mockClear();saveIdentityRule.mockClear();useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
+
+  it('opens a concept with every part folded, each title saying what it holds', () => {
+    renderInspector(true,{open:false});
+    expect(folded().map((button)=>button.querySelector('h3')?.textContent)).toEqual(['workspaceUi.meaning','attributes.title','identity.title','workspaceUi.relationships','mapping.sourcesTitle','workspaceUi.advanced']);
+    expect(screen.queryByRole('textbox',{name:'aliases.placeholder'})).not.toBeInTheDocument();
+    fireEvent.click(folded()[0]);
+    expect(screen.getByRole('textbox',{name:'aliases.placeholder'})).toBeInTheDocument();
+  });
 
   it('renders read-only details without mutation-shaped controls', () => {
     renderInspector(false);

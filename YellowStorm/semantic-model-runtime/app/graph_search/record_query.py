@@ -15,11 +15,18 @@ is left out of that comparison and counted in ``unparsable``.
 
 Records hidden from the actor (read from a workspace they cannot open) are
 excluded in SQL, before counting and paging, so totals are right.
+
+Links are followed over the stored accepted links, several in a row: a filter or a
+group may name a field of a record reached through a chain of relationships
+(``sent by.works for.country``), and ``compile_query`` with a ``traversal`` answers a
+walk (start records, then steps) with the records it reaches. Every record on the
+way must be readable, so a hidden record never links two others.
 """
 
 from __future__ import annotations
 
 import calendar
+import itertools
 import json
 import re
 from dataclasses import dataclass, field
@@ -43,6 +50,11 @@ TYPES = ("text", "number", "boolean", "date", "enum")
 CASTS = ("text", "number", "boolean", "date")
 
 MAX_FILTERS = 20
+MAX_HOPS = 4  # relationships in a row in a field or link path
+MAX_STEPS = 6  # steps of a walk
+MAX_REPEAT = 4  # times a step may follow a relationship between records of one concept
+MAX_WALK_LINKS = 8  # links a walk may follow in all
+MAX_WALK_SHAPES = 32  # fixed chains a walk with repeated steps unfolds into
 MAX_GROUP_BY = 2
 MAX_AGGREGATES = 10
 MAX_ORDER_BY = 3
@@ -102,6 +114,30 @@ class Relation:
 
 
 @dataclass
+class Hop:
+    """One step of a walk over the stored links: the relationship, read from the records
+    reached so far; the condition on the records it reaches (on the walk's alias for that
+    step); how many times it is followed in a row (``repeat``: from, to), for a
+    relationship between records of one concept such as "reports to"."""
+    relation: Relation
+    condition: str | None = None
+    repeat: tuple[int, int] = (1, 1)
+
+
+@dataclass
+class Walk:
+    """Hops from a record, with their own aliases (``prefix``) so walks can nest."""
+    prefix: str
+    hops: list[Hop]
+    # Leave out a walk that comes back to the record it started from (customers sharing a contract).
+    distinct_ends: bool = False
+
+    def alias(self, index: int) -> str:
+        """The alias of the record reached by hop ``index`` (1-based)."""
+        return f"{self.prefix}{index}"
+
+
+@dataclass
 class Plan:
     """A checked query: SQL pieces and their parameters, plus what to echo back."""
     concept: Concept
@@ -119,6 +155,8 @@ class Plan:
     offset: int = 0
     # Each filter and link alone, to explain an empty result (``diagnose``).
     checks: list[dict[str, Any]] = field(default_factory=list)
+    # Lateral joins of the groups on linked records: a record counts in each group it is linked to.
+    laterals: list[str] = field(default_factory=list)
 
 
 class _Errors:
@@ -353,6 +391,11 @@ class _Builder:
         self.columns: dict[tuple[str, str], int] = {}
         self.raw: list[str] = []
         self.typed: list[str] = []
+        self.walks = 0
+
+    def walk_prefix(self) -> str:
+        self.walks += 1
+        return f"w{self.walks}_"
 
     def bind(self, value: Any) -> str:
         self.params.append(value)
@@ -506,27 +549,103 @@ def _visible(alias: str, allowed: str = "$4") -> str:
             f"AND NOT ((src.item -> 'assetRef' ->> 'workspaceId') = ANY({allowed}::text[]))))")
 
 
-def _resolve_field(compiled: dict[str, Any], catalog: dict[str, Any], concept: Concept, name: Any
-                   ) -> tuple[Field | None, Relation | None]:
-    """A field of the concept, or ``<relation>.<field>``: a field of the records linked to it."""
+def _resolve_field(compiled: dict[str, Any], catalog: dict[str, Any], concept: Concept, name: Any,
+                   depth: int = 0) -> tuple[Field | None, list[Relation]]:
+    """A field of the concept, or ``<relation>.<field>``: a field of the records linked to it,
+    through up to MAX_HOPS relationships in a row (``sent by.works for.country``)."""
     if not isinstance(name, str) or not name.strip():
-        return None, None
+        return None, []
     item = concept.by_name.get(fold(name))
     if item is not None:
-        return item, None
+        return item, []
     if "." not in name:
-        near = near_match(name, concept.by_name)
-        if near is not None:
-            return near, None
+        return near_match(name, concept.by_name), []
+    if depth >= MAX_HOPS:
+        return None, []
     for index, char in enumerate(name):
         if char != ".":
             continue
         relation = find_relation(compiled, catalog, concept, name[:index])
         if relation is not None:
-            linked = relation.other.by_name.get(fold(name[index + 1:]))
+            linked, rest = _resolve_field(compiled, catalog, relation.other, name[index + 1:], depth + 1)
             if linked is not None:
-                return linked, relation
-    return None, None
+                return linked, [relation, *rest]
+    return None, []
+
+
+def _relation_path(compiled: dict[str, Any], catalog: dict[str, Any], concept: Concept, name: str,
+                   depth: int = 0) -> list[Relation]:
+    """A relationship of the concept, or several in a row written ``<relation>.<relation>``."""
+    whole = find_relation(compiled, catalog, concept, name)
+    if whole is not None:
+        return [whole]
+    if depth + 1 >= MAX_HOPS:
+        return []
+    for index, char in enumerate(name):
+        if char != ".":
+            continue
+        first = find_relation(compiled, catalog, concept, name[:index])
+        if first is not None:
+            rest = _relation_path(compiled, catalog, first.other, name[index + 1:], depth + 1)
+            if rest:
+                return [first, *rest]
+    return []
+
+
+def _echo_path(echo: dict[str, Any], chain: list[Relation]) -> None:
+    """How a linked field or link was read: one relationship as before, a chain step by step."""
+    if len(chain) == 1:
+        echo.update(relation=chain[0].key, relationLabel=chain[0].label, direction=chain[0].direction,
+                    linkedConcept=chain[0].other.label)
+        return
+    echo.update(relation=".".join(item.key for item in chain),
+                relationLabel=" > ".join(item.label or item.key for item in chain),
+                linkedConcept=chain[-1].other.label,
+                path=[{"relation": item.label or item.key, "direction": item.direction, "concept": item.other.label}
+                      for item in chain])
+
+
+def _walk_bodies(builder: _Builder, walk: Walk, start: str) -> list[str]:
+    """``FROM ... WHERE ...`` of the walk from the record id ``start``: one fixed chain of
+    joins per number of repeats of its steps. Each link is an accepted stored link of the
+    step's relationship, and each record reached is of the step's concept and readable."""
+    binds = [(builder.bind(hop.relation.relation_id), builder.bind(hop.relation.other.concept_id))
+             for hop in walk.hops]
+    bodies = []
+    for counts in itertools.product(*(range(hop.repeat[0], hop.repeat[1] + 1) for hop in walk.hops)):
+        tables: list[str] = []
+        conditions: list[str] = []
+        previous = start
+        for index, (hop, count, (relation, concept)) in enumerate(zip(walk.hops, counts, binds), 1):
+            own, other = ("source_entity_id", "target_entity_id") if hop.relation.direction == "outgoing" \
+                else ("target_entity_id", "source_entity_id")
+            for repeat in range(count):
+                alias = walk.alias(index) if repeat == count - 1 else f"{walk.alias(index)}_{repeat}"
+                link = f"{alias}_l"
+                tables.append(f"semantic_population.relationships {link} JOIN semantic_population.entities {alias} "
+                              f"ON {alias}.data_revision_id = {link}.data_revision_id AND {alias}.id = {link}.{other}")
+                conditions.append(f"{link}.data_revision_id = $2 AND {link}.relation_id = {relation}::text "
+                                  f"AND {link}.state = 'accepted' AND {link}.{own} = {previous} "
+                                  f"AND {alias}.concept_id = {concept}::text AND {_visible(alias)}")
+                previous = f"{alias}.id"
+            if hop.condition:
+                conditions.append(f"({hop.condition})")
+        if walk.distinct_ends:
+            conditions.append(f"{previous} <> {start}")
+        bodies.append("FROM " + ", ".join(tables) + " WHERE " + " AND ".join(conditions))
+    return bodies
+
+
+def _walk_exists(builder: _Builder, walk: Walk, start: str = "typed.id") -> str:
+    return "(" + " OR ".join(f"EXISTS (SELECT 1 {body})" for body in _walk_bodies(builder, walk, start)) + ")"
+
+
+def _chain_exists(builder: _Builder, chain: list[Relation], condition: str | None, start: str,
+                  walk: Walk | None = None) -> str:
+    """Linked through ``chain`` to a record matching ``condition`` (written on the walk's last alias)."""
+    walk = walk or Walk(builder.walk_prefix(), [Hop(relation) for relation in chain])
+    walk.hops[-1].condition = condition
+    return _walk_exists(builder, walk, start)
 
 
 def _field_suggestions(concept: Concept) -> list[str]:
@@ -534,9 +653,9 @@ def _field_suggestions(concept: Concept) -> list[str]:
 
 
 def _compile_filter(builder: _Builder, errors: _Errors, compiled: dict[str, Any], catalog: dict[str, Any],
-                    concept: Concept, index: int, spec: dict[str, Any], now: datetime,
-                    unparsable: dict[str, int]) -> tuple[str | None, dict[str, Any]]:
-    part = f"filters[{index}]"
+                    concept: Concept, part: str, spec: dict[str, Any], now: datetime,
+                    unparsable: dict[str, int], alias: str | None = None) -> tuple[str | None, dict[str, Any]]:
+    """A filter on the queried records, or with ``alias`` on the records a walk reached there."""
     op = spec.get("op")
     name = spec.get("field")
     echo: dict[str, Any] = {"field": name, "op": op}
@@ -547,28 +666,37 @@ def _compile_filter(builder: _Builder, errors: _Errors, compiled: dict[str, Any]
     if cast is not None and cast not in CASTS:
         errors.add(f"{part}.as", "unknown_type", f"as must be one of: {', '.join(CASTS)}", value=cast)
         return None, echo
-    item, relation = _resolve_field(compiled, catalog, concept, name)
+    item, chain = _resolve_field(compiled, catalog, concept, name)
+    start = f"{alias}.id" if alias else "typed.id"
     if item is None:
-        whole = find_relation(compiled, catalog, concept, name) if isinstance(name, str) else None
-        if whole is not None and op in NO_VALUE_OPS:
+        path = _relation_path(compiled, catalog, concept, name) if isinstance(name, str) else []
+        if path and op in NO_VALUE_OPS:
             # "relation" not_empty / is_empty: has (or has no) linked record through it.
-            echo.update(relation=whole.key, direction=whole.direction, field=None)
-            exists = _related_exists(builder, whole, None)
+            if len(path) == 1:
+                echo.update(relation=path[0].key, direction=path[0].direction, field=None)
+            else:
+                _echo_path(echo, path)
+                echo["field"] = None
+            exists = _chain_exists(builder, path, None, start)
             return (exists if op == "not_empty" else f"NOT {exists}"), echo
         errors.add(f"{part}.field", "unknown_field",
                    f"{concept.label} has no field {name!r}; for a linked record's field write "
-                   "<relation>.<field>", value=name, available=_field_suggestions(concept))
+                   "<relation>.<field> (or <relation>.<relation>.<field>)", value=name,
+                   available=_field_suggestions(concept))
         return None, echo
     kind = _kind(item, cast)
     echo.update(field=item.key, fieldLabel=item.label, type=kind)
-    if relation is not None:
-        echo.update(relation=relation.key, relationLabel=relation.label, direction=relation.direction,
-                    linkedConcept=relation.other.label)
-        alias = "o"
-        raw = builder.raw_sql(item, alias)
+    if chain:
+        _echo_path(echo, chain)
+        walk = Walk(builder.walk_prefix(), [Hop(relation) for relation in chain])
+        raw = builder.raw_sql(item, walk.alias(len(chain)))
         condition = _condition(builder, errors, part, op, kind, raw, typed_value_sql(kind, raw), spec.get("value"),
                                now, echo)
-        return (_related_exists(builder, relation, condition) if condition else None), echo
+        return (_chain_exists(builder, chain, condition, start, walk) if condition else None), echo
+    if alias is not None:
+        raw = builder.raw_sql(item, alias)
+        return _condition(builder, errors, part, op, kind, raw, typed_value_sql(kind, raw), spec.get("value"),
+                          now, echo), echo
     column = builder.column(item, kind)
     if kind != "text" and op not in NO_VALUE_OPS:
         unparsable[item.key] = column
@@ -577,16 +705,25 @@ def _compile_filter(builder: _Builder, errors: _Errors, compiled: dict[str, Any]
     return condition, echo
 
 
-def _related_exists(builder: _Builder, relation: Relation, condition: str | None) -> str:
-    own, other = ("source_entity_id", "target_entity_id") if relation.direction == "outgoing" \
-        else ("target_entity_id", "source_entity_id")
-    rel, concept = builder.bind(relation.relation_id), builder.bind(relation.other.concept_id)
-    return ("EXISTS (SELECT 1 FROM semantic_population.relationships rel "
-            "JOIN semantic_population.entities o ON o.data_revision_id = rel.data_revision_id "
-            f"AND o.id = rel.{other} "
-            f"WHERE rel.data_revision_id = $2 AND rel.relation_id = {rel}::text AND rel.state = 'accepted' "
-            f"AND rel.{own} = typed.id AND o.concept_id = {concept}::text AND {_visible('o')}"
-            + (f" AND {condition}" if condition else "") + ")")
+def _compile_filters_at(builder: _Builder, errors: _Errors, compiled: dict[str, Any], catalog: dict[str, Any],
+                        concept: Concept, alias: str, part: str, filters: list[dict[str, Any]], match: str,
+                        now: datetime) -> tuple[str | None, list[dict[str, Any]]]:
+    """The filters of one step of a walk, on the records it reached (``alias``)."""
+    if len(filters) > MAX_FILTERS:
+        errors.add(f"{part}.filters", "too_many", f"At most {MAX_FILTERS} filters")
+        filters = filters[:MAX_FILTERS]
+    if match not in ("all", "any"):
+        errors.add(f"{part}.match", "invalid_value", "match must be all or any", value=match)
+    conditions, echoed = [], []
+    for index, spec in enumerate(filters):
+        condition, echo = _compile_filter(builder, errors, compiled, catalog, concept, f"{part}.filters[{index}]",
+                                          spec, now, {}, alias=alias)
+        echoed.append(echo)
+        if condition:
+            conditions.append(f"({condition})")
+    if not conditions:
+        return None, echoed
+    return (" AND " if match != "any" else " OR ").join(conditions), echoed
 
 
 def _compile_linked_to(builder: _Builder, errors: _Errors, compiled: dict[str, Any], catalog: dict[str, Any],
@@ -600,8 +737,8 @@ def _compile_linked_to(builder: _Builder, errors: _Errors, compiled: dict[str, A
     for index, spec in enumerate(specs):
         part = f"linkedTo[{index}]"
         name, ids = spec.get("relation"), spec.get("recordIds")
-        relation = find_relation(compiled, catalog, concept, name) if isinstance(name, str) else None
-        if relation is None:
+        chain = _relation_path(compiled, catalog, concept, name) if isinstance(name, str) else []
+        if not chain:
             errors.add(f"{part}.relation", "unknown_relation", f"{concept.label} has no relationship {name!r}",
                        value=name, available=relation_names(compiled, catalog, concept))
             continue
@@ -609,18 +746,24 @@ def _compile_linked_to(builder: _Builder, errors: _Errors, compiled: dict[str, A
             errors.add(f"{part}.recordIds", "invalid_value", "recordIds must be a non-empty list of entityIds",
                        value=ids)
             continue
-        condition = _related_exists(builder, relation, f"o.id = ANY({builder.bind(ids)}::text[])")
-        links.append((condition, {"relation": relation.label or relation.key, "direction": relation.direction,
-                                  "linkedConcept": relation.other.label, "recordIds": ids}))
+        walk = Walk(builder.walk_prefix(), [Hop(relation) for relation in chain])
+        condition = _chain_exists(builder, chain, f"{walk.alias(len(chain))}.id = ANY({builder.bind(ids)}::text[])",
+                                  "typed.id", walk)
+        echo = {"relation": " > ".join(item.label or item.key for item in chain), "direction": chain[0].direction,
+                "linkedConcept": chain[-1].other.label, "recordIds": ids}
+        if len(chain) > 1:
+            echo["path"] = [{"relation": item.label or item.key, "direction": item.direction,
+                             "concept": item.other.label} for item in chain]
+        links.append((condition, echo))
     return links
 
 
 def _local_field(errors: _Errors, concept: Concept, part: str, name: Any, compiled: dict[str, Any],
                  catalog: dict[str, Any]) -> Field | None:
-    item, relation = _resolve_field(compiled, catalog, concept, name)
-    if relation is not None:
-        errors.add(part, "unsupported_field", "Grouping, totals and sorting use the concept's own fields; "
-                   "a linked record's field is only available in filters", value=name)
+    item, chain = _resolve_field(compiled, catalog, concept, name)
+    if chain:
+        errors.add(part, "unsupported_field", "Totals and sorting use the concept's own fields; "
+                   "a linked record's field is available in filters and group_by", value=name)
         return None
     if item is None:
         errors.add(part, "unknown_field", f"{concept.label} has no field {name!r}", value=name,
@@ -628,14 +771,174 @@ def _local_field(errors: _Errors, concept: Concept, part: str, name: Any, compil
     return item
 
 
+@dataclass
+class _Step:
+    relation: Relation  # read from the concept of the step before
+    repeat: tuple[int, int]
+    filters: list[dict[str, Any]]
+    match: str
+
+
+@dataclass
+class _Path:
+    start: Concept
+    start_ids: list[str] | None
+    start_filters: list[dict[str, Any]]
+    start_match: str
+    steps: list[_Step]
+
+    @property
+    def concepts(self) -> list[Concept]:
+        """The concept of the records at each point: the start, then each step's."""
+        return [self.start, *(step.relation.other for step in self.steps)]
+
+
+def _flip(direction: str) -> str:
+    return "incoming" if direction == "outgoing" else "outgoing"
+
+
+def _resolve_traversal(compiled: dict[str, Any], catalog: dict[str, Any], traversal: dict[str, Any],
+                       errors: _Errors) -> _Path | None:
+    """The concepts and relationships of a walk, step by step from its start; each step's
+    relationship is named as seen from the records reached before it."""
+    start_spec = traversal.get("start") or {}
+    start = find_concept(compiled, catalog, str(start_spec.get("concept") or ""))
+    if start is None:
+        errors.add("start.concept", "unknown_concept", f"The model has no concept {start_spec.get('concept')!r}",
+                   value=start_spec.get("concept"), available=concept_names(compiled, catalog))
+        return None
+    ids = start_spec.get("recordIds")
+    if ids is not None and (not isinstance(ids, list) or not ids
+                            or not all(isinstance(item, str) and item for item in ids)):
+        errors.add("start.recordIds", "invalid_value", "recordIds must be a non-empty list of entityIds", value=ids)
+        return None
+    specs = traversal.get("steps") or []
+    if not 1 <= len(specs) <= MAX_STEPS:
+        errors.add("steps", "invalid_value", f"A walk has 1 to {MAX_STEPS} steps")
+        return None
+    current, steps, links, shapes = start, [], 0, 1
+    for index, spec in enumerate(specs):
+        part = f"steps[{index}]"
+        name = spec.get("relation")
+        relation = find_relation(compiled, catalog, current, name) if isinstance(name, str) and name.strip() else None
+        if relation is None:
+            errors.add(f"{part}.relation", "unknown_relation",
+                       f"{current.label} has no relationship {name!r} (each step goes on from the records "
+                       "the step before reached)", value=name, available=relation_names(compiled, catalog, current))
+            return None
+        own_concept = relation.other.concept_id == current.concept_id
+        direction = spec.get("direction")
+        if direction is not None and direction not in ("outgoing", "incoming"):
+            errors.add(f"{part}.direction", "invalid_value", "direction must be outgoing or incoming", value=direction)
+            return None
+        if own_concept and direction and direction != relation.direction:
+            # Between records of one concept, the direction says which way to read it (reports to / manages).
+            relation = Relation(relation.relation_id, relation.key, relation.label, direction, relation.other)
+        low, high = spec.get("minHops", 1), spec.get("maxHops", spec.get("minHops", 1))
+        if any(isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_REPEAT
+               for value in (low, high)) or low > high:
+            errors.add(f"{part}.hops", "invalid_value", f"hops must be 1 to {MAX_REPEAT}, from no more than to",
+                       value=[low, high])
+            return None
+        if high > 1 and not own_concept:
+            errors.add(f"{part}.hops", "invalid_value",
+                       f"{relation.label} links {current.label} to {relation.other.label}: it can be followed once "
+                       "per step; repeat only a relationship between records of one concept", value=[low, high])
+            return None
+        links, shapes = links + high, shapes * (high - low + 1)
+        steps.append(_Step(relation, (low, high), list(spec.get("filters") or []), spec.get("match") or "all"))
+        current = relation.other
+    if links > MAX_WALK_LINKS or shapes > MAX_WALK_SHAPES:
+        errors.add("steps", "too_long", f"A walk follows at most {MAX_WALK_LINKS} links in all")
+        return None
+    return _Path(start, ids, list(start_spec.get("filters") or []), start_spec.get("match") or "all", steps)
+
+
+def _compile_walk(builder: _Builder, errors: _Errors, compiled: dict[str, Any], catalog: dict[str, Any],
+                  path: _Path, now: datetime) -> tuple[Walk, dict[str, Any]]:
+    """The walk read backwards, from the records it reaches (the queried concept) to its
+    start: hop i reaches the records of step n - i, with that step's filters (the start's
+    filters and records on the last hop). The last step's filters are the query's own."""
+    concepts = path.concepts
+    count = len(path.steps)
+    walk = Walk(builder.walk_prefix(), [], distinct_ends=path.start.concept_id == concepts[-1].concept_id)
+    echoed: dict[int, list[dict[str, Any]]] = {}
+    for hop in range(1, count + 1):
+        reached = count - hop  # the point the hop reaches: 0 is the start
+        step = path.steps[reached]
+        alias = walk.alias(hop)
+        if reached == 0:
+            condition, echoed[0] = _compile_filters_at(builder, errors, compiled, catalog, path.start, alias, "start",
+                                                       path.start_filters, path.start_match, now)
+            if path.start_ids:
+                ids = f"{alias}.id = ANY({builder.bind(path.start_ids)}::text[])"
+                condition = f"{ids} AND ({condition})" if condition else ids
+        else:
+            before = path.steps[reached - 1]
+            condition, echoed[reached] = _compile_filters_at(builder, errors, compiled, catalog, concepts[reached],
+                                                             alias, f"steps[{reached - 1}]", before.filters,
+                                                             before.match, now)
+        relation = step.relation
+        walk.hops.append(Hop(Relation(relation.relation_id, relation.key, relation.label, _flip(relation.direction),
+                                      concepts[reached]), condition, step.repeat))
+    echo = {
+        "start": {"concept": path.start.label, **({"recordIds": path.start_ids} if path.start_ids else {}),
+                  "filters": echoed.get(0, []), "match": path.start_match},
+        "steps": [{"relation": step.relation.label or step.relation.key, "direction": step.relation.direction,
+                   "concept": step.relation.other.label,
+                   **({"hops": list(step.repeat)} if step.repeat != (1, 1) else {}),
+                   **({"filters": echoed.get(index + 1, []), "match": step.match}
+                      if index + 1 < count and echoed.get(index + 1) else {})}
+                  for index, step in enumerate(path.steps)],
+    }
+    return walk, echo
+
+
+def _linked_group(builder: _Builder, walk: Walk, target: int, item: Field, kind: str, bucket: str | None,
+                  index: int) -> tuple[str, str, str]:
+    """(lateral join, key, display) of a group on the records a walk reaches at hop
+    ``target``: each queried record joins the distinct values of its linked records, so it
+    counts once in each of their groups, and in the empty group when it has none."""
+    alias = walk.alias(target)
+    if item.special == "name":
+        key_sql, value_sql = f"{alias}.id", f"{alias}.label"  # one group per linked record
+    else:
+        raw = builder.raw_sql(item, alias)
+        typed = typed_value_sql(kind, raw)
+        key_sql = f"to_char({typed}, '{_BUCKET_FORMATS[bucket]}')" if kind == "date" and bucket else typed
+        value_sql = raw
+    union = " UNION ALL ".join(f"SELECT {key_sql} AS k, {value_sql} AS v {body}"
+                               for body in _walk_bodies(builder, walk, "matched.id"))
+    lateral = (f"LEFT JOIN LATERAL (SELECT DISTINCT ON (k) k, v FROM ({union}) x ORDER BY k, v) lg{index} ON true")
+    key = f"lg{index}_k"
+    if item.special == "name":
+        display = f"min(lg{index}_v)"
+    elif kind == "text":
+        display = f"mode() WITHIN GROUP (ORDER BY btrim(lg{index}_v))"
+    else:
+        display = key
+    return lateral, key, display
+
+
 def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: dict[str, Any], *,
                   model_id: str, revision_id: str, allowed_workspaces: list[str] | None,
-                  now: datetime) -> tuple[Plan | None, list[dict[str, Any]], dict[str, Any]]:
+                  now: datetime, traversal: dict[str, Any] | None = None
+                  ) -> tuple[Plan | None, list[dict[str, Any]], dict[str, Any]]:
     """(plan, errors, applied query). With errors there is no plan; an unknown concept gives a
-    single ``unknown_concept`` error."""
+    single ``unknown_concept`` error. With ``traversal`` ({start: {concept, recordIds,
+    filters, match}, steps: [{relation, direction, minHops, maxHops, filters, match}]}) the
+    query is on the records the walk reaches: its concept is the last step's, and the
+    request's filters are the last step's."""
     errors = _Errors()
     applied: dict[str, Any] = {"concept": request.get("concept"), "timezone": "UTC", "now": _iso(now)}
-    concept = find_concept(compiled, catalog, str(request.get("concept") or ""))
+    path = None
+    if traversal is not None:
+        path = _resolve_traversal(compiled, catalog, traversal, errors)
+        if path is None:
+            return None, errors.items, applied
+        concept = path.concepts[-1]
+    else:
+        concept = find_concept(compiled, catalog, str(request.get("concept") or ""))
     if concept is None:
         errors.add("concept", "unknown_concept", f"The model has no concept {request.get('concept')!r}",
                    value=request.get("concept"), available=concept_names(compiled, catalog))
@@ -653,7 +956,8 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
         filters = filters[:MAX_FILTERS]
     conditions, echoed, checks = [], [], []
     for index, spec in enumerate(filters):
-        condition, echo = _compile_filter(builder, errors, compiled, catalog, concept, index, spec, now, unparsable)
+        condition, echo = _compile_filter(builder, errors, compiled, catalog, concept, f"filters[{index}]", spec, now,
+                                          unparsable)
         column = echo.pop("_column", None)
         echoed.append(echo)
         if condition:
@@ -670,12 +974,23 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
                     "field": echo["relation"], "op": "linked_to", "type": None, "value": echo["recordIds"]}
                    for index, (condition, echo) in enumerate(links)]
         where = " AND ".join([f"({where})", *(f"({condition})" for condition, _ in links)])
+    ids = request.get("recordIds")
+    if ids:  # internal: the start records of a walk, counted on their own
+        where = f"({where}) AND typed.id = ANY({builder.bind(list(ids))}::text[])"
+    walk = None
+    if path is not None:
+        walk, applied["path"] = _compile_walk(builder, errors, compiled, catalog, path, now)
+        reached = _walk_exists(builder, walk)
+        checks.append({"part": "path", "condition": reached, "column": None, "field": "path", "op": "reached_by",
+                       "type": None, "value": None})
+        where = f"({where}) AND {reached}"
 
     group_specs = request.get("groupBy") or []
     if len(group_specs) > MAX_GROUP_BY:
         errors.add("groupBy", "too_many", f"Group by at most {MAX_GROUP_BY} fields")
         group_specs = group_specs[:MAX_GROUP_BY]
     groups: list[dict[str, Any]] = []
+    laterals: list[str] = []
     for index, spec in enumerate(group_specs):
         part = f"groupBy[{index}]"
         spec = {"field": spec} if isinstance(spec, str) else spec
@@ -683,9 +998,31 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
         if cast is not None and cast not in CASTS:
             errors.add(f"{part}.as", "unknown_type", f"as must be one of: {', '.join(CASTS)}", value=cast)
             continue
-        item = _local_field(errors, concept, f"{part}.field", spec.get("field"), compiled, catalog)
-        if item is None:
-            continue
+        step = spec.get("step")
+        group_walk, target, chain = None, 0, []
+        if step is not None:
+            # A field of the records a walk went through: its start (0) or a step before the last.
+            if path is None or walk is None or isinstance(step, bool) or not isinstance(step, int) \
+                    or not 0 <= step < len(path.steps):
+                errors.add(f"{part}.step", "invalid_value", "step names a point of the walk before its last step: "
+                           f"0 for the start, up to {len(path.steps) - 1 if path else 0}", value=step)
+                continue
+            at = path.concepts[step]
+            item, linked = _resolve_field(compiled, catalog, at, spec.get("field"))
+            if item is None or linked:
+                errors.add(f"{part}.field", "unknown_field", f"{at.label} has no field {spec.get('field')!r}",
+                           value=spec.get("field"), available=_field_suggestions(at))
+                continue
+            group_walk, target = walk, len(path.steps) - step
+        else:
+            item, chain = _resolve_field(compiled, catalog, concept, spec.get("field"))
+            if item is None:
+                errors.add(f"{part}.field", "unknown_field",
+                           f"{concept.label} has no field {spec.get('field')!r}; for a linked record's field write "
+                           "<relation>.<field>", value=spec.get("field"), available=_field_suggestions(concept))
+                continue
+            if chain:
+                group_walk, target = Walk(builder.walk_prefix(), [Hop(relation) for relation in chain]), len(chain)
         kind = _kind(item, cast)
         if bucket is not None and (bucket not in BUCKETS or kind != "date"):
             errors.add(f"{part}.bucket", "invalid_bucket",
@@ -694,6 +1031,20 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
             continue
         if kind == "date":
             bucket = bucket or "day"
+        if group_walk is not None:
+            lateral, key_sql, label_sql = _linked_group(builder, group_walk, target, item, kind, bucket, len(groups))
+            laterals.append(lateral)
+            if step is not None:
+                prefix = "start" if step == 0 else f"step{step}"
+                label = f"{path.concepts[step].label} {item.label}"
+            else:
+                prefix = ".".join(relation.key for relation in chain)
+                label = f"{' > '.join(relation.label or relation.key for relation in chain)} {item.label}"
+            name = f"{prefix}.{item.key}" + (f":{bucket}" if bucket else "")
+            groups.append({"name": name, "field": item.key, "label": label, "type": kind, "bucket": bucket,
+                           "key": key_sql, "display": label_sql, "entity": item.special == "name", "linked": True,
+                           "asked": spec.get("field"), **({"step": step} if step is not None else {})})
+            continue
         column = builder.column(item, kind)
         if kind != "text":
             unparsable[item.key] = column
@@ -707,9 +1058,10 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
         else:
             key_sql = label_sql = f"t{column}"
         groups.append({"name": name, "field": item.key, "label": item.label, "type": kind, "bucket": bucket,
-                       "key": key_sql, "display": label_sql})
+                       "key": key_sql, "display": label_sql, "asked": spec.get("field")})
     applied["groupBy"] = [{"name": g["name"], "field": g["field"], "label": g["label"], "type": g["type"],
-                           **({"bucket": g["bucket"]} if g["bucket"] else {})} for g in groups]
+                           **({"bucket": g["bucket"]} if g["bucket"] else {}),
+                           **({"step": g["step"]} if "step" in g else {})} for g in groups]
 
     aggregate_specs = request.get("aggregates") or ([{"op": "count"}] if group_specs else [])
     if len(aggregate_specs) > MAX_AGGREGATES:
@@ -782,8 +1134,11 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
                 order.append(f"a{aggregates.index(alias)} {direction.upper()} NULLS LAST")
                 applied_order.append({"by": alias["name"], "direction": direction})
                 continue
-            item, _ = _resolve_field(compiled, catalog, concept, target)
-            group = next((g for g in groups if item is not None and g["field"] == item.key), None)
+            group = next((g for g in groups if target in (g["name"], g["asked"])), None)
+            if group is None:
+                item, _ = _resolve_field(compiled, catalog, concept, target)
+                group = next((g for g in groups if item is not None and not g.get("linked")
+                              and g["field"] == item.key), None)
             if group is None:
                 errors.add(f"{part}.field", "unknown_order",
                            "With groupBy, sort by a grouped field or an aggregate name: "
@@ -844,7 +1199,7 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
     plan = Plan(concept=concept, params=builder.params, raw_columns=builder.raw, typed_columns=builder.typed,
                 where=where, applied=applied, unparsable=sorted(unparsable.items()), group=groups,
                 aggregates=aggregates, order=order, fields=returned, limit=limit, offset=offset,
-                checks=checks)
+                checks=checks, laterals=laterals)
     return plan, [], applied
 
 
@@ -852,13 +1207,22 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
 
 
 def base_sql(plan: Plan) -> str:
+    """The records of the concept, read with their types, then those matching. Groups on
+    linked records join them in ``grouped``, which every statement carries (each binds all
+    the parameters) and only the groups read: a CTE nobody reads is not run."""
     raw = "".join(f", {column}" for column in plan.raw_columns)
     typed = "".join(f", {column}" for column in plan.typed_columns)
+    grouped = ""
+    if plan.laterals:
+        values = "".join(f", lg{index}.k AS lg{index}_k, lg{index}.v AS lg{index}_v"
+                         for index, group in enumerate(plan.group) if group.get("linked"))
+        grouped = (", grouped AS (SELECT matched.*" + values + " FROM matched "
+                   + " ".join(plan.laterals) + ")")
     return ("WITH scoped AS (SELECT e.id, e.label, e.identity_key, e.attributes" + raw +
             " FROM semantic_population.entities e"
             " WHERE e.model_id = $1 AND e.data_revision_id = $2 AND e.concept_id = $3::text AND " + _visible("e") +
             "), typed AS (SELECT scoped.*" + typed + " FROM scoped)"
-            ", matched AS MATERIALIZED (SELECT typed.* FROM typed WHERE " + plan.where + ")")
+            ", matched AS MATERIALIZED (SELECT typed.* FROM typed WHERE " + plan.where + ")" + grouped)
 
 
 def stats_sql(plan: Plan) -> str:
@@ -884,7 +1248,8 @@ def groups_sql(plan: Plan) -> str:
                      for index, group in enumerate(plan.group))
     aggregates = "".join(f", {aggregate['sql']} AS a{index}" for index, aggregate in enumerate(plan.aggregates))
     group_by = ", ".join(f"g{index}" for index in range(len(plan.group)))
-    return (base_sql(plan) + f" SELECT {keys}{aggregates} FROM matched GROUP BY {group_by} ORDER BY "
+    source = "grouped" if plan.laterals else "matched"
+    return (base_sql(plan) + f" SELECT {keys}{aggregates} FROM {source} GROUP BY {group_by} ORDER BY "
             + ", ".join(plan.order) + f" LIMIT ${limit}")
 
 
@@ -951,10 +1316,17 @@ async def run_query(pool: Any, plan: Plan) -> dict[str, Any]:
         buckets = []
         for row in rows[:MAX_BUCKETS]:
             bucket = {group["name"]: _json_value(row[f"d{index}"]) for index, group in enumerate(plan.group)}
+            records = {group["name"]: row[f"g{index}"] for index, group in enumerate(plan.group)
+                       if group.get("entity") and row[f"g{index}"] is not None}
+            if records:  # a group per linked record: its entityId, to follow it further
+                bucket["entityIds"] = records
             bucket.update({aggregate["name"]: _json_value(row[f"a{index}"])
                            for index, aggregate in enumerate(plan.aggregates)})
             buckets.append(bucket)
         result.update(buckets=buckets, bucketsTruncated=len(rows) > MAX_BUCKETS)
+        if plan.laterals:
+            # Grouped by linked records: a record counts in the group of each record it is linked to.
+            result["groupsOverlap"] = True
         return result
     if plan.aggregates:
         result["aggregates"] = {aggregate["name"]: _json_value(stats[f"a{index}"])

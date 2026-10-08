@@ -6,6 +6,21 @@ param([ValidateSet('all', 'datasource', 'population', 'search')][string]$Only = 
 
 $ErrorActionPreference = 'Stop'
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
+$python = @(
+  (Join-Path $runtimeRoot 'venv311\Scripts\python.exe'),
+  (Join-Path $runtimeRoot '.venv\Scripts\python.exe'),
+  (Join-Path $runtimeRoot 'venv\Scripts\python.exe')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $python) { $python = 'python' }
+
+# The task bodies use asyncio.timeout(), added in Python 3.11. On 3.10 a task
+# dies deep inside the fetch with a bare AttributeError and the job surfaces an
+# unrelated error code, so refuse to start rather than fail unreadably later.
+& $python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'
+if ($LASTEXITCODE -ne 0) {
+  $found = (& $python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+  throw "Python 3.11+ required (app/workers uses asyncio.timeout); $python is $found. Recreate the virtualenv with a 3.11 interpreter."
+}
 
 function Import-DotEnv([string]$Path) {
   foreach ($line in [System.IO.File]::ReadAllLines((Resolve-Path $Path))) {
@@ -30,8 +45,8 @@ $definitions = @(
 $workers = @()
 try {
   foreach ($definition in $definitions) {
-    $workers += Start-Process -FilePath 'conda' -ArgumentList @(
-      'run', '--no-capture-output', '-n', 'meta', 'python', '-m', 'celery',
+    $workers += Start-Process -FilePath $python -ArgumentList @(
+      '-m', 'celery',
       '-A', $definition.App, 'worker', '--loglevel=INFO', '--pool=solo',
       '--queues', $definition.Queues, '--hostname', "semantic-$($definition.Name)@%h"
     ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru

@@ -236,7 +236,7 @@ async def test_search_settings_apply_to_one_request(monkeypatch) -> None:  # typ
                              profile=Profile(), embedder=_embed, settings=settings,  # type: ignore[arg-type]
                              index_fingerprint=fingerprint)
     assert found["modeUsed"] == "hybrid"
-    assert ("lexical", ["rack", "keys"], 7) in store.calls and ("vector", 9) in store.calls
+    assert ("lexical", "rack | keys", 7) in store.calls and ("vector", 9) in store.calls
     assert ("passage_lexical", 7, 1) in store.calls
     # c is near only by meaning and below 0.44: dropped; b, found both ways, first.
     assert [seed["entityId"] for seed in found["seeds"]] == ["b", "a"]

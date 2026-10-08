@@ -40,6 +40,7 @@ class CommonHelpers:
         """
         self.file_path = file_path
         self.api_url = settings.API_URL
+        self.storage_provider = (settings.STORAGE_PROVIDER or "ceph").strip().lower()
         self.azure_connection_string = settings.AZURE_DATALAKE_CONNECTION_STRING
         self.azure_file_system_name = settings.AZURE_DATALAKE_FILE_SYSTEM_NAME
         self.ceph_endpoint = settings.CEPH_ENDPOINT
@@ -56,21 +57,33 @@ class CommonHelpers:
             self.ceph_secret_access_key,
         ])
 
-    def _normalize_ceph_object_key(self, file_path: str) -> str:
+    def _normalize_object_key(self, file_path: str) -> str:
+        """
+        Strip the storage locator from a stored path, leaving the bare key.
+
+        Stored paths show up in four shapes: "s3://<container>/<key>", an
+        absolute "http(s)://<host>/<container>/<key>" URL, "<container>/<key>",
+        and an already-bare "<key>". Both the Ceph bucket and the Azure file
+        system count as strippable containers, so a path indexed while on Ceph
+        still resolves once STORAGE_PROVIDER flips to azure. Idempotent: a bare
+        key is returned unchanged.
+        """
         text = (file_path or "").strip()
-        bucket = self.ceph_bucket_name or ""
+        containers = [c for c in (self.ceph_bucket_name, self.azure_file_system_name) if c]
+
         if text.startswith("s3://"):
             parts = text.removeprefix("s3://").split("/", 1)
-            return parts[1] if len(parts) == 2 and parts[0] == bucket else text
+            return parts[1] if len(parts) == 2 and parts[0] in containers else text
 
-        endpoint = (self.ceph_endpoint or "").rstrip("/")
-        if endpoint and text.startswith(f"{endpoint}/"):
-            path = urlsplit(text).path.lstrip("/")
-            prefix = f"{bucket}/"
-            return path[len(prefix):] if path.startswith(prefix) else path
+        if text.startswith("http://") or text.startswith("https://"):
+            text = urlsplit(text).path.lstrip("/")
 
-        prefix = f"{bucket}/"
-        return text[len(prefix):] if text.startswith(prefix) else text
+        for container in containers:
+            prefix = f"{container}/"
+            if text.startswith(prefix):
+                return text[len(prefix):]
+
+        return text
 
     def _build_ceph_get_headers(self, object_key: str) -> Dict[str, str]:
         endpoint = (self.ceph_endpoint or "").rstrip("/")
@@ -126,7 +139,7 @@ class CommonHelpers:
         if not self._has_ceph_config():
             raise RuntimeError("Ceph S3 credentials are not configured")
 
-        object_key = self._normalize_ceph_object_key(file_path)
+        object_key = self._normalize_object_key(file_path)
         endpoint = (self.ceph_endpoint or "").rstrip("/")
         url = f"{endpoint}/{quote(self.ceph_bucket_name or '', safe='')}/{quote(object_key, safe='/')}"
         output_path = os.path.join(self.file_path, os.path.basename(object_key))
@@ -144,6 +157,13 @@ class CommonHelpers:
             raise
 
     async def async_download_from_storage(self, file_path: str) -> str:
+        """
+        Route to the backend named by STORAGE_PROVIDER. Setting it to "azure"
+        wins even while the CEPH_* vars are still present, so a deployment can
+        switch over without first stripping its old config.
+        """
+        if self.storage_provider == "azure":
+            return await self.async_download_from_azure_datalake(file_path)
         if self._has_ceph_config():
             return await self.async_download_from_ceph_s3(file_path)
         return await self.async_download_from_azure_datalake(file_path)
@@ -170,13 +190,19 @@ class CommonHelpers:
         except Exception as e:
             logger.error(f"Error processing file extension: {file_path}, Error: {str(e)}")
 
+        # Same normalization the Ceph path applies: stored paths can carry an
+        # "s3://", a full URL, or a bare container prefix, none of which is part
+        # of the blob name. Without this, anything indexed while on Ceph fails
+        # to download after switching to azure.
+        object_key = self._normalize_object_key(file_path)
+
         try:
             async with FileClient.from_connection_string(
                     conn_str=self.azure_connection_string,
                     file_system_name=self.azure_file_system_name,
-                    file_path=file_path,
+                    file_path=object_key,
             ) as file:
-                output_path = os.path.join(self.file_path, os.path.basename(file_path))
+                output_path = os.path.join(self.file_path, os.path.basename(object_key))
                 os.makedirs(self.file_path, exist_ok=True)
                 download = await file.download_file()
 

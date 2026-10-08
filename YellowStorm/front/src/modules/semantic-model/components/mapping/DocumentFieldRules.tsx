@@ -380,7 +380,7 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
 /** The AI calls a run makes at once when nothing sets it (the runtime's own default). */
 export const DEFAULT_PARALLEL_CALLS = 4;
 
-const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords'>; min: number; max: number }> = [
+const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords' | 'maxRecords' | 'maxFiles'>; min: number; max: number }> = [
   { key: 'maxBlocks', min: 10, max: 500 },
   { key: 'maxCharacters', min: 2000, max: 400000 },
   { key: 'longDocumentCharacters', min: 1000, max: 2000000 },
@@ -420,15 +420,17 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
 }
 
 /** This source's AI reading limits, starting from the admin defaults; only what is changed is kept. */
-export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
+export function AiLimitsEditor({ defaults, value, onChange, folded }: Readonly<{
   defaults?: AiExtractionSettings;
   value: Partial<AiExtractionSettings>;
   onChange: (value: Partial<AiExtractionSettings>) => void;
+  /** Starts folded even when this source changed the limits (its title says so). */
+  folded?: boolean;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   // "Several records per document" lives in the same settings but is not a reading limit.
   const overridden = Object.keys(value).some((key) => key !== 'manyRecords');
-  const [open, setOpen] = useState(overridden);
+  const [open, setOpen] = useState(overridden && !folded);
   const effective = defaults ? { ...defaults, ...value } : undefined;
   return <div className='rounded-lg border'>
     <div className='flex items-center gap-1 pr-2'>

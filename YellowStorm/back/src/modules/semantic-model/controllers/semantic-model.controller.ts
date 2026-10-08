@@ -34,6 +34,8 @@ import {
   ResolveReviewItemDto,
   RequestPopulationRefreshDto, RebuildPopulationDto,
   RecordCorrectionDto,
+  GraphSearchQueryDto,
+  GraphExportDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -49,7 +51,8 @@ import { SemanticPopulationRefreshService } from '../services/semantic-populatio
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
-import { GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { CitedRecordQueryDto, GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { SemanticRecordCitationService } from '../services/semantic-record-citation.service';
 import { SemanticGraphSearchService } from '../services/semantic-graph-search.service';
 
 @ApiTags('Semantic Models')
@@ -71,6 +74,7 @@ export class SemanticModelController {
     private readonly reviewQueue: SemanticReviewQueueService,
     private readonly assistant: SemanticModelAssistantService,
     private readonly graphSearch: SemanticGraphSearchService,
+    private readonly recordCitations: SemanticRecordCitationService,
   ) {}
 
   @Get()
@@ -155,6 +159,43 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   getAgeGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('dataRevisionId') dataRevisionId?: string) {
     return this.populationRefresh.boundGraph(user._id.toString(), modelId, dataRevisionId);
+  }
+
+  @Get(':modelId/age-graph/outline')
+  @ApiOperation({ summary: 'Every record and link of the data graph, without values' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  graphOutline(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('dataRevisionId') dataRevisionId?: string) {
+    return this.populationRefresh.graphOutline(user._id.toString(), modelId, dataRevisionId);
+  }
+
+  @Get(':modelId/age-graph/search')
+  @ApiOperation({ summary: 'Records of the data graph whose values hold the words typed' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  searchGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: GraphSearchQueryDto) {
+    return this.populationRefresh.searchGraph(user._id.toString(), modelId, query.q, query.dataRevisionId, query.limit);
+  }
+
+  @Get(':modelId/age-graph/records/:recordId')
+  @ApiOperation({ summary: "One data graph record's values" })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  graphRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('recordId') recordId: string,@Query('dataRevisionId') dataRevisionId?: string) {
+    return this.populationRefresh.graphRecord(user._id.toString(), modelId, recordId, dataRevisionId);
+  }
+
+  @Get(':modelId/cited-records/:entityId')
+  @ApiOperation({ summary: 'A record a chat answer cited: its values, where each came from, and the documents the person may open' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  citedRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('entityId') entityId: string,@Query() query: CitedRecordQueryDto) {
+    return this.recordCitations.citedRecord(user._id.toString(), modelId, { entityId, data: query.data, dataRevisionId: query.dataRevisionId });
+  }
+
+  @Post(':modelId/age-graph/export')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'The whole data graph for a standalone file (owners and editors)' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  exportGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphExportDto) {
+    const name = [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ') || user.email;
+    return this.populationRefresh.exportGraph({ id: user._id.toString(), name }, modelId, dto);
   }
 
   @Post(':modelId/graph/impact')

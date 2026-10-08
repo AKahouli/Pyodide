@@ -1,4 +1,4 @@
-import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions, mappingFileCap, mappingRecordCap } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -6,6 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
+import { pickArchiveLimits, type ArchiveReadLimits } from '../domain/semantic-data-connection.types';
 import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
@@ -14,9 +15,10 @@ import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
-import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { graphExport, graphFieldKey, graphOutline, graphRecordValues, searchGraphValues, type ExportFieldChoice } from '../domain/graph-outline';
 import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
 import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
@@ -569,6 +571,71 @@ export class SemanticPopulationRefreshService {
     };
   }
 
+  /** The runtime graph read lately, per person, model and revision: the outline, a record and a search read it in turn. */
+  private readonly graphCache = new Map<string, { at: number; graph: Promise<RuntimeBoundGraph> }>();
+
+  private async cachedGraph(userId: string, modelId: string, roles: Array<'owner' | 'editor' | 'viewer'>, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, roles);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const key = `${userId}|${model.id}|${dataRevisionId ?? 'current'}`;
+    // A named revision never changes; "the current one" may move on, so it is read again sooner.
+    const ttl = dataRevisionId ? 5 * 60_000 : 30_000;
+    const now = Date.now();
+    for (const [cached, entry] of this.graphCache) if (now - entry.at > 5 * 60_000) this.graphCache.delete(cached);
+    let entry = this.graphCache.get(key);
+    if (!entry || now - entry.at > ttl) {
+      entry = { at: now, graph: this.runtime.getBoundGraph(model.id, userId, dataRevisionId) };
+      entry.graph.catch(() => this.graphCache.delete(key));
+      this.graphCache.delete(key);
+      this.graphCache.set(key, entry);
+      while (this.graphCache.size > 6) this.graphCache.delete(this.graphCache.keys().next().value!);
+    }
+    return { model, graph: await entry.graph };
+  }
+
+  /** Every record and link of the data graph, without values: what the graph view draws and counts. */
+  async graphOutline(userId: string, modelId: string, dataRevisionId?: string) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    return graphOutline(graph);
+  }
+
+  /** One record's values, read when someone opens it. */
+  async graphRecord(userId: string, modelId: string, recordId: string, dataRevisionId?: string) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    const record = graphRecordValues(graph, recordId);
+    if (!record) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This record is not in the data graph');
+    return record;
+  }
+
+  /** Records whose values hold the words typed. */
+  async searchGraph(userId: string, modelId: string, query: string, dataRevisionId?: string, limit = 8) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    return { hits: searchGraphValues(graph, query, limit) };
+  }
+
+  /**
+   * The whole data graph for a standalone file, each field kept, cut or left out as chosen. Only owners and editors
+   * may take the data out of the app, and each export is recorded in the model's history.
+   */
+  async exportGraph(user: { id: string; name: string }, modelId: string,
+    input: { dataRevisionId?: string; fields?: Record<string, Record<string, ExportFieldChoice>>; shortenTo?: number }) {
+    const { model, graph } = await this.cachedGraph(user.id, modelId, ['owner', 'editor'], input.dataRevisionId);
+    const shortenTo = Math.min(Math.max(Math.trunc(input.shortenTo ?? 200) || 200, 20), 100_000);
+    const choices: Record<string, Record<string, ExportFieldChoice>> = {};
+    for (const [concept, fields] of Object.entries(input.fields ?? {})) {
+      if (!fields || typeof fields !== 'object') continue;
+      choices[concept] = Object.fromEntries(Object.entries(fields).filter(([, choice]) => choice === 'full' || choice === 'short' || choice === 'exclude'));
+    }
+    const content = graphExport(graph, choices, shortenTo);
+    const exportedAt = new Date().toISOString();
+    await this.database.transaction((client) => this.models.audit(client, model.id, model.currentDraftVersionId, user.id, 'graph.exported', {
+      dataRevisionId: content.dataRevisionId, records: content.records.length, links: content.links.length, shortenTo,
+      excluded: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'exclude').map(([field]) => `${concept}.${field}`)),
+      full: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'full').map(([field]) => `${concept}.${field}`)),
+    }));
+    return { ...content, modelName: model.name, exportedBy: user.name, exportedAt, shortenTo };
+  }
+
   /**
    * Everything a run would read, without starting it: the specification and the fingerprint that decides
    * whether a run is new. A viewer may plan (to learn whether the data is current); only editors may run.
@@ -627,6 +694,16 @@ export class SemanticPopulationRefreshService {
     const usableMappings: MappingRow[] = [];
     const skipped: { mappingId: string; reason: string }[] = [];
     let waitingFiles = 0;
+    const archives = await this.archiveConnections(model.id);
+    // An archive's connection says how much of it is read, and whether the runtime also copies its e-mails and
+    // attachments into the workspace. Only what was set travels, so other sources keep their fingerprint.
+    const withIndexing = <T extends { source: { assetId: string } }>(entry: T): T => {
+      const archive = archives.get(entry.source.assetId);
+      if (!archive) return entry;
+      return { ...entry, source: { ...entry.source,
+        ...(archive.indexInWorkspace ? { indexInWorkspace: true } : {}),
+        ...(Object.keys(archive.limits).length ? { archiveLimits: archive.limits } : {}) } };
+    };
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -640,10 +717,12 @@ export class SemanticPopulationRefreshService {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
+          // A mapping may read only its first files (in the stable order the runtime sees), never more than the admin allows.
+          const maxFiles = mappingFileCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRunSources);
+          for (const file of files.readable.slice(0, maxFiles)) sources.push(withIndexing(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId))));
           waitingFiles += files.waiting.length;
         } else {
-          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
+          sources.push(withIndexing(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId))));
         }
         usableMappings.push(mapping);
       } catch (error) {
@@ -679,7 +758,7 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
     // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
-    const limits = await this.adminRunLimits();
+    const { purgeTimeoutSeconds: _purgeTime, ...limits } = await this.adminRunLimits();
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
     if (sources.filter(inRun).length > maxRunSources) {
       throw new BadRequestException(
@@ -800,6 +879,8 @@ export class SemanticPopulationRefreshService {
         ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
         // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
+        // Only present when a mapping sets its own reading limits.
+        ...('readLimits' in source && source.readLimits ? { readLimits: source.readLimits } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -825,7 +906,7 @@ export class SemanticPopulationRefreshService {
       = await this.planRefresh(userId, modelId, input, 'run');
     // Forgotten only once the run is known to start, so a refused run keeps the readings.
     const rereadAt = input.rereadDocuments
-      ? (await this.runtime.forgetDocumentReadings(model.id, userId), new Date().toISOString())
+      ? (await this.runtime.forgetDocumentReadings(model.id, userId, scope.kind === 'concept' ? scope.conceptId : undefined), new Date().toISOString())
       : undefined;
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
@@ -885,7 +966,8 @@ export class SemanticPopulationRefreshService {
     const build: RequestPopulationRefreshInput = { purpose: 'build', scope: { kind: 'model' } };
     // Check that a build can start before clearing anything, so a refused run never leaves the model empty.
     await this.planRefresh(userId, modelId, build, 'run');
-    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading) });
+    const timeoutSeconds = (await this.adminRunLimits()).purgeTimeoutSeconds ?? DEFAULT_RUN_LIMITS.purgeTimeoutSeconds;
+    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading), timeoutSeconds });
     return { ...await this.requestRefresh(userId, modelId, build), cleared };
   }
 
@@ -905,18 +987,26 @@ export class SemanticPopulationRefreshService {
    * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
    * have today (design, mappings and source file versions) with the one of the active data.
    */
-  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+  /**
+   * ``waitingFiles``: files the mappings select that are not indexed yet. A run reads the indexed ones
+   * only, so "current" is current for those: the others join the data once they are indexed.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string; waitingFiles?: number }> {
     let fingerprint: string;
+    let waitingFiles = 0;
     try {
-      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+      const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+      fingerprint = plan.populationExecutionFingerprint;
+      waitingFiles = plan.waitingFiles;
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
       throw error;
     }
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
-    if (!active) return { state: 'never_run' };
-    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
+    const waiting = waitingFiles > 0 ? { waitingFiles } : {};
+    if (!active) return { state: 'never_run', ...waiting };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated', ...waiting };
   }
 
   private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {
@@ -1068,6 +1158,18 @@ export class SemanticPopulationRefreshService {
   }
 
   /** Readable files of a workspace mapping, listed at run time. */
+  /** The mail archives whose data source asks for their e-mails to be indexed in the workspace too. */
+  /** Per archive file, what its connection chose: read time and memory never above the admin's. */
+  private async archiveConnections(modelId: string): Promise<Map<string, { indexInWorkspace: boolean; limits: ArchiveReadLimits }>> {
+    const result = await this.database.query<{ documentId: string; indexInWorkspace: boolean | null; limits: unknown }>(
+      `SELECT document_id AS "documentId", (config->>'indexInWorkspace')::boolean AS "indexInWorkspace", config->'limits' AS limits
+       FROM semantic_model.data_connections WHERE model_id=$1 AND kind='mail_archive'`, [modelId]);
+    const admin = { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() };
+    const ceilings = { archiveTimeoutSeconds: admin.archiveTimeoutSeconds, parserMemoryMb: admin.parserMemoryMb };
+    return new Map(result.rows.map((row) => [row.documentId,
+      { indexInWorkspace: row.indexInWorkspace === true, limits: pickArchiveLimits(row.limits, ceilings) }]));
+  }
+
   private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
     const all = await this.documents.listAllInWorkspace(workspaceId);
     return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
@@ -1183,6 +1285,7 @@ export class SemanticPopulationRefreshService {
       );
     }
     const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
+    const maxRecords = mappingRecordCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRecordsPerSource);
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
@@ -1199,16 +1302,15 @@ export class SemanticPopulationRefreshService {
       ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
       ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
+      // Only sent when the mapping reads fewer records than the admin allows, so other sheets keep their fingerprint.
+      ...(maxRecords !== undefined ? { readLimits: { maxRecords } } : {}),
       mappingVersion,
     };
   }
 }
 
 /** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
-export function graphPropertyKey(field: string): string {
-  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
-  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
-}
+export const graphPropertyKey = graphFieldKey;
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
 export { aiFieldHints };

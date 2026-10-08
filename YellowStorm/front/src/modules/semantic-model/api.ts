@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, PopulationReprojectResponse, GraphStatus, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { ArchiveReadLimits, DataConnection, DataConnectionDraft, SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, GraphOutline, GraphRecordValues, CitedRecordView, GraphExportChoice, GraphExportContent, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, PopulationReprojectResponse, GraphStatus, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
@@ -69,6 +69,22 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },
     ));
+  },
+  async getGraphOutline(id: string, dataRevisionId?: string): Promise<GraphOutline> {
+    return unwrap(await apiClient.get<ApiResponse<GraphOutline>>(API_ENDPOINTS.semanticModels.graphOutline(id), { params: { dataRevisionId } }));
+  },
+  async getGraphRecord(id: string, recordId: string, dataRevisionId?: string): Promise<GraphRecordValues> {
+    return unwrap(await apiClient.get<ApiResponse<GraphRecordValues>>(API_ENDPOINTS.semanticModels.graphRecord(id, recordId), { params: { dataRevisionId } }));
+  },
+  /** A record a chat answer cited, read again: values, where each came from, and the documents one may open. */
+  async getCitedRecord(id: string, entityId: string, params: { data?: 'published' | 'draft'; dataRevisionId?: string }): Promise<CitedRecordView> {
+    return unwrap(await apiClient.get<ApiResponse<CitedRecordView>>(API_ENDPOINTS.semanticModels.citedRecord(id, entityId), { params }));
+  },
+  async searchGraph(id: string, q: string, dataRevisionId?: string, limit = 8): Promise<{ hits: Array<{ id: string; field: string; value: string }> }> {
+    return unwrap(await apiClient.get<ApiResponse<{ hits: Array<{ id: string; field: string; value: string }> }>>(API_ENDPOINTS.semanticModels.graphSearch(id), { params: { q, dataRevisionId, limit } }));
+  },
+  async exportGraph(id: string, body: { dataRevisionId?: string; fields: Record<string, Record<string, GraphExportChoice>>; shortenTo: number }): Promise<GraphExportContent> {
+    return unwrap(await apiClient.post<ApiResponse<GraphExportContent>>(API_ENDPOINTS.semanticModels.graphExport(id), body));
   },
   async bindings(id: string): Promise<KnowledgeBinding[]> {
     return unwrap(await apiClient.get<ApiResponse<KnowledgeBinding[]>>(API_ENDPOINTS.semanticModels.bindings(id)));
@@ -157,6 +173,19 @@ export const semanticModelApi = {
   async deleteSourceMapping(id: string, mappingId: string): Promise<{ revision: number }> {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMapping(id, mappingId), { data: { expectedRevision: model.revision } }));
+  },
+  // ── Data sources (connections) ────────────────────────────────────────────
+  async listDataConnections(id: string): Promise<DataConnection[]> {
+    return unwrap(await apiClient.get<ApiResponse<DataConnection[]>>(API_ENDPOINTS.semanticModels.dataConnections(id)));
+  },
+  async createDataConnection(id: string, draft: DataConnectionDraft): Promise<DataConnection> {
+    return unwrap(await apiClient.post<ApiResponse<DataConnection>>(API_ENDPOINTS.semanticModels.dataConnections(id), draft));
+  },
+  async updateDataConnection(id: string, connectionId: string, change: { indexInWorkspace?: boolean; limits?: ArchiveReadLimits }): Promise<DataConnection> {
+    return unwrap(await apiClient.patch<ApiResponse<DataConnection>>(API_ENDPOINTS.semanticModels.dataConnection(id, connectionId), change));
+  },
+  async deleteDataConnection(id: string, connectionId: string): Promise<void> {
+    await apiClient.delete(API_ENDPOINTS.semanticModels.dataConnection(id, connectionId));
   },
   async listMappingPresets(id: string, conceptId: string): Promise<MappingPreset[]> {
     return unwrap(await apiClient.get<ApiResponse<MappingPreset[]>>(API_ENDPOINTS.semanticModels.mappingPresets(id), { params: { conceptId } }));

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, NodeToolbar, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, Mail, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -17,7 +17,9 @@ import type { AttributeDefinition, ConceptSourceMapping, DerivedSource, MappingH
 import { businessKey, compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion, typedRecordsDeletion } from '../../utils/graph-deletes';
 import { announceUndoable, isTextEntry } from '../../utils/undo-notice';
+import { copyConcept, copySource, pasteConcept, readCanvasClipboard, writeCanvasClipboard } from '../../utils/canvas-clipboard';
 import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell } from './CanvasToolbars';
+import { tableLabel } from '../../utils/data-sources';
 import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
 /** What a concept card says about its data: how many sources feed it, which are usable, and how it recognises a record. */
@@ -56,6 +58,8 @@ type BusinessNodeData = Record<string, unknown> & {
   onRename?: (nodeId: string, label: string) => void;
   onDetails?: (nodeId: string) => void;
   onBrowseRecords?: (nodeId: string) => void;
+  /** A run is refreshing this concept's records right now. */
+  refreshing?: boolean;
 };
 
 function stopNodeEvent(event: MouseEvent | PointerEvent | FormEvent): void {
@@ -158,6 +162,7 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
     {data.quickActions&&!data.protected&&<button type='button' className='nodrag nopan absolute left-0 top-[36px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>runClickAction(event,()=>data.onOpenKnowledge?.(data.nodeId))} aria-label={t('designer.plus.source',{name:data.label})} title={t('designer.plus.source',{name:data.label})}><Plus className='h-4 w-4' /></button>}
     <div className={cn('relative flex h-24 w-24 items-center justify-center rounded-full transition-shadow',data.protected?'bg-sky-500 text-white':'bg-primary text-primary-foreground',selected?'ring-8 ring-primary/30':'ring-8 ring-primary/10 hover:ring-primary/20',data.dropState==='valid'&&'ring-primary/40',data.dropState==='already-linked'&&'ring-emerald-500/40',data.dropState==='busy'&&'ring-amber-500/40')}>
       <Handle type='target' position={Position.Left} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectTo')} title={t('relation.connectTo')} />
+      {data.refreshing&&<span className='pointer-events-none absolute -inset-3 animate-spin rounded-full drop-shadow-[0_0_6px_rgba(236,72,153,0.8)] [animation-duration:1.6s] motion-reduce:animate-none' style={REFRESH_RING} role='status' aria-label={t('editor.refreshing',{name:data.label})} title={t('editor.refreshing',{name:data.label})} />}
       <Icon className='h-10 w-10' />
       {data.onDelete&&!selected&&<HoverDelete label={t('designer.delete.concept',{name:data.label})} className='-left-1 -top-1' onDelete={()=>data.onDelete?.(data.nodeId)} />}
       {hasKey&&<span className='absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-amber-400 text-amber-950' role='img' aria-label={t('editor.matchingKey')} title={t('editor.matchingKey')}><KeyRound className='h-3.5 w-3.5' /></span>}
@@ -180,6 +185,13 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
   </div>;
 });
 
+// A bright spinning gradient ring, cut out of a disc so only its edge shows.
+const REFRESH_RING = {
+  background:'conic-gradient(#ff00c8,#ffb800,#00f0ff,#7c3aed,#ff00c8)',
+  mask:'radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px))',
+  WebkitMask:'radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px))',
+} as const;
+
 const TONE_CLASS = {
   ok:'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
   warn:'bg-amber-500/10 text-amber-700 dark:text-amber-400',
@@ -198,10 +210,11 @@ function HoverDelete({ label,onDelete,className,visible=false }: Readonly<{ labe
 const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<SourceNodeData>>) {
   const { t } = useModuleTranslation('semantic-model');
   const { source } = data;
-  const Icon = source.kind==='typed' ? Keyboard : source.kind==='spreadsheet' ? Sheet : source.kind==='workspace' ? FolderOpen : FileText;
+  const Icon = source.kind==='typed' ? Keyboard : source.kind==='mail' ? Mail : source.kind==='spreadsheet' ? Sheet : source.kind==='workspace' ? FolderOpen : FileText;
   const title = source.kind==='typed' ? t('designer.typedRecords') : source.label;
   const detail = source.kind==='typed' ? t('editor.recordCount',{count:Number(source.detail)})
     : source.kind==='workspace' ? t(Number(source.detail)===1?'records.table.files_one':'records.table.files',{count:Number(source.detail)})
+    : source.kind==='mail' ? tableLabel(t,source.detail)
     : source.detail || t(`designer.kind.${source.kind}`);
   const [recordInputOpen,setRecordInputOpen] = useState(false);
   const typedConceptId = source.kind==='typed' ? source.id.slice('typed:'.length) : '';
@@ -285,7 +298,7 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onPaneClick }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onPaneClick,refreshingConcepts }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
   /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
   identityRules?:{conceptId:string;fields:string[]}[];
   /** Concepts made from another concept's records; each draws a line from that concept. */
@@ -310,7 +323,9 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   sourcePositions?:Record<string,{x:number;y:number}>;
   onMoveSource?:(id:string,position:{x:number;y:number})=>void;
   /** Open the table of a concept's records under the canvas. */
-  onBrowseRecords?:(conceptId:string)=>void }>) {
+  onBrowseRecords?:(conceptId:string)=>void;
+  /** Concepts a running job refreshes: 'all' for a whole-model run, none when nothing runs. */
+  refreshingConcepts?:'all'|string[] }>) {
   const { t } = useModuleTranslation('semantic-model');
   const isMobile = useIsMobile();
   const graph = useSemanticModelEditorStore((state)=>state.graph);
@@ -523,6 +538,51 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
     return () => window.removeEventListener('keydown',keyboard);
   },[]);
 
+  // Ctrl/Cmd+C copies the selected concept or source; Ctrl/Cmd+V pastes a concept as a new one, and a source onto the
+  // selected concept (or onto empty canvas, where the drawer asks which concept it feeds).
+  const clipboardRef = useRef<(key:'c'|'v')=>boolean>(()=>false);
+  clipboardRef.current = (key) => {
+    const state = useSemanticModelEditorStore.getState();
+    if (!state.graph||mode==='records') return false;
+    if (key==='c') {
+      const id = state.selectedId;
+      const concept = state.graph.nodes.find((node)=>node.id===id&&!node.systemKey);
+      const source = flow.sources.find((item)=>item.id===id);
+      if (!concept&&!source) return false;
+      const copied = concept?copyConcept(concept):copySource(source!);
+      if (!copied){showWarning(t('designer.clipboard.notCopyable'));return true;}
+      writeCanvasClipboard(copied);
+      showSuccess(t('designer.clipboard.copied',{name:concept?.label??(copied.kind==='source'?copied.resource.name:'')}));
+      return true;
+    }
+    const copied = readCanvasClipboard();
+    if (!canEdit||!copied) return false;
+    if (copied.kind==='concept') {
+      const node = pasteConcept(copied.concept,state.graph.nodes,t('designer.clipboard.copyName',{name:copied.concept.label}));
+      commit({type:'node_type.create',entity:node},(current)=>({...current,nodes:[...current.nodes,node]}));
+      focus(node.id);
+      showSuccess(t('designer.clipboard.pasted',{name:node.label}));
+      return true;
+    }
+    const target = state.graph.nodes.find((node)=>node.id===state.selectedId);
+    if (target&&onMapStructuredDrop) onMapStructuredDrop(copied.resource,target.id);
+    else if (onPaneDrop) onPaneDrop(copied.resource);
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const keyboard = (event:globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if ((key!=='c'&&key!=='v')||!(event.ctrlKey||event.metaKey)||event.altKey||event.shiftKey||isTextEntry(event.target)) return;
+      if (event.target instanceof HTMLElement&&event.target.closest('[role="dialog"]')) return;
+      // Copying text selected on the page stays the browser's.
+      if (key==='c'&&window.getSelection()?.toString()) return;
+      if (clipboardRef.current(key)) event.preventDefault();
+    };
+    window.addEventListener('keydown',keyboard);
+    return () => window.removeEventListener('keydown',keyboard);
+  },[]);
+
   const graphId = graph?.versionId;
   // Sources arrive after the model, so fit again once they do; otherwise the source column starts off-screen.
   const sourceCount = flow.sources.length;
@@ -537,7 +597,7 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   const baseNodes = useMemo<Node<BusinessNodeData>[]>(()=>{
     if (!graph) return [];
     if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
-    const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined,onDelete:canEdit&&!node.systemKey?deleteConcept:undefined,keyFields:keyFieldsByConcept[node.id]??[],onToggleKey:canEdit?onToggleKey:undefined,onRename:canEdit&&!node.systemKey?renameConcept:undefined,onDetails:openDetails,onBrowseRecords:node.systemKey?undefined:onBrowseRecords}}));
+    const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined,onDelete:canEdit&&!node.systemKey?deleteConcept:undefined,keyFields:keyFieldsByConcept[node.id]??[],onToggleKey:canEdit?onToggleKey:undefined,onRename:canEdit&&!node.systemKey?renameConcept:undefined,onDetails:openDetails,onBrowseRecords:node.systemKey?undefined:onBrowseRecords,refreshing:!node.systemKey&&(refreshingConcepts==='all'||Boolean(refreshingConcepts?.includes(node.id)))}}));
     const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:canEdit&&Boolean(onMoveSource),connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined,onSwitch:canEdit?onSwitchSource:undefined,onRemove:!canEdit?undefined:source.kind==='typed'?removeTypedRecords:onRemoveSource?(item:DesignerSource)=>onRemoveSource(item):undefined,onOpen:onOpenSource?(item:DesignerSource)=>onOpenSource(item):undefined,canAddRecord:canEdit}}));
     const withSources = [...sourceNodes,...modelNodes] as unknown as Node<BusinessNodeData>[];
     if (!quickConcept) return withSources;

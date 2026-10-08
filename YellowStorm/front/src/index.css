@@ -245,6 +245,18 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* Live progress remains visible without rotation or horizontal scanning. */
+  [data-agent-spinner],
+  [data-tool-spinner],
+  [data-agent-scan] {
+    animation: live-status-pulse 2.4s ease-in-out infinite !important;
+  }
+}
+
+@keyframes live-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @layer base {

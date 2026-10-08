@@ -4,6 +4,18 @@ import { applyChunksToComponents, StreamingBuffer } from './stream-buffer';
 describe('StreamingBuffer', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('merges replayed agent activity adds by identity across flushes', () => {
+    const activity = { id: 'activity-1', type: 'agentActivity' as const, data: { summary: 'Inspect the report', status: 'completed' } };
+    const first = applyChunksToComponents([], [{ action: 'add', component: activity }]);
+    const replay = applyChunksToComponents(first, [
+      { action: 'add', component: { ...activity, data: { detail: 'Full reasoning' } } },
+      { action: 'add', component: { ...activity, id: 'activity-2' } },
+    ]);
+    expect(replay).toHaveLength(2);
+    expect(replay[0].data).toEqual({ ...activity.data, detail: 'Full reasoning' });
+    expect(first[0].data).not.toHaveProperty('detail');
+  });
+
   it('coalesces chunks per frame without mixing concurrent conversation sessions', () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {

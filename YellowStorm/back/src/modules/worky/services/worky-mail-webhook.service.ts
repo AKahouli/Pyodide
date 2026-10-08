@@ -1,7 +1,10 @@
-import { timingSafeEqual } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
-import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
+import { timingSafeStringEquals } from '@common/utils';
+import {
+  PlaybookFlowMailGraphClientService,
+  pinInboxMessageResource,
+} from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
 import { WorkyMailSubscriptionService } from './worky-mail-subscription.service';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
@@ -12,14 +15,6 @@ interface GraphNotification {
   clientState?: string;
   resource?: string;
   resourceData?: { id?: string };
-}
-
-/** Constant-time, so a mismatch leaks nothing about how close a guess was. */
-function secretsMatch(a: string, b: string): boolean {
-  const x = Buffer.from(a ?? '', 'utf8');
-  const y = Buffer.from(b ?? '', 'utf8');
-  if (x.length !== y.length || x.length === 0) return false;
-  return timingSafeEqual(x, y);
 }
 
 /**
@@ -65,10 +60,21 @@ export class WorkyMailWebhookService {
     // claims matches the one we issued for that secret.
     if (
       !subscription.clientState ||
-      !secretsMatch(subscription.clientState, notification.clientState ?? '') ||
+      !timingSafeStringEquals(subscription.clientState, notification.clientState ?? '') ||
       subscription.subscriptionId !== notification.subscriptionId
     ) {
       this.logger.warn('Rejected mail notification with mismatched subscription');
+      return false;
+    }
+
+    // Pin the notification to the subscribed inbox shape: a spoofed or
+    // tampered notification must not pick which mailbox resource we read.
+    const pinnedResource = pinInboxMessageResource(
+      notification.resource,
+      notification.resourceData?.id,
+    );
+    if (!pinnedResource) {
+      this.logger.warn('Rejected mail notification with unexpected resource path');
       return false;
     }
 
@@ -77,7 +83,7 @@ export class WorkyMailWebhookService {
     const message = await this.graphClient.getMessageByResource(
       subscription.userId,
       subscription.mailboxAppKey,
-      notification.resource ?? `me/messages/${notification.resourceData?.id ?? ''}`,
+      pinnedResource,
     );
     if (!message) return false;
 

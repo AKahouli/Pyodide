@@ -9,7 +9,8 @@ export const KNOWLEDGE_DRAG_TYPE = 'application/x-yellowstorm-knowledge';
 
 export type KnowledgeResource =
   | { kind:'workspace';workspaceId:string;name:string }
-  | { kind:'document';workspaceId:string;documentId:string;name:string;structured?:boolean;mappable?:boolean;mimeType?:string;path?:string };
+  // A table of a connection (a mail archive's messages, say) is its file with the table named.
+  | { kind:'document';workspaceId:string;documentId:string;name:string;structured?:boolean;mappable?:boolean;mimeType?:string;path?:string;sheetName?:string };
 
 export type KnowledgeDropState = 'valid' | 'already-linked' | 'busy';
 
@@ -20,7 +21,7 @@ export function parseKnowledgeResource(value: string): KnowledgeResource | null 
       return {kind:'workspace',workspaceId:parsed.workspaceId,name:parsed.name};
     }
     if (parsed.kind==='document'&&typeof parsed.workspaceId==='string'&&typeof parsed.documentId==='string'&&typeof parsed.name==='string') {
-      return {kind:'document',workspaceId:parsed.workspaceId,documentId:parsed.documentId,name:parsed.name,structured:parsed.structured===true,mappable:parsed.mappable===true,mimeType:typeof parsed.mimeType==='string'?parsed.mimeType:undefined,path:typeof parsed.path==='string'?parsed.path:undefined};
+      return {kind:'document',workspaceId:parsed.workspaceId,documentId:parsed.documentId,name:parsed.name,structured:parsed.structured===true,mappable:parsed.mappable===true,mimeType:typeof parsed.mimeType==='string'?parsed.mimeType:undefined,path:typeof parsed.path==='string'?parsed.path:undefined,sheetName:typeof parsed.sheetName==='string'?parsed.sheetName:undefined};
     }
   } catch {
     return null;

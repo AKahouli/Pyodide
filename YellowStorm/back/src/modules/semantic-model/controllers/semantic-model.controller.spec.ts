@@ -24,6 +24,7 @@ describe('SemanticModelController validation synchronization', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     await expect(controller.validate({ _id: { toString: () => 'user-id' } } as never, 'model-id'))
@@ -43,7 +44,7 @@ describe('SemanticModelController graph search', () => {
     };
     const unused = {} as never;
     const controller = new SemanticModelController(
-      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never,
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never, unused,
     );
     const user = { _id: { toString: () => 'user-id' } } as never;
 

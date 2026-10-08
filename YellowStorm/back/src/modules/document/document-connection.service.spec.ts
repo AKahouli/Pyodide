@@ -38,6 +38,22 @@ jest.mock('@aws-sdk/client-s3', () => {
   return { S3Client, HeadBucketCommand, CreateBucketCommand };
 });
 
+// Mock Azure Blob client: only enough for provider selection + connect().
+const mockCreateIfNotExists = jest.fn().mockResolvedValue({ succeeded: true });
+
+jest.mock('@azure/storage-blob', () => ({
+  BlobSASPermissions: { parse: jest.fn() },
+  BlobServiceClient: {
+    fromConnectionString: () => ({
+      getContainerClient: () => ({
+        createIfNotExists: mockCreateIfNotExists,
+        getProperties: jest.fn().mockResolvedValue({}),
+        getBlockBlobClient: (key: string) => ({ url: `https://account.blob.core.windows.net/documents/${key}` }),
+      }),
+    }),
+  },
+}));
+
 import { HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 
 describe('DocumentConnectionService', () => {
@@ -201,7 +217,7 @@ describe('DocumentConnectionService', () => {
 
       expect(newService.isConnectedNow()).toBe(false);
       expect(newLogger.warn).toHaveBeenCalledWith(
-        'Ceph S3 credentials not configured (endpoint/accessKey/secretKey). Document service disabled.',
+        'Ceph S3 credentials not configured. Document service disabled.',
       );
 
       newService.onModuleDestroy();
@@ -216,7 +232,7 @@ describe('DocumentConnectionService', () => {
 
       expect(newService.isConnectedNow()).toBe(false);
       expect(newLogger.warn).toHaveBeenCalledWith(
-        'Ceph S3 credentials not configured (endpoint/accessKey/secretKey). Document service disabled.',
+        'Ceph S3 credentials not configured. Document service disabled.',
       );
 
       newService.onModuleDestroy();
@@ -412,26 +428,49 @@ describe('DocumentConnectionService', () => {
     });
   });
 
-  describe('getS3Client', () => {
+  describe('getBackend', () => {
     it('should return null before connecting', () => {
-      expect(service.getS3Client()).toBeNull();
+      expect(service.getBackend()).toBeNull();
     });
 
-    it('should return S3 client after connecting', async () => {
+    it('should return the Ceph S3 backend after connecting', async () => {
       await service.connect();
-      expect(service.getS3Client()).not.toBeNull();
+      expect(service.getBackend()?.label).toBe('Ceph S3');
     });
   });
 
-  describe('getBucket', () => {
-    it('should return configured bucket name', () => {
-      expect(service.getBucket()).toBe('documents');
+  describe('provider selection', () => {
+    it('should use the Azure backend when STORAGE_PROVIDER is azure', async () => {
+      const { service: azureService } = await createService({
+        'storage.provider': 'azure',
+        'storage.azure.connectionString': 'UseDevelopmentStorage=true',
+        'storage.azure.container': 'documents',
+      });
+
+      await azureService.connect();
+      expect(azureService.getBackend()?.label).toBe('Azure Blob');
+      azureService.onModuleDestroy();
+    });
+
+    it('should report unavailable when the azure connection string is missing', async () => {
+      const { service: azureService } = await createService({
+        'storage.provider': 'azure',
+        'storage.azure.connectionString': '',
+      });
+
+      expect(azureService.isAvailable()).toBe(false);
+      await azureService.connect();
+      expect(azureService.getBackend()).toBeNull();
+      azureService.onModuleDestroy();
     });
   });
 
-  describe('getPublicUrl', () => {
-    it('should return configured public URL', () => {
-      expect(service.getPublicUrl()).toBe('https://s3.example.com');
+  describe('publicUrl', () => {
+    it('should build the object URL from the configured public URL', async () => {
+      await service.connect();
+      expect(service.getBackend()?.publicUrl('a/b.txt')).toBe(
+        'https://s3.example.com/documents/a/b.txt',
+      );
     });
 
     it('should fall back to endpoint when public URL is empty', async () => {
@@ -440,7 +479,10 @@ describe('DocumentConnectionService', () => {
         'storage.s3.endpoint': 'https://endpoint.example.com',
       });
 
-      expect(newService.getPublicUrl()).toBe('https://endpoint.example.com');
+      await newService.connect();
+      expect(newService.getBackend()?.publicUrl('a/b.txt')).toBe(
+        'https://endpoint.example.com/documents/a/b.txt',
+      );
       newService.onModuleDestroy();
     });
   });

@@ -143,9 +143,13 @@ class SearchSettings(BaseModel):
     lexical_candidates: int = Field(default=50, alias="lexicalCandidates", ge=5, le=500)
     vector_candidates: int = Field(default=50, alias="vectorCandidates", ge=5, le=500)
     # 0.4 from first live qwen3 probes: unrelated records scored 0.34-0.37 against a key,
-    # related ones 0.46-0.59; calibrate on gold queries (plan G5).
+    # related ones 0.46-0.59; calibrate on gold queries (plan G5). With ``adaptive_similarity``
+    # it is the floor only when the nearest records do not stand out from the rest.
     min_similarity: float = Field(default_factory=lambda: _env_float("SEMANTIC_SEARCH_MIN_SIMILARITY", 0.4),
                                   alias="minSimilarity", ge=0, le=1)
+    # The floor follows the request: above the similarity most of the nearest records share (their
+    # median), by a share of the gap to the nearest one; so it suits any embedding model's scale.
+    adaptive_similarity: bool = Field(default=True, alias="adaptiveSimilarity")
     rrf_k: int = Field(default=60, alias="rrfK", ge=1, le=1000)
     default_limit: int = Field(default=10, alias="defaultLimit", ge=1, le=100)
     max_limit: int = Field(default=25, alias="maxLimit", ge=1, le=100)

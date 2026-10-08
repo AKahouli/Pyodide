@@ -551,8 +551,8 @@ def test_purge_clears_data_and_drops_its_graphs(client: TestClient, monkeypatch:
 
     seen: dict = {}
 
-    async def purge(pool, model_id, *, forget_document_reading, emit_signal):  # type: ignore[no-untyped-def]
-        seen.update(model=model_id, forget=forget_document_reading)
+    async def purge(pool, model_id, *, forget_document_reading, emit_signal, timeout_s):  # type: ignore[no-untyped-def]
+        seen.update(model=model_id, forget=forget_document_reading, timeout=timeout_s)
         return {"modelId": model_id, "resetGeneration": 1, "revisions": 2, "keptRevisions": 0,
                 "reviewItems": 0, "jobs": 1, "documentReadings": 0,
                 "projections": ["age:v1:pop_dr_a", "age:v1:pop_dr_gone"]}
@@ -561,12 +561,32 @@ def test_purge_clears_data_and_drops_its_graphs(client: TestClient, monkeypatch:
     graphs = _GraphsPool({"pop_dr_a"})
     _inject(client, ScriptedPool([]), graphs)
     response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH,
-                           json={"forgetDocumentReading": True})
+                           json={"forgetDocumentReading": True, "timeoutSeconds": 900})
     assert response.status_code == 200
     assert response.json()["projectionsDropped"] == 1
     assert "projections" not in response.json()
-    assert seen == {"model": "m1", "forget": True}
+    assert seen == {"model": "m1", "forget": True, "timeout": 900}
     assert len(graphs.dropped) == 1 and "pop_dr_a" in graphs.dropped[0]
+
+
+def test_purge_uses_the_default_time_when_none_is_sent_and_refuses_one_out_of_range(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[int] = []
+
+    async def purge(pool, model_id, *, forget_document_reading, emit_signal, timeout_s):  # type: ignore[no-untyped-def]
+        seen.append(timeout_s)
+        return {"modelId": model_id, "projections": []}
+
+    monkeypatch.setattr(store, "purge_model_data", purge)
+    _inject(client, ScriptedPool([]))
+    url = "/v1/semantic-model-population/models/m1/purge"
+    assert client.post(url, headers=AUTH, json={}).status_code == 200
+    assert seen == [300]
+    for bad in (5, 4000):
+        assert client.post(url, headers=AUTH, json={"timeoutSeconds": bad}).status_code == 422
+    assert seen == [300]
 
 
 def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest.MonkeyPatch):
@@ -586,17 +606,21 @@ def test_forget_readings_keeps_the_data_and_waits_for_a_running_build(client: Te
                                                                        monkeypatch: pytest.MonkeyPatch):
     from app.persistence import population_store as store
 
-    seen: list[str] = []
+    seen: list[tuple] = []
 
-    async def forget(pool, model_id):  # type: ignore[no-untyped-def]
-        seen.append(model_id)
+    async def forget(pool, model_id, concept_id=None):  # type: ignore[no-untyped-def]
+        seen.append((model_id, concept_id))
         return 12
 
     monkeypatch.setattr(store, "forget_document_readings", forget)
     _inject(client, ScriptedPool([]))
     response = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
     assert response.status_code == 200
-    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == ["m1"]
+    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == [("m1", None)]
+    # A concept's refresh forgets only that concept's readings.
+    scoped = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH,
+                         json={"conceptId": "fait"})
+    assert scoped.status_code == 200 and seen[-1] == ("m1", "fait")
 
     async def running(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise store.PopulationRunning("m1")

@@ -11,6 +11,7 @@ import { useShareNotifications } from './modules/workspace/hooks/useShareNotific
 import { useFileViewerDisplayMode, useFileViewerMode } from './modules/file-viewer/store';
 import { Toaster } from './components/ui/sonner';
 import { router } from './Router';
+import { useRecordCitationStore } from './modules/semantic-model/citations/record-citation-store';
 
 const SettingsModal = React.lazy(() =>
   import('./modules/profile/components/SettingsModal').then((m) => ({ default: m.SettingsModal })),
@@ -97,6 +98,21 @@ function DeferredWorkspaceModals() {
   );
 }
 
+const RecordCitationDrawer = React.lazy(() => import('./modules/semantic-model/citations/RecordCitationDrawer'));
+
+/** The record a chat citation opens, loaded the first time one is opened. */
+function DeferredRecordCitationDrawer() {
+  const opened = useRecordCitationStore((state) => state.target !== null);
+  const [wanted, setWanted] = React.useState(false);
+  React.useEffect(() => { if (opened) setWanted(true); }, [opened]);
+  if (!wanted && !opened) return null;
+  return (
+    <Suspense fallback={null}>
+      <RecordCitationDrawer />
+    </Suspense>
+  );
+}
+
 function DeferredFileFloatingWindow() {
   const mode = useFileViewerMode();
   const displayMode = useFileViewerDisplayMode();
@@ -116,6 +132,7 @@ export default function App() {
       <DeferredWorkspaceModals />
       <ShareNotificationsBridge />
       <DeferredFileFloatingWindow />
+      <DeferredRecordCitationDrawer />
       <Toaster position='top-right' richColors offset={80} closeButton />
     </CombinedProvider>
   );

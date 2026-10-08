@@ -258,7 +258,7 @@ def test_sandbox_previews_prepares_and_derives_from_a_file(archive: bytes, tmp_p
 async def test_population_downloads_an_archive_once_and_derives_its_files_once(archive: bytes, tmp_path: Path):
     from test_population_task import command
 
-    source = {**SOURCE, "sizeBytes": len(archive)}
+    source = {**SOURCE, "sizeBytes": len(archive), "indexInWorkspace": True}
     sources = [{"conceptId": "c1", "source": dict(source), "options": {"sheetName": sheet},
                 "columnMapping": {key: "customer_id", "nom_fichier" if sheet == "attachments" else "objet": "name"},
                 "mappingVersion": "map-v1"}
@@ -296,6 +296,28 @@ async def test_population_downloads_an_archive_once_and_derives_its_files_once(a
     assert second["ok"] is True and len(uploads) == 6
 
 
+@pytest.mark.asyncio
+async def test_population_leaves_the_workspace_alone_unless_the_source_asks_to_index_there(archive: bytes):
+    from test_population_task import command
+
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    sources = [{"conceptId": "c1", "source": source, "options": {"sheetName": "messages"},
+                "columnMapping": {"cle_message": "customer_id", "objet": "name"}, "mappingVersion": "map-v1"}]
+    uploads: list[str] = []
+
+    async def fetch(src: dict, actor: str, *, target: Path) -> Path:
+        target.write_bytes(archive)
+        return target
+
+    async def upload(src: dict, actor: str, entry: dict, path: Path) -> dict:
+        uploads.append(entry["fileName"])
+        return {"documentId": "d", "created": True}
+
+    outcome = await run(command(sources=sources), fetch, upload, None)
+    assert outcome["ok"] is True and outcome["counts"]["materialized"] == 4
+    assert uploads == []
+
+
 async def run(cmd: dict, fetch, upload, cache) -> dict:  # type: ignore[no-untyped-def]
     from app.workers.population_tasks import run_population_for_task
 
@@ -320,6 +342,18 @@ def test_run_limits_fall_back_to_built_in_values_and_stay_in_range():
     assert run_limits({}) == DEFAULT_RUN_LIMITS
     assert run_limits({"limits": {"maxRecordsPerRun": 50000, "maxValuesPerRun": 10**9,
                                   "maxRunSources": True}}) == {**DEFAULT_RUN_LIMITS, "maxRecordsPerRun": 50000}
+
+
+def test_an_archive_connection_sets_its_own_limits_but_not_more_time_or_memory_than_the_run():
+    from app.population.run_limits import DEFAULT_RUN_LIMITS, source_limits
+
+    limits = {**DEFAULT_RUN_LIMITS, "archiveTimeoutSeconds": 600}
+    assert source_limits(limits, {"assetId": "a"}) is limits
+    chosen = source_limits(limits, {"archiveLimits": {"maxArchiveEmails": 200, "maxArchiveMb": 5000,
+                                                      "archiveTimeoutSeconds": 3000, "parserMemoryMb": 300,
+                                                      "maxRecordsPerRun": 100}})
+    assert chosen == {**limits, "maxArchiveEmails": 200, "maxArchiveMb": 5000, "archiveTimeoutSeconds": 600,
+                      "parserMemoryMb": 300}
 
 
 @pytest.mark.asyncio
@@ -378,6 +412,12 @@ async def test_admin_limit_on_records_per_source_stops_reading_that_source():
     limited["payload"]["limits"] = {"maxRecordsPerSource": 100}
     outcome = await run_population_for_task(limited, fetch=fetch, upload_derived=upload)
     assert outcome["counts"]["materialized"] == 100 and outcome["completeEnumeration"] is False
+    # A mapping may read fewer records than the admin allows, never more.
+    own = command(sources=[{**sources[0], "readLimits": {"maxRecords": 40}}])
+    assert (await run_population_for_task(own, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 40
+    more = command(sources=[{**sources[0], "readLimits": {"maxRecords": 400}}])
+    more["payload"]["limits"] = {"maxRecordsPerSource": 100}
+    assert (await run_population_for_task(more, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 100
 
 
 def test_corps_falls_back_to_full_text_when_nothing_new() -> None:

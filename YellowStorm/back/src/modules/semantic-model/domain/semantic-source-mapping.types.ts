@@ -118,7 +118,14 @@ export interface AiExtractionSettings {
   parallelCalls?: number;
   /** One document gives several records (one per item the AI finds), e.g. each line of a table. Mapping only. */
   manyRecords?: boolean;
+  /** Most records this mapping's sheet gives; never above the admin's records per source. Mapping only. */
+  maxRecords?: number;
+  /** Most files a workspace mapping reads, always the same ones; never above the admin's files per run. Mapping only. */
+  maxFiles?: number;
 }
+
+/** A mapping's own reading limits, kept with its AI settings but never sent as AI settings. */
+export const MAPPING_READ_LIMIT_KEYS = ['maxRecords', 'maxFiles'] as const;
 
 /** How much one population run may read and keep. The runtime applies the same ranges. */
 export interface RunLimits {
@@ -134,14 +141,12 @@ export interface RunLimits {
   maxAiRowsPerSource: number;
   /** Most AI calls one run makes at once, whatever a mapping asks. */
   maxAiParallelCalls: number;
-  /** Most e-mails one archive may hold. */
-  maxArchiveEmails: number;
-  /** Largest e-mail archive read, in MB. */
-  maxArchiveMb: number;
-  /** Memory of the reader process for one source, in MB (enforced on Linux). */
+  /** Memory of the reader process for one source, in MB (enforced on Linux); the most a mail archive connection may choose. */
   parserMemoryMb: number;
-  /** Time one full read of an e-mail archive may take, in seconds. */
+  /** Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose. */
   archiveTimeoutSeconds: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. Not part of a run. */
+  purgeTimeoutSeconds: number;
 }
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
@@ -151,10 +156,9 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxValuesPerRun: 50000,
   maxAiRowsPerSource: 500,
   maxAiParallelCalls: 8,
-  maxArchiveEmails: 50000,
-  maxArchiveMb: 1024,
   parserMemoryMb: 512,
   archiveTimeoutSeconds: 900,
+  purgeTimeoutSeconds: 300,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
@@ -164,10 +168,9 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   maxValuesPerRun: [1000, 5000000],
   maxAiRowsPerSource: [0, 200000],
   maxAiParallelCalls: [1, 32],
-  maxArchiveEmails: [100, 200000],
-  maxArchiveMb: [10, 51200],
   parserMemoryMb: [256, 16384],
   archiveTimeoutSeconds: [60, 7200],
+  purgeTimeoutSeconds: [30, 3600],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

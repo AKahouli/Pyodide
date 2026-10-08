@@ -39,6 +39,10 @@ def make_celery() -> Celery:
         # bound redelivery so a persistent failure cannot loop forever.
         task_acks_on_failure_or_timeout=False,
         worker_prefetch_multiplier=1,
+        # Solo pools cannot send AMQP heartbeats while a task runs: a run longer than the
+        # heartbeat window gets its connection closed by the broker, and the worker then
+        # stops consuming without exiting. Disabled; TCP keepalive still detects dead peers.
+        broker_heartbeat=0,
         task_reject_on_worker_lost=True,
         # Keep the unified-logging root bridge alive: celery's default hijack
         # clears root handlers at worker boot, silencing the SDK (plan P06).

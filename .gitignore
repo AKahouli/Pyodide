@@ -36,7 +36,11 @@ coverage/
 *.env.*.local
 .env.local
 .env.development.local
-.env.example
+
+# .env.example documents the required variables and MUST be committed:
+# it carries no secret, only names, defaults and comments.
+!.env.example
+!**/.env.example
 
 .claude/
 *cwd*

@@ -34,7 +34,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Iterator
 
-from .attachment_text import attachment_text
+from .attachment_text import attachment_text, is_extractable
 
 EMAIL_ARCHIVE_MIMES = {"application/zip", "application/x-zip-compressed"}
 EML_MIMES = {"message/rfc822"}
@@ -79,6 +79,9 @@ _INDEXABLE = {
     "text/plain": ".txt",
 }
 _INDEXABLE_EXTENSIONS = {ext: mime for mime, ext in _INDEXABLE.items()}
+# Read for the attachments table's text but not copied to the workspace, whose indexer does not read them.
+_READABLE_EXTENSIONS = {**_INDEXABLE_EXTENSIONS, ".csv": "text/csv",
+                        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}
 _ENCRYPTED = {"application/pkcs7-mime", "application/x-pkcs7-mime", "application/pgp-encrypted"}
 _SIGNATURES = {"application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature"}
 
@@ -395,8 +398,8 @@ def _filename(part: EmailMessage) -> str | None:
 
 def _guess_type(filename: str, declared: str) -> str:
     extension = ("." + filename.rsplit(".", 1)[1].lower()) if "." in filename else ""
-    if declared in ("application/octet-stream", "application/x-octet-stream", "") and extension in _INDEXABLE_EXTENSIONS:
-        return _INDEXABLE_EXTENSIONS[extension]
+    if declared in ("application/octet-stream", "application/x-octet-stream", "") and extension in _READABLE_EXTENSIONS:
+        return _READABLE_EXTENSIONS[extension]
     return declared
 
 
@@ -409,7 +412,7 @@ def _status(content_type: str, payload: bytes | None, filename: str) -> str:
         return "trop volumineuse"
     if content_type == "application/pdf" and b"/Encrypt" in payload[:200000]:
         return "chiffrée"
-    if content_type in _INDEXABLE or content_type == "message/rfc822":
+    if content_type in _INDEXABLE or is_extractable(content_type) or content_type == "message/rfc822":
         return "lue"
     return "non prise en charge"
 
