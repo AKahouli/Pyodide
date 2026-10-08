@@ -55,7 +55,7 @@ export interface AppBuilderSessionPointerPatch {
 }
 
 /**
- * Persistence port for app_builder.sessions (P8).
+ * Persistence port for conversation_v2.sessions (P8).
  * Callers never touch Drizzle / Mongoose directly.
  */
 export interface AppBuilderSessionStore {

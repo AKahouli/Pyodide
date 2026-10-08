@@ -17,7 +17,7 @@ import { PgAppBuilderSessionStore } from './pg-app-builder-session.store';
 type EventRow = typeof schema.appBuilderEvents.$inferSelect;
 
 /**
- * PostgreSQL app_builder.events store.
+ * PostgreSQL conversation_v2.events store.
  * `append` mirrors Mongo semantics: bump counters first, then insert-on-conflict
  * by (session_id, event_id); duplicate eventIds leave a wasted sequence slot.
  */

@@ -112,7 +112,7 @@ export class AdminTemplateController {
       actorId: user._id,
       actorEmail: user.email,
       // Audit identifiers are persisted: `action`/`targetType` values are frozen
-      // (same policy as `ERR_380x` codes and the `app_builder` DB schema).
+      // (same policy as `ERR_380x` codes and the `conversation_v2` DB schema).
       // Renaming them would split historical audit records and break filters.
       action: 'conversation_v2_templates.create',
       targetId: template.id,

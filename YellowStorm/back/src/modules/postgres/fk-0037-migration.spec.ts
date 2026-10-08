@@ -10,14 +10,8 @@ import { describeIntegration, makeTestDb } from './testing/pg-integration';
  */
 describeIntegration('0037_conversation_app_runtime_fks on dirty data (integration)', () => {
   const { pool, close } = makeTestDb();
-  // 0037 predates migration 0048 (conversation_v2 -> app_builder); apply the same
-  // rename to the historical file so the dirty-data contract is tested against the
-  // schema the suite actually runs on.
-  const migration = fs
-    .readFileSync(path.resolve(__dirname, '..', '..', '..', 'drizzle', '0037_conversation_app_runtime_fks.sql'), 'utf8')
-    .replaceAll('conversation_v2', 'app_builder')
-    .replaceAll('_c2_', '_ab_');
-  const NAME = 'fk_ab_sessions_owner';
+  const migration = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'drizzle', '0037_conversation_app_runtime_fks.sql'), 'utf8');
+  const NAME = 'fk_c2_sessions_owner';
 
   afterAll(async () => {
     await close();
@@ -31,22 +25,22 @@ describeIntegration('0037_conversation_app_runtime_fks on dirty data (integratio
     try {
       await client.query('BEGIN');
       // Start from the state before the migration for this one constraint, with an orphan in place.
-      await client.query(`ALTER TABLE app_builder.sessions DROP CONSTRAINT IF EXISTS ${NAME}`);
+      await client.query(`ALTER TABLE conversation_v2.sessions DROP CONSTRAINT IF EXISTS ${NAME}`);
       const orphanId = newObjectId();
-      await client.query(`INSERT INTO app_builder.sessions (id, owner_id) VALUES ($1, $2)`, [orphanId, newObjectId()]);
+      await client.query(`INSERT INTO conversation_v2.sessions (id, owner_id) VALUES ($1, $2)`, [orphanId, newObjectId()]);
 
       await client.query(migration);
       expect(await state(client, NAME)).toBe(false);
 
       // NOT VALID still rejects a new row with an unknown owner.
       await client.query('SAVEPOINT refused');
-      await expect(client.query(`INSERT INTO app_builder.sessions (id, owner_id) VALUES ($1, $2)`, [newObjectId(), newObjectId()])).rejects.toThrow(/foreign key/i);
+      await expect(client.query(`INSERT INTO conversation_v2.sessions (id, owner_id) VALUES ($1, $2)`, [newObjectId(), newObjectId()])).rejects.toThrow(/foreign key/i);
       await client.query('ROLLBACK TO SAVEPOINT refused');
 
       // Running it again changes nothing (idempotent); with the orphan gone it validates.
       await client.query(migration);
       expect(await state(client, NAME)).toBe(false);
-      await client.query('DELETE FROM app_builder.sessions WHERE id = $1', [orphanId]);
+      await client.query('DELETE FROM conversation_v2.sessions WHERE id = $1', [orphanId]);
       await client.query(migration);
       expect(await state(client, NAME)).toBe(true);
     } finally {
@@ -60,7 +54,7 @@ describeIntegration('0037_conversation_app_runtime_fks on dirty data (integratio
     try {
       await client.query('BEGIN');
       await client.query(migration);
-      const constraints = await client.query("SELECT conname FROM pg_constraint WHERE conname LIKE 'fk\\_ab\\_%' OR conname LIKE 'fk\\_ar\\_%'");
+      const constraints = await client.query("SELECT conname FROM pg_constraint WHERE conname LIKE 'fk\\_c2\\_%' OR conname LIKE 'fk\\_ar\\_%'");
       expect(constraints.rows.length).toBeGreaterThanOrEqual(12);
     } finally {
       await client.query('ROLLBACK');

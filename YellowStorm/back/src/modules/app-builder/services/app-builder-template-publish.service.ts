@@ -19,7 +19,7 @@ export interface PublishedTemplateRevision {
   manifestObjectKey: string;
   manifestHash: string;
   fileCount: number;
-  /** Manifest file list, also persisted to `app_builder.template_revisions`. */
+  /** Manifest file list, also persisted to `conversation_v2.template_revisions`. */
   files: TemplateManifestFile[];
   /** Compatibility snapshot kept for catalog rows; not exposed by admin analyze APIs. */
   platformReport: TemplatePlatformReport;

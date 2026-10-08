@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       types: arr(doc.types),
       is_active: doc.isActive !== false,
       is_default: doc.isDefault === true,
-      is_app_builder_default: doc.isConversationV2Default === true,
+      is_conversation_v2_default: doc.isConversationV2Default === true,
       omit_temperature: doc.omitTemperature === true,
       input_modalities: arr(doc.inputModalities),
       max_input_tokens: n(doc.maxInputTokens),
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
     insert: async (unit) => {
       await pool.query(
         `INSERT INTO catalog.ai_models (id, model_id, name, chef, chef_slug, litellm_model, providers, type, types,
-          is_active, is_default, is_app_builder_default, omit_temperature, input_modalities,
+          is_active, is_default, is_conversation_v2_default, omit_temperature, input_modalities,
           max_input_tokens, max_output_tokens, input_cost_per_token, output_cost_per_token, cached_input_cost_per_token,
           supports_reasoning, reasoning_efforts, default_reasoning_effort, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
         [
           unit.id, unit.model_id, unit.name, unit.chef, unit.chef_slug, unit.litellm_model,
           unit.providers, unit.type, unit.types, unit.is_active, unit.is_default,
-          unit.is_app_builder_default, unit.omit_temperature, unit.input_modalities,
+          unit.is_conversation_v2_default, unit.omit_temperature, unit.input_modalities,
           unit.max_input_tokens, unit.max_output_tokens, unit.input_cost_per_token,
           unit.output_cost_per_token, unit.cached_input_cost_per_token, unit.supports_reasoning,
           unit.reasoning_efforts, unit.default_reasoning_effort, unit.created_at, unit.updated_at,
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
   // ── single-default sanity (partial unique indexes allow at most one) ─
   const defaults = await pool.query(
     `SELECT 'default' AS kind, count(*)::int AS n FROM catalog.ai_models WHERE is_default
-     UNION ALL SELECT 'v2_default', count(*)::int FROM catalog.ai_models WHERE is_app_builder_default
+     UNION ALL SELECT 'v2_default', count(*)::int FROM catalog.ai_models WHERE is_conversation_v2_default
      UNION ALL SELECT 'plan_default', count(*)::int FROM catalog.plans WHERE is_default`,
   );
   console.log('=== demoted extra defaults (2.3) ===');

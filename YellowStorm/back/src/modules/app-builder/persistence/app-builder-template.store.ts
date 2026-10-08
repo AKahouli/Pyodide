@@ -1,6 +1,6 @@
 /**
  * Persistence ports for the App Builder template catalog
- * (`app_builder.template_categories` + `app_builder.templates`).
+ * (`conversation_v2.template_categories` + `conversation_v2.templates`).
  * All SQL lives in the Postgres implementation; services never query directly.
  */
 import type { TemplatePlatformReport } from '@modules/app-runtime/platform-kit/platform-template-report';
