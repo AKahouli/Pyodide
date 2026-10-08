@@ -61,6 +61,55 @@ def _xlsx() -> bytes:
     return out.getvalue()
 
 
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _pptx(slides: list[list[str]], notes: dict[int, str] | None = None) -> bytes:
+    ns = ('xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+          'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"')
+    def part(lines: list[str]) -> str:
+        return f"<p:sld {ns}>" + "".join(f"<a:p><a:r><a:t>{line}</a:t></a:r></a:p>" for line in lines) + "</p:sld>"
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        for number, lines in enumerate(slides, start=1):
+            archive.writestr(f"ppt/slides/slide{number}.xml", part(lines))
+        for number, note in (notes or {}).items():
+            archive.writestr(f"ppt/notesSlides/notesSlide{number}.xml", part([note]))
+    return out.getvalue()
+
+
+def test_reads_powerpoint_slides_in_order_with_their_notes():
+    slides = [[f"Titre {n}", "Point cle"] for n in range(1, 11)]
+    text, status = attachment_text(PPTX_MIME, _pptx(slides, {2: "Penser au budget"}))
+    assert status == "extrait"
+    assert text.index("## Slide 2") < text.index("## Slide 10")  # numeric, not alphabetical
+    assert "## Slide 2\nTitre 2\nPoint cle\nNotes : Penser au budget" in text
+
+
+def test_reads_csv_under_its_usual_types_and_by_extension():
+    csv = "Lot;Montant\nLot 2;1250\n".encode("cp1252")
+    for mime in ("text/csv", "application/csv", "text/comma-separated-values"):
+        assert attachment_text(mime, csv) == ("Lot;Montant\nLot 2;1250", "extrait")
+    message = EmailMessage()
+    message["From"] = "achats@client.fr"
+    message.set_content("Voir pieces jointes.")
+    message.add_attachment(csv, maintype="application", subtype="octet-stream", filename="prix.csv")
+    message.add_attachment(_pptx([["Plan"]]), maintype="application", subtype="octet-stream", filename="deck.pptx")
+    rows = {a.row["nom_fichier"]: a.row for a in next(read_messages(bytes(message), "message/rfc822", with_text=True)).attachments}
+    assert rows["prix.csv"]["type_fichier"] == "text/csv" and rows["prix.csv"]["contenu"] == "Lot;Montant\nLot 2;1250"
+    assert rows["deck.pptx"]["statut_lecture"] == "lue" and rows["deck.pptx"]["contenu"] == "## Slide 1\nPlan"
+
+
+def test_csv_and_powerpoint_are_not_copied_to_the_workspace():
+    from app.datasource.email_archive import iter_derived_files
+    message = EmailMessage()
+    message["From"] = "achats@client.fr"
+    message.set_content("Pieces jointes.")
+    message.add_attachment(b"a;b\n1;2", maintype="text", subtype="csv", filename="t.csv")
+    message.add_attachment(_pptx([["Plan"]]), maintype="application", subtype="vnd.openxmlformats-officedocument.presentationml.presentation", filename="d.pptx")
+    assert [f.file_name.rsplit("-", 1)[-1] for f in iter_derived_files(bytes(message), "message/rfc822")] == ["message.txt"]
+
+
 def test_reads_pdf_word_excel_and_text():
     assert attachment_text(PDF_MIME, _pdf("Penalites de retard 3 pourcent"))[0] == "Penalites de retard 3 pourcent"
     assert attachment_text(DOCX_MIME, _docx("Article 1", "Livraison le 12 mars")) == ("Article 1\nLivraison le 12 mars", "extrait")

@@ -1,6 +1,6 @@
 """Plain text of an e-mail attachment, so its content becomes a field of the record.
 
-Reads the formats the Email Reader marks as readable (PDF, Word, Excel, text). A file that
+Reads the formats the Email Reader marks as readable (PDF, Word, Excel, PowerPoint, CSV, text). A file that
 yields no text (a scanned PDF, a damaged file) gives ``None``: the record keeps its other
 fields and says why in ``statut_contenu``.
 """
@@ -17,6 +17,8 @@ MAX_PDF_PAGES = 300
 MAX_SHEET_CELLS = 50_000
 
 _WORD = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_DRAWING = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+MAX_SLIDES = 500
 
 
 def _pdf(payload: bytes) -> str:
@@ -68,6 +70,35 @@ def _xlsx(payload: bytes) -> str:
         workbook.close()
 
 
+def _slide_number(name: str) -> int:
+    return int(re.search(r"(\d+)\.xml$", name).group(1))  # type: ignore[union-attr]
+
+
+def _paragraphs(xml: bytes) -> list[str]:
+    lines = []
+    for paragraph in ElementTree.fromstring(xml).iter(f"{_DRAWING}p"):
+        text = "".join(node.text for node in paragraph.iter(f"{_DRAWING}t") if node.text)
+        if text.strip():
+            lines.append(text)
+    return lines
+
+
+def _pptx(payload: bytes) -> str:
+    """Slide texts in order, each under a ``## Slide n`` heading, followed by that slide's speaker notes."""
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        names = set(archive.namelist())
+        slides = sorted((name for name in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)), key=_slide_number)
+        sections = []
+        for name in slides[:MAX_SLIDES]:
+            number = _slide_number(name)
+            lines = [f"## Slide {number}", *_paragraphs(archive.read(name))]
+            notes = f"ppt/notesSlides/notesSlide{number}.xml"
+            if notes in names:
+                lines += [f"Notes : {line}" for line in _paragraphs(archive.read(notes))]
+            sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
 def _plain(payload: bytes) -> str:
     for encoding in ("utf-8-sig", "cp1252"):
         try:
@@ -81,7 +112,11 @@ _READERS = {
     "application/pdf": _pdf,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": _docx,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": _xlsx,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": _pptx,
     "text/plain": _plain,
+    "text/csv": _plain,
+    "application/csv": _plain,
+    "text/comma-separated-values": _plain,
 }
 
 
