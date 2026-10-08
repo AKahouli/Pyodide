@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG UBUNTU_IMAGE="ubuntu:22.04@sha256:f9d633ff6640178c2d0525017174a688e2c1aef28f0a0130b26bd5554491f0da"
+ARG BASE_IMAGE="python:3.11-slim-bookworm"
 ARG PYTHON_VERSION=3.11
 ARG TRIVY_VERSION=0.49.1
 
@@ -13,7 +13,7 @@ RUN apk --no-cache add ca-certificates
 # -----------------------------------------------------------------------------
 # Builder
 # -----------------------------------------------------------------------------
-FROM ${UBUNTU_IMAGE} AS builder
+FROM ${BASE_IMAGE} AS builder
 ARG PYTHON_VERSION
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -42,17 +42,13 @@ RUN set -eux; mkdir -p /tmp; chmod 1777 /tmp
 
 # CI runner's bridge network blocks port 80; switch mirrors to HTTPS.
 COPY --from=ca-certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list
 
 # Build deps
 RUN set -eux; \
     apt-get -o Acquire::Retries=3 update; \
     apt-get -o Acquire::Retries=3 install --no-install-recommends -y \
       ca-certificates \
-      python${PYTHON_VERSION} \
-      python${PYTHON_VERSION}-dev \
-      python${PYTHON_VERSION}-venv \
-      python3-pip \
       build-essential \
       git \
       ffmpeg \
@@ -71,12 +67,12 @@ WORKDIR /build
 # Venv
 ENV VENV_PATH=/opt/venv
 RUN set -eux; \
-    python${PYTHON_VERSION} -m venv "${VENV_PATH}"; \
+    python -m venv "${VENV_PATH}"; \
     "${VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
 
 COPY --chown=azureuser:azureuser requirements.txt /build/requirements.txt
 # Staged unified-logging SDK wheel (created by scripts/observability/build-sdks.mjs before build)
-COPY --chown=azureuser:azureuser .generated/observability/ /build/.generated/observability/
+COPY --chown=azureuser:azureuser .generated/observability/*.whl /build/.generated/observability/
 
 # Mount the pip cache and install dependencies with network resilience
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -87,10 +83,15 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -r /build/requirements.txt; \
     "${VENV_PATH}/bin/pip" check
 
-# Security tools (builder only) using the cache mount
+# Security tools (builder only) in a separate venv
+ENV SECURITY_VENV=/opt/security-venv
+RUN set -eux; \
+    python -m venv "${SECURITY_VENV}"; \
+    "${SECURITY_VENV}/bin/python" -m pip install --upgrade pip setuptools wheel
+
 RUN --mount=type=cache,target=/root/.cache/pip \
     set -eux; \
-    "${VENV_PATH}/bin/pip" install \
+    "${SECURITY_VENV}/bin/pip" install \
         --default-timeout=120 \
         --retries=10 \
         pip-audit safety bandit
@@ -108,12 +109,12 @@ RUN set -eux; \
 RUN set -eux; \
     mkdir -p /build/security; \
     "${VENV_PATH}/bin/pip" list --format json > /build/security/pip-packages.json; \
-    ( "${VENV_PATH}/bin/pip-audit" --desc --format json > /build/security/pip-audit.json 2>&1 || \
+    ( "${SECURITY_VENV}/bin/pip-audit" --desc --format json > /build/security/pip-audit.json 2>&1 || \
       echo '{"vulnerabilities": [], "error": "pip-audit failed or no vulnerabilities found"}' > /build/security/pip-audit.json ); \
-    ( "${VENV_PATH}/bin/safety" check --json --output /build/security/safety-report.json 2>&1 || \
+    ( "${SECURITY_VENV}/bin/safety" check --json --output /build/security/safety-report.json 2>&1 || \
       echo '{"vulnerabilities": [], "error": "safety check failed or no vulnerabilities found"}' > /build/security/safety-report.json ); \
-    ( "${VENV_PATH}/bin/bandit" -r /build/src -f json -o /build/security/bandit-report.json 2>&1 || \
-      echo '{"results": [], "error": "bandit scan failed"}' > /build/security/bandit-report.json ); \
+    ( "${SECURITY_VENV}/bin/bandit" -r /build/src -f json -o /build/security/bandit-report.json 2>&1 || true ); \
+    if [ ! -s /build/security/bandit-report.json ]; then echo '{"results": [], "error": "bandit scan failed"}' > /build/security/bandit-report.json; fi; \
     "${VENV_PATH}/bin/python" -m py_compile /build/main.py 2>/dev/null || true; \
     "${VENV_PATH}/bin/python" -m py_compile /build/src/*.py 2>/dev/null || true
 
@@ -136,7 +137,7 @@ FROM aquasec/trivy:${TRIVY_VERSION} AS trivy
 # -----------------------------------------------------------------------------
 # Runtime base
 # -----------------------------------------------------------------------------
-FROM ${UBUNTU_IMAGE} AS runtime-base
+FROM ${BASE_IMAGE} AS runtime-base
 ARG PYTHON_VERSION
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -151,13 +152,12 @@ RUN set -eux; mkdir -p /tmp; chmod 1777 /tmp
 
 # CI runner's bridge network blocks port 80; switch mirrors to HTTPS.
 COPY --from=ca-certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list
 
 RUN set -eux; \
     apt-get -o Acquire::Retries=3 update; \
     apt-get -o Acquire::Retries=3 install --no-install-recommends -y \
       ca-certificates \
-      python${PYTHON_VERSION} \
       ffmpeg \
       libsm6 \
       libxext6; \
@@ -205,6 +205,7 @@ RUN set -eux; \
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scanned
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
+ENV PATH="/usr/local/bin:${PATH}"
 
 RUN set -eux; \
     mkdir -p /opt/app/security; \
