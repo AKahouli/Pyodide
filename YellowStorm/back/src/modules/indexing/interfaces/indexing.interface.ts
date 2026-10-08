@@ -36,16 +36,10 @@ export interface IndexDocumentResponse {
 }
 
 export interface DeleteIndexRequest {
-  // Kept for logging/observability — the upstream endpoint no longer uses
-  // (workspaceId, documentId) to locate the index entry.
+  // documentId is retained for logging; the API identifies files by workspace ID and location.
   documentId: string;
   workspaceId: string;
-  // Fields actually sent to the indexing API. Symmetric with what
-  // IndexDocumentRequest provides — workspaceName mirrors workspace.storagePrefix
-  // (the immutable second path segment), filePath is the full Ceph object key
-  // (document.path), and fileName is the sanitised stored filename
-  // (document.filename — last segment of the path).
-  workspaceName: string;
+  // Full Ceph object key and sanitised stored filename.
   filePath: string;
   fileName: string;
 }

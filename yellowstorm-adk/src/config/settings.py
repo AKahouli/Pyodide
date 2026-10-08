@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     HOST: str = "localhost"
     PORT: int = Field(
