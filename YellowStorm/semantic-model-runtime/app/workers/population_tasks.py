@@ -554,7 +554,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             from app.persistence.extraction_cache import extraction_cache_key
             cache_key = extraction_cache_key({
                 "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
-                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"]})
+                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
+                # Tables cut at the old e-mail or size limit are derived again once it changes.
+                "limits": {key: value for key, value in source_limits(limits, source).items()
+                           if key in ("maxArchiveEmails", "maxArchiveMb")}})
             if await extraction_cache.get(cache_key) is not None:
                 return
         phase = progress.phase
@@ -701,6 +704,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
                     "content": content_digest,
+                    # A reading cut at the old limit must not be reused once the limit changes.
+                    "recordCap": source_record_cap(limits, entry),
                     # Only present with a recipe, so a sheet without one keeps its cached reading.
                     **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
                     **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}

@@ -1,8 +1,7 @@
 import { useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ChevronDown, ChevronRight, Gauge, GripVertical, Loader2, Mail, Plug, Plus, RefreshCw, Table2, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, GripVertical, Loader2, Mail, Plug, Plus, RefreshCw, Settings, Table2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
@@ -13,7 +12,7 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { DataConnection } from '../../types';
 import { MAIL_TABLES, tableLabel } from '../../utils/data-sources';
 import { SectionHeader } from '../form/FormParts';
-import { ArchiveLimitsEditor, useArchiveLimitsSummary } from './ArchiveLimitsEditor';
+import { ConnectionSettingsDialog } from './ConnectionSettingsDialog';
 import { ConnectDataSourceDialog } from './ConnectDataSourceDialog';
 
 type TableResource = Extract<KnowledgeResource, { kind: 'document' }>;
@@ -91,22 +90,15 @@ export function DataConnectionsSection({ modelId, canEdit, onUse, onDragStart, o
   onShowWorkspaces: () => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
-  const limitsSummary = useArchiveLimitsSummary();
   const client = useQueryClient();
   const connections = useDataConnections(modelId || undefined);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [limitsOpen, setLimitsOpen] = useState<string | null>(null);
+  const [settingsOf, setSettingsOf] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const remove = useMutation({
     mutationFn: (connection: DataConnection) => semanticModelApi.deleteDataConnection(modelId, connection.id),
     onSuccess: () => { void client.invalidateQueries({ queryKey: semanticModelQueryKeys.dataConnections(modelId) }); showSuccess(t('dataSources.removed')); },
     onError: (error) => showError(t('dataSources.removeError'), { description: parseApiError(error).message }),
-  });
-  const indexing = useMutation({
-    mutationFn: ({ connection, on }: { connection: DataConnection; on: boolean }) =>
-      semanticModelApi.updateDataConnection(modelId, connection.id, { indexInWorkspace: on }),
-    onSuccess: () => void client.invalidateQueries({ queryKey: semanticModelQueryKeys.dataConnections(modelId) }),
-    onError: (error) => showError(t('dataSources.indexError'), { description: parseApiError(error).message }),
   });
   const toggle = (id: string) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const items = connections.data ?? [];
@@ -128,26 +120,14 @@ export function DataConnectionsSection({ modelId, canEdit, onUse, onDragStart, o
               {connection.available ? <p className='text-[10px] text-muted-foreground'>{t(`dataSources.kind.${connection.kind}`)}</p>
                 : <p className='flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3 w-3' />{t('dataSources.unavailable')}</p>}
             </div>
+            <Button size='icon' variant='ghost' className='h-11 w-11 shrink-0' onClick={() => setSettingsOf(connection.id)} aria-label={t('dataSources.settingsOpen', { name: connection.name })} title={t('dataSources.settingsOpen', { name: connection.name })}><Settings className='h-4 w-4' /></Button>
             {canEdit && <Button size='icon' variant='ghost' className='h-11 w-11 shrink-0' disabled={remove.isPending} onClick={() => remove.mutate(connection)} aria-label={t('dataSources.remove', { name: connection.name })}><Trash2 className='h-4 w-4' /></Button>}
           </div>
-          {canEdit ? <label className='flex items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground' title={t('dataSources.indexInWorkspaceHelp')}>
-            <Checkbox checked={connection.indexInWorkspace} disabled={indexing.isPending} aria-label={t('dataSources.indexToggle', { name: connection.name })}
-              onCheckedChange={(value) => indexing.mutate({ connection, on: value === true })} />
-            {t('dataSources.indexInWorkspace')}
-          </label> : connection.indexInWorkspace && <p className='border-t px-3 py-2 text-xs text-muted-foreground'>{t('dataSources.indexOn')}</p>}
-          <button type='button' className='flex min-h-11 w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/30'
-            aria-expanded={limitsOpen === connection.id} onClick={() => setLimitsOpen((current) => current === connection.id ? null : connection.id)}
-            title={t('dataSources.limits.help')}>
-            {limitsOpen === connection.id ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
-            <Gauge className='h-3.5 w-3.5 shrink-0' />
-            <span className='shrink-0 font-medium text-foreground'>{t('dataSources.limits.title')}</span>
-            <span className='min-w-0 flex-1 truncate'>{limitsSummary(connection)}</span>
-          </button>
-          {limitsOpen === connection.id && <div className='border-t p-3'><ArchiveLimitsEditor modelId={modelId} connection={connection} canEdit={canEdit} /></div>}
           {open && <div className='border-t bg-muted/20 p-2'><ConnectionTables modelId={modelId} connection={connection} canEdit={canEdit} onUse={onUse} onDragStart={onDragStart} onDragEnd={onDragEnd} /></div>}
         </div>;
       })
       : <p className='rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground'>{t('dataSources.empty')}</p>}
+    <ConnectionSettingsDialog modelId={modelId} connection={items.find((item) => item.id === settingsOf) ?? null} canEdit={canEdit} onOpenChange={(next) => { if (!next) setSettingsOf(null); }} />
     {modelId && <ConnectDataSourceDialog modelId={modelId} open={connectOpen} onOpenChange={setConnectOpen} onShowWorkspaces={onShowWorkspaces} />}
   </section>;
 }

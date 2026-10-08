@@ -758,7 +758,7 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
     // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
-    const limits = await this.adminRunLimits();
+    const { purgeTimeoutSeconds: _purgeTime, ...limits } = await this.adminRunLimits();
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
     if (sources.filter(inRun).length > maxRunSources) {
       throw new BadRequestException(
@@ -966,7 +966,8 @@ export class SemanticPopulationRefreshService {
     const build: RequestPopulationRefreshInput = { purpose: 'build', scope: { kind: 'model' } };
     // Check that a build can start before clearing anything, so a refused run never leaves the model empty.
     await this.planRefresh(userId, modelId, build, 'run');
-    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading) });
+    const timeoutSeconds = (await this.adminRunLimits()).purgeTimeoutSeconds ?? DEFAULT_RUN_LIMITS.purgeTimeoutSeconds;
+    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading), timeoutSeconds });
     return { ...await this.requestRefresh(userId, modelId, build), cleared };
   }
 

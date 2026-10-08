@@ -304,6 +304,9 @@ class PurgeModelDataCommand(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     forget_document_reading: bool = Field(default=False, alias="forgetDocumentReading")
+    # The admin's purge time (Admin > Semantic models); absent means the built-in one.
+    timeout_seconds: int = Field(default=store.DEFAULT_PURGE_TIMEOUT_S, alias="timeoutSeconds",
+                                 ge=30, le=3600)
 
 
 @router.post("/models/{model_id}/purge", status_code=status.HTTP_200_OK)
@@ -316,6 +319,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     try:
         result = await store.purge_model_data(
             pool, model_id, forget_document_reading=command.forget_document_reading,
+            timeout_s=command.timeout_seconds,
             emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     except store.PopulationRunning as exc:
         raise HTTPException(status_code=409, detail="population_running") from exc

@@ -17,6 +17,7 @@ import type { AttributeDefinition, ConceptSourceMapping, DerivedSource, MappingH
 import { businessKey, compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion, typedRecordsDeletion } from '../../utils/graph-deletes';
 import { announceUndoable, isTextEntry } from '../../utils/undo-notice';
+import { copyConcept, copySource, pasteConcept, readCanvasClipboard, writeCanvasClipboard } from '../../utils/canvas-clipboard';
 import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell } from './CanvasToolbars';
 import { tableLabel } from '../../utils/data-sources';
 import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
@@ -532,6 +533,51 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
       if ((event.key!=='Delete'&&event.key!=='Backspace')||event.ctrlKey||event.metaKey||event.altKey||isTextEntry(event.target)) return;
       if (event.target instanceof HTMLElement&&event.target.closest('[role="dialog"]')) return;
       if (removeSelectedRef.current()) event.preventDefault();
+    };
+    window.addEventListener('keydown',keyboard);
+    return () => window.removeEventListener('keydown',keyboard);
+  },[]);
+
+  // Ctrl/Cmd+C copies the selected concept or source; Ctrl/Cmd+V pastes a concept as a new one, and a source onto the
+  // selected concept (or onto empty canvas, where the drawer asks which concept it feeds).
+  const clipboardRef = useRef<(key:'c'|'v')=>boolean>(()=>false);
+  clipboardRef.current = (key) => {
+    const state = useSemanticModelEditorStore.getState();
+    if (!state.graph||mode==='records') return false;
+    if (key==='c') {
+      const id = state.selectedId;
+      const concept = state.graph.nodes.find((node)=>node.id===id&&!node.systemKey);
+      const source = flow.sources.find((item)=>item.id===id);
+      if (!concept&&!source) return false;
+      const copied = concept?copyConcept(concept):copySource(source!);
+      if (!copied){showWarning(t('designer.clipboard.notCopyable'));return true;}
+      writeCanvasClipboard(copied);
+      showSuccess(t('designer.clipboard.copied',{name:concept?.label??(copied.kind==='source'?copied.resource.name:'')}));
+      return true;
+    }
+    const copied = readCanvasClipboard();
+    if (!canEdit||!copied) return false;
+    if (copied.kind==='concept') {
+      const node = pasteConcept(copied.concept,state.graph.nodes,t('designer.clipboard.copyName',{name:copied.concept.label}));
+      commit({type:'node_type.create',entity:node},(current)=>({...current,nodes:[...current.nodes,node]}));
+      focus(node.id);
+      showSuccess(t('designer.clipboard.pasted',{name:node.label}));
+      return true;
+    }
+    const target = state.graph.nodes.find((node)=>node.id===state.selectedId);
+    if (target&&onMapStructuredDrop) onMapStructuredDrop(copied.resource,target.id);
+    else if (onPaneDrop) onPaneDrop(copied.resource);
+    else return false;
+    return true;
+  };
+  useEffect(() => {
+    const keyboard = (event:globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if ((key!=='c'&&key!=='v')||!(event.ctrlKey||event.metaKey)||event.altKey||event.shiftKey||isTextEntry(event.target)) return;
+      if (event.target instanceof HTMLElement&&event.target.closest('[role="dialog"]')) return;
+      // Copying text selected on the page stays the browser's.
+      if (key==='c'&&window.getSelection()?.toString()) return;
+      if (clipboardRef.current(key)) event.preventDefault();
     };
     window.addEventListener('keydown',keyboard);
     return () => window.removeEventListener('keydown',keyboard);

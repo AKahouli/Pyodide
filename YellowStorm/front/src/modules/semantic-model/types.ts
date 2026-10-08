@@ -444,6 +444,8 @@ export interface RunLimits {
   /** Also the most a mail archive connection may give its reader, and what one that sets none gets. */
   parserMemoryMb: number;
   archiveTimeoutSeconds: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. */
+  purgeTimeoutSeconds: number;
 }
 
 export interface RunLimitsDefaults {

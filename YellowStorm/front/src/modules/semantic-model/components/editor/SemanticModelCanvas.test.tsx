@@ -276,6 +276,41 @@ describe('SemanticModelCanvas', () => {
     input.remove();
   });
 
+  it('copies the selected concept and pastes it as a new one with its fields, only with Ctrl/Cmd+V and not while typing', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([]);
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.keyDown(window,{key:'c',ctrlKey:true});
+    expect(showSuccess).toHaveBeenCalledWith('designer.clipboard.copied');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    fireEvent.keyDown(input,{key:'v',ctrlKey:true});
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
+    input.remove();
+    fireEvent.keyDown(window,{key:'v',metaKey:true});
+    const nodes = useSemanticModelEditorStore.getState().graph!.nodes;
+    expect(nodes).toHaveLength(2);
+    const pasted = nodes.find((node)=>node.id!=='contract')!;
+    expect(pasted).toMatchObject({ label:'designer.clipboard.copyName', key:'designer_clipboard_copyname', systemKey:null, recordPolicy:'expected' });
+    expect(pasted.attributes).toEqual(nodes[0].attributes);
+    expect(pasted.position).not.toEqual(nodes[0].position);
+  });
+
+  it('pastes a copied source onto the selected concept, or onto empty canvas when none is selected', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onMapStructuredDrop = vi.fn(), onPaneDrop = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({ assetKind:'excel_sheet', sheetName:'Sheet1', documentName:'clients.xlsx' })]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onMapStructuredDrop={onMapStructuredDrop} onPaneDrop={onPaneDrop} />);
+    act(()=>useSemanticModelEditorStore.getState().select('source:workspace:document:Sheet1'));
+    fireEvent.keyDown(window,{key:'c',ctrlKey:true});
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.keyDown(window,{key:'v',ctrlKey:true});
+    expect(onMapStructuredDrop).toHaveBeenCalledWith(expect.objectContaining({ kind:'document', documentId:'document', sheetName:'Sheet1', structured:true, mappable:true }), 'contract');
+    act(()=>useSemanticModelEditorStore.getState().select(null));
+    fireEvent.keyDown(window,{key:'v',ctrlKey:true});
+    expect(onPaneDrop).toHaveBeenCalledWith(expect.objectContaining({ documentId:'document' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
+  });
+
   it('hands a source removal to the page, which removes it at once with Undo', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onRemoveSource = vi.fn();

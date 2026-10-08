@@ -329,6 +329,8 @@ export interface RuntimeComputedPreview {
 
 /** Query embedding can take a few seconds; seeds and expansion get a fixed, longer deadline. */
 const GRAPH_SEARCH_TIMEOUT_MS = 15_000;
+/** Clearing a large model cascades through every record; the runtime is given the admin's purge time, and this much more to answer. */
+const PURGE_ANSWER_MARGIN_MS = 10_000;
 
 export type RuntimeSearchEnvironment = 'draft' | 'production';
 export type RuntimeSearchIndexState = 'ready' | 'queued' | 'indexing' | 'failed' | 'missing' | 'unavailable';
@@ -794,6 +796,7 @@ export class SemanticRuntimeClientService {
     path: string,
     body: unknown,
     headers: Record<string, string> = {},
+    timeoutMs = this.config.runtimeRequestTimeoutMs,
   ): Promise<T> {
     const base = this.requireWrites();
     try {
@@ -805,7 +808,7 @@ export class SemanticRuntimeClientService {
           ...headers,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         throw Object.assign(new Error(`HTTP ${res.status}`), {
@@ -996,10 +999,10 @@ export class SemanticRuntimeClientService {
   }
 
   /** Clear a model's built data (records, links, review items, finished builds); its settings stay. */
-  async purgeModelData(modelId: string, actorUserId: string, options: { forgetDocumentReading: boolean }): Promise<RuntimePurgedData> {
+  async purgeModelData(modelId: string, actorUserId: string, options: { forgetDocumentReading: boolean; timeoutSeconds: number }): Promise<RuntimePurgedData> {
     return this.post<RuntimePurgedData>(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/purge`, options, {
       'X-Actor-User-Id': actorUserId,
-    });
+    }, options.timeoutSeconds * 1000 + PURGE_ANSWER_MARGIN_MS);
   }
 
   /**

@@ -374,11 +374,24 @@ describe('SemanticPopulationRefreshService', () => {
   it('clears the built data, then builds again from scratch', async () => {
     const { runtime, service } = setup();
     const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
-    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true, timeoutSeconds: 300 });
     expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
     const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
     expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it("clears with the admin's purge time, which never travels with the run", async () => {
+    const built = setup();
+    const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured: { purgeTimeoutSeconds: 900, maxRunSources: 40 } })) };
+    const service = new SemanticPopulationRefreshService(
+      built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+      built.aiExtractionAgent as any, extractionSettings as any,
+    );
+    await service.rebuildFromScratch('u-1', 'model-1');
+    expect(built.runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: false, timeoutSeconds: 900 });
+    const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][];
+    expect(calls[0][0].payload.limits).toEqual({ maxRunSources: 40 });
   });
 
   it('rebuilds only the graph: no run is started and no source is read', async () => {

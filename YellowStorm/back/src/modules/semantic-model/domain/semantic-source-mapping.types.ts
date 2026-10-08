@@ -145,6 +145,8 @@ export interface RunLimits {
   parserMemoryMb: number;
   /** Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose. */
   archiveTimeoutSeconds: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. Not part of a run. */
+  purgeTimeoutSeconds: number;
 }
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
@@ -156,6 +158,7 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxAiParallelCalls: 8,
   parserMemoryMb: 512,
   archiveTimeoutSeconds: 900,
+  purgeTimeoutSeconds: 300,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
@@ -167,6 +170,7 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   maxAiParallelCalls: [1, 32],
   parserMemoryMb: [256, 16384],
   archiveTimeoutSeconds: [60, 7200],
+  purgeTimeoutSeconds: [30, 3600],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

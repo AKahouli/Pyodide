@@ -673,6 +673,10 @@ export class RunLimitsDto {
   @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: 'Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
   archiveTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 30, maximum: 3600, description: 'Time "Start over from scratch" may take to clear the data of a model, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(30) @Max(3600)
+  purgeTimeoutSeconds?: number;
 }
 
 export class DerivedFieldMappingDto {

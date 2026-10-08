@@ -394,17 +394,25 @@ class PopulationRunning(Exception):
     """A build of the model is still going on; its data cannot be cleared under it."""
 
 
+DEFAULT_PURGE_TIMEOUT_S = 300
+
+
 async def purge_model_data(pool: Any, model_id: str, *,
                            forget_document_reading: bool = False,
-                           emit_signal: bool = False) -> dict[str, Any]:
+                           emit_signal: bool = False,
+                           timeout_s: int = DEFAULT_PURGE_TIMEOUT_S) -> dict[str, Any]:
     """Clear what builds produced for a model, so the next build starts from nothing.
 
     The model's settings stay: specification, corrections and hand-typed records
     (manual snapshots). Data served to another environment (published) stays
     until that environment moves on. Returns the projection graphs no longer
-    referenced, for the caller to drop from the graph database."""
+    referenced, for the caller to drop from the graph database. ``timeout_s`` is how long
+    the clearing may take (the admin's purge time)."""
     async with pool.acquire() as connection:
         async with connection.transaction():
+            # The API pool stops statements after a few seconds; clearing a large model
+            # cascades through every record, so the purge gets its own budget.
+            await connection.execute(f"SET LOCAL statement_timeout = '{int(timeout_s)}s'")
             # One purge at a time per model, and none while a build runs.
             await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                                      f"purge:{model_id}")
@@ -424,7 +432,7 @@ async def purge_model_data(pool: Any, model_id: str, *,
             removed = await connection.fetch(
                 "DELETE FROM semantic_population.data_revisions "
                 "WHERE model_id = $1 AND NOT (id = ANY($2::text[])) "
-                "RETURNING id, projection_ref", model_id, sorted(kept))
+                "RETURNING id, projection_ref", model_id, sorted(kept), timeout=timeout_s)
             review_items = await connection.fetchval(
                 "WITH gone AS (DELETE FROM semantic_population.review_items "
                 "WHERE model_id = $1 AND (data_revision_id IS NULL "
@@ -439,7 +447,8 @@ async def purge_model_data(pool: Any, model_id: str, *,
             if forget_document_reading:
                 readings = await connection.fetchval(
                     "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id)
+                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
+                    timeout=timeout_s)
             generation = await connection.fetchval(
                 "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
                 "ON CONFLICT (model_id) DO UPDATE SET generation = "

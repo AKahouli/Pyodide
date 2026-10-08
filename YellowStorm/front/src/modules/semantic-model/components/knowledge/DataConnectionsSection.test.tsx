@@ -54,6 +54,7 @@ describe('DataConnectionsSection', () => {
   it('lets an editor choose to also index an archive in its workspace, off by default', async () => {
     const update = vi.spyOn(semanticModelApi, 'updateDataConnection').mockResolvedValue({ ...connection, indexInWorkspace: true });
     render(wrap(<DataConnectionsSection modelId='m' canEdit onDragStart={vi.fn()} onDragEnd={vi.fn()} onShowWorkspaces={vi.fn()} />));
+    fireEvent.click(await screen.findByRole('button', { name: 'dataSources.settingsOpen' }));
     const box = await screen.findByRole('checkbox', { name: 'dataSources.indexToggle' });
     expect(box).not.toBeChecked();
     fireEvent.click(box);
@@ -63,9 +64,8 @@ describe('DataConnectionsSection', () => {
   it("sets an archive's reading limits, read time and memory no higher than the admin allows", async () => {
     const update = vi.spyOn(semanticModelApi, 'updateDataConnection').mockResolvedValue(connection);
     render(wrap(<DataConnectionsSection modelId='m' canEdit onDragStart={vi.fn()} onDragEnd={vi.fn()} onShowWorkspaces={vi.fn()} />));
-    const fold = await screen.findByRole('button', { name: /dataSources.limits.title/ });
-    expect(fold).toHaveTextContent('settings.runLimits.maxArchiveEmails 50,000');
-    fireEvent.click(fold);
+    fireEvent.click(await screen.findByRole('button', { name: 'dataSources.settingsOpen' }));
+    expect(screen.getByLabelText('settings.runLimits.maxArchiveEmails')).toHaveAttribute('placeholder', '50000');
     const memory = screen.getByLabelText('settings.runLimits.parserMemoryMb');
     expect(memory).toHaveAttribute('placeholder', '512');
     fireEvent.change(memory, { target: { value: '1024' } });

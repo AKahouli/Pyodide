@@ -53,3 +53,23 @@ describe('RunLimitsSettings AI calls pane', () => {
     await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxRecordsPerRun: 60000, maxAiParallelCalls: 12 }));
   });
 });
+
+describe('RunLimitsSettings start-over pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ rebuild: true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { maxAiParallelCalls: 12 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the purge time with the limits set elsewhere, and refuses one out of range', async () => {
+    render(<RunLimitsSettings group='rebuild' />);
+    const time = await screen.findByLabelText('settings.runLimits.purgeTimeoutSeconds');
+    expect(screen.queryByLabelText('settings.runLimits.maxAiParallelCalls')).not.toBeInTheDocument();
+
+    fireEvent.change(time, { target: { value: '10' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(time, { target: { value: '900' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxAiParallelCalls: 12, purgeTimeoutSeconds: 900 }));
+  });
+});
