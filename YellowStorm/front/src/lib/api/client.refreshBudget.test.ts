@@ -102,7 +102,7 @@ describe('refresh burst budget recovery', () => {
 
     expect(axiosPost).toHaveBeenCalledWith(
       '/auth/refresh',
-      null,
+      {},
       expect.objectContaining({ timeout: 10_000 }),
     );
     expect(getStoredToken()).toBe('fresh-token');
@@ -126,7 +126,7 @@ describe('refresh burst budget recovery', () => {
 
     expect(axiosPost).toHaveBeenCalledWith(
       '/auth/refresh',
-      null,
+      {},
       expect.objectContaining({
         headers: expect.objectContaining({ 'X-Refresh-Attempt-Id': expect.any(String) }),
       }),

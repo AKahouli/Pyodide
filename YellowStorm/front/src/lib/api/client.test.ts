@@ -95,7 +95,7 @@ describe('apiClient token refresh', () => {
 
     expect(apiClientPostMock).toHaveBeenCalledWith(
       '/auth/refresh',
-      null,
+      {},
       expect.objectContaining({ headers: expect.objectContaining({ 'X-Refresh-Attempt-Id': expect.any(String) }) }),
     );
     clearAuthData();
@@ -130,7 +130,7 @@ describe('apiClient token refresh', () => {
     // The boot marker is what exempts this 401 from the logout redirect.
     expect(apiClientPostMock).toHaveBeenCalledWith(
       '/auth/refresh',
-      null,
+      {},
       expect.objectContaining({ headers: expect.objectContaining({ 'X-YellowStorm-Boot-Restore': '1' }) }),
     );
   });

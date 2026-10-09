@@ -217,7 +217,7 @@ async function runCoordinatedRefresh(
     const postRefresh = () =>
       apiClient.post<ApiResponse<{ accessToken: string; expiresIn: number }>>(
         API_ENDPOINTS.auth.refresh,
-        null,
+        {},
         { timeout: REFRESH_HTTP_BUDGET_MS, headers: { 'X-Refresh-Attempt-Id': attemptId, ...extraHeaders } },
       );
 
