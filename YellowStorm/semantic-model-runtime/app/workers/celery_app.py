@@ -2,8 +2,9 @@
 
 Datasource and population remain separate worker processes/containers with
 separate queues, credentials and budgets; sharing this module does not share
-a process. The broker is the Phase 0 dedicated RabbitMQ (SEMANTIC_BROKER_URL);
-the Postgres outbox stays the job source of truth (plan P2.6).
+a process. The broker is whatever SEMANTIC_BROKER_URL points at (amqp:// or
+redis://, rediss:// for TLS); the Postgres outbox stays the job source of
+truth (plan P2.6), so the broker transport is interchangeable.
 """
 
 from __future__ import annotations
@@ -28,10 +29,46 @@ POPULATION_QUEUES = ("semantic-model-population.corrections", "semantic-model-po
 SEARCH_QUEUES = ("semantic-model-search.index",)
 
 
+def broker_ssl(broker: str) -> dict[str, object] | bool:
+    """TLS options for a rediss:// broker.
+
+    Declared explicitly rather than left to kombu: a bare rediss:// URL logs a
+    warning and falls back on its own (kombu/connection.py:268), and a
+    ?ssl_cert_reqs= query string is ignored outright because kombu's redis
+    channel only reads ``from_transport_options``, which has no ssl key.
+    amqp:// keeps its own URL-level TLS, so it must stay False.
+
+    ponytail: traffic is encrypted but the server certificate is NOT verified,
+    so a MITM on the Redis route would not be detected. Switch to
+    ssl.CERT_REQUIRED (works as-is against Azure Cache for Redis, whose
+    certificate chains to a public CA) if the broker ever leaves a trusted
+    network.
+    """
+    if not broker.startswith("rediss://"):
+        return False
+    import ssl
+
+    return {"ssl_cert_reqs": ssl.CERT_NONE}
+
+
 def make_celery() -> Celery:
     broker = os.environ.get("SEMANTIC_BROKER_URL", "memory://")
     app = Celery("semantic-model-runtime", broker=broker)
     app.conf.update(
+        broker_use_ssl=broker_ssl(broker),
+        broker_transport_options={
+            # Redis only (ignored by amqp). A task still running after this
+            # delay gets its message redelivered; the duplicate is fenced by
+            # the Postgres lease, but jobs here are deliberately untimed, so
+            # keep the window wide and let lease-expiry recovery own redelivery.
+            "visibility_timeout": 86400,
+            # Redis analogue of broker_heartbeat below: a solo pool cannot
+            # touch the socket during a long task, and managed Redis drops
+            # idle connections (10 min on Azure), leaving a worker alive but
+            # no longer consuming.
+            "socket_keepalive": True,
+            "retry_on_timeout": True,
+        },
         task_acks_late=True,
         # acks_late alone still acks failures by default; without this a failed
         # task is acknowledged and the durable row stays non-terminal forever.
