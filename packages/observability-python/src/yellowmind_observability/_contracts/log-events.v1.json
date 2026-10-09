@@ -53,6 +53,7 @@
     "dependency.request.failed":  { "message": "Dependency request failed", "attributes": ["dependency", "operation", "status_code", "attempt"] },
     "dependency.request.retried": { "message": "Dependency request retried", "attributes": ["dependency", "operation", "status_code", "attempt"] },
     "dependency.recovered":       { "message": "Dependency recovered", "attributes": ["dependency"] },
+    "semantic.population.sources_skipped": { "message": "Population sources skipped", "attributes": ["scope", "reason_code", "count", "detail"] },
 
     "legacy.log":                 { "message": "Legacy log call", "attributes": ["logger_name", "level", "source", "detail"] },
     "framework.log":              { "message": "Framework log", "attributes": ["logger_name", "source"] },

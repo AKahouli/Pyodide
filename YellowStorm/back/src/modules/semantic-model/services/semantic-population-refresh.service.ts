@@ -11,6 +11,7 @@ import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesA
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { logDomainEvent } from '@modules/logger/logger.service';
 import { graphExposureOf } from '../domain/semantic-graph-exposure';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
@@ -127,6 +128,31 @@ const RELATION_SPEC_CODES = new Set(['duplicate_relation_id', 'unknown_relation_
 /** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
 const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-8';
+
+/** Fields of a mapping aimed at an attribute the concept no longer has. */
+function staleFieldIssues(mapping: MappingRow, node: NodeTypeRow): ModelCheckIssue[] {
+  return mappingIssues(mapping, node).filter((issue) => issue.code === 'mapping_attribute_missing');
+}
+
+/** The mapping without its stale fields: they are reported by the check, never a reason to read nothing. */
+function withoutStaleFields(mapping: MappingRow, node: NodeTypeRow): MappingRow {
+  const known = new Set((node.attributes ?? []).map((attribute) => attribute.key));
+  const fields = mapping.fieldMappings ?? [];
+  const kept = fields.filter((field) => field.mode === 'ignore' || known.has(field.targetAttribute));
+  return kept.length === fields.length ? mapping : { ...mapping, fieldMappings: kept };
+}
+
+function scopeKeyOf(scope: PopulationRefreshScope): string {
+  return scope.kind === 'model' ? 'model' : scope.kind === 'concept' ? 'concept' : 'mapping';
+}
+
+/** "Concept: reason; ..." of the mappings a run left out, for the refusal and the log. */
+function skippedSummary(skipped: { mappingId: string; reason: string }[], nodes: NodeTypeRow[], mappings: MappingRow[]): string {
+  return skipped.map((item) => {
+    const concept = nodes.find((node) => node.id === mappings.find((mapping) => mapping.id === item.mappingId)?.conceptId)?.label;
+    return concept ? `${concept}: ${item.reason}` : item.reason;
+  }).join('; ');
+}
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -795,6 +821,12 @@ export class SemanticPopulationRefreshService {
             message: 'The mapped concept is not present in the current draft',
           }]);
         }
+        // Fields aimed at an attribute the concept no longer has are left out of the source (nothing could hold
+        // them); the check still reports them, so a mapping is never dropped whole for a field it cannot fill.
+        // A run asked for this one mapping is refused instead: it is exactly what the person pointed at.
+        const stale = staleFieldIssues(mapping, node);
+        if (scope.kind === 'mapping' && stale.length) throw new ModelIssueException(stale);
+        if (collect && inRun(mapping)) collect.push(...stale);
         if (collect) {
           sources.push({ ...await this.populationSource(mapping, node, checkFile(mapping), labelFields.get(mapping.conceptId)), mappingId: mapping.id });
         } else if (mapping.scope === 'workspace') {
@@ -838,8 +870,18 @@ export class SemanticPopulationRefreshService {
     }
     // A concept made from another one alone is refreshed from that concept's records in use.
     const madeFromAnother = scope.kind === 'concept' && derivations.some((derivation) => derivation.conceptId === scope.conceptId);
-    if (!sources.filter(inRun).length && !madeFromAnother) {
-      refuse({ severity: 'error', code: 'no_usable_source', message: 'No usable source in the selected scope' });
+    const refused = !sources.filter(inRun).length && !madeFromAnother;
+    // A mapping left out of a run is a handled failure: say which and why, in the log and in the refusal.
+    if (skipped.length && !collect) {
+      logDomainEvent(refused ? 'error' : 'warn', 'semantic.population.sources_skipped', {
+        scope: scopeKeyOf(scope), reason_code: refused ? 'refused' : 'partial', count: skipped.length,
+        detail: skippedSummary(skipped, nodes, mappings).slice(0, 500),
+      });
+    }
+    if (refused) {
+      const why = skipped.length ? `: ${skippedSummary(skipped, nodes, mappings)}` : '';
+      refuse({ severity: 'error', code: 'no_usable_source', message: `No usable source in the selected scope${why}`,
+        ...(skipped.length ? { params: { skipped: skipped.length } } : {}) });
     }
     // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save, projection and
     // index build limits travel too but stay out of the fingerprint: how a run is written, how its graph is loaded, or
@@ -1341,8 +1383,9 @@ export class SemanticPopulationRefreshService {
    * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
    * listed a moment ago, so they are read as they are now rather than checked against a saved version.
    */
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
-    this.assertUsable(mapping);
+  private async populationSource(declared: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
+    this.assertUsable(declared);
+    const mapping = withoutStaleFields(declared, node);
     const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))

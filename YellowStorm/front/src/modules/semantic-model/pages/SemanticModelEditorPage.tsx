@@ -47,7 +47,7 @@ import { CloneSemanticModelDialog } from "../components/catalog/CloneSemanticMod
 import { DeleteSemanticModelDialog } from "../components/catalog/DeleteSemanticModelDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { showError, showSuccess } from "@/lib/notifications";
-import { parseApiError } from "@/lib/api-error";
+import { apiErrorDetails, parseApiError } from "@/lib/api-error";
 import { useModuleTranslation } from "@/modules/localization";
 import { cn } from '@/lib/utils';
 import { announceUndoable, isTextEntry } from '../utils/undo-notice';
@@ -757,7 +757,8 @@ export function SemanticModelEditorPage() {
       setPopulationJobId(run.jobId);
       setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
     } catch (error) {
-      showError(t('records.table.refreshError'), { description: parseApiError(error).message });
+      // The code's text says the run is refused; the details say which source and why.
+      showError(t('records.table.refreshError'), { description: [parseApiError(error).message, ...apiErrorDetails(error)].join(' ') });
     }
   };
   const readSwitched = async (mappingIds: string[]) => {
@@ -770,7 +771,7 @@ export function SemanticModelEditorPage() {
       setRunConceptIds(mappedConcept ? [mappedConcept] : null);
       setPopulationJobId(run.jobId);
     } catch (error) {
-      showError(t('mapping.switch.readError'), { description: parseApiError(error).message });
+      showError(t('mapping.switch.readError'), { description: [parseApiError(error).message, ...apiErrorDetails(error)].join(' ') });
     }
   };
   const mappingSaved = () => {

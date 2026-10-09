@@ -40,9 +40,14 @@ export interface ModelCheck {
 }
 
 /** A refusal that carries its issues; to a caller that only reads the message it is a validation failure. */
+/** How many issues an answer carries in its details. */
+const MAX_ISSUE_DETAILS = 10;
+
 export class ModelIssueException extends BadRequestException {
   constructor(readonly issues: ModelCheckIssue[]) {
-    super(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, issues[0]?.message ?? 'The model cannot be checked');
+    // The issues travel with the answer, so a caller can say which part of the model is refused and why.
+    super(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, issues[0]?.message ?? 'The model cannot be checked',
+      issues.slice(0, MAX_ISSUE_DETAILS).map((issue) => ({ field: issue.mappingId ?? issue.conceptId ?? issue.code, message: issue.message })));
   }
 }
 

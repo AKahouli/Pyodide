@@ -794,7 +794,7 @@ async def run_step(
                         _merge_human_context(state, new_human_context),
                     )
             elif metadata.get("executionStrategy") == "deterministic_script":
-                deterministic_payload = _execute_deterministic_step(
+                deterministic_payload = await _execute_deterministic_step(
                     metadata,
                     input_context if isinstance(input_context, dict) else {},
                     node_id,
@@ -1129,7 +1129,7 @@ async def _execute_step(
     return full_output, components, trace_collector
 
 
-def _execute_deterministic_step(
+async def _execute_deterministic_step(
     metadata: dict[str, Any],
     input_context: dict[str, Any],
     node_id: str,
@@ -1140,11 +1140,8 @@ def _execute_deterministic_step(
         source = metadata.get("script_source")
     if not isinstance(source, dict):
         raise ValueError("Deterministic script metadata is missing scriptSource")
-    validation = metadata.get("scriptValidation")
-    if not isinstance(validation, dict):
-        validation = metadata.get("script_validation")
-    if not isinstance(validation, dict) or validation.get("status") != "passed":
-        raise ValueError("Deterministic script requires passed validation metadata")
+    # scriptValidation/script_validation metadata travels with the request and is
+    # NOT trusted: content validation happens inside the sandbox module itself.
     script = str(source.get("code") or "")
     script_hash = str(source.get("sha256") or "")
     actual_hash = _script_hash(script)
@@ -1152,7 +1149,7 @@ def _execute_deterministic_step(
         raise ValueError("Deterministic script hash does not match script source")
     if source.get("kind") != "advisor_generated":
         logger.warning("[step] Running deterministic script from non-advisor source", node_id=node_id)
-    output = run_deterministic_script(script, input_context)
+    output = await asyncio.to_thread(run_deterministic_script, script, input_context)
     trace_metadata = {
         "executionStrategy": "deterministic_script",
         "scriptHash": script_hash,

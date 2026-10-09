@@ -22,8 +22,8 @@ vi.mock('../query/hooks', () => ({
   useSemanticModels: (filters: Record<string, string | number | undefined>) => { queryState.filters.push(filters); return queryState; },
 }));
 
-vi.mock('../components/catalog/SemanticModelCard', () => ({
-  SemanticModelCard: ({ model }: { model: { id: string } }) => <div>model-{model.id}</div>,
+vi.mock('../components/catalog/SemanticModelRow', () => ({
+  SemanticModelRow: ({ model }: { model: { id: string } }) => <tr><td>model-{model.id}</td></tr>,
 }));
 
 vi.mock('../components/catalog/CreateSemanticModelDialog', () => ({
@@ -63,9 +63,43 @@ describe('SemanticModelCatalogPage', () => {
     render(<MemoryRouter><SemanticModelCatalogPage /></MemoryRouter>);
 
     expect(screen.getByRole('heading', { name: 'catalog.emptyTitle' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('tab', { name: 'catalog.section.designed' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'catalog.filter.kind' }), 'designed');
     expect(screen.getByRole('heading', { name: 'catalog.filteredEmptyTitle' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'catalog.clearFilters' })).toBeInTheDocument();
+  });
+
+  it('combines scope, type and publication filters and clears all of them', async () => {
+    render(<MemoryRouter><SemanticModelCatalogPage /></MemoryRouter>);
+    await userEvent.click(screen.getByRole('tab', { name: 'catalog.section.shared' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'catalog.filter.kind' }), 'workspace_default');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'catalog.filter.status' }), 'published');
+    await userEvent.type(screen.getByRole('textbox', { name: 'catalog.search' }), 'contract');
+
+    expect(queryState.filters.at(-1)).toEqual({ search: 'contract', scope: 'shared', kind: 'workspace_default', status: 'published' });
+    await userEvent.click(screen.getAllByRole('button', { name: 'catalog.clearFilters' })[0]);
+    expect(queryState.filters.at(-1)).toEqual({ search: undefined, scope: undefined, kind: undefined, status: undefined });
+    expect(screen.getByRole('combobox', { name: 'catalog.filter.content' })).toHaveValue('all');
+    expect(screen.getByRole('combobox', { name: 'catalog.filter.status' })).toHaveValue('active');
+  });
+
+  it('shows non-archived rows and filters records and attention without confusing publication status', async () => {
+    queryState.data.items = [
+      { id: 'draft', status: 'draft', recordCount: 0 },
+      { id: 'published', status: 'published', recordCount: 2, brokenBindingCount: 1 },
+      { id: 'archived', status: 'archived', recordCount: 3 },
+    ];
+    render(<MemoryRouter><SemanticModelCatalogPage /></MemoryRouter>);
+    expect(screen.getByRole('table', { name: 'catalog.title' })).toBeInTheDocument();
+    expect(screen.getByText('model-draft')).toBeInTheDocument();
+    expect(screen.queryByText('model-archived')).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'catalog.filter.content' }), 'records');
+    expect(screen.queryByText('model-draft')).not.toBeInTheDocument();
+    expect(screen.getByText('model-published')).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'catalog.filter.content' }), 'attention');
+    expect(screen.getByText('model-published')).toBeInTheDocument();
+    expect(queryState.filters.at(-1)?.status).toBeUndefined();
+    await userEvent.click(screen.getByRole('button', { name: 'catalog.clearFilters' }));
+    expect(screen.getByText('model-draft')).toBeInTheDocument();
   });
 
   it('opens creation without changing the catalog route', async () => {

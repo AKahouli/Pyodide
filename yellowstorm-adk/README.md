@@ -30,7 +30,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
 - **Playbook Execution** -- Multi-step playbook workflows with per-step streaming.
 - **Attribute Extraction** -- Extract structured data from documents asynchronously with webhook delivery. Supports batch processing via Celery.
 - **Session Persistence** -- PostgreSQL-backed sessions using Google ADK's `DatabaseSessionService`.
-- **Observability** -- Azure Application Insights, Elasticsearch, DataDog, and PostgreSQL centralized logging.
+- **Observability** -- Shared Yellowmind observability SDK with structured stderr logs, collected by Alloy into Loki and viewed in Grafana; optional Azure Application Insights and DataDog integrations.
 - **Security** -- JWT authentication, hardened Docker images with Trivy/Bandit/pip-audit/Safety scanning, CIS Docker Benchmark compliance.
 - **CI/CD** -- GitHub Actions pipeline with tests, SonarCloud analysis, semantic versioning, Docker build/push to Azure Container Registry, and automated deployment.
 
@@ -44,7 +44,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
 | Storage | Azure Data Lake, PostgreSQL, Redis |
 | Background Tasks | Celery (Redis broker) |
 | Graph DB | Neo4j |
-| Monitoring | Azure Application Insights, Elasticsearch, DataDog |
+| Monitoring | Yellowmind observability SDK, Grafana, Loki, Alloy; optional Azure Application Insights and DataDog |
 | Containerization | Docker (multi-stage hardened build) |
 | CI/CD | GitHub Actions, SonarCloud, Azure Container Registry |
 
@@ -71,7 +71,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
     ├── schema/                     # Pydantic request/response models
     ├── authentification/           # JWT authentication
     ├── middleware/                  # CORS, tracing, correlation ID, context binding
-    ├── logger/                     # Elasticsearch, PostgreSQL, App Insights logging
+    ├── logger/                     # Shared observability SDK bootstrap and logger facade
     ├── infrastructure/             # Celery app configuration
     ├── similarity_search/          # Azure AI Search, hybrid/vector search, embeddings
     ├── attribute_extraction/       # Structured data extraction with webhooks

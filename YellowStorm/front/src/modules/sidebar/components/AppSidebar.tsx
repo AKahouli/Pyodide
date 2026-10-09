@@ -1,5 +1,6 @@
 import { createElement, useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { ArrowRight, MessageSquarePlus } from 'lucide-react';
 
 import {
   Sidebar,
@@ -8,6 +9,7 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
+  SidebarMenuButton,
   SidebarRail,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
@@ -41,7 +43,7 @@ import { useAutoCollapse } from '../hooks/useAutoCollapse';
 import { buildHistoryRows, RECENT_CHATS_CAP } from './chatGroups';
 
 export const AppSidebar = memo(function AppSidebar() {
-  const { isMobile, state, setOpen, toggleSidebar } = useAutoCollapse();
+  const { isMobile, state, toggleSidebar } = useAutoCollapse();
   const navigate = useNavigate();
   const { t, language } = useModuleTranslation('sidebar');
   const { hasAnyPermission, canUseFeature, canSeeMenu } = usePermissions();
@@ -80,7 +82,7 @@ export const AppSidebar = memo(function AppSidebar() {
     () => buildHistoryRows(historyConversations, v2Pointers, t('recentChats.untitled')),
     [historyConversations, v2Pointers, t],
   );
-  const cappedRows = useMemo(() => mergedHistory.slice(0, RECENT_CHATS_CAP), [mergedHistory]);
+  const cappedRows = useMemo(() => mergedHistory.slice(0, 5), [mergedHistory]);
 
   const handleNewConversation = useCallback(() => {
     if (!isMobile && state === 'collapsed') toggleSidebar();
@@ -109,34 +111,25 @@ export const AppSidebar = memo(function AppSidebar() {
       }));
   }, [allowedLauncherItems, language]);
 
-  // One click anywhere on the collapsed rail re-opens it. setOpen(true) is
-  // idempotent, so inner toggles (trigger, rail strip) never double-fire.
-  const handleRailClick = useCallback(() => {
-    if (!isMobile && state === 'collapsed') setOpen(true);
-  }, [isMobile, state, setOpen]);
+  const newChatNode = allowedNavigationItems.find((node) => node.targetKey === 'newChat');
+  const showHistory = allowedNavigationItems.some((node) => node.targetKey === 'history');
+  const collapsed = !isMobile && state === 'collapsed';
 
   return (
-    <Sidebar collapsible='icon' className='shrink-0 z-30' onClick={handleRailClick}>
+    <Sidebar collapsible='icon' className='shrink-0 z-30'>
       {/* Header remains fixed while configured navigation controls every destination. */}
-      <SidebarHeader className='gap-2 pt-8 duration-500 ease-linear group-data-[collapsible=icon]:pt-4'>
+      <SidebarHeader className='gap-2 p-2'>
+        <div className='flex h-9 min-w-0 items-center gap-1'>
         <NavLink
           to='/'
           aria-label={t('actions.home')}
-          className='mb-4 flex h-12 items-center overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:mb-0 group-data-[collapsible=icon]:h-0 group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
+          className='flex min-w-0 flex-1 items-center overflow-hidden group-data-[collapsible=icon]:hidden'
         >
-          <AppBrandLogo className='h-12 shrink-0' />
+          <AppBrandLogo className='h-7 w-full max-w-44 object-contain object-left' />
         </NavLink>
+        <SidebarTrigger className='shrink-0' />
+        </div>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <NavigationLauncher
-              settings={navigation}
-              items={allowedLauncherItems}
-              language={language}
-              mobile={isMobile}
-              onNewConversation={handleNewConversation}
-              label={t('launcher.label')}
-            />
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <GlobalSearch
               destinations={destinations}
@@ -144,10 +137,14 @@ export const AppSidebar = memo(function AppSidebar() {
               showProjects={allowedNavigationItems.some((node) => node.targetKey === 'projects')}
             />
           </SidebarMenuItem>
+          {newChatNode && <SidebarMenuItem><SidebarMenuButton tooltip={t('actions.newChat.tooltip')} className='bg-primary font-medium text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground' onClick={handleNewConversation}><MessageSquarePlus /><span>{navigationLabel(newChatNode.labels, language)}</span></SidebarMenuButton></SidebarMenuItem>}
+          <SidebarMenuItem>
+            <NavigationLauncher settings={navigation} items={allowedLauncherItems} language={language} mobile={isMobile} onNewConversation={handleNewConversation} label={t('launcher.label')} />
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent className={`my-3 gap-0 overflow-hidden ${!isMobile && state === 'collapsed' ? '[&_[data-slot=collapsible-content]]:hidden' : ''}`}>
+      <SidebarContent className='my-1 min-h-0 gap-0 overflow-hidden'>
         <ManagedNavigation
           settings={navigation}
           language={language}
@@ -159,20 +156,19 @@ export const AppSidebar = memo(function AppSidebar() {
           onNewConversation={handleNewConversation}
           historyRows={cappedRows}
           historyLoading={conversationsLoading}
-          showAllChatsLink
-          collapsed={isMobile || state === 'collapsed'}
-          navigateOnDisclosureClick={!isMobile && state === 'collapsed'}
+          showAllChatsLink={false}
+          collapsed={collapsed}
         />
       </SidebarContent>
 
       <SidebarFooter className='gap-1 p-2'>
+        {showHistory && !collapsed && <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild><NavLink to='/chats'><span>{t('recentChats.allChats')}</span><ArrowRight aria-hidden className='ml-auto size-4' /></NavLink></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
         {/* Above the SidebarRail hit-strip so the trigger stays clickable when collapsed. */}
         <div className={`relative z-30 mt-1 flex items-center gap-1 border-t border-sidebar-border pt-2 ${!isMobile && state === 'collapsed' ? 'flex-col' : ''}`}>
           <ProfileMenu />
           <span className='group-data-[collapsible=icon]:hidden'>
             <ModeToggle />
           </span>
-          <SidebarTrigger />
         </div>
       </SidebarFooter>
 

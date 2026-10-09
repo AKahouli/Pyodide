@@ -2,6 +2,9 @@ import { ModelSpecificationService } from './model-specification.service';
 import { graphPropertyKey, SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { logDomainEvent } from '@modules/logger/logger.service';
+
+jest.mock('@modules/logger/logger.service', () => ({ logDomainEvent: jest.fn() }));
 
 const NODES = [
   {
@@ -262,6 +265,33 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
     expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
     expect(result.summary.unresolvedRelations).toBe(3);
+  });
+
+  it('still reads a mapping that fills a field its concept no longer has, and the check still reports the field', async () => {
+    const stale = MAPPING({
+      fieldMappings: [...MAPPING().fieldMappings, { sourceField: 'old_column', targetAttribute: 'removed_attribute', mode: 'direct' }],
+    });
+    const { runtime, service } = setup([stale]);
+    const accepted = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    expect(accepted.skipped).toEqual([]);
+    const source = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0];
+    expect(source.columnMapping).toEqual({ customer_id: 'customer_id', legal_name: 'name' });
+    expect(logDomainEvent).not.toHaveBeenCalled();
+    const checked = await setup([stale]).service.checkPlan('u-1', 'model-1');
+    expect(checked.request?.sources).toHaveLength(1);
+    expect(checked.issues).toEqual([expect.objectContaining({ code: 'mapping_attribute_missing', fieldId: 'removed_attribute', mappingId: 'm-1' })]);
+  });
+
+  it('says why a refresh has no usable source: in the refusal, its details and a registered event', async () => {
+    const changed = MAPPING({ validatedSourceVersion: 'sha256:older' });
+    const { runtime, service } = setup([changed]);
+    const refusal = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } })
+      .then(() => null, (error: Error & { details?: { field: string; message: string }[] }) => error);
+    expect(refusal?.message).toBe('No usable source in the selected scope: Customer: The mapped source changed since this mapping was validated');
+    expect(refusal?.details).toEqual([{ field: 'no_usable_source', message: refusal?.message }]);
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(logDomainEvent).toHaveBeenCalledWith('error', 'semantic.population.sources_skipped', {
+      scope: 'concept', reason_code: 'refused', count: 1, detail: 'Customer: The mapped source changed since this mapping was validated' });
   });
 
   it("sends a sheet mapping's own record limit, never above the built-in records per source", async () => {
