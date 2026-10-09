@@ -21,8 +21,9 @@ import httpx
 from .documents import FIELD_POLICY_VERSION, SERIALIZER_VERSION
 from .settings import IndexBuildSettings
 
-# The column type in migration 022; another size needs its own storage.
-STORAGE_DIMENSION = 2560
+# Must match the halfvec(...) width of the embedding columns in the migrations;
+# another size needs its own storage.
+STORAGE_DIMENSION = int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", "2560"))
 # Qwen3-Embedding is trained with an instruction on the query side only.
 QUERY_INSTRUCTION = ("Instruct: Given a search request, retrieve the business records "
                      "that match it\nQuery: ")
@@ -96,7 +97,7 @@ def profile_from_env() -> EmbeddingProfile | None:
         base_url=base_url,
         api_key=os.environ.get("SEMANTIC_EMBEDDING_API_KEY", ""),
         model=model,
-        dimension=int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", str(STORAGE_DIMENSION))),
+        dimension=STORAGE_DIMENSION,
         timeout_seconds=float(os.environ.get("SEMANTIC_EMBEDDING_TIMEOUT_SECONDS", "30")),
         batch_size=max(1, min(128, int(os.environ.get("SEMANTIC_EMBEDDING_BATCH_SIZE", "32")))),
         parallel_calls=max(1, min(16, int(os.environ.get("SEMANTIC_EMBEDDING_PARALLEL_CALLS", "4")))),

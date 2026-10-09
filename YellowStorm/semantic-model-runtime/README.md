@@ -47,8 +47,9 @@ database and an embedding profile; without one, search answers exact keys only:
 
 - `SEMANTIC_EMBEDDING_BASE_URL`: OpenAI-compatible LiteLLM origin (no `/v1`).
 - `SEMANTIC_EMBEDDING_API_KEY`: a LiteLLM key for this service.
-- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions, the
-  `halfvec(2560)` storage size; another size needs its own storage).
+- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions).
+- `SEMANTIC_EMBEDDING_DIMENSION` (2560): the model's vector size. It must equal the
+  `halfvec(...)` width of the embedding columns, so changing it means a migration too.
 - Optional: `SEMANTIC_EMBEDDING_TIMEOUT_SECONDS` (30),
   `SEMANTIC_EMBEDDING_BATCH_SIZE` (32), `SEMANTIC_SEARCH_MIN_SIMILARITY` (0.4).
 
