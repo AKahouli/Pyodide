@@ -17,10 +17,13 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
   i18nInstance: { isInitialized: false },
 }));
 
+// The service reads the access token from the in-memory store via the
+// barrel; this holder doubles as the test seed.
+let seededToken: string | null = null;
 vi.mock('@/lib/api', () => ({
-  AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_CONFIG: { baseURL: 'https://api.test' },
   API_ENDPOINTS: { auth: { refresh: '/auth/refresh' } },
+  getAccessToken: () => seededToken,
 }));
 
 // Minimal EventSource mock
@@ -44,7 +47,7 @@ class EventSourceMock {
 describe('NotificationsService', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', EventSourceMock);
-    localStorage.setItem('token-key', 'abc123');
+    seededToken = 'abc123';
     toastMock.loading.mockReset();
     toastMock.success.mockReset();
     toastMock.error.mockReset();

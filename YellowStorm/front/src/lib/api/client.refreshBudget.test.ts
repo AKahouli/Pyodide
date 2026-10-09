@@ -47,6 +47,8 @@ function makeAxiosError(status?: number, code?: string): Record<string, unknown>
 
 describe('refresh burst budget recovery', () => {
   let errorHandler: (error: unknown) => Promise<unknown>;
+  let seedToken: (token: string | null) => void;
+  let getStoredToken: () => string | null;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -55,6 +57,17 @@ describe('refresh burst budget recovery', () => {
     axiosGet.mockReset();
     localStorage.clear();
     sessionStorage.clear();
+
+    // Import after resetModules. Go through the mocked '@/lib/api' barrel so
+    // the store functions belong to the SAME cached module graph the mocked
+    // client module binds to — a direct './access-token-store' import can
+    // instantiate a second copy that the client never sees.
+    const store = (await import('@/lib/api')) as unknown as {
+      setAccessToken: (token: string | null) => void;
+      getAccessToken: () => string | null;
+    };
+    seedToken = store.setAccessToken;
+    getStoredToken = store.getAccessToken;
 
     await import('./client');
     const { create } = (await import('axios')).default as unknown as {
@@ -68,7 +81,7 @@ describe('refresh burst budget recovery', () => {
   });
 
   it('recovers refresh capability after transient outage once the server answers', async () => {
-    localStorage.setItem('yellostorm_access_token', 'expired-token');
+    seedToken('expired-token');
 
     // Three transient refresh failures (network black hole: no response at all).
     axiosPost.mockRejectedValue(makeAxiosError(undefined));
@@ -78,7 +91,7 @@ describe('refresh burst budget recovery', () => {
       });
     }
     // Credentials survive the outage (F02).
-    expect(localStorage.getItem('yellostorm_access_token')).toBe('expired-token');
+    expect(getStoredToken()).toBe('expired-token');
 
     // The backend becomes reachable again: the next 401 carries a real HTTP
     // response, renewing the budget and allowing the refresh to proceed.
@@ -92,11 +105,11 @@ describe('refresh burst budget recovery', () => {
       null,
       expect.objectContaining({ timeout: 10_000 }),
     );
-    expect(localStorage.getItem('yellostorm_access_token')).toBe('fresh-token');
+    expect(getStoredToken()).toBe('fresh-token');
   });
 
   it('never blocks the recovery probe, even with an exhausted budget', async () => {
-    localStorage.setItem('yellostorm_access_token', 'expired-token');
+    seedToken('expired-token');
     axiosPost.mockRejectedValue(makeAxiosError(undefined));
     for (let i = 0; i < 3; i += 1) {
       await errorHandler(makeAxiosError(401)).catch(() => undefined);
@@ -118,6 +131,6 @@ describe('refresh burst budget recovery', () => {
         headers: expect.objectContaining({ 'X-Refresh-Attempt-Id': expect.any(String) }),
       }),
     );
-    expect(localStorage.getItem('yellostorm_access_token')).toBe('probe-recovered');
+    expect(getStoredToken()).toBe('probe-recovered');
   });
 });

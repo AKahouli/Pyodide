@@ -6,6 +6,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
 import { exchangeOAuthToken } from '../api';
 import { AUTH_STORAGE_KEYS } from '@/lib/api/config';
+import { setAccessToken } from '@/lib/api/access-token-store';
 import { scheduleProactiveRefresh } from '@/lib/api/client';
 
 export function OAuthCallbackPage() {
@@ -67,8 +68,8 @@ export function OAuthCallbackPage() {
   async function handleTokenExchange(token: string) {
     try {
       const response = await exchangeOAuthToken(token);
-      // Store access token
-      localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
+      // Access token stays in memory only
+      setAccessToken(response.accessToken);
       scheduleProactiveRefresh(response.accessToken);
       if (response.user) {
         localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));

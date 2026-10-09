@@ -80,6 +80,11 @@ export default defineConfig(({ mode }) => {
   const crossOriginIsolationHeaders = {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Embedder-Policy': 'credentialless',
+    // Mirrors the nginx.conf policy so vite preview exercises the
+    // same CSP as the container. connect-src stays broad: API/socket
+    // origins are runtime configuration (env.sh).
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http: https: wss:; media-src 'self' blob: data: https:; frame-src 'self' blob: data: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   };
 
   // Dev/preview port configurable through `.env` via `VITE_PORT` (default 5173).

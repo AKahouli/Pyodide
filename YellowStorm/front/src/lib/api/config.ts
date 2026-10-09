@@ -109,8 +109,9 @@ export function getSocketBaseUrl(): string {
   return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 }
 
+// The access token lives only in memory (see lib/api/access-token-store.ts);
+// session continuity is owned by the HttpOnly refresh cookie.
 export const AUTH_STORAGE_KEYS = {
-  accessToken: 'yellostorm_access_token',
   user: 'yellostorm_user',
 } as const;
 

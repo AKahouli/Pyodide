@@ -433,7 +433,7 @@ Email link ──▶ /#/reset-password?token=xxx ──▶ ResetPasswordPage
 ## Token Management
 
 ### Access Token
-- Stored in `localStorage` as `yellostorm_access_token`
+- Held in memory only (`lib/api/access-token-store.ts`); never written to web storage
 - 15 minute expiry
 - Sent in `Authorization: Bearer <token>` header
 - Automatically refreshed on 401 response

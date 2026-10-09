@@ -31,6 +31,15 @@ import {
   subscribeAuthBroadcast,
   withCrossTabRefreshLock,
 } from './crossTabRefresh';
+import { getAccessToken, setAccessToken } from './access-token-store';
+
+// Pre-memory-store releases persisted the access token in localStorage; the
+// HttpOnly refresh cookie now owns session continuity, so drop any copy left
+// by an older tab/version.
+const LEGACY_ACCESS_TOKEN_STORAGE_KEY = 'yellostorm_access_token';
+if (typeof localStorage !== 'undefined') {
+  localStorage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY);
+}
 
 // Types
 export interface ApiError {
@@ -144,7 +153,7 @@ function tokenUsedBy(request: InternalAxiosRequestConfig): string | null {
 }
 
 function currentStoredToken(): string | null {
-  return localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  return getAccessToken();
 }
 
 // Create axios instance
@@ -162,6 +171,13 @@ const apiClient: AxiosInstance = axios.create({
 // ---------------------------------------------------------------------------
 
 const ROTATION_CONFLICT_CODE = 'ERR_1131';
+
+/**
+ * Marks the boot-time cookie-restore refresh. The response interceptor treats
+ * a definitive rejection on it as a normal guest state (no cookie yet), not
+ * as an auth loss — no redirect, no generation bump.
+ */
+const BOOT_RESTORE_HEADER = 'X-YellowStorm-Boot-Restore';
 
 function extractApiErrorCode(error: unknown): string | null {
   if (error && typeof error === 'object') {
@@ -183,7 +199,10 @@ function delay(ms: number): Promise<void> {
  * the persisted attempt id, and retry a rotation conflict once with the SAME
  * identity so the server receipt path can serve the committed successor.
  */
-async function runCoordinatedRefresh(usedToken: string | null): Promise<string> {
+async function runCoordinatedRefresh(
+  usedToken: string | null,
+  extraHeaders: Record<string, string> = {},
+): Promise<string> {
   return withCrossTabRefreshLock(async () => {
     const generationAtStart = getAuthGeneration();
 
@@ -199,7 +218,7 @@ async function runCoordinatedRefresh(usedToken: string | null): Promise<string> 
       apiClient.post<ApiResponse<{ accessToken: string; expiresIn: number }>>(
         API_ENDPOINTS.auth.refresh,
         null,
-        { timeout: REFRESH_HTTP_BUDGET_MS, headers: { 'X-Refresh-Attempt-Id': attemptId } },
+        { timeout: REFRESH_HTTP_BUDGET_MS, headers: { 'X-Refresh-Attempt-Id': attemptId, ...extraHeaders } },
       );
 
     let lastError: unknown;
@@ -210,7 +229,7 @@ async function runCoordinatedRefresh(usedToken: string | null): Promise<string> 
         if (getAuthGeneration() !== generationAtStart) {
           throw new AuthTransientError('Session changed during refresh');
         }
-        localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, accessToken);
+        setAccessToken(accessToken);
         scheduleProactiveRefresh(accessToken);
         clearRefreshAttempt();
         broadcastAuthEvent('refreshed');
@@ -292,7 +311,7 @@ export async function refreshAccessToken(usedToken = currentStoredToken()): Prom
 // Request interceptor - Add auth token to requests
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -356,9 +375,14 @@ apiClient.interceptors.response.use(
         };
         // Only a definitive credential/account denial may clear auth.
         if (apiError.code === 'ERR_1107' || apiError.code === 'ERR_1003') {
-          resetAuthRecovery();
-          bumpAuthGeneration();
-          safeRedirectToLogin();
+          // A boot-time cookie-restore rejection is a normal guest state —
+          // clearing auth here would bounce deep links (#/share/...,
+          // #/verify-email, ...) to '#/' on every logged-out page load.
+          if (originalRequest.headers?.[BOOT_RESTORE_HEADER] !== '1') {
+            resetAuthRecovery();
+            bumpAuthGeneration();
+            safeRedirectToLogin();
+          }
         }
         return Promise.reject(apiError);
       }
@@ -438,8 +462,27 @@ function clearAuthData() {
   resetAuthRecovery();
   if (proactiveRefreshTimer !== null) window.clearTimeout(proactiveRefreshTimer);
   proactiveRefreshTimer = null;
-  localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
+  setAccessToken(null);
   localStorage.removeItem(AUTH_STORAGE_KEYS.user);
+}
+
+/**
+ * Boot-time session restore from the HttpOnly refresh cookie. Unlike the
+ * 401-driven refresh path, a definitive rejection resolves to null (plain
+ * guest) instead of redirecting — a cold boot without a session is normal,
+ * and bouncing a guest off #/register would be wrong.
+ */
+export async function restoreSessionFromCookie(): Promise<string | null> {
+  try {
+    return await runCoordinatedRefresh(null, { [BOOT_RESTORE_HEADER]: '1' });
+  } catch (error) {
+    if (isDefinitiveAuthFailure(error)) {
+      clearRefreshAttempt();
+      resetAuthRecovery();
+      return null;
+    }
+    throw error;
+  }
 }
 
 // Helper function to safely redirect to login (prevents multiple redirects)
@@ -458,8 +501,11 @@ registerRecoveryProbe(async () => {
   await refreshAccessToken();
 });
 
-// Stale tabs learn about a completed rotation and reconnect their SSE pipes
-// with the newer token instead of starting their own rotation.
+// Stale tabs learn about a completed rotation and reconnect their SSE pipes.
+// Tokens are per-tab memory now, so a stale tab cannot adopt the newer token
+// from the broadcast: it reconnects with its own (possibly expired) token and
+// self-heals because scheduleProactiveRefresh() below fires immediately for
+// an expired token, starting that tab's own rotation.
 subscribeAuthBroadcast((type) => {
   if (type === 'refreshed') {
     scheduleProactiveRefresh();

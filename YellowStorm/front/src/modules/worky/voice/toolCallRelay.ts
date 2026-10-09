@@ -1,4 +1,4 @@
-import { AUTH_STORAGE_KEYS } from '../../../lib/api/config';
+import { getAccessToken } from '../../../lib/api/access-token-store';
 
 /**
  * Relays a Gemini tool call to the worky-concierge MCP server — and ONLY the
@@ -17,7 +17,7 @@ const DEFAULT_MCP_URL =
 
 function accessToken(): string | null {
   try {
-    return localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    return getAccessToken();
   } catch {
     return null;
   }

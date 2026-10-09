@@ -1,4 +1,4 @@
-import { AUTH_STORAGE_KEYS } from '../../../lib/api/config';
+import { getAccessToken } from '../../../lib/api/access-token-store';
 
 /**
  * Mirrors the realtime mic PCM to the voice-memory sidecar so it can build
@@ -30,7 +30,7 @@ const NOOP: VoiceMemoryIngest = {
 
 function accessToken(): string | null {
   try {
-    return localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    return getAccessToken();
   } catch {
     return null;
   }

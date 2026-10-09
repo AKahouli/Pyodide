@@ -1,4 +1,5 @@
-import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
+import { API_CONFIG } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/access-token-store';
 import type { StreamSSEEvent } from './types';
 import { translateConversation } from './translation';
 
@@ -66,7 +67,7 @@ class ConversationStreamService {
   connect(): void {
     if (this.isEvicted) return;
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) {
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
       return;
