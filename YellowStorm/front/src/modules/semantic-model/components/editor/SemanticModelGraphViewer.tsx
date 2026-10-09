@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Download, Loader2, Maximize, RefreshCw, Search, Tags, X } from 'lucide-react';
+import { BarChart3, Download, Loader2, Maximize, Network, RefreshCw, Search, Tags, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { parseApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import type { GraphOutline, SemanticGraph } from '../../types';
-import { buildGraphIndex, neighbourhood, searchRecords, shownRecords, withValues, type GraphIndex, type SearchHit } from '../graph/graph-analytics';
+import { buildGraphIndex, mergeOutlines, neighbourhood, searchRecords, shownRecords, withValues, type GraphIndex, type SearchHit } from '../graph/graph-analytics';
 import { GraphRecordPanel } from '../graph/GraphRecordPanel';
 import { GraphOverviewPanel, type GraphHighlight, type GraphPeriod } from '../graph/GraphOverviewPanel';
 import { GraphCanvas, type CanvasEdge, type CanvasLayout, type CanvasNode, type GraphCanvasHandle } from '../graph/GraphCanvas';
@@ -94,7 +94,14 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const [drawAll, setDrawAll] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  // A large graph is read in part: the concept whose records are read ('' for a share of every concept), and a read around one record.
+  const [serverConcept, setServerConcept] = useState('');
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState<string | null>(null);
   const revision = outline?.dataRevisionId ?? dataRevisionId;
+  const windowed = Boolean(outline?.truncated);
+  const totals = outline?.totals ?? null;
 
   /** Keeps a new drawing limit for this browser; a value out of range is brought back into it. */
   const setDrawLimit = (value: number) => {
@@ -109,9 +116,10 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     setError(null);
     setSelectedId(null);
     setHighlight(null);
+    setExpandError(null);
     try {
       const [loaded, structure] = await Promise.all([
-        semanticModelApi.getGraphOutline(modelId, dataRevisionId),
+        semanticModelApi.getGraphOutline(modelId, dataRevisionId, serverConcept ? { conceptId: serverConcept } : undefined),
         semanticModelApi.graph(modelId),
       ]);
       setOutline(loaded);
@@ -123,13 +131,32 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     } finally {
       setLoading(false);
     }
-  }, [dataRevisionId, modelId, onDataRevision]);
+  }, [dataRevisionId, modelId, onDataRevision, serverConcept]);
 
   useEffect(() => {
     if (open && modelId) void load();
   }, [open, modelId, load]);
+  // The concept read belongs to the model and the visit: a closed viewer starts again from a share of every concept.
+  useEffect(() => { if (!open) setServerConcept(''); }, [open]);
+
+  /** Reads the records linked to one record and adds them to those shown; false when the record is not found. */
+  const expand = useCallback(async (recordId: string) => {
+    setExpanding(true);
+    setExpandError(null);
+    try {
+      const more = await semanticModelApi.getGraphOutline(modelId, revision, { focus: recordId });
+      setOutline((current) => (current ? mergeOutlines(current, more) : more));
+      return more.records.some((record) => record.id === recordId);
+    } catch (err: unknown) {
+      setExpandError(parseApiError(err).message);
+      return false;
+    } finally {
+      setExpanding(false);
+    }
+  }, [modelId, revision]);
 
   const index = useMemo(() => buildGraphIndex(outline, modelGraph), [outline, modelGraph]);
+  const conceptName = useCallback((conceptId: string) => modelGraph?.nodes.find((concept) => concept.id === conceptId)?.label ?? conceptId.replaceAll('_', ' '), [modelGraph]);
   const labels = useMemo(() => displayLabels(index), [index]);
   const conceptOrder = useMemo(() => index.concepts.map((concept) => concept.key), [index]);
   const colorOf = useCallback((concept: string) => {
@@ -213,8 +240,18 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     openedInitial.current = initialRecordId;
     const found = index.byId.has(initialRecordId);
     if (found) goTo(initialRecordId);
-    onInitialRecord?.(found);
-  }, [open, loading, outline, initialRecordId, index, goTo, onInitialRecord]);
+    if (found || !windowed) { onInitialRecord?.(found); return; }
+    // The record may be among those not read yet: read it with its neighbours, then open it.
+    void expand(initialRecordId).then((read) => {
+      if (read) setPendingOpen(initialRecordId);
+      onInitialRecord?.(read);
+    });
+  }, [open, loading, outline, initialRecordId, index, goTo, onInitialRecord, windowed, expand]);
+  useEffect(() => {
+    if (!pendingOpen || !index.byId.has(pendingOpen)) return;
+    goTo(pendingOpen);
+    setPendingOpen(null);
+  }, [pendingOpen, index, goTo]);
 
   const onlyConcept = useCallback((concept: string) => setHidden(new Set(index.concepts.filter((item) => item.key !== concept).map((item) => item.key))), [index]);
   const onCanvasSelect = useCallback((id: string | null) => {
@@ -255,7 +292,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const valueSearch = useQuery({
     queryKey: ['semantic-model', modelId, 'graph-search', revision, settledQuery],
     queryFn: () => semanticModelApi.searchGraph(modelId, settledQuery, revision),
-    enabled: open && settledQuery.length >= 2 && nameHits.length < 8,
+    // Values are searched in the whole graph, which a graph read in part is too large for: names only.
+    enabled: open && settledQuery.length >= 2 && nameHits.length < 8 && !windowed,
     staleTime: 60_000,
   });
   const results = useMemo((): SearchHit[] => {
@@ -317,7 +355,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           </ul>}
         </div>
         <div className="flex-1" />
-        {canExport && index.records.length > 0 && <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => setExportOpen(true)} title={t('graphViewer.exportHelpShort')}>
+        {canExport && index.records.length > 0 && <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" disabled={windowed} onClick={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}>
           <Download className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t('graphViewer.export')}</span>
         </Button>}
         <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => void load()} disabled={loading} aria-label={t('graphViewer.refresh')} title={t('graphViewer.refresh')}>
@@ -335,10 +373,16 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
               title={isShown ? t('graphViewer.hideConcept', { concept: concept.label }) : t('graphViewer.showConcept', { concept: concept.label })}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-xs hover:bg-white/10 ${isShown ? 'text-white/75' : 'text-white/30 line-through'}`}>
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorOf(concept.key), opacity: isShown ? 1 : 0.3 }} />
-              {concept.label}<span className="tabular-nums text-white/40">{concept.count.toLocaleString(language)}</span>
+              {concept.label}<span className="tabular-nums text-white/40">{concept.count.toLocaleString(language)}{windowed && totals?.concepts[concept.conceptId] !== undefined && totals.concepts[concept.conceptId] !== concept.count ? ` / ${totals.concepts[concept.conceptId].toLocaleString(language)}` : ''}</span>
             </button>;
           })}
           {hidden.size > 0 && <button type="button" onClick={() => setHidden(new Set())} className="px-2 text-xs text-sky-300 hover:underline">{t('graphViewer.showAll')}</button>}
+          {totals && (windowed || serverConcept) && <label className="ml-auto flex items-center gap-1.5 text-xs text-white/50" title={t('graphViewer.loadConceptHelp')}>{t('graphViewer.loadConcept')}
+            <select value={serverConcept} disabled={loading} onChange={(event) => setServerConcept(event.target.value)} className="h-7 max-w-[16rem] rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
+              <option value="">{t('graphViewer.allConcepts')}</option>
+              {Object.entries(totals.concepts).map(([conceptId, count]) => <option key={conceptId} value={conceptId}>{t('graphViewer.conceptOption', { concept: conceptName(conceptId), records: count.toLocaleString(language) })}</option>)}
+            </select>
+          </label>}
         </div>
       </div>
 
@@ -352,6 +396,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           {index.records.length > 0 && <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-[#15152a]/90 p-1 backdrop-blur" role="toolbar" aria-label={t('graphViewer.tools')}>
             <Button variant="ghost" size="sm" className={`${tool} ${overviewOpen ? pressed : ''}`} aria-pressed={overviewOpen} aria-label={t('graphViewer.overview')} title={t('graphViewer.overview')} onClick={() => setOverviewOpen(!overviewOpen)}><BarChart3 className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.overview')}</span></Button>
             <Button variant="ghost" size="sm" className={tool} onClick={() => canvas.current?.fit()} title={t('graphViewer.fit')} aria-label={t('graphViewer.fit')}><Maximize className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.fit')}</span></Button>
+            {windowed && <Button variant="ghost" size="sm" className={tool} disabled={!selectedId || expanding} onClick={() => { if (selectedId) void expand(selectedId).then((read) => { if (read) setFocusDepth((depth) => depth || 1); }); }} aria-label={t('graphViewer.loadNeighbours')} title={t('graphViewer.loadNeighboursHelp')}>
+              {expanding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}<span className="hidden lg:inline">{t('graphViewer.loadNeighbours')}</span></Button>}
             <Button variant="ghost" size="sm" className={`${tool} ${linkNames ? pressed : ''}`} aria-pressed={linkNames} aria-label={t('graphViewer.linkNames')} onClick={() => setLinkNames(!linkNames)} title={t('graphViewer.linkNamesHelp')}><Tags className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.linkNames')}</span></Button>
             <label className="flex items-center gap-1 px-1 text-xs text-white/50">{t('graphViewer.layout')}
               <select value={layout} disabled={summary} onChange={(event) => setLayout(event.target.value as CanvasLayout)} className="h-7 rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
@@ -387,6 +433,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           {/* What is shown, and what narrows it */}
           {index.records.length > 0 && <div className="absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-2 text-xs text-white/55" role="status">
             <span>{t('graphViewer.showing', { shown: (drawn?.size ?? visible.size).toLocaleString(language), total: index.records.length.toLocaleString(language) })}</span>
+            {windowed && totals && <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-sky-200" title={t('graphViewer.windowHelp')}>{t('graphViewer.windowShowing', { shown: index.records.length.toLocaleString(language), total: (serverConcept ? totals.concepts[serverConcept] ?? index.records.length : totals.records).toLocaleString(language) })}</span>}
+            {expandError && <span className="rounded-full bg-red-400/15 px-2 py-0.5 text-red-200" role="alert">{t('graphViewer.loadNeighboursFailed', { message: expandError })}</span>}
             {focusDepth > 0 && selected && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.focusOn', { record: selected.label, count: focusDepth })}</span>}
             {period && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.periodActive', { from: period.from, to: period.to })}</span>}
             {highlight && !overviewOpen && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">{highlight.reason} <button type="button" className="ml-1 underline" onClick={() => setHighlight(null)}>{t('graphViewer.clearHighlight')}</button></span>}

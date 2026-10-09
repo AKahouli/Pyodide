@@ -648,15 +648,33 @@ class IndexStop(BaseModel):
     environment: Environment = "draft"
 
 
-@router.post("/indexes/stop", status_code=status.HTTP_200_OK)
-async def stop_search_index(command: IndexStop, request: Request) -> dict[str, object]:
-    """Stop the build of the search index of the bound data (queued or indexing). A build not yet
-    picked up ends at once; a running one ends at its next batch. The generation then fails with the
-    code ``cancelled``, keeping what is embedded: only an explicit index request builds it again."""
-    pool = _pool(request)
+def _writer(request: Request):  # type: ignore[no-untyped-def]
     service = getattr(request.app.state, "job_service", None)
     if service is None or os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") != "true":
         raise HTTPException(status_code=503, detail="runtime_writes_disabled")
+    return service
+
+
+async def _stop_generation(pool, service, generation: dict) -> tuple[dict | None, dict | None]:  # type: ignore[no-untyped-def]
+    """Stop a queued or indexing generation: its job is asked to stop, and the generation ends here
+    (``failed`` / ``cancelled``, keeping what is embedded) unless a worker answering live holds it,
+    which then ends it itself at its next batch. A worker whose lease ran out (gone, or stuck) is not
+    waited for. Returns the generation as it is now and the job."""
+    job = (await service.repository.request_cancel(generation["job_id"], SYSTEM_ACTOR)
+           if generation.get("job_id") else None)
+    if job is None or job["state"] != "cancel_requested":
+        await search_store.fail_generation(pool, generation["index_id"], CANCELLED_CODE)
+    return await search_store.get_generation_by_id(pool, generation["index_id"]), job
+
+
+@router.post("/indexes/stop", status_code=status.HTTP_200_OK)
+async def stop_search_index(command: IndexStop, request: Request) -> dict[str, object]:
+    """Stop the build of the search index of the bound data (queued or indexing). A build not yet
+    picked up, or whose worker no longer answers (its lease ran out), ends at once; a running one ends
+    at its next batch. The generation then fails with the code ``cancelled``, keeping what is embedded:
+    only an explicit index request builds it again."""
+    pool = _pool(request)
+    service = _writer(request)
     binding = await _pin(pool, command.model_id, command.environment, None)
     profile = profile_from_env()
     generation = None if profile is None else await search_store.latest_generation(
@@ -665,15 +683,38 @@ async def stop_search_index(command: IndexStop, request: Request) -> dict[str, o
             "dataRevisionId": binding["data_revision_id"]}
     if generation is None or generation["state"] not in ("queued", "indexing"):
         return {**base, "stopped": False, "index": search_store.public_generation(generation)}
-    job = (await service.repository.request_cancel(generation["job_id"], SYSTEM_ACTOR)
-           if generation.get("job_id") else None)
-    if job is None or job["state"] != "cancel_requested":
-        # No live worker holds it (not started, or its lease ran out): the generation ends here.
-        # A worker holding it live ends it itself at its next batch.
-        await search_store.fail_generation(pool, generation["index_id"], CANCELLED_CODE)
-    generation = await search_store.get_generation_by_id(pool, generation["index_id"])
+    generation, job = await _stop_generation(pool, service, generation)
     return {**base, "stopped": True, "index": search_store.public_generation(generation),
             "jobId": job["jobId"] if job else None}
+
+
+@router.post("/indexes/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_search_index(command: IndexCommand, request: Request) -> dict[str, object]:
+    """Stop a build and start a new one: what is already embedded is reused. A build whose worker still
+    answers is only asked to stop (``restarted`` false): restarting it would wait for that worker."""
+    pool = _pool(request)
+    service = _writer(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    if generation is not None and generation["state"] in ("queued", "indexing"):
+        generation, _ = await _stop_generation(pool, service, generation)
+        if generation is not None and generation["state"] in ("queued", "indexing"):
+            return {"modelId": command.model_id, "environment": command.environment,
+                    "dataRevisionId": binding["data_revision_id"], "restarted": False,
+                    "index": search_store.public_generation(generation), "jobId": generation.get("job_id")}
+    try:
+        requested = await request_index(pool, service.admit, revision_id=binding["data_revision_id"],
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
+    except IndexUnavailable as exc:
+        raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
+                            detail=exc.code) from exc
+    return {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"], "restarted": True,
+            "index": search_store.public_generation(requested["generation"]),
+            "jobId": requested["jobId"]}
 
 
 @router.get("/models/{model_id}/index", status_code=status.HTTP_200_OK)

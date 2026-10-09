@@ -5,15 +5,22 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticReadiness } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { ValidationIssue } from '../../types';
+import type { ConceptSourceMapping, DerivedSource, ModelCheck, ModelCheckIssue, ValidationIssue } from '../../types';
+import { ModelCheckList } from './ModelCheckList';
 import { ReviewQueueList, type ReviewQueueGroup, type ReviewQueueHandlers } from './ReviewQueuePanel';
 
 /** The review items behind each readiness area, so picking an area shows what keeps it open. */
 const AREA_GROUPS: Record<string, ReviewQueueGroup[]> = { sources: ['sources'], identity: ['identity'], relationships: ['links'], quality: ['decisions', 'data'] };
 
-export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCheck = false, checking = false, onRunCheck, onClose, onOpenIssue, activeKey }: Readonly<ReviewQueueHandlers & {
+export function SemanticTrustPanel({ modelId, canEdit, modelCheck, modelCheckFailed = false, checkMappings, checkDerivedSources, onOpenCheckIssue, validation = [], canRunCheck = false, checking = false, onRunCheck, onClose, onOpenIssue, activeKey }: Readonly<ReviewQueueHandlers & {
   modelId: string;
   canEdit: boolean;
+  /** The live model check: what is wrong in the model as it is now. */
+  modelCheck?: ModelCheck;
+  modelCheckFailed?: boolean;
+  checkMappings?: ConceptSourceMapping[];
+  checkDerivedSources?: DerivedSource[];
+  onOpenCheckIssue?: (issue: ModelCheckIssue) => void;
   /** Findings of the last structural check, shown here instead of a floating card. */
   validation?: ValidationIssue[];
   canRunCheck?: boolean;
@@ -46,6 +53,11 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
   const content = (closeControl?: ReactNode) => <>
     <div className='relative flex items-center justify-between border-b p-4 pr-20 sm:pr-4'><div><h2 className='flex items-center gap-2 font-semibold'><ShieldCheck className='h-4 w-4 text-primary' />{t('trust.title')}</h2><p className='text-xs text-muted-foreground'>{t('trust.description')}</p></div>{closeControl}</div>
     <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-4 pb-28'>
+      {(modelCheck || modelCheckFailed) && <section aria-label={t('check.title')}>
+        <h3 className='font-semibold'>{t('check.title')}</h3>
+        <p className='text-xs text-muted-foreground'>{t('check.description')}</p>
+        <ModelCheckList check={modelCheck} loadFailed={modelCheckFailed} mappings={checkMappings} derivedSources={checkDerivedSources} onOpenIssue={onOpenCheckIssue} />
+      </section>}
       {/* What needs a decision comes first: this panel opens from the To review button. */}
       <section ref={reviewRef} className='scroll-mt-4' aria-label={t('reviewQueue.title')}>
         <div className='flex items-baseline justify-between gap-2'>

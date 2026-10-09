@@ -1530,6 +1530,33 @@ export class SaveCanvasPositionsDto {
   positions!: CanvasPositionDto[];
 }
 
+export class GraphOutlineQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+
+  @ApiPropertyOptional({ default: 2000, maximum: 5000, description: 'Records to read, shared among the concepts' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5000)
+  limit?: number;
+
+  @ApiPropertyOptional({ description: 'Read the records of this concept only' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  conceptId?: string;
+
+  @ApiPropertyOptional({ description: 'Read this record with its neighbours instead' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  focus?: string;
+}
+
 export class GraphSearchQueryDto {
   @ApiProperty({ maxLength: 200 })
   @IsString()

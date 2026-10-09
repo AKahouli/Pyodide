@@ -1164,3 +1164,108 @@ async def test_a_stopped_cache_fill_keeps_what_it_reused(pool: asyncpg.Pool):
     assert (await search_store.generation_counts(pool, index_id))["ready"] == 3
     # A later attempt carries on with the rest.
     assert await search_store.fill_from_cache(pool, index_id, "m-1", ["vfp"], chunk_rows=3) == 5
+
+
+async def _stall(pool: asyncpg.Pool, index_id: str, task_id: int) -> None:
+    """The worker stopped renewing both leases minutes ago; the task's, which lasts longer, is still live."""
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 minute', progress_at = now() - interval '6 minutes' "
+                       "WHERE index_id = $1::uuid", index_id)
+    await pool.execute("UPDATE semantic_jobs.tasks SET updated_at = now() - interval '10 minutes' WHERE id = $1",
+                       task_id)
+
+
+@pytest.mark.asyncio
+async def test_a_build_whose_generation_lease_ran_out_is_requeued_though_its_task_lease_is_live(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    _, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="stuck", lease_seconds=600)
+    await _stall(pool, index_id, task_id)
+    assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is True
+
+    assert await _recover(repository) == {"exhausted": 0, "requeued": 1}
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "queued"
+    assert await pool.fetchval("SELECT published_at FROM semantic_jobs.outbox") is None
+    # Its next attempt resumes the generation; until then it shows as stalled, not failed.
+    generation = await search_store.get_generation_by_id(pool, index_id)
+    assert generation["state"] == "indexing" and generation["stalled"] is True
+    assert await search_store.claim_generation(pool, index_id, "search-worker:node:new:run", 600)
+    assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_build_out_of_attempts_fails_its_job_and_generation_in_the_same_pass(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="stuck", lease_seconds=600)
+    await _stall(pool, index_id, task_id)
+
+    assert await _recover(repository, max_attempts=0) == {"exhausted": 1, "requeued": 0}
+    assert (await repository.get_job(admitted.job_id, "system"))["state"] == "failed"
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "index_interrupted"
+    assert generation["owner"] is None and generation["lease_until"] is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_leaves_a_task_claimed_after_the_generation_lease_was_left_behind(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    _, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 minute' WHERE index_id = $1::uuid", index_id)
+    # A new attempt has the task but has not taken the generation yet.
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="new", lease_seconds=600)
+
+    assert await _recover(repository) == {"exhausted": 0, "requeued": 0}
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "running"
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_stalled_build_ends_it_at_once_instead_of_waiting_for_its_task_lease(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="stuck", lease_seconds=600)
+    await _stall(pool, index_id, task_id)
+
+    assert (await repository.request_cancel(admitted.job_id, "system"))["state"] == "cancelled"
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
+    generation = await _generation(pool, index_id)
+    assert generation["state"] == "failed" and generation["last_error_code"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_stopping_asks_a_build_that_is_still_progressing_and_waits_for_it(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="live", lease_seconds=600)
+
+    assert (await repository.request_cancel(admitted.job_id, "system"))["state"] == "cancel_requested"
+    assert (await _generation(pool, index_id))["state"] == "indexing"
+
+
+@pytest.mark.asyncio
+async def test_a_build_reads_stalled_when_its_lease_ran_out_or_it_made_no_progress_for_long(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    _, index_id = await _admit_index(repository)
+    owner = "search-worker:node:old:run"
+
+    assert await search_store.renew_generation(pool, index_id, owner, 300)
+    fresh = await search_store.get_generation_by_id(pool, index_id)
+    assert fresh["stalled"] is False and fresh["last_progress_at"] is not None
+    assert search_store.public_generation(fresh)["lastProgressAt"] is not None
+
+    await pool.execute("UPDATE semantic_graph_search.index_generations SET progress_at = now() - interval '11 minutes' "
+                       "WHERE index_id = $1::uuid", index_id)
+    assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is True
+
+    await pool.execute("UPDATE semantic_graph_search.index_generations SET progress_at = now(), "
+                       "lease_until = now() - interval '1 second' WHERE index_id = $1::uuid", index_id)
+    assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is True
+
+    await search_store.fail_generation(pool, index_id, "index_interrupted")
+    assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is False

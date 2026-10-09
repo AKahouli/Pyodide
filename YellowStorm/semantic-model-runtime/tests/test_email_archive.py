@@ -294,6 +294,55 @@ async def test_population_downloads_an_archive_once_and_derives_its_files_once(a
     assert len(uploads) == 6  # 4 message texts + 2 PDFs
     second = await run(command(sources=sources), fetch, upload, cache)
     assert second["ok"] is True and len(uploads) == 6
+    # Nothing changed: the archive is not downloaded again for the cached readings.
+    assert downloads == [SOURCE["assetId"]]
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_archive_is_not_downloaded_for_any_of_its_three_tables(archive: bytes):
+    from test_population_task import command
+
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    sheets = (("messages", "cle_message", "objet"), ("participants", "cle_message", "adresse"),
+              ("attachments", "cle_piece_jointe", "nom_fichier"))
+    sources = [{"conceptId": "c1", "source": dict(source), "options": {"sheetName": sheet},
+                "columnMapping": {key: "customer_id", name: "name"}, "mappingVersion": "map-v1"}
+               for sheet, key, name in sheets]
+    downloads: list[str] = []
+    checked: list[str] = []
+
+    async def fetch(src: dict, actor: str, *, target: Path) -> Path:
+        downloads.append(src["assetId"])
+        target.write_bytes(archive)
+        return target
+
+    async def metadata(src: dict, actor: str) -> dict:
+        checked.append(src["assetId"])
+        return src
+
+    class Cache:
+        def __init__(self) -> None:
+            self.rows: dict[str, dict] = {}
+
+        async def get(self, key: str) -> dict | None:
+            return self.rows.get(key)
+
+        async def put(self, key: str, *, concept_id: str, asset_id: str, output: dict) -> None:
+            self.rows[key] = output
+
+    cache = Cache()
+    first = await run(command(sources=sources), fetch, None, cache, metadata)
+    assert first["ok"] is True, first
+    # One download feeds the three tables of the archive.
+    assert downloads == [SOURCE["assetId"]] and checked == []
+    second = await run(command(sources=sources), fetch, None, cache, metadata)
+    assert second["ok"] is True and second["entities"] == first["entities"]
+    assert downloads == [SOURCE["assetId"]] and checked == [SOURCE["assetId"]] * 3
+
+    # A re-uploaded archive (another content hash) is downloaded and read again.
+    changed = [{**entry, "source": {**entry["source"], "contentHash": "f" * 32}} for entry in sources]
+    third = await run(command(sources=changed), fetch, None, cache, metadata)
+    assert third["ok"] is True and downloads == [SOURCE["assetId"]] * 2
 
 
 @pytest.mark.asyncio
@@ -318,10 +367,14 @@ async def test_population_leaves_the_workspace_alone_unless_the_source_asks_to_i
     assert uploads == []
 
 
-async def run(cmd: dict, fetch, upload, cache) -> dict:  # type: ignore[no-untyped-def]
+async def run(cmd: dict, fetch, upload, cache, metadata=None) -> dict:  # type: ignore[no-untyped-def]
     from app.workers.population_tasks import run_population_for_task
 
-    return await run_population_for_task(cmd, fetch=fetch, upload_derived=upload, extraction_cache=cache)
+    async def unchanged(src: dict, actor: str) -> dict:
+        return src
+
+    return await run_population_for_task(cmd, fetch=fetch, upload_derived=upload, extraction_cache=cache,
+                                         metadata_fetch=metadata or unchanged)
 
 
 def test_a_message_whose_body_is_a_single_file_has_that_attachment():

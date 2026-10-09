@@ -10,6 +10,7 @@ import {
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
 import { runtimeErrorMessage, runtimeUnreachableMessage } from '../domain/runtime-error-messages';
+import type { ModelCheckIssue } from '../domain/semantic-model-check';
 
 // Thin NestJS client for the merged semantic-model-runtime (P2.11). Single
 // shot per call with the configured deadline; no retries without the caller's
@@ -186,6 +187,22 @@ export interface RuntimeBoundGraph {
   specification: RuntimeBoundRecords['specification'];
 }
 
+/** A bounded part of the bound graph; `totals` (visible records, links, per concept and relationship) is null for a focused read. */
+export interface RuntimeGraphWindow extends RuntimeBoundGraph {
+  truncated: boolean;
+  nodeLimit: number;
+  totals: { records: number; links: number; concepts: Record<string, number>; relations: Record<string, number> } | null;
+}
+
+export interface RuntimeGraphWindowOptions {
+  dataRevisionId?: string;
+  nodeLimit?: number;
+  conceptId?: string;
+  /** Records to read with their neighbours (or alone with `neighbours: false`) instead of the first records of the data. */
+  focusIds?: string[];
+  neighbours?: boolean;
+}
+
 export interface RuntimeCorrectionCommand {
   actorUserId: string;
   modelId: string;
@@ -308,6 +325,21 @@ export interface RuntimeDocumentLabels {
   documentsRead: number;
   unread: { assetId: string; status: string }[];
   labels: { label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }[];
+}
+
+/** What a build would send, for the runtime to check without running it (`POST .../population/check`). */
+export interface RuntimeModelCheckRequest {
+  specification: unknown;
+  sources: unknown[];
+  relationBindings: unknown[];
+  derivations: unknown[];
+  limits?: Record<string, number>;
+}
+
+export interface RuntimeModelCheck {
+  issues: ModelCheckIssue[];
+  errorCount: number;
+  warningCount: number;
 }
 
 export interface RuntimeComputedPreviewRequest {
@@ -522,6 +554,10 @@ export interface RuntimeGraphSearchIndex {
   stage?: 'documents' | 'reusing' | 'embedding' | null;
   /** Records whose search card is written so far (builds: counts of the other fields are live too). */
   loadedCount?: number;
+  /** The build's worker stopped answering (its lease ran out, or no progress for a long while): what was embedded is kept and the build can be restarted. */
+  stalled?: boolean;
+  /** When the build last made progress (ISO); null before its first step. */
+  lastProgressAt?: string | null;
   lastErrorCode: string | null;
   completedAt: string | null;
   embeddingFingerprint: string | null;
@@ -918,6 +954,24 @@ export class SemanticRuntimeClientService {
     return await res.json() as RuntimeShapedSheetRows;
   }
 
+  /** Every problem the runtime would stop a build of this plan on, listed at once. Reads and stores nothing. */
+  async checkModelPlan(body: RuntimeModelCheckRequest): Promise<RuntimeModelCheck> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch (error) {
+      throw this.translate(error);
+    }
+    if (!res.ok) throw await this.failure(res);
+    return await res.json() as RuntimeModelCheck;
+  }
+
   async previewComputedField(body: RuntimeComputedPreviewRequest): Promise<RuntimeComputedPreview> {
     const base = this.requireRuntime();
     let res: Response;
@@ -1234,6 +1288,25 @@ export class SemanticRuntimeClientService {
     );
   }
 
+  /** A bounded, workspace-scoped part of the graph: what the graph view draws, never the whole of a large graph. */
+  async getBoundGraphWindow(modelId: string, actorUserId: string, allowedWorkspaceIds: string[],
+    options: RuntimeGraphWindowOptions = {}): Promise<RuntimeGraphWindow> {
+    return this.readPost<RuntimeGraphWindow>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/graph/window`,
+      actorUserId,
+      {
+        actorUserId,
+        environment: 'draft',
+        allowedWorkspaceIds: this.requireScope(allowedWorkspaceIds),
+        ...(options.dataRevisionId ? { dataRevisionId: options.dataRevisionId } : {}),
+        ...(options.nodeLimit ? { nodeLimit: options.nodeLimit } : {}),
+        ...(options.conceptId ? { conceptId: options.conceptId } : {}),
+        ...(options.focusIds?.length ? { focusIds: options.focusIds } : {}),
+        ...(options.neighbours === false ? { neighbours: false } : {}),
+      },
+    );
+  }
+
   /** Per-field record filters travel as a JSON object; invalid ones are refused here. */
   private parseRecordFilters(raw: string): Record<string, string> {
     let parsed: unknown;
@@ -1381,6 +1454,15 @@ export class SemanticRuntimeClientService {
   async stopGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
     Promise<RuntimeGraphSearchIndexStatus & { stopped: boolean; jobId?: string | null }> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes/stop', body.actorUserId, body, undefined, true);
+  }
+
+  /**
+   * Stops the build (a stalled one ends at once) and starts a new one that reuses what is already embedded.
+   * `restarted` is false when a live worker was only asked to stop: the person asks again once it has.
+   */
+  async restartGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
+    Promise<RuntimeGraphSearchIndexStatus & { restarted: boolean; jobId: string | null }> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes/restart', body.actorUserId, body, undefined, true);
   }
 
   async getGraphSearchIndex(modelId: string, environment: RuntimeSearchEnvironment, actorUserId: string): Promise<RuntimeGraphSearchIndexStatus> {

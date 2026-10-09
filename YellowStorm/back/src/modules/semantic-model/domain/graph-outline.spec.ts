@@ -1,4 +1,4 @@
-import { graphExport, graphOutline, graphRecordValues, searchGraphValues, type OutlineSourceGraph } from './graph-outline';
+import { graphExport, graphOutline, graphRecordValues, graphWindowOutline, searchGraphValues, type OutlineSourceGraph } from './graph-outline';
 
 const graph: OutlineSourceGraph = {
   dataRevisionId: 'rev-1',
@@ -20,6 +20,14 @@ describe('graph outline', () => {
     expect(outline.records[1]).toEqual({ id: 'p1', c: 'c-person', l: 'Ana' });
     expect(outline.links).toEqual([{ id: 'e1', r: 'r-sent', s: 'm1', t: 'p1' }]);
     expect(JSON.stringify(outline)).not.toContain('xxxx');
+  });
+
+  it('adds to a window outline whether records were left out and the totals', () => {
+    const totals = { records: 9, links: 3, concepts: { 'c-mail': 5, 'c-person': 4 }, relations: { 'r-sent': 3 } };
+    const outline = graphWindowOutline({ ...graph, truncated: true, nodeLimit: 2, totals });
+    expect(outline).toMatchObject({ truncated: true, nodeLimit: 2, totals });
+    expect(outline.records).toHaveLength(2);
+    expect(graphWindowOutline({ ...graph, truncated: false, nodeLimit: 2, totals: null }).totals).toBeNull();
   });
 
   it('reads one record with its values and file', () => {

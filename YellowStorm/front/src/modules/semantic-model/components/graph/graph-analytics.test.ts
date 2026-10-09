@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphOutline, SemanticGraph } from '../../types';
 import {
-  buildGraphIndex, countPer, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords,
+  buildGraphIndex, countPer, mergeOutlines, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords,
 } from './graph-analytics';
 
 const FIELDS: Record<string, string[]> = { 'c-mail': ['sujet', 'envoye_le'], 'c-person': ['nom'], 'c-file': ['nom_fichier'] };
@@ -44,7 +44,7 @@ describe('graph analytics', () => {
     expect(mail.fields.map((field) => field.label)).toEqual(['Subject', 'Sent on']);
     expect(index.byId.get('m3')!.missing).toBe(2);
     expect(index.links[0].label).toBe('sent by');
-    expect(index.concepts).toEqual([{ key: 'mail', label: 'Message', count: 3 }, { key: 'person', label: 'Correspondent', count: 2 }, { key: 'file', label: 'Attachment', count: 2 }]);
+    expect(index.concepts).toEqual([{ key: 'mail', conceptId: 'c-mail', label: 'Message', count: 3 }, { key: 'person', conceptId: 'c-person', label: 'Correspondent', count: 2 }, { key: 'file', conceptId: 'c-file', label: 'Attachment', count: 2 }]);
   });
 
   it('groups linked records by relationship and direction', () => {
@@ -91,5 +91,29 @@ describe('graph analytics', () => {
     expect(ids(shownRecords(index, { hidden: new Set(), period: { concept: 'mail', field: 'envoye_le', from: '2026-02', to: '2026-03' } })))
       .toEqual(['f1', 'f9', 'm2', 'p1']);
     expect(shownRecords(index, { hidden: new Set(['mail']), keep: 'm1' }).has('m1')).toBe(true);
+  });
+});
+
+describe('mergeOutlines', () => {
+  it('adds the records and links read around a record, keeping the first part and its totals', () => {
+    const totals = { records: 9, links: 4, concepts: { 'c-mail': 5, 'c-person': 4 }, relations: { 'r-sent': 4 } };
+    const first: GraphOutline = {
+      dataRevisionId: 'rev', truncated: true, totals,
+      concepts: [{ id: 'c-mail', fields: ['sujet'] }],
+      records: [node('m1', 'mail', 'Hello', { sujet: 'Hello' })],
+      links: [],
+    };
+    const more: GraphOutline = {
+      dataRevisionId: 'rev', truncated: false, totals: null,
+      concepts: [{ id: 'c-mail', fields: ['sujet'] }, { id: 'c-person', fields: ['nom'] }],
+      records: [node('m1', 'mail', 'Hello', { sujet: 'Hello' }), node('p1', 'person', 'Ana', { nom: 'Ana' })],
+      links: [edge('e1', 'm1', 'p1', 'r-sent')],
+    };
+    const merged = mergeOutlines(first, more);
+    expect(merged.records.map((record) => record.id)).toEqual(['m1', 'p1']);
+    expect(merged.links).toHaveLength(1);
+    expect(merged.concepts.map((concept) => concept.id)).toEqual(['c-mail', 'c-person']);
+    expect(merged).toMatchObject({ truncated: true, totals });
+    expect(mergeOutlines(merged, more).records).toHaveLength(2);
   });
 });

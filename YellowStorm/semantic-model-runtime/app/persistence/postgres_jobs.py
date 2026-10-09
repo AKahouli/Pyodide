@@ -423,7 +423,7 @@ class PostgresJobRepository:
             async with connection.transaction():
                 job = await connection.fetchrow(
                     """
-                    SELECT id::text, state, progress FROM semantic_jobs.jobs
+                    SELECT id::text, state, progress, job_type FROM semantic_jobs.jobs
                     WHERE id = $1::uuid AND actor_user_id = $2
                     FOR UPDATE
                     """,
@@ -432,6 +432,10 @@ class PostgresJobRepository:
                 )
                 if job is None:
                     return None
+                if job["job_type"].startswith("graph_search."):
+                    # A search build whose generation lease ran out has no worker answering, whatever
+                    # its task lease says: stopping it must not wait for that one.
+                    await self._expire_stalled_search_leases(connection, job_id)
                 if job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
                     live = await connection.fetchval(
                         """
@@ -469,6 +473,31 @@ class PostgresJobRepository:
                         )
                         await self._finish_cancelled(connection, job_id, None)
         return await self.get_job(job_id, actor_user_id)
+
+    @staticmethod
+    async def _expire_stalled_search_leases(connection: Any, job_id: str | None = None) -> int:
+        """Expire the task lease of a search build whose generation lease ran out.
+
+        The two leases are renewed together, at each real step of progress, but the task's lasts
+        longer: a worker hung inside one step (a call that never returns) would keep its task for
+        minutes after its build stopped. The generation lease running out is the earlier and exact
+        signal. ``updated_at < lease_until`` keeps out a task claimed after that lease was left
+        behind (a new attempt not yet at its own generation claim). Recovery then requeues the task
+        or ends it as for any lost lease.
+        """
+        result = await connection.execute(
+            """
+            UPDATE semantic_jobs.tasks t
+            SET lease_expires_at = now() - interval '1 second', updated_at = now()
+            FROM semantic_graph_search.index_generations g
+            WHERE g.job_id = t.job_id AND g.state = 'indexing' AND g.lease_until < now()
+              AND t.state = 'running' AND t.lease_expires_at >= now()
+              AND t.updated_at < g.lease_until
+              AND ($1::uuid IS NULL OR t.job_id = $1::uuid)
+            """,
+            job_id,
+        )
+        return int(result.split()[-1]) if result else 0
 
     async def cancel_requested(self, job_id: str) -> bool:
         return await self.pool.fetchval(
@@ -1104,6 +1133,7 @@ class PostgresJobRepository:
         """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                await self._expire_stalled_search_leases(connection)
                 # A build stopped while its worker was gone (or by an earlier version) must not
                 # leave its generation "indexing" for good: once the lease ran out it is failed.
                 await connection.execute(
@@ -1114,21 +1144,6 @@ class PostgresJobRepository:
                     WHERE g.job_id = j.id AND j.state = 'cancelled'
                       AND g.state IN ('queued', 'indexing')
                       AND (g.lease_until IS NULL OR g.lease_until < now())
-                    """
-                )
-                # A generation no live job will build (its lease ran out and its job ended, or never
-                # was set) must not read "indexing" for good: it fails, and a build can be asked again.
-                await connection.execute(
-                    """
-                    UPDATE semantic_graph_search.index_generations g
-                    SET state = 'failed', owner = NULL, lease_until = NULL,
-                        last_error_code = 'index_interrupted'
-                    WHERE g.state = 'indexing'
-                      AND (g.lease_until IS NULL OR g.lease_until < now())
-                      AND NOT EXISTS (
-                        SELECT 1 FROM semantic_jobs.jobs j
-                        WHERE j.id = g.job_id
-                          AND j.state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested'))
                     """
                 )
                 expired = await connection.fetch(
@@ -1254,6 +1269,22 @@ class PostgresJobRepository:
                     )
                     republished += 1
 
+                # A generation no live job will build (its lease ran out and its job ended, or never
+                # was set) must not read "indexing" for good: it fails, and a build can be asked again.
+                # After the tasks above, so a job that just ran out of attempts takes its generation along.
+                await connection.execute(
+                    """
+                    UPDATE semantic_graph_search.index_generations g
+                    SET state = 'failed', owner = NULL, lease_until = NULL,
+                        last_error_code = 'index_interrupted'
+                    WHERE g.state = 'indexing'
+                      AND (g.lease_until IS NULL OR g.lease_until < now())
+                      AND NOT EXISTS (
+                        SELECT 1 FROM semantic_jobs.jobs j
+                        WHERE j.id = g.job_id
+                          AND j.state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested'))
+                    """
+                )
                 return {"exhausted": exhausted, "requeued": len(requeue_running) + republished}
 
     async def claim_outbox(

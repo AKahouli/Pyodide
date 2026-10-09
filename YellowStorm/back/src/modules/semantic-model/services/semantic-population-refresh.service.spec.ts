@@ -94,6 +94,15 @@ const setup = (
       nodes: [{ id: 'n-1', label: 'c-customer', properties: { record_id: 'n-1', concept_id: 'c-customer', record_label: 'Acme' } }],
       edges: [] as unknown[],
     })),
+    getBoundGraphWindow: jest.fn(async (..._args: unknown[]) => ({
+      dataRevisionId: 'dr-1',
+      specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['name'] }], relations: [] },
+      nodes: [{ id: 'n-1', label: 'c-customer', properties: { record_id: 'n-1', concept_id: 'c-customer', record_label: 'Acme', name: 'Acme SA' } }],
+      edges: [] as unknown[],
+      truncated: true,
+      nodeLimit: 2000,
+      totals: { records: 125900, links: 225500, concepts: { 'c-customer': 125900 }, relations: {} } as unknown,
+    })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
       entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {} }],
@@ -1152,22 +1161,50 @@ describe('SemanticPopulationRefreshService', () => {
   });
 
   describe('scoped graph reads', () => {
-    it('reads the graph only through the workspaces the person may access', async () => {
+    it('reads a bounded outline only through the workspaces the person may access', async () => {
       const { runtime, service, graphSearch } = setup();
-      await service.graphOutline('u-1', 'model-1');
+      const outline = await service.graphOutline('u-1', 'model-1');
       expect(graphSearch.allowedWorkspaceIds).toHaveBeenCalledWith('u-1', 'model-1');
-      expect(runtime.getBoundGraph).toHaveBeenCalledWith('model-1', 'u-1', undefined, ['ws-1', 'ws-2']);
+      expect(runtime.getBoundGraphWindow).toHaveBeenCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 2000, conceptId: undefined, focusIds: undefined });
+      expect(runtime.getBoundGraph).not.toHaveBeenCalled();
+      expect(outline).toMatchObject({ truncated: true, nodeLimit: 2000, totals: { records: 125900 } });
+      expect(outline.records).toEqual([{ id: 'n-1', c: 'c-customer', l: 'Acme' }]);
     });
 
-    it('reuses the cached graph within its TTL for the same scope, and re-reads when the scope changes', async () => {
+    it('passes the limit, concept and focus on, keeping the limit within bounds', async () => {
+      const { runtime, service } = setup();
+      await service.graphOutline('u-1', 'model-1', { dataRevisionId: 'dr-1', limit: 99999, conceptId: 'c-customer', focus: 'n-1' });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: 'dr-1', nodeLimit: 5000, conceptId: 'c-customer', focusIds: ['n-1'] });
+      await service.graphOutline('u-1', 'model-1', { limit: 0.2 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        expect.objectContaining({ nodeLimit: 2000 }));
+    });
+
+    it('reads one record alone for its values, with the scope recomputed on every read', async () => {
       const { runtime, service, graphSearch } = setup();
-      await service.graphOutline('u-1', 'model-1');
+      const record = await service.graphRecord('u-1', 'model-1', 'n-1');
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 1, focusIds: ['n-1'], neighbours: false });
+      expect(record).toMatchObject({ id: 'n-1', values: { name: 'Acme SA' } });
+
+      // A workspace share was revoked: the next read runs with the new scope.
+      graphSearch.allowedWorkspaceIds.mockResolvedValueOnce(['ws-1']);
       await service.graphRecord('u-1', 'model-1', 'n-1');
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1'], expect.anything());
+    });
+
+    it('reuses the cached whole graph within its TTL for the same scope, and re-reads when the scope changes', async () => {
+      const { runtime, service, graphSearch } = setup();
+      await service.searchGraph('u-1', 'model-1', 'acme');
+      await service.searchGraph('u-1', 'model-1', 'acme');
       expect(runtime.getBoundGraph).toHaveBeenCalledTimes(1);
+      expect(runtime.getBoundGraph).toHaveBeenCalledWith('model-1', 'u-1', undefined, ['ws-1', 'ws-2']);
 
       // A workspace share was revoked: the next read recomputes the scope and runs again.
       graphSearch.allowedWorkspaceIds.mockResolvedValueOnce(['ws-1']);
-      await service.graphOutline('u-1', 'model-1');
+      await service.searchGraph('u-1', 'model-1', 'acme');
       expect(runtime.getBoundGraph).toHaveBeenLastCalledWith('model-1', 'u-1', undefined, ['ws-1']);
       expect(runtime.getBoundGraph).toHaveBeenCalledTimes(2);
     });
@@ -1179,7 +1216,9 @@ describe('SemanticPopulationRefreshService', () => {
         new ModelSpecificationService(), built.runtime as any, built.aiExtractionAgent as any,
       );
       await expect(bare.graphOutline('u-1', 'model-1')).rejects.toThrow('Source authorization is not available');
+      await expect(bare.graphRecord('u-1', 'model-1', 'n-1')).rejects.toThrow('Source authorization is not available');
       expect(built.runtime.getBoundGraph).not.toHaveBeenCalled();
+      expect(built.runtime.getBoundGraphWindow).not.toHaveBeenCalled();
     });
   });
 });

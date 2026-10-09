@@ -8,8 +8,12 @@ embeds only what is left.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
+from collections.abc import Awaitable
+from typing import Any
 
 from celery.signals import worker_ready
 
@@ -25,6 +29,34 @@ TASK_LEASE_SECONDS = 600
 WORKER_BOOT_ID = uuid.uuid4().hex
 
 
+class BuildStalled(RuntimeError):
+    """The build made no progress for as long as its generation lease lasts (a step that never returns)."""
+
+    code = "index_stalled"
+
+
+async def run_watched(build: Awaitable[Any], progressed_at: dict[str, float], stall_seconds: float,
+                      check_seconds: float = 15.0) -> Any:
+    """Run ``build`` and cancel it when ``progressed_at["at"]`` (monotonic time of the last real
+    progress) is older than ``stall_seconds``. A worker stuck in one await would otherwise hold its
+    slot for good: the task lease is recovered in the database, but the requeued task has no worker
+    left to run it. Raises ``BuildStalled`` so the task is requeued (or failed past its attempts)."""
+    running = asyncio.ensure_future(build)
+    try:
+        while True:
+            done, _ = await asyncio.wait({running}, timeout=check_seconds)
+            if done:
+                return running.result()
+            if time.monotonic() - progressed_at["at"] > stall_seconds:
+                running.cancel()
+                # A step that ignores the cancellation is abandoned rather than waited for.
+                await asyncio.wait({running}, timeout=30)
+                raise BuildStalled("search index build made no progress")
+    except asyncio.CancelledError:
+        running.cancel()
+        raise
+
+
 def node_lease_prefix(hostname: str | None) -> str:
     return f"search-worker:{hostname or 'unknown'}:"
 
@@ -38,8 +70,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 
     import asyncpg
 
-    from app.graph_search.embeddings import EmbeddingError
-    from app.graph_search.indexer import build_index
+    from app.graph_search.embeddings import EmbeddingError, profile_from_env
+    from app.graph_search.indexer import GENERATION_LEASE_SECONDS, build_index, build_lease_seconds
     from app.graph_search.settings import IndexBuildSettings, ValidationError
     from app.jobs.service import INDEX_BUILD_PAYLOAD_KEY
     from app.jobs.models import StaleLease
@@ -93,7 +125,13 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         # An embedding call may take up to its timeout: the task lease must outlast one wave.
         lease_seconds = max(TASK_LEASE_SECONDS, (build.embedding_timeout_seconds or 0) + 300 if build else 0)
 
+        # Real progress only (a page read, a chunk reused, a wave stored): the clock the watchdog reads.
+        progressed_at = {"at": time.monotonic()}
+        profile = profile_from_env()
+        stall_seconds = build_lease_seconds(profile.with_build(build)) if profile else GENERATION_LEASE_SECONDS
+
         async def report(progress: dict) -> None:
+            progressed_at["at"] = time.monotonic()
             if not await repository.checkpoint(task_id=task_id, lease_owner=lease_owner,
                                                lease_epoch=lease.lease_epoch, progress=progress,
                                                lease_seconds=lease_seconds):
@@ -103,8 +141,17 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             return await repository.cancel_requested(lease.job_id)
 
         try:
-            outcome = await build_index(pool, index_id=index_id, owner=lease_owner, report=report,
-                                        build=build, should_stop=should_stop)
+            outcome = await run_watched(
+                build_index(pool, index_id=index_id, owner=lease_owner, report=report, build=build,
+                            should_stop=should_stop),
+                progressed_at, stall_seconds)
+        except BuildStalled:
+            logger.warning("Search index build stalled; its worker is released",
+                           extra={"attempt": lease.attempt_count, "stall_seconds": stall_seconds})
+            if lease.attempt_count < max_attempts:
+                raise
+            await search_store.fail_generation(pool, index_id, "index_interrupted", lease_owner)
+            return await finish("failed", {"indexId": index_id}, "index_interrupted")
         except EmbeddingError as exc:
             if exc.retryable and lease.attempt_count < max_attempts:
                 raise
@@ -134,7 +181,11 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                                extra={"error_code": type(requeue_exc).__name__[:100]})
         raise
     finally:
-        await pool.close()
+        # A connection stuck on a lost network would make a graceful close wait as long as the hang did.
+        try:
+            await asyncio.wait_for(pool.close(), 30)
+        except asyncio.TimeoutError:
+            pool.terminate()
 
 
 async def _release_abandoned_leases(hostname: str) -> int:

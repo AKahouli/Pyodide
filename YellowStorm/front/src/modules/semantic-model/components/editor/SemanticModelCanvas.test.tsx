@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConceptSourceMapping, MappingHealthItem, SemanticGraph } from '../../types';
+import type { ConceptSourceMapping, MappingHealthItem, ModelCheckIssue, SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
 import { showSuccess, showWarning } from '@/lib/notifications';
@@ -414,4 +414,52 @@ describe('SemanticModelCanvas', () => {
     act(()=>{void useSemanticModelEditorStore.getState().undo();});
     expect(useSemanticModelEditorStore.getState().graph!.records).toHaveLength(2);
   });
+
+  describe('model check', () => {
+    const issue = (overrides: Partial<ModelCheckIssue>): ModelCheckIssue => ({ severity:'error', code:'no_identity', message:'No unique field', conceptId:'contract', ...overrides });
+
+    it('flags a concept without a unique field with an error badge instead of the old no-key chip', () => {
+      useSemanticModelEditorStore.getState().hydrate(contractGraph);
+      const onOpenCheckIssue = vi.fn();
+      const noKey = issue({});
+      render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({ identityFields:[] })]} mappingHealth={healthy('mapping')} checkIssues={[noKey, issue({ severity:'warning', code:'missing_label_field', conceptId:'other' })]} onOpenCheckIssue={onOpenCheckIssue} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+
+      expect(screen.queryByText('editor.status.noKey')).not.toBeInTheDocument();
+      // Only the issues of this concept are on its badge, and an error makes it an error badge.
+      const badge = screen.getByRole('button', { name: 'check.badge' });
+      expect(badge.closest('[data-severity]')).toHaveAttribute('data-severity', 'error');
+      expect(screen.getAllByRole('button', { name: 'check.badge' })).toHaveLength(1);
+      expect(screen.getByRole('tooltip')).toHaveTextContent('check.no_identity');
+
+      fireEvent.click(screen.getByRole('button', { name: 'check.no_identity' }));
+      expect(onOpenCheckIssue).toHaveBeenCalledWith(noKey);
+      fireEvent.click(badge);
+      expect(onOpenCheckIssue).toHaveBeenCalledTimes(2);
+    });
+
+    it('draws a warning badge when a concept only has warnings, and none when it is clean', () => {
+      useSemanticModelEditorStore.getState().hydrate(contractGraph);
+      const { unmount } = render(<SemanticModelCanvas canEdit knowledge={knowledge} checkIssues={[issue({ severity:'warning', code:'runtime_unavailable' })]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+      expect(screen.getByRole('button', { name: 'check.badge' }).closest('[data-severity]')).toHaveAttribute('data-severity', 'warning');
+      unmount();
+      render(<SemanticModelCanvas canEdit knowledge={knowledge} checkIssues={[]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: 'check.badge' })).not.toBeInTheDocument();
+    });
+
+    it('hands each relationship and source link the issues that name it', () => {
+      useSemanticModelEditorStore.getState().hydrate({ ...contractGraph, nodes:[...contractGraph.nodes, { ...contractGraph.nodes[0], id:'customer', key:'customer', label:'Customer', attributes:[] }],
+        relations:[{ id:'rel-1', key:'owns', label:'owns', inverseLabel:'', description:'', sourceNodeTypeId:'customer', targetNodeTypeId:'contract', cardinality:'one_to_many', traversable:true, filterable:true, attributes:[] }] });
+      const onRelation = issue({ severity:'warning', code:'relation_without_rule', conceptId:undefined, relationId:'rel-1' });
+      const onMapping = issue({ code:'mapping_attribute_missing', mappingId:'mapping' });
+      renderCanvasWith([onRelation, onMapping]);
+
+      const edges = flow.props.edges as Array<{ id:string;data:{ checkIssues?:ModelCheckIssue[] } }>;
+      expect(edges.find((edge)=>edge.id==='rel-1')!.data.checkIssues).toEqual([onRelation]);
+      expect(edges.find((edge)=>edge.id==='feed:mapping')!.data.checkIssues).toEqual([onMapping]);
+    });
+  });
 });
+
+function renderCanvasWith(checkIssues: ModelCheckIssue[]) {
+  return render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({})]} mappingHealth={healthy('mapping')} checkIssues={checkIssues} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+}

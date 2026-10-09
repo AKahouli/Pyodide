@@ -202,6 +202,14 @@ export class SemanticGraphSearchService {
     return this.bound(environment, () => this.runtime.stopGraphSearchIndex({ actorUserId: userId, modelId: model.id, environment }));
   }
 
+  /** Restarting spends embedding calls like starting a build: same roles, and the same settings go with it. */
+  async restartIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment) {
+    const model = await this.models.requireActiveRole(userId, modelId, EDIT_ROLES);
+    const { index, build } = await this.settingsFor(model, environment);
+    const request = { actorUserId: userId, modelId: model.id, environment, settings: { index, ...(build ? { build } : {}) } };
+    return this.bound(environment, () => this.runtime.restartGraphSearchIndex(request));
+  }
+
   /** The search settings sent to the runtime: the admin's, and each field's own from the bound version's definitions. */
   private async settingsFor(model: { id: string; currentDraftVersionId?: string | null; currentPublishedVersionId?: string | null },
     environment: RuntimeSearchEnvironment): Promise<RuntimeSearchSettingsPayload> {

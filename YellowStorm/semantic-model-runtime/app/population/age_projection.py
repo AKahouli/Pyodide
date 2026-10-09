@@ -426,14 +426,7 @@ async def read_projection_graph(age_pool: Any, projection_ref: str) -> dict[str,
             "target_id ag_catalog.agtype, properties ag_catalog.agtype",
         ))
     return {
-        "nodes": [{
-            "id": str(_agtype_value(row["record_id"])),
-            "label": str(_agtype_value(row["concept_id"])),
-            "properties": {
-                **(_agtype_value(row["properties"]) or {}),
-                "record_label": _agtype_value(row["label"]),
-            },
-        } for row in nodes],
+        "nodes": [_node(row) for row in nodes],
         "edges": [{
             "id": f"{_agtype_value(row['relation_id'])}:"
                   f"{_agtype_value(row['source_id'])}:{_agtype_value(row['target_id'])}",
@@ -442,6 +435,41 @@ async def read_projection_graph(age_pool: Any, projection_ref: str) -> dict[str,
             "targetId": str(_agtype_value(row["target_id"])),
             "properties": _agtype_value(row["properties"]) or {},
         } for row in edges],
+    }
+
+
+# Record ids per Cypher statement: the literal list is part of the query text.
+NODE_READ_CHUNK = 1000
+
+
+async def read_projection_nodes(age_pool: Any, projection_ref: str, record_ids: list[str]) -> list[dict[str, Any]]:
+    """The records of ``record_ids`` in one projection, shaped like :func:`read_projection_graph`'s
+    nodes. The ids are written as literals so the planner starts from each label's record_id index
+    (a bound parameter would make it scan every record); a missing id is simply absent."""
+    graph = projection_graph(projection_ref)
+    nodes: list[dict[str, Any]] = []
+    async with age_pool.acquire() as connection:
+        for start in range(0, len(record_ids), NODE_READ_CHUNK):
+            chunk = record_ids[start:start + NODE_READ_CHUNK]
+            rows = await connection.fetch(_cypher(
+                graph,
+                f"MATCH (n) WHERE n.record_id IN {_escape(chunk)} "
+                "RETURN n.record_id, n.concept_id, n.label, properties(n)",
+                "record_id ag_catalog.agtype, concept_id ag_catalog.agtype, "
+                "label ag_catalog.agtype, properties ag_catalog.agtype",
+            ))
+            nodes.extend(_node(row) for row in rows)
+    return nodes
+
+
+def _node(row: Any) -> dict[str, Any]:
+    return {
+        "id": str(_agtype_value(row["record_id"])),
+        "label": str(_agtype_value(row["concept_id"])),
+        "properties": {
+            **(_agtype_value(row["properties"]) or {}),
+            "record_label": _agtype_value(row["label"]),
+        },
     }
 
 

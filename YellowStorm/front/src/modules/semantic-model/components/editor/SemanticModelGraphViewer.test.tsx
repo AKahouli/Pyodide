@@ -95,7 +95,7 @@ describe('SemanticModelGraphViewer', () => {
 
   it('reads the requested data revision', async () => {
     renderViewer({ dataRevisionId: 'rev-1' });
-    await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenCalledWith('model-1', 'rev-1'));
+    await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenCalledWith('model-1', 'rev-1', undefined));
   });
 
   it('opens on one bubble per concept when there are too many records to draw', async () => {
@@ -116,6 +116,86 @@ describe('SemanticModelGraphViewer', () => {
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
     expect(window.localStorage.getItem('semantic-model.graph.drawLimit')).toBe('2000');
     window.localStorage.removeItem('semantic-model.graph.drawLimit');
+  });
+
+  describe('a large graph read in part', () => {
+    const part = {
+      dataRevisionId: 'rev-9', truncated: true, nodeLimit: 2000,
+      totals: { records: 125900, links: 225500, concepts: { 'c-mail': 120000, 'c-person': 5900 }, relations: { 'r-sent': 225500 } },
+      concepts: graph.concepts,
+      records: [{ id: 'm1', c: 'c-mail', l: 'Hello' }, { id: 'p1', c: 'c-person', l: 'Ana' }],
+      links: [{ id: 'e1', r: 'r-sent', s: 'm1', t: 'p1' }],
+    };
+    beforeEach(() => {
+      apiMocks.getGraphOutline.mockResolvedValue(part);
+      apiMocks.graph.mockResolvedValue(structure);
+    });
+
+    it('says how many of the records are shown and offers the concepts to read', async () => {
+      const user = userEvent.setup();
+      renderViewer();
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      expect(screen.getByText('graphViewer.windowShowing')).toBeInTheDocument();
+      const picker = screen.getByRole('combobox', { name: /graphViewer.loadConcept/ });
+      expect(within(picker).getAllByRole('option')).toHaveLength(3);
+
+      await user.selectOptions(picker, 'c-person');
+      await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', undefined, { conceptId: 'c-person' }));
+    });
+
+    it('does not search the values of a graph it holds only in part, nor export it', async () => {
+      const user = userEvent.setup();
+      renderViewer({ canExport: true });
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      await user.type(screen.getByRole('textbox', { name: 'graphViewer.search' }), 'short');
+      expect(apiMocks.searchGraph).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /graphViewer.export$/ })).toBeDisabled();
+    });
+
+    it('adds the neighbours of the selected record to the graph', async () => {
+      const user = userEvent.setup();
+      renderViewer();
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      const load = screen.getByRole('button', { name: 'graphViewer.loadNeighbours' });
+      expect(load).toBeDisabled();
+
+      apiMocks.getGraphOutline.mockResolvedValueOnce({
+        dataRevisionId: 'rev-9', truncated: false, nodeLimit: 2000, totals: null, concepts: graph.concepts,
+        records: [{ id: 'p1', c: 'c-person', l: 'Ana' }, { id: 'm2', c: 'c-mail', l: 'Invoice' }],
+        links: [{ id: 'e2', r: 'r-sent', s: 'm2', t: 'p1' }],
+      });
+      await pick(user, 'ana', /Ana/);
+      await user.click(load);
+      expect(await screen.findByRole('button', { name: 'Invoice · mail' })).toBeInTheDocument();
+      expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'p1' });
+      // What was shown stays, and the totals of the whole graph are kept.
+      expect(screen.getByRole('button', { name: 'Hello · mail' })).toBeInTheDocument();
+      expect(screen.getByText('graphViewer.windowShowing')).toBeInTheDocument();
+    });
+
+    it('reads a record a chat citation names when it was not among those read first', async () => {
+      const found = vi.fn();
+      apiMocks.getGraphOutline.mockResolvedValueOnce(part).mockResolvedValueOnce({
+        dataRevisionId: 'rev-9', truncated: false, nodeLimit: 2000, totals: null, concepts: graph.concepts,
+        records: [{ id: 'm2', c: 'c-mail', l: 'Invoice' }, { id: 'p1', c: 'c-person', l: 'Ana' }],
+        links: [{ id: 'e2', r: 'r-sent', s: 'm2', t: 'p1' }],
+      });
+      renderViewer({ initialRecordId: 'm2', onInitialRecord: found });
+      const panel = await screen.findByRole('complementary', { name: 'graphViewer.recordPanel' });
+      expect(within(panel).getByRole('heading', { name: 'Invoice' })).toBeInTheDocument();
+      expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'm2' });
+      expect(found).toHaveBeenCalledWith(true);
+    });
+
+    it('shows why the neighbours could not be loaded', async () => {
+      const user = userEvent.setup();
+      renderViewer();
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      apiMocks.getGraphOutline.mockRejectedValueOnce(new Error('The semantic runtime did not answer in time'));
+      await pick(user, 'ana', /Ana/);
+      await user.click(screen.getByRole('button', { name: 'graphViewer.loadNeighbours' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('graphViewer.loadNeighboursFailed');
+    });
   });
 
   describe('with records', () => {

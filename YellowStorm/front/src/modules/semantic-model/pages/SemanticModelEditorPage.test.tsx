@@ -12,9 +12,17 @@ const apiMocks = vi.hoisted(() => ({
   getPopulationJob: vi.fn(),
   stopPopulationJob: vi.fn(),
   stopSearchIndex: vi.fn(),
+  restartSearchIndex: vi.fn(),
 }));
 // The state of the search index the page follows; undefined: nothing is being built.
-const indexMock = vi.hoisted(() => ({ state: undefined as string | undefined }));
+const indexMock = vi.hoisted(() => ({ state: undefined as string | undefined, stalled: false }));
+// The model check the page follows; undefined: it is still loading or could not be read.
+const checkMock = vi.hoisted(() => ({ result: undefined as Record<string, unknown> | undefined }));
+const checkOf = (issues: Array<{ severity: 'error' | 'warning'; code: string; message: string; conceptId?: string }>) => ({
+  modelId: 'model-1', versionKey: 'v1', checkedAt: '', issues,
+  errorCount: issues.filter((issue) => issue.severity === 'error').length,
+  warningCount: issues.filter((issue) => issue.severity === 'warning').length,
+});
 
 vi.mock("../api", () => ({
   semanticModelApi: {
@@ -23,6 +31,7 @@ vi.mock("../api", () => ({
     getPopulationJob: apiMocks.getPopulationJob,
     stopPopulationJob: apiMocks.stopPopulationJob,
     stopSearchIndex: apiMocks.stopSearchIndex,
+    restartSearchIndex: apiMocks.restartSearchIndex,
   },
 }));
 
@@ -54,6 +63,7 @@ vi.mock("../query/hooks", () => ({
   useDerivedSources: () => ({ data: [], isLoading: false }),
   useSemanticDataPreview: () => ({ data: undefined, isLoading: false }),
   useMappingHealth: () => ({ data: undefined, isLoading: false }),
+  useModelCheck: () => ({ data: checkMock.result, isLoading: false, isError: false }),
   useSemanticModel: () => ({
     data: {
       id: "model-1",
@@ -78,7 +88,7 @@ vi.mock("../query/hooks", () => ({
   usePopulationFreshness: () => ({ data: undefined, isLoading: false }),
   useGraphStatus: () => ({ data: undefined, isLoading: false, isError: false }),
   isIndexBuilding: (state?: string) => state === 'queued' || state === 'indexing',
-  useSearchIndexStatus: () => ({ data: indexMock.state ? { index: { state: indexMock.state } } : undefined }),
+  useSearchIndexStatus: () => ({ data: indexMock.state ? { index: { state: indexMock.state, stalled: indexMock.stalled } } : undefined }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
@@ -147,6 +157,9 @@ describe("SemanticModelEditorPage", () => {
     apiMocks.stopPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'cancel_requested' });
     apiMocks.stopSearchIndex.mockResolvedValue({ stopped: true, index: { state: 'indexing' } });
     indexMock.state = undefined;
+    indexMock.stalled = false;
+    checkMock.result = undefined;
+    apiMocks.restartSearchIndex.mockResolvedValue({ restarted: true, index: { state: 'queued' } });
     useSemanticModelEditorStore.getState().reset();
   });
 
@@ -323,6 +336,22 @@ describe("SemanticModelEditorPage", () => {
     expect(apiMocks.stopPopulationJob).not.toHaveBeenCalled();
   });
 
+  it('offers Restart next to Stop only while the search index build is stalled', async () => {
+    indexMock.state = 'indexing';
+    const { unmount } = renderPage();
+    await screen.findByText('semantic-model-canvas');
+    expect(screen.queryByRole('button', { name: 'runStop.restart' })).not.toBeInTheDocument();
+    unmount();
+
+    indexMock.stalled = true;
+    renderPage();
+    await screen.findByText('semantic-model-canvas');
+    expect(stopButtons().length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'runStop.restart' }));
+    await waitFor(() => expect(apiMocks.restartSearchIndex).toHaveBeenCalledWith('model-1'));
+    expect(apiMocks.stopSearchIndex).not.toHaveBeenCalled();
+  });
+
   it('brings the progress panel back from the header while an update runs, whatever closed it', async () => {
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
     renderPage();
@@ -365,6 +394,30 @@ describe("SemanticModelEditorPage", () => {
     // Stop is in the panel too, and asks first.
     fireEvent.click(stopButtons()[stopButtons().length - 1]);
     expect(await screen.findByText('runStop.indexConfirmTitle')).toBeInTheDocument();
+  });
+
+  describe('model check', () => {
+    const runButton = async () => (await screen.findByText('designer.run')).closest('button')!;
+
+    it('keeps Run free while the check is loading or could not be read', async () => {
+      renderPage();
+      expect(await runButton()).toBeEnabled();
+    });
+
+    it('holds Run back while the model has errors, and says why', async () => {
+      checkMock.result = checkOf([{ severity: 'warning', code: 'relation_without_rule', message: 'No rule' }, { severity: 'error', code: 'no_identity', message: 'No unique field', conceptId: 'customer' }]);
+      renderPage();
+      const run = await runButton();
+      expect(run).toBeDisabled();
+      expect(run).toHaveAttribute('title', expect.stringContaining('check.blocked'));
+      expect(run).toHaveAttribute('title', expect.stringContaining('check.no_identity'));
+    });
+
+    it('never holds Run back for warnings', async () => {
+      checkMock.result = checkOf([{ severity: 'warning', code: 'runtime_unavailable', message: 'Not checked' }]);
+      renderPage();
+      expect(await runButton()).toBeEnabled();
+    });
   });
 
   it('shows Run when nothing is running', async () => {

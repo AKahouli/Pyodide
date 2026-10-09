@@ -23,6 +23,7 @@ import { ListOrdered,
   Sparkles,
   Spline,
   StopCircle,
+  RotateCcw,
   Table2,
   Undo2,
   Workflow,
@@ -80,10 +81,11 @@ import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip'
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
-import { isIndexBuilding, useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, usePopulationFreshness, useSearchIndexStatus, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
+import { isIndexBuilding, useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, useModelCheck, usePopulationFreshness, useSearchIndexStatus, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
-import type { ConceptSourceMapping, ReviewQueueItem } from "../types";
+import type { ConceptSourceMapping, ModelCheckIssue, ReviewQueueItem } from "../types";
+import { checkBlockReason, checkTarget } from "../utils/model-check";
 import type { DesignerSource } from "../utils/designer-flow";
 import { layoutStructure } from "../utils/model-utils";
 
@@ -123,6 +125,9 @@ export function SemanticModelEditorPage() {
   const graph = useSemanticModelEditorStore((state) => state.graph);
   // Records for the status line; only asked once something can produce them.
   const freshness = usePopulationFreshness(modelId, Boolean(sourceMappings.data?.length || graph?.records.length));
+  const modelCheck = useModelCheck(modelId);
+  // A check that could not be read blocks nothing: Run and Publish fail open.
+  const checkResult = modelCheck.isError ? undefined : modelCheck.data;
   const designerRecords = useSemanticDataPreview(modelId, 10, Boolean(sourceMappings.data?.length || graph?.records.length));
   // Stable between renders: the canvas rebuilds its boxes when these change.
   const conceptRecordCounts = useMemo(() => {
@@ -160,6 +165,20 @@ export function SemanticModelEditorPage() {
   const undo = useSemanticModelEditorStore((state) => state.undo);
   const redo = useSemanticModelEditorStore((state) => state.redo);
   const reset = useSemanticModelEditorStore((state) => state.reset);
+  // The model check follows the model: asked again shortly after the last edit, save or source change.
+  const checkTimerRef = useRef<number>();
+  const refreshModelCheck = useCallback(() => {
+    if (!modelId) return;
+    window.clearTimeout(checkTimerRef.current);
+    checkTimerRef.current = window.setTimeout(() => void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.modelCheck(modelId) }), 800);
+  }, [modelId, queryClient]);
+  useEffect(() => () => window.clearTimeout(checkTimerRef.current), []);
+  const checkSeenRef = useRef(false);
+  useEffect(() => {
+    // The first read is already the current one.
+    if (!checkSeenRef.current) { checkSeenRef.current = true; return; }
+    if (saveStatus === "saved") refreshModelCheck();
+  }, [graph?.revision, saveStatus, sourceMappings.dataUpdatedAt, identityRules.dataUpdatedAt, derivedSources.dataUpdatedAt, refreshModelCheck]);
   const [conceptOpen, setConceptOpen] = useState(false);
   // null = closed; a source = suggest from that file; 'pick' = let the user choose a spreadsheet.
   const [suggestSource, setSuggestSource] = useState<SuggestionSource | 'pick' | null>(null);
@@ -202,6 +221,7 @@ export function SemanticModelEditorPage() {
   // What the person is asked to confirm stopping: the data update, or the build of the search index.
   const [confirmStop, setConfirmStop] = useState<'run' | 'index' | null>(null);
   const [stoppingIndex, setStoppingIndex] = useState(false);
+  const [restartingIndex, setRestartingIndex] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   // The review item being fixed, and the records to show for a missing value.
   const [reviewFocus, setReviewFocus] = useState<ReviewQueueItem | null>(null);
@@ -258,7 +278,7 @@ export function SemanticModelEditorPage() {
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
-    ]);
+    ]).then(() => refreshModelCheck());
     // Put back, a source gets a new id; follow it so Redo removes the right one.
     let live = removed;
     const remove = async () => {
@@ -301,7 +321,7 @@ export function SemanticModelEditorPage() {
     }
     pushAction({ undo: reported(restore, t('designer.undo.restoreError')), redo: reported(remove, t('designer.delete.sourceError')) });
     announceUndoable(t('designer.delete.sourceDone', { name: label }), t('action.undo'));
-  }, [adoptRevision, modelId, pushAction, queryClient, t]);
+  }, [adoptRevision, modelId, pushAction, queryClient, refreshModelCheck, t]);
   const openMappingTarget = useCallback(async (target: SourceMappingTarget) => {
     if (!modelId) return;
     const linked = knowledge.workspaceLinks.some((item) => item.workspaceId === target.workspaceId && item.enabled);
@@ -358,6 +378,8 @@ export function SemanticModelEditorPage() {
   // What the status button opens: the update being followed, else the index being built, else the last update seen.
   const statusTarget: 'run' | 'index' | 'last' | null = populationJobId ? 'run' : indexBuilding ? 'index' : lastRun || population || indexPanelOpen ? 'last' : null;
   const busy = Boolean(populationJobId) || indexBuilding;
+  // The worker building the index stopped answering: Restart sits next to Stop.
+  const indexStalled = !populationJobId && indexBuilding && Boolean(indexStatus.data?.index.stalled);
   const openRunStatus = () => {
     setTrustOpen(false); setSuggestionsOpen(false); setVersionsOpen(false); setRunHistoryOpen(false); setMappingTarget(null);
     if (populationJobId) {
@@ -557,6 +579,18 @@ export function SemanticModelEditorPage() {
       setStoppingRun(false);
     }
   };
+  const restartIndex = async () => {
+    if (!modelId) return;
+    setRestartingIndex(true);
+    try {
+      await semanticModelApi.restartSearchIndex(modelId);
+      await queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.searchIndex(modelId).slice(0, 3) });
+    } catch (error) {
+      showError(t('runStop.indexRestartError'), { description: parseApiError(error).message });
+    } finally {
+      setRestartingIndex(false);
+    }
+  };
   const stopIndex = async () => {
     if (!modelId) return;
     setStoppingIndex(true);
@@ -678,6 +712,20 @@ export function SemanticModelEditorPage() {
     const mapping = sourceMappings.data?.find((candidate) => candidate.id === mappingId);
     if (!mapping) { setMode('mappings'); return; }
     void openMappingTarget({ ...mappingTarget_(mapping), ...(bulkEdit ? { bulkEdit } : {}) });
+  };
+  // A check issue opens where it is fixed: the source link or derived source it names, else the relationship, else the concept.
+  const openCheckIssue = (issue: ModelCheckIssue) => {
+    const target = checkTarget(issue);
+    setTrustOpen(false);
+    if (target.kind === 'mapping' && sourceMappings.data?.some((mapping) => mapping.id === target.id)) { repairMapping(target.id); return; }
+    const derived = target.kind === 'source' ? derivedSources.data?.find((source) => source.id === target.id) : undefined;
+    if (derived) { openDerived({ conceptId: derived.conceptId, derived }); return; }
+    const relationId = issue.relationId && graph.relations.some((relation) => relation.id === issue.relationId) ? issue.relationId : undefined;
+    const conceptId = issue.conceptId && graph.nodes.some((node) => node.id === issue.conceptId) ? issue.conceptId : undefined;
+    if (!relationId && !conceptId) return;
+    setMode('structure');
+    if (relationId) focus(relationId, 'matching');
+    else if (conceptId) focus(conceptId, ['no_identity', 'missing_label_field', 'unmapped_identity'].includes(issue.code) ? 'identity' : undefined);
   };
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
@@ -824,9 +872,11 @@ export function SemanticModelEditorPage() {
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
-    ])).catch((error) => showError(t('canvasTools.keyError'), { description: parseApiError(error).message }));
+    ]).then(() => refreshModelCheck())).catch((error) => showError(t('canvasTools.keyError'), { description: parseApiError(error).message }));
   };
   const freshnessState = freshness.data?.state;
+  // Preview, Run and Publish wait for errors to be fixed; warnings never hold them back.
+  const checkBlock = checkBlockReason(checkResult, t as (key: string | string[], options?: Record<string, unknown>) => string);
   const unpublishedChanges = publishComparison.data?.changes.length ?? 0;
   const hasUnpublished = Boolean(draftVersionId) && (!publishedVersionId || unpublishedChanges > 0);
   return (
@@ -910,10 +960,19 @@ export function SemanticModelEditorPage() {
               <TooltipContent>{stopPending && stopSlow ? t('runStatus.stoppingSlowHint')
                 : populationJobId ? (runStoppable ? t('runStop.running') : t('runStop.notNow')) : t('runStop.indexBuilding')}</TooltipContent>
             </Tooltip></TooltipProvider>
+            {indexStalled && <TooltipProvider><Tooltip>
+              <TooltipTrigger asChild><span>
+                <Button variant='outline' size='sm' aria-label={t('runStop.restart')} disabled={restartingIndex} onClick={() => void restartIndex()}>
+                  {restartingIndex ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <RotateCcw className='mr-1.5 h-4 w-4' />}
+                  {restartingIndex ? t('runStop.restarting') : t('runStop.restart')}
+                </Button>
+              </span></TooltipTrigger>
+              <TooltipContent>{t('runStop.restartHint')}</TooltipContent>
+            </Tooltip></TooltipProvider>}
           </div>}
-          {canEdit && !populationJobId && !indexBuilding && <Button variant='outline' size='sm' disabled={!canValidate}
+          {canEdit && !populationJobId && !indexBuilding && <Button variant='outline' size='sm' disabled={!canValidate || Boolean(checkBlock)}
             onClick={() => setValidateOpen(true)}
-            title={freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined}
+            title={checkBlock ?? (freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined)}
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
             className={freshnessState === 'outdated' || freshnessState === 'never_run' ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
             <Play className='mr-1.5 h-4 w-4' />
@@ -959,6 +1018,8 @@ export function SemanticModelEditorPage() {
             onMoveSource={canEdit ? moveSource : undefined}
             onBrowseRecords={browseRecords}
             refreshingConcepts={populationJobId ? runConceptIds ?? 'all' : undefined}
+            checkIssues={checkResult?.issues}
+            onOpenCheckIssue={openCheckIssue}
           />
           </div>}
           {onCanvas && modelId && recordsConceptId && graph.nodes.some((node) => node.id === recordsConceptId) && <ConceptRecordsPanel
@@ -1033,6 +1094,11 @@ export function SemanticModelEditorPage() {
           canEdit={canEdit && pending.length === 0}
           validation={validation}
           canRunCheck={canValidate}
+          modelCheck={checkResult}
+          modelCheckFailed={modelCheck.isError && !checkResult}
+          checkMappings={sourceMappings.data}
+          checkDerivedSources={derivedSources.data}
+          onOpenCheckIssue={openCheckIssue}
           checking={checking}
           onRunCheck={() => void validate()}
           onClose={() => setTrustOpen(false)}
@@ -1043,6 +1109,7 @@ export function SemanticModelEditorPage() {
           modelId={modelId}
           canEdit={canEdit}
           canPublish={canEdit && saveStatus === "saved"}
+          publishBlockedReason={checkBlock}
           onClose={() => setVersionsOpen(false)}
           onPublished={() => {
             hydratedVersionRef.current = null;

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { SearchIndexProgress } from './SearchIndexProgress';
 
-const api = vi.hoisted(() => ({ searchIndexStatus: vi.fn(), ensureSearchIndex: vi.fn() }));
+const api = vi.hoisted(() => ({ searchIndexStatus: vi.fn(), ensureSearchIndex: vi.fn(), restartSearchIndex: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
 const renderIndex = (dataRevisionId?: string) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -72,6 +72,36 @@ describe('SearchIndexProgress', () => {
     const { container } = renderIndex('dr-1');
     await vi.waitFor(() => expect(api.searchIndexStatus).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('SearchIndexProgress when the worker stopped responding', () => {
+  const stalledStatus = (index: Record<string, unknown>) => ({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+    index: { state: 'indexing', stage: 'embedding', expectedCount: 200, indexedCount: 50, stalled: true, ...index } });
+
+  it('warns with the time of the last progress and restarts the build on request', async () => {
+    api.searchIndexStatus.mockResolvedValue(stalledStatus({ lastProgressAt: '2026-10-09T06:31:00.000Z' }));
+    api.restartSearchIndex.mockResolvedValue({ restarted: true });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.stalled')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('population.progress.index.restart'));
+    await vi.waitFor(() => expect(api.restartSearchIndex).toHaveBeenCalledWith('model-1'));
+    expect(api.ensureSearchIndex).not.toHaveBeenCalled();
+  });
+
+  it('still warns when the time of the last progress is not known', async () => {
+    api.searchIndexStatus.mockResolvedValue(stalledStatus({ lastProgressAt: null }));
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.stalledUnknown')).toBeInTheDocument();
+  });
+
+  it('shows no warning and no restart while the build progresses', async () => {
+    api.searchIndexStatus.mockResolvedValue(stalledStatus({ stalled: false, lastProgressAt: '2026-10-09T06:31:00.000Z' }));
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.indexing')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.restart')).not.toBeInTheDocument();
   });
 });
 

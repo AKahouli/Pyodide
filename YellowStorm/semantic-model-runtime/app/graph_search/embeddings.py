@@ -9,6 +9,7 @@ input order. Failures raise; nothing is silently skipped.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -27,6 +28,8 @@ STORAGE_DIMENSION = 2560
 QUERY_INSTRUCTION = ("Instruct: Given a search request, retrieve the business records "
                      "that match it\nQuery: ")
 DOCUMENT_PREFIX = ""
+# What the whole embedding call may take beyond httpx's per-phase timeout.
+CALL_DEADLINE_MARGIN_SECONDS = 5.0
 
 
 class EmbeddingError(RuntimeError):
@@ -122,8 +125,12 @@ async def embed(profile: EmbeddingProfile, texts: list[str], *, query: bool = Fa
     owned = client is None
     client = client or httpx.AsyncClient(timeout=profile.timeout_seconds)
     try:
-        response = await client.post(f"{profile.base_url}/v1/embeddings", json=body, headers=headers)
-    except httpx.TimeoutException as exc:
+        # httpx's timeout bounds each phase (connect, write, each read), not the call: a response that
+        # trickles in could hold a build for good. The whole call is bounded too.
+        response = await asyncio.wait_for(
+            client.post(f"{profile.base_url}/v1/embeddings", json=body, headers=headers),
+            timeout=profile.timeout_seconds + CALL_DEADLINE_MARGIN_SECONDS)
+    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
         raise EmbeddingError("embedding_timeout", retryable=True) from exc
     except httpx.HTTPError as exc:
         raise EmbeddingError("embedding_unreachable", retryable=True) from exc

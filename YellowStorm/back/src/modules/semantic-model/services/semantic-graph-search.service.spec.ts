@@ -21,6 +21,7 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     getGraphSearchIndex: jest.fn().mockResolvedValue({ index: { state: 'ready' } }),
     ensureGraphSearchIndex: jest.fn().mockResolvedValue({ jobId: 'job-1', index: { state: 'queued' } }),
     stopGraphSearchIndex: jest.fn().mockResolvedValue({ stopped: true, index: { state: 'indexing' } }),
+    restartGraphSearchIndex: jest.fn().mockResolvedValue({ restarted: true, jobId: 'job-2', index: { state: 'queued' } }),
     recordsQuery: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
     recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
     traverseRecords: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
@@ -220,5 +221,19 @@ describe('SemanticGraphSearchService', () => {
     await expect(editor.service.stopIndex('user-1', 'model-1', 'draft')).resolves.toMatchObject({ stopped: true });
     expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
     expect(editor.runtime.stopGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft' });
+  });
+
+  it('restarts an index build only for the people who edit the model, with the same settings as a build', async () => {
+    const viewer = setup();
+    await expect(viewer.service.restartIndex('user-1', 'model-1', 'draft')).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
+    expect(viewer.runtime.restartGraphSearchIndex).not.toHaveBeenCalled();
+
+    const editor = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+    editor.searchSettings.runtimePayload.mockResolvedValue({ index: {}, search: {}, build: { embeddingParallelCalls: 8 } });
+    await expect(editor.service.restartIndex('user-1', 'model-1', 'draft')).resolves.toMatchObject({ restarted: true, jobId: 'job-2' });
+    expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(editor.runtime.restartGraphSearchIndex).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', settings: { index: {}, build: { embeddingParallelCalls: 8 } },
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { ValidationPipe } from '@nestjs/common';
-import { ComputedFieldPreviewDto, DocumentLabelsDto, GraphOperationsDto, SourceFieldMappingDto } from './semantic-model.dto';
+import { ComputedFieldPreviewDto, DocumentLabelsDto, GraphOperationsDto, GraphOutlineQueryDto, SourceFieldMappingDto } from './semantic-model.dto';
 
 describe('GraphOperationsDto', () => {
   const pipe = new ValidationPipe({
@@ -104,5 +104,21 @@ describe('Passage rules and document labels DTOs', () => {
     await expect(labels(['doc-1'])).resolves.toMatchObject({ documentIds: ['doc-1'] });
     await expect(labels([])).rejects.toBeDefined();
     await expect(labels(Array.from({ length: 11 }, (_, index) => `doc-${index}`))).rejects.toBeDefined();
+  });
+});
+
+describe('GraphOutlineQueryDto', () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
+  const query = (value: Record<string, unknown>) => pipe.transform(value, { type: 'query', metatype: GraphOutlineQueryDto });
+
+  it('reads the limit as a number within 1 to 5000, with the concept and focus record', async () => {
+    await expect(query({})).resolves.toBeDefined();
+    await expect(query({ limit: '500', conceptId: 'c1', focus: 'r1', dataRevisionId: 'dr' }))
+      .resolves.toMatchObject({ limit: 500, conceptId: 'c1', focus: 'r1' });
+    await expect(query({ limit: '0' })).rejects.toBeDefined();
+    await expect(query({ limit: '5001' })).rejects.toBeDefined();
+    await expect(query({ limit: 'many' })).rejects.toBeDefined();
+    await expect(query({ focus: 'x'.repeat(301) })).rejects.toBeDefined();
+    await expect(query({ unknown: '1' })).rejects.toBeDefined();
   });
 });

@@ -62,6 +62,18 @@ export function graphOutline(graph: OutlineSourceGraph) {
   };
 }
 
+/** A bounded part of the graph as the runtime read it: how many records it was limited to, and what the visible whole holds. */
+export interface GraphWindowSource extends OutlineSourceGraph {
+  truncated: boolean;
+  nodeLimit: number;
+  totals: { records: number; links: number; concepts: Record<string, number>; relations: Record<string, number> } | null;
+}
+
+/** The outline of a window, with whether records were left out and the totals of what the person may see (null when reading around one record). */
+export function graphWindowOutline(window: GraphWindowSource) {
+  return { ...graphOutline(window), truncated: window.truncated, nodeLimit: window.nodeLimit, totals: window.totals };
+}
+
 /** One record's values by field, and the file it was read from; null when the record is not in the graph. */
 export function graphRecordValues(graph: OutlineSourceGraph, recordId: string) {
   const node = graph.nodes.find((item) => item.id === recordId);

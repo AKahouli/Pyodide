@@ -19,20 +19,16 @@ from functools import partial
 from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
-from app.population.compiler import (canonical_spec_hash, compile_specification,
-                                     filter_fields, validate_specification)
-from app.population.derived import (DerivationError, derivation_items, derive_concept, merge_derived,
-                                    normalize_derivations, read_derived_fields)
-from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
-                                            normalize_row_recipes, recipe_columns, recipe_sources)
-from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
-                                        normalize_field_extractions, uses_ai as uses_cell_ai)
-from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
+from app.population.payload_rules import analyze_payload
+from app.population.derived import derivation_items, derive_concept, merge_derived, read_derived_fields
+from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
+from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
+from app.population.document_rules import answer_options, normalize_ai_settings
 from app.population.run_limits import (ai_pacing, identity_limits, index_build_limits, run_limits,
                                         source_limits, source_record_cap)
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
-from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
+from app.population.expand import expand_rows, is_item_attribute, normalize_expand
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -55,8 +51,6 @@ PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
 # Bump when the way a sheet is read changes, so earlier readings are not reused.
 TABULAR_READ_VERSION = "t1"
-# A sheet this large is read again each run rather than kept: its reading would be a large row.
-TABULAR_CACHE_MAX_RECORDS = 20000
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
@@ -259,198 +253,19 @@ def run_population_for_payload(command_dump: dict) -> dict:
             return {"ok": False, "errorCode": "invalid_command"}
         if payload.get("purpose") not in ("preview", "build", "refresh"):
             return {"ok": False, "errorCode": "invalid_purpose"}
-        spec = payload.get("specification")
-        issues = validate_specification(spec)
-        if issues:
-            return {"ok": False, "errorCode": "invalid_specification",
-                    "issues": issues[:10]}
         expected_hash = payload.get("specHash") or payload.get("spec_hash")
-        if canonical_spec_hash(spec) != expected_hash:
-            return {"ok": False, "errorCode": "spec_hash_mismatch"}
-        sources = payload.get("sources")
-        # A concept refresh keeps every other concept from the data in use: its own concept may be made
-        # from another one alone (no source of its own), and its links may reach concepts it does not read.
-        concept_refresh = (payload.get("scope") or {}).get("kind") == "concept"
-        if (not isinstance(sources, list) or (not sources and not concept_refresh)
-                or len(sources) > min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"])):
-            return {"ok": False, "errorCode": "invalid_sources"}
-        compiled = compile_specification(spec)
-        normalized: list[dict] = []
-        mapped_fields: dict[str, set[str]] = {}
-        for entry in sources:
-            if not isinstance(entry, dict):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            concept = compiled["concepts"].get(entry.get("conceptId"))
-            if concept is None:
-                return {"ok": False, "errorCode": "unknown_concept"}
-            source_kind = entry.get("sourceKind") or entry.get("source_kind")
-            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document", "manual"):
-                return {"ok": False, "errorCode": "invalid_source_kind"}
-            if source_kind == "document":
-                field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
-                if not isinstance(field_mappings, list) or not field_mappings:
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                active = [item for item in field_mappings if isinstance(item, dict)
-                          and item.get("mode") != "ignore"]
-                if len(active) != len(field_mappings):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("mode") not in {"extract", "metadata", "constant", "computed"}
-                       or item.get("targetAttribute") not in concept["allowedFields"] for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("mode") == "extract"
-                       and (not isinstance(item.get("sourceField"), str)
-                            or not item["sourceField"].strip()) for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                metadata_fields = {"document_name", "document_id", "workspace_id"}
-                if any(item.get("mode") == "metadata"
-                       and item.get("sourceField") not in metadata_fields for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai", "rules_then_ai")
-                       or (item.get("extractionStrategy") is not None
-                           and item.get("mode") != "extract") for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                # The AI reading settings of a field: a definition (text) and an agent (an id).
-                if any((item.get("semanticDefinition") is not None
-                        and not isinstance(item["semanticDefinition"], str))
-                       or (item.get("agentId") is not None and not isinstance(item["agentId"], str))
-                       or ((item.get("semanticDefinition") is not None or item.get("agentId") is not None)
-                           and item.get("mode") != "extract") for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                # Rules are checked once here, so a bad pattern fails the run before any reading.
-                try:
-                    active = [{**item, "rules": normalize_rules(item["rules"])}
-                              if item.get("rules") is not None else item for item in active]
-                    if any(item.get("rules") is not None and item.get("mode") != "extract" for item in active):
-                        raise RuleError("rules only apply to extracted fields")
-                    active = [{**item, "computed": normalize_computed(item.get("computed"))}
-                              if item.get("mode") == "computed" else item for item in active]
-                    check_inputs(active)
-                    normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                mapped_attributes = {item["targetAttribute"] for item in active}
-                if len(mapped_attributes) != len(active):
-                    return {"ok": False, "errorCode": "duplicate_document_mapping"}
-                mapping = None
-            else:
-                mapping = entry.get("columnMapping") or entry.get("column_mapping")
-                constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
-                field_recipes = entry.get("fieldRecipes") or entry.get("field_recipes")
-                field_extractions = entry.get("fieldExtractions") or entry.get("field_extractions")
-                if (not isinstance(mapping, dict) or not isinstance(constants, dict)
-                        or (not mapping and not constants and not field_extractions and not field_recipes)):
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                # A field read out of a cell's text with the document rules and/or AI.
-                try:
-                    extractions = normalize_field_extractions(field_extractions)
-                    if uses_cell_ai(extractions):
-                        normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                if (set(mapping.values()) & set(constants) or set(extractions) & set(mapping.values())
-                        or set(extractions) & set(constants)):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field:
-                # on a column it shapes, or on its own (a field taken from a column or another field).
-                recipe_fields = set(field_recipes) if isinstance(field_recipes, dict) else set()
-                if recipe_fields & (set(constants) | set(extractions)):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                try:
-                    recipes = normalize_row_recipes(
-                        field_recipes, set(mapping.values()) | set(constants) | set(extractions) | recipe_fields)
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)
-                # Several records per row: one column split into items (its columns are only known when read).
-                sheet_expand = ((entry.get("options") or {}).get("expand")
-                                if isinstance(entry.get("options"), dict) else None)
-                if sheet_expand is not None:
-                    try:
-                        if not isinstance(sheet_expand, dict) or "relationId" in sheet_expand:
-                            raise ExpandError("invalid_expand")
-                        normalize_expand(sheet_expand, {sheet_expand.get("field")} - {None, ""})
-                    except ExpandError:
-                        return {"ok": False, "errorCode": "invalid_column_mapping"}
-                elif any(is_item_attribute(column) for column in mapping):
-                    # A field reading an item of a sheet that does not expand a column.
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-            unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
-            # Manual rows without a key value keep their own row key as identity.
-            if unmapped and source_kind != "manual":
-                return {"ok": False, "errorCode": "unmapped_identity"}
-            if mapping is not None and len(set(mapping.values())) != len(mapping):
-                return {"ok": False, "errorCode": "duplicate_column_mapping"}
-            if "_row" in mapped_attributes:
-                return {"ok": False, "errorCode": "reserved_attribute_name"}
-            # A filter on an unmapped attribute sees only None: eq never
-            # matches, so the source would report a clean empty population.
-            for filt in (concept.get("eligibility"), concept.get("materialization")):
-                for field in filter_fields(filt):
-                    if field not in mapped_attributes:
-                        return {"ok": False, "errorCode": "unmapped_filter_field"}
-            source = entry.get("source")
-            if not isinstance(source, dict) or not source.get("assetId"):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            if source_kind == "manual" and not isinstance(source.get("snapshotId"), str):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            options = entry.get("options") or {}
-            normalized.append({
-                "conceptId": entry.get("conceptId"), "source": source,
-                "sourceKind": source_kind or "tabular",
-                "options": options if isinstance(options, dict) else {},
-                **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
-                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants),
-                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {}),
-                         **({"fieldExtractions": extractions, "receivedFieldExtractions": field_extractions}
-                            if extractions else {})}),
-                "labelField": entry.get("labelField") or entry.get("label_field"),
-                "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
-                **({"readLimits": entry["readLimits"]} if isinstance(entry.get("readLimits"), dict) else {}),
-            })
-            mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
-        try:
-            derivations = normalize_derivations(payload.get("derivations"), compiled["concepts"])
-            for derivation in derivations:
-                # The relationship an expanding derivation links its records by joins its two concepts.
-                relation_id = (derivation.get("expand") or {}).get("relationId")
-                relation = compiled["relations"].get(relation_id) if relation_id else None
-                if relation_id and (relation is None or {relation["sourceConceptId"], relation["targetConceptId"]}
-                                    != {derivation["conceptId"], derivation["sourceConceptId"]}):
-                    raise DerivationError("invalid_derivations")
-        except DerivationError as exc:
-            return {"ok": False, "errorCode": str(exc)}
-        for derivation in derivations:
-            mapped_fields.setdefault(derivation["conceptId"], set()).update(
-                field["targetAttribute"] for field in derivation["fieldMappings"])
-        bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
-        if not isinstance(bindings, list):
-            return {"ok": False, "errorCode": "invalid_relation_bindings"}
-        normalized_bindings = []
-        for binding in bindings:
-            if not isinstance(binding, dict):
-                return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            relation = compiled["relations"].get(binding.get("relationId"))
-            if relation is None:
-                return {"ok": False, "errorCode": "unknown_relation"}
-            reference = binding.get("referenceField") or binding.get("reference_field")
-            target = binding.get("targetField") or binding.get("target_field")
-            target_concept = compiled["concepts"][relation["targetConceptId"]]
-            target_identity = target_concept["keyComponents"]
-            if target is None and len(target_identity) == 1:
-                target = target_identity[0]
-            def mapped(concept_id: str, field: str) -> bool:
-                # A kept concept's fields were checked when its data was made; the back plans every link.
-                if concept_refresh and concept_id not in mapped_fields:
-                    return field in compiled["concepts"][concept_id]["allowedFields"]
-                return field in mapped_fields.get(concept_id, set())
-
-            if (not isinstance(reference, str)
-                    or not mapped(relation["sourceConceptId"], reference)
-                    or not isinstance(target, str)
-                    or not mapped(relation["targetConceptId"], target)):
-                return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            normalized_bindings.append({"relationId": relation["relationId"],
-                                        "referenceField": reference, "targetField": target})
+        # The rules live in app.population.payload_rules, shared with the model check.
+        analysis = analyze_payload(
+            payload, verify_hash=True, expected_hash=expected_hash,
+            max_sources=min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"]))
+        if analysis.spec_issues:
+            return {"ok": False, "errorCode": "invalid_specification",
+                    "issues": analysis.spec_issues[:10]}
+        error = analysis.first_error
+        if error is not None:
+            return {"ok": False, "errorCode": error["code"]}
+        compiled, normalized = analysis.compiled, analysis.sources
+        derivations, normalized_bindings = analysis.derivations, analysis.bindings
         ai_extraction = payload.get("aiExtraction") or payload.get("ai_extraction")
         if ai_extraction is not None and not isinstance(ai_extraction, dict):
             return {"ok": False, "errorCode": "invalid_command"}
@@ -497,7 +312,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     from pathlib import Path
 
     from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
-                                                fetch_workspace_asset)
+                                                fetch_workspace_asset, fetch_workspace_asset_metadata)
     from app.datasource.discovery import is_email_archive
     from app.datasource.dataset_query import query_parquet
     from app.datasource.discovery import resolve_asset_ref
@@ -551,6 +366,18 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 await derive_archive(source, archive_files[key])
         return archive_files[key]
 
+    def derivation_cache_key(source: dict) -> str | None:
+        """What marks an archive version as already copied into the workspace, for this model."""
+        if extraction_cache is None:
+            return None
+        from app.persistence.extraction_cache import extraction_cache_key
+        return extraction_cache_key({
+            "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
+            "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
+            # Tables cut at the old e-mail or size limit are derived again once it changes.
+            "limits": {key: value for key, value in source_limits(limits, source).items()
+                       if key in ("maxArchiveEmails", "maxArchiveMb")}})
+
     async def derive_archive(source: dict, path: Path) -> None:
         """Store the e-mails' texts and readable attachments in the workspace, where they are indexed.
 
@@ -560,17 +387,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         from app.datasource.asset_delivery import upload_derived_file
         from app.datasource.parser_sandbox import derive_files_subprocess
 
-        cache_key = None
-        if extraction_cache is not None:
-            from app.persistence.extraction_cache import extraction_cache_key
-            cache_key = extraction_cache_key({
-                "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
-                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
-                # Tables cut at the old e-mail or size limit are derived again once it changes.
-                "limits": {key: value for key, value in source_limits(limits, source).items()
-                           if key in ("maxArchiveEmails", "maxArchiveMb")}})
-            if await extraction_cache.get(cache_key) is not None:
-                return
+        cache_key = derivation_cache_key(source)
+        if cache_key is not None and await extraction_cache.get(cache_key) is not None:
+            return
         phase = progress.phase
         await progress.enter("deriving")
         try:
@@ -642,6 +461,52 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         # The parser answers with the preview and the prepared dataset beside it.
         return result["dataset"] if isinstance(result, dict) and isinstance(result.get("dataset"), dict) else result
 
+    def tabular_cache_key(entry: dict, options: dict | None, asset_ref: dict, content_digest: str | None) -> str:
+        """Over everything that decides a sheet's reading: the file (its version, else its bytes),
+        the mapping and the concept."""
+        from app.persistence.extraction_cache import extraction_cache_key
+        return extraction_cache_key({
+            # A changed file reader reads the table again (reading a table is cheap).
+            "engine": TABULAR_READ_VERSION, "reader": reader_version(),
+            "modelId": str(command_dump.get("modelId") or ""),
+            "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
+            "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
+            "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
+            "labelField": entry.get("labelField"), "assetRef": asset_ref,
+            # None when the version identifies the file, so that key is found before fetching it.
+            "content": content_digest,
+            # A reading cut at the old limit must not be reused once the limit changes.
+            "recordCap": source_record_cap(limits, entry),
+            # Only present with a recipe, so a sheet without one keeps its cached reading.
+            **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
+            **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
+               if entry.get("fieldExtractions") else {})})
+
+    async def derivation_done(source: dict) -> bool:
+        """False while an archive still has to be copied into the workspace, which needs its bytes."""
+        if source.get("indexInWorkspace") is not True or not is_email_archive(source.get("mimeType")):
+            return True
+        key = derivation_cache_key(source)
+        return key is not None and await extraction_cache.get(key) is not None
+
+    async def reuse_reading(entry: dict, cached: dict) -> bool:
+        """Take a sheet's earlier reading as this run's; False when it is not usable."""
+        nonlocal complete_enumeration
+        if not isinstance(cached.get("outputs"), list):
+            return False
+        for output in cached["outputs"]:
+            per_concept.setdefault(entry["conceptId"], []).append(output)
+        if not cached.get("completeEnumeration", True):
+            complete_enumeration = False
+        observation = cached.get("observation") or {}
+        if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
+            dataset_fingerprints.add(observation["contentHash"])
+        observations.append(observation)
+        await progress.read(entry, records=sum(len(output["entities"]) for output in cached["outputs"]),
+                            gaps=sum(len(output["gaps"]) for output in cached["outputs"]),
+                            status="read", reused=True)
+        return True
+
     async def read_sources() -> dict | None:
         """Read every source in turn; an error result stops the run."""
         nonlocal complete_enumeration
@@ -686,6 +551,26 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     status=output["coverage"]["status"], reused=reused)
                 continue
             try:
+                asset_ref = resolve_asset_ref(source)
+            except ValueError as exc:
+                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+            # A sheet whose file, mapping and concept are unchanged yields what it yielded last time.
+            cache_key = None
+            cached = None
+            if extraction_cache is not None and asset_ref["assetVersionId"].startswith(("sha256:", "md5:")):
+                # The version is the file's content fingerprint, so an unchanged sheet is found
+                # without downloading it; the back end is still asked to confirm the version and access.
+                cache_key = tabular_cache_key(entry, options, asset_ref, None)
+                cached = await extraction_cache.get(cache_key)
+                if cached is not None and await derivation_done(source):
+                    try:
+                        async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                            await (metadata_fetch or fetch_workspace_asset_metadata)(source, actor)
+                    except AssetFetchError as exc:
+                        return {"ok": False, "errorCode": exc.code}
+                    if await reuse_reading(entry, cached):
+                        continue
+            try:
                 if is_email_archive(source.get("mimeType")):
                     data = await fetch_archive(source)
                 else:
@@ -693,48 +578,18 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         data = await (fetch or fetch_workspace_asset)(source, actor)
             except AssetFetchError as exc:
                 return {"ok": False, "errorCode": exc.code}
-            try:
-                asset_ref = resolve_asset_ref(source)
-            except ValueError as exc:
-                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
-            # A sheet whose bytes, mapping and concept are unchanged yields what it yielded last time.
-            cache_key = None
-            if extraction_cache is not None:
-                from app.persistence.extraction_cache import extraction_cache_key
+            if extraction_cache is not None and cache_key is None:
+                # No version to trust: the fetched bytes name the file.
                 if isinstance(data, Path):
                     content_digest = await asyncio.to_thread(_file_sha256, data)
                 else:
                     content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
                     content_digest = hashlib.sha256(content).hexdigest()
-                cache_key = extraction_cache_key({
-                    # A changed file reader reads the table again (reading a table is cheap).
-                    "engine": TABULAR_READ_VERSION, "reader": reader_version(),
-                    "modelId": str(command_dump.get("modelId") or ""),
-                    "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
-                    "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
-                    "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
-                    "labelField": entry.get("labelField"), "assetRef": asset_ref,
-                    "content": content_digest,
-                    # A reading cut at the old limit must not be reused once the limit changes.
-                    "recordCap": source_record_cap(limits, entry),
-                    # Only present with a recipe, so a sheet without one keeps its cached reading.
-                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
-                    **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
-                       if entry.get("fieldExtractions") else {})})
+                cache_key = tabular_cache_key(entry, options, asset_ref, content_digest)
                 cached = await extraction_cache.get(cache_key)
-                if cached is not None and isinstance(cached.get("outputs"), list):
-                    for output in cached["outputs"]:
-                        per_concept.setdefault(entry["conceptId"], []).append(output)
-                    if not cached.get("completeEnumeration", True):
-                        complete_enumeration = False
-                    observation = cached.get("observation") or {}
-                    if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
-                        dataset_fingerprints.add(observation["contentHash"])
-                    observations.append(observation)
-                    await progress.read(entry, records=sum(len(output["entities"]) for output in cached["outputs"]),
-                                        gaps=sum(len(output["gaps"]) for output in cached["outputs"]),
-                                        status="read", reused=True)
-                    continue
+            # Fetched anyway (the archive was not yet copied into the workspace): the reading still stands.
+            if cached is not None and await reuse_reading(entry, cached):
+                continue
             temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
             records = gaps = 0
             outputs: list[dict] = []
@@ -883,7 +738,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             observations.append(observation)
             # A failed call to the extraction agent is worth retrying next run.
             ai_failed = cells is not None and cells.stats["aiFailedRows"] > 0
-            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS and not ai_failed:
+            if cache_key is not None and not ai_failed:
                 sheet = (options or {}).get("sheetName") or ""
                 await extraction_cache.put(
                     cache_key, concept_id=entry["conceptId"],

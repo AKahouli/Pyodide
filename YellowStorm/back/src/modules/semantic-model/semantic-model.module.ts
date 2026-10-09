@@ -42,6 +42,7 @@ import { ModelSpecificationService } from './services/model-specification.servic
 import { SemanticDataTokenService } from './services/semantic-data-token.service';
 import { SemanticRuntimeClientService } from './services/semantic-runtime-client.service';
 import { SemanticPopulationRefreshService } from './services/semantic-population-refresh.service';
+import { SemanticModelCheckService } from './services/semantic-model-check.service';
 import { SemanticModelSourceEventHandler } from './integration/semantic-model-source-event.handler';
 import { SemanticModelSourceReconciliationService } from './integration/semantic-model-source-reconciliation.service';
 import { SemanticDataGrantService } from './services/semantic-data-grant.service';
@@ -76,6 +77,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticRealtimeSignalService,
     SemanticRuntimeClientService,
     SemanticPopulationRefreshService,
+    SemanticModelCheckService,
     SemanticModelSourceEventHandler,
     SemanticModelSourceReconciliationService,
     SemanticAccessEventHandler,

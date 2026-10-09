@@ -82,6 +82,10 @@ export function useReviewQueue(id: string | undefined, enabled = true) {
 export function usePopulationFreshness(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.freshness(id ?? 'none'), queryFn: () => semanticModelApi.populationFreshness(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
 }
+/** The model's inconsistencies; a refetch keeps the last answer on screen (no flicker). */
+export function useModelCheck(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.modelCheck(id ?? 'none'), queryFn: () => semanticModelApi.check(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 3_000, retry: false });
+}
 export function useGraphStatus(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.graphStatus(id ?? 'none'), queryFn: () => semanticModelApi.graphStatus(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
 }

@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030 and 031).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030, 031 and 034).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -15,12 +15,18 @@ from typing import Any
 from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
                                         with_partition_locks)
 
+# A build with no progress for this long reads as stalled even before its lease runs out. Longer
+# than the longest embedding call a build waits for.
+STALL_AFTER_SECONDS = 600
+
 _GENERATION_COLUMNS = (
     "index_id::text, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
     "state, attempt, owner, job_id::text, expected_count, indexed_count, exact_only_count, "
     "failed_count, reused_count, embedding_calls, last_error_code, created_at, completed_at, "
     "passage_count, passage_indexed_count, passage_truncated_count, index_settings, vector_fingerprint, "
-    "progress_stage, loaded_count")
+    "progress_stage, loaded_count, progress_at AS last_progress_at, "
+    "COALESCE(state = 'indexing' AND (lease_until < now() "
+    f"OR progress_at < now() - make_interval(secs => {STALL_AFTER_SECONDS})), false) AS stalled")
 
 # Word index of a text: its words as written, and their French and English stems.
 _LEXICAL_CONFIGS = ("simple", "french", "english")
@@ -49,6 +55,7 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
     if generation is None:
         return {"indexId": None, "state": "missing", "embeddingFingerprint": None}
     completed = generation.get("completed_at")
+    progressed = generation.get("last_progress_at")
     return {"indexId": generation["index_id"], "state": generation["state"],
             "embeddingFingerprint": generation["embedding_fingerprint"],
             "expectedCount": generation["expected_count"], "indexedCount": generation["indexed_count"],
@@ -60,6 +67,10 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
             "passageTruncatedCount": generation.get("passage_truncated_count", 0),
             "stage": generation.get("progress_stage") if generation["state"] == "indexing" else None,
             "loadedCount": generation.get("loaded_count", 0),
+            # The worker stopped answering (lease expired, or no progress for a long while): what was
+            # embedded is kept, and the build can be restarted.
+            "stalled": bool(generation.get("stalled")),
+            "lastProgressAt": progressed.isoformat() if hasattr(progressed, "isoformat") else progressed,
             "completedAt": completed.isoformat() if hasattr(completed, "isoformat") else completed}
 
 
@@ -151,7 +162,7 @@ async def claim_generation(pool: Any, index_id: str, owner: str, lease_seconds: 
     row = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
         "SET state = 'indexing', owner = $2, lease_until = now() + make_interval(secs => $3), "
-        "last_error_code = NULL "
+        "progress_at = now(), last_error_code = NULL "
         "WHERE index_id = $1::uuid AND (state = 'queued' OR (state = 'indexing' "
         "AND (owner = $2 OR lease_until IS NULL OR lease_until < now()))) RETURNING index_id",
         index_id, owner, lease_seconds)
@@ -171,9 +182,12 @@ async def adopt_generation(pool: Any, index_id: str, job_id: str, owner: str) ->
 
 async def renew_generation(pool: Any, index_id: str, owner: str, lease_seconds: int,
                            embedding_calls: int = 0) -> bool:
+    """Extend the lease. Callers renew only after real progress (a wave stored, a page read, a chunk
+    reused), never on a timer: a build that stops progressing must let its lease run out."""
     row = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
-        "SET lease_until = now() + make_interval(secs => $3), embedding_calls = embedding_calls + $4 "
+        "SET lease_until = now() + make_interval(secs => $3), progress_at = now(), "
+        "embedding_calls = embedding_calls + $4 "
         "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2 RETURNING index_id",
         index_id, owner, lease_seconds, embedding_calls)
     return row is not None

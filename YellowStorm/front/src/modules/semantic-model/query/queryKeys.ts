@@ -22,6 +22,7 @@ export const semanticModelQueryKeys = {
   corrections: (id: string) => ['semantic-models','corrections',id] as const,
   mappingHealth: (id: string) => ['semantic-models','mapping-health',id] as const,
   freshness: (id: string) => ['semantic-models','freshness',id] as const,
+  modelCheck: (id: string) => ['semantic-models','model-check',id] as const,
   // Under freshness: whatever refreshes freshness after a run refreshes the graph status too.
   /** The search index status of a model's data; a revision id names the status asked for after a run. */
   searchIndex: (id: string, dataRevisionId?: string | null) => ['semantic-model', id, 'search-index', dataRevisionId ?? 'current'] as const,

@@ -19,7 +19,7 @@ export const INDEX_INTERRUPTED_CODE = 'index_interrupted';
  * long fields such as a body or an attachment's text). Followed every few seconds while it builds.
  */
 export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ modelId: string; dataRevisionId?: string | null }>) {
-  const { t } = useModuleTranslation('semantic-model');
+  const { t, language } = useModuleTranslation('semantic-model');
   const queryClient = useQueryClient();
   const status = useQuery({
     queryKey: semanticModelQueryKeys.searchIndex(modelId, dataRevisionId),
@@ -53,12 +53,15 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
   const stopped = !stale && state === 'failed' && index.lastErrorCode === INDEX_STOPPED_CODE;
   // A build whose worker vanished is a failure the administrator can retry.
   const interrupted = !stale && state === 'failed' && index.lastErrorCode === INDEX_INTERRUPTED_CODE;
-  const buildAgain = async () => {
+  // Its worker stopped answering: what was embedded is kept, and the build can be restarted.
+  const stalled = !stale && state === 'indexing' && Boolean(index.stalled);
+  const stalledAt = index.lastProgressAt ? new Date(index.lastProgressAt) : null;
+  const buildAgain = async (restart = false) => {
     try {
-      await semanticModelApi.ensureSearchIndex(modelId);
+      await (restart ? semanticModelApi.restartSearchIndex(modelId) : semanticModelApi.ensureSearchIndex(modelId));
       await queryClient.invalidateQueries({ queryKey: ['semantic-model', modelId, 'search-index'] });
     } catch (error) {
-      showError(t('population.progress.index.buildError'), { description: parseApiError(error).message });
+      showError(t(restart ? 'runStop.indexRestartError' : 'population.progress.index.buildError'), { description: parseApiError(error).message });
     }
   };
 
@@ -91,6 +94,15 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
             passages: passages.done.toLocaleString(), passagesTotal: passages.total.toLocaleString() })
           : t('population.progress.index.countsRecords', { records: records.done.toLocaleString(), recordsTotal: records.total.toLocaleString() })}
     </p>}
+    {stalled && <>
+      <p className='flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400' role='alert'>
+        <AlertTriangle className='mt-px h-3.5 w-3.5 shrink-0' />
+        <span>{stalledAt && !Number.isNaN(stalledAt.getTime())
+          ? t('population.progress.index.stalled', { time: new Intl.DateTimeFormat(language, { timeStyle: 'short' }).format(stalledAt) })
+          : t('population.progress.index.stalledUnknown')}</span>
+      </p>
+      <Button variant='outline' size='sm' className='w-full' onClick={() => void buildAgain(true)}>{t('population.progress.index.restart')}</Button>
+    </>}
     {state === 'failed' && index.lastErrorCode && !stopped && !interrupted && <p className='text-[11px] text-destructive'>{index.lastErrorCode}</p>}
     {(stopped || interrupted) && <>
       <p className='text-[11px] text-muted-foreground'>{t(stopped ? 'population.progress.index.stoppedHint' : 'population.progress.index.interruptedHint')}</p>

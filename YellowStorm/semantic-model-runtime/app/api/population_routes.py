@@ -20,15 +20,18 @@ from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, Idempot
                              ManualBatchCommand, ManualCommitCommand,
                              MirrorSpecificationCommand, PopulationCommand, PublishModelDataCommand,
                              ReviewResolveCommand)
+from app.persistence import graph_window_store as window_store
 from app.persistence import manual_store
 from app.persistence import population_store as store
 from app.population.age_projection import (ProjectionUnavailable, projection_graph,
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
                                              graph_counts, is_typed_projection,
-                                             read_projection_graph, reproject_revision)
+                                             read_projection_graph, read_projection_nodes,
+                                             reproject_revision)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
+from app.population.model_check import check_model
 from app.workers.celery_app import POPULATION_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
@@ -121,6 +124,13 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
+@router.post("/check", status_code=status.HTTP_200_OK)
+async def check_model_plan(body: dict) -> dict[str, object]:
+    """Every problem a preview or build of this plan would stop on, listed at once. Pure validation:
+    the same rules as a run, nothing read, stored or sent (the 256 KiB body limit bounds the work)."""
+    return check_model(body)
+
+
 class _WorkspaceScoped(BaseModel):
     """Body of a workspace-scoped read. NestJS computes the scope from the actor's current
     workspace access; a missing, null or oversized one is a validation failure — never
@@ -143,6 +153,27 @@ class _WorkspaceScoped(BaseModel):
 
 class ScopedGraphRead(_WorkspaceScoped):
     pass
+
+
+MAX_GRAPH_WINDOW_NODES = 5000
+DEFAULT_GRAPH_WINDOW_NODES = 2000
+
+
+class ScopedGraphWindowRead(_WorkspaceScoped):
+    """A bounded part of the graph: at most ``nodeLimit`` records (shared among the concepts, or
+    all of one ``conceptId``), or the ``focusIds`` records with their neighbours."""
+
+    node_limit: int = Field(DEFAULT_GRAPH_WINDOW_NODES, alias="nodeLimit", ge=1, le=MAX_GRAPH_WINDOW_NODES)
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
+    focus_ids: list[str] = Field(default_factory=list, alias="focusIds", max_length=50)
+    neighbours: bool = True
+
+    @field_validator("focus_ids")
+    @classmethod
+    def _bounded_focus(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 300 for item in value):
+            raise ValueError("record id must be 1..300 characters")
+        return value
 
 
 class ScopedRecordsRead(_WorkspaceScoped):
@@ -305,6 +336,53 @@ async def read_scoped_graph(model_id: str, command: ScopedGraphRead, request: Re
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": binding["data_revision_id"],
             "specification": specification, **graph}
+
+
+@router.post("/models/{model_id}/graph/window", status_code=status.HTTP_200_OK)
+async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead,
+                                   request: Request) -> dict[str, object]:
+    """A bounded part of the draft graph under the same workspace rule as ``graph/read``: only
+    visible records are chosen (in SQL, over the canonical rows), only they are read from the
+    graph, and the counts are of visible records and links. Without ``focusIds`` the window is
+    the first records of the data, shared evenly among the concepts (or all from one concept)
+    plus the visible totals; with them it is those records and, unless ``neighbours`` is false,
+    the records linked to them."""
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
+    revision_id = binding["data_revision_id"]
+    allowed = command.allowed_workspace_ids
+    totals: dict[str, object] | None = None
+    if command.focus_ids:
+        records, truncated = await window_store.select_focus_records(
+            pool, revision_id, allowed, command.focus_ids, neighbours=command.neighbours,
+            limit=command.node_limit)
+    else:
+        overview = await window_store.count_visible_overview(pool, revision_id, allowed)
+        concept_counts = overview["concepts"]
+        if command.concept_id is not None:
+            concept_counts = {command.concept_id: concept_counts.get(command.concept_id, 0)}
+        quotas = window_store.allocate_quotas(concept_counts, command.node_limit)
+        records = await window_store.select_visible_records(pool, revision_id, allowed, quotas)
+        truncated = len(records) < sum(concept_counts.values())
+        totals = {"records": sum(overview["concepts"].values()), "links": sum(overview["relations"].values()),
+                  "concepts": overview["concepts"], "relations": overview["relations"]}
+    try:
+        nodes = await read_projection_nodes(_age_pool(request), binding["projection_ref"],
+                                            [record_id for record_id, _concept in records])
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    shown = {node["id"] for node in nodes}
+    edges = [{"id": f"{link['relationId']}:{link['sourceId']}:{link['targetId']}", "label": link["relationId"],
+              "sourceId": link["sourceId"], "targetId": link["targetId"],
+              "properties": {"relation_id": link["relationId"]}}
+             for link in await window_store.list_links_among(pool, revision_id, sorted(shown))]
+    specification = await store.get_revision_specification(pool, revision_id)
+    if specification is None:
+        raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
+            "dataRevisionId": revision_id, "specification": specification,
+            "nodes": nodes, "edges": edges, "truncated": truncated,
+            "nodeLimit": command.node_limit, "totals": totals}
 
 
 @router.post("/corrections", status_code=status.HTTP_200_OK)

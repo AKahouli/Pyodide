@@ -131,9 +131,24 @@ export interface AgeGraphNode {
   properties: Record<string, unknown>;
 }
 
-/** Every record and link of the data graph, without values: what the graph view draws and counts. */
+/** What the person may see of the whole data graph, whatever part of it was read. */
+export interface GraphTotals {
+  records: number;
+  links: number;
+  /** Records per concept id. */
+  concepts: Record<string, number>;
+  /** Links per relationship id. */
+  relations: Record<string, number>;
+}
+
+/** A part of the data graph, without values: what the graph view draws and counts. */
 export interface GraphOutline {
   dataRevisionId?: string;
+  /** True when records the person may see were left out of this part. */
+  truncated?: boolean;
+  nodeLimit?: number;
+  /** Null when read around one record. */
+  totals?: GraphTotals | null;
   concepts: Array<{ id: string; fields: string[] }>;
   /** Id, concept id, name, missing field keys, and dates by field. */
   records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string> }>;
@@ -840,6 +855,10 @@ export interface SearchIndexStatus {
     /** While indexing: 'documents' (records read into search cards, counted by loadedCount), 'reusing' (earlier vectors taken from the cache) or 'embedding'. */
     stage?: 'documents' | 'reusing' | 'embedding' | null;
     loadedCount?: number;
+    /** The build's worker stopped answering (its lease ran out, or no progress for a long while); what was embedded is kept. */
+    stalled?: boolean;
+    /** ISO time of the build's last real progress. */
+    lastProgressAt?: string | null;
     lastErrorCode?: string | null;
   };
 }
@@ -1197,6 +1216,33 @@ export interface PopulationFreshness {
   /** current: built from the model as it is now; outdated: the design, a mapping or a source file changed since. */
   state: 'current' | 'outdated' | 'never_run' | 'not_runnable';
   reason?: string;
+}
+
+/** One thing wrong (error) or doubtful (warning) in a model, found by the model check. */
+export interface ModelCheckIssue {
+  severity: 'error' | 'warning';
+  /** Stable; the suffix of the message key. */
+  code: string;
+  /** Narrows the code to one case. */
+  reason?: string;
+  /** English fallback text. */
+  message: string;
+  conceptId?: string;
+  fieldId?: string;
+  relationId?: string;
+  mappingId?: string;
+  /** A derived source (derivation). */
+  sourceId?: string;
+  params?: Record<string, string | number>;
+}
+
+export interface ModelCheck {
+  modelId: string;
+  versionKey: string;
+  checkedAt: string;
+  errorCount: number;
+  warningCount: number;
+  issues: ModelCheckIssue[];
 }
 
 /** Where a source or typed-record box sits on the canvas. */
