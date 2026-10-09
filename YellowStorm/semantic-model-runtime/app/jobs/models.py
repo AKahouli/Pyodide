@@ -7,6 +7,8 @@ from typing import Any, Literal
 from pydantic import (BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler,
                       model_serializer, model_validator)
 
+from app.population.run_limits import MAX_SOURCES_PER_TASK, max_run_sources
+
 JobState = Literal[
     "queued",
     "waiting_dependencies",
@@ -194,7 +196,8 @@ class PopulationPayload(BaseModel):
     scope: PopulationScope
     specification: dict[str, Any]
     # Empty only for a concept refresh of a concept made from another one alone (see check_sources).
-    sources: list[PopulationSource] = Field(max_length=25)
+    # Bounded by the run's admin limit ``maxRunSources`` (see ``check_sources``), never above the hard ceiling.
+    sources: list[PopulationSource] = Field(max_length=MAX_SOURCES_PER_TASK)
     relation_bindings: list[RelationBinding] = Field(
         default_factory=list, alias="relationBindings", max_length=50)
     # Concepts made from another concept's records, after every source is read.
@@ -216,6 +219,9 @@ class PopulationPayload(BaseModel):
     def check_sources(self) -> "PopulationPayload":
         if not self.sources and not (self.scope.kind == "concept" and self.derivations):
             raise ValueError("a run reads at least one source, unless it refreshes a concept made from another one")
+        allowed = max_run_sources({"limits": self.limits})
+        if len(self.sources) > allowed:
+            raise ValueError(f"a run reads at most {allowed} sources")
         return self
 
     @model_serializer(mode="wrap")

@@ -24,8 +24,8 @@ from app.population.derived import derivation_items, derive_concept, merge_deriv
 from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
 from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
 from app.population.document_rules import answer_options, normalize_ai_settings
-from app.population.run_limits import (ai_pacing, identity_limits, index_build_limits, run_limits,
-                                        source_limits, source_record_cap)
+from app.population.run_limits import (MAX_SOURCES_PER_TASK, ai_pacing, identity_limits, index_build_limits,
+                                        max_run_sources, run_limits, source_limits, source_record_cap)
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import expand_rows, is_item_attribute, normalize_expand
@@ -44,8 +44,6 @@ DERIVED_UPLOAD_BATCH = 500
 EMAIL_DERIVATION_VERSION = "email-derived-v1"
 EMAIL_DERIVATION_CACHE_CONCEPT = "__email_derived_files__"
 QUERY_ROW_LIMIT = 1000
-# A workspace mapping expands to one source per document, so a run can read thousands of files.
-MAX_SOURCES_PER_TASK = 5000
 # How long each progress report keeps the lease alive: a long run stays owned while it reports.
 PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
@@ -257,7 +255,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
         # The rules live in app.population.payload_rules, shared with the model check.
         analysis = analyze_payload(
             payload, verify_hash=True, expected_hash=expected_hash,
-            max_sources=min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"]))
+            max_sources=max_run_sources(payload))
         if analysis.spec_issues:
             return {"ok": False, "errorCode": "invalid_specification",
                     "issues": analysis.spec_issues[:10]}

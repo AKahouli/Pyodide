@@ -149,7 +149,10 @@ def _check_source(entry: Any, compiled: dict[str, Any], mapping_id: str | None) 
         field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
         mapped_attributes, active = _check_document_fields(field_mappings, concept, options, add)
     else:
-        mapping = entry.get("columnMapping") or entry.get("column_mapping")
+        # An empty column mapping is a real one: fields may come only from fixed values, cell readings
+        # or recipes. Absent (null) means the same.
+        mapping = entry.get("columnMapping") if entry.get("columnMapping") is not None else entry.get("column_mapping")
+        mapping = {} if mapping is None else mapping
         constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
         mapped_attributes, extractions, recipes = _check_sheet_fields(
             entry, mapping, constants, options, add)

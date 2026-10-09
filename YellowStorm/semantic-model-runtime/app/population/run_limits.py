@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# A workspace mapping expands to one source per document, so a run can read thousands of files. The
+# hard ceiling of a run's sources, whatever an admin enters: admission and the run both stop at it.
+MAX_SOURCES_PER_TASK = 5000
+
 DEFAULT_RUN_LIMITS = {
     "maxRunSources": 5000,
     "maxRecordsPerSource": 5000,
@@ -73,6 +77,11 @@ def index_build_limits(limits: Any) -> dict[str, int]:
         if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
             picked[key] = value
     return picked
+
+
+def max_run_sources(payload: Any) -> int:
+    """Most sources the run whose payload this is may read: the admin's limit, never above the ceiling."""
+    return min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"])
 
 
 def run_limits(payload: Any) -> dict[str, int]:
