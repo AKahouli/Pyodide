@@ -876,3 +876,20 @@ async def test_progress_says_how_far_the_current_step_is_and_counts_ai_calls():
     # A finished source or a new phase has no step left; the AI tally runs for the whole run.
     await progress.enter("linking")
     assert "step" not in reports[-1] and reports[-1]["ai"]["planned"] == 40
+
+
+@pytest.mark.asyncio
+async def test_progress_names_the_concept_a_concept_refresh_makes_again():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    scoped = PopulationProgress(report, min_interval=0, scope_concept_id="c1")
+    await scoped.begin(1)
+    assert reports[-1]["scopeConceptId"] == "c1"
+    whole = PopulationProgress(report, min_interval=0)
+    await whole.begin(3)
+    assert "scopeConceptId" not in reports[-1]

@@ -15,6 +15,8 @@ const NODES = [
     id: 'c-contract', key: 'contract', label: 'Contract',
     attributes: [{ key: 'contract_id', label: 'Id', type: 'text' }, { key: 'customer_ref', label: 'Customer', type: 'text' }],
   },
+  { id: 'c-other', key: 'other', label: 'Other', attributes: [{ key: 'other_id', label: 'Id', type: 'text' }] },
+  { id: 'c-fact', key: 'fact', label: 'Fact', attributes: [{ key: 'fact_id', label: 'Id', type: 'text' }] },
 ];
 
 const MAPPING = (overrides: Record<string, unknown> = {}) => ({
@@ -941,6 +943,50 @@ describe('SemanticPopulationRefreshService', () => {
     // A concept with neither a source nor a derivation has nothing to refresh.
     await expect(plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } }))
       .rejects.toThrow('No usable source in the selected scope');
+  });
+
+  it('refreshes one concept with only the derivations it feeds, and keeps the others out of the run', async () => {
+    const contract = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const other = MAPPING({
+      id: 'm-3', conceptId: 'c-other', documentId: 'd-3', identityFields: ['other_id'],
+      fieldMappings: [{ sourceField: 'other_id', targetAttribute: 'other_id', mode: 'direct' }],
+    });
+    const identity = { 'c-customer': ['customer_id'], 'c-contract': ['contract_id'], 'c-other': ['other_id'], 'c-fact': ['fact_id'] };
+    const labels = { 'c-customer': 'name', 'c-contract': 'contract_id', 'c-other': 'other_id', 'c-fact': 'fact_id' };
+    const derived = [
+      { id: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
+        fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
+      { id: 'dv-2', conceptId: 'c-fact', sourceConceptId: 'c-other', conflictRule: 'latest', orderBy: 'other_id',
+        fieldMappings: [{ sourceAttribute: 'other_id', targetAttribute: 'fact_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
+    ];
+    const run = async (conceptId: string) => {
+      const built = setup([contract, other], identity, [], [], [], [], labels);
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, undefined,
+        new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: derived })) } as any, {} as any),
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId } });
+      const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return command.payload;
+    };
+    // Contracts: only their own source, and the customers made from them; the facts made from other records stay as they are.
+    const contracts = await run('c-contract');
+    expect(contracts.sources.map((source: { conceptId: string }) => source.conceptId)).toEqual(['c-contract']);
+    expect(contracts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-1']);
+    // The kept concepts remain in the specification so the data in use is not dropped.
+    expect(contracts.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort())
+      .toEqual(['c-contract', 'c-customer', 'c-fact', 'c-other']);
+    // A concept made from another one: no source, only the derivation that makes it.
+    const facts = await run('c-fact');
+    expect(facts.sources).toEqual([]);
+    expect(facts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-2']);
   });
 
   it('binds one-to-many relations through one field of a composite target identity', async () => {

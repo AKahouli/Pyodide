@@ -71,6 +71,15 @@ export function runCanStop(progress?: Partial<PopulationProgress> | null): boole
   return progress?.cancellable !== false && !(progress?.phase && PAST_STOP.has(progress.phase));
 }
 
+/**
+ * Sources a run reads: what it reports, else what was counted when it started, else the mappings it covers.
+ * A concept refresh covers only that concept's mappings, never the whole model's.
+ */
+export function runSourceCount(outcome: Pick<PopulationOutcome, 'sourceCount' | 'skipped'>, progress: Partial<PopulationProgress> | undefined, sourceMappings: ConceptSourceMapping[]): number {
+  const covered = progress?.scopeConceptId ? sourceMappings.filter((mapping) => mapping.conceptId === progress.scopeConceptId) : sourceMappings;
+  return progress?.total || outcome.sourceCount || Math.max(0, covered.length - outcome.skipped.length);
+}
+
 const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
 
 export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId }: Readonly<{
@@ -95,7 +104,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
   const shownProgress = progress ?? outcome.progress;
-  const readCount = shownProgress?.total || outcome.sourceCount || Math.max(0, sourceMappings.length - outcome.skipped.length);
+  const readCount = runSourceCount(outcome, shownProgress, sourceMappings);
   const tone = toneOf(outcome.status);
   const canStop = runCanStop(shownProgress);
 

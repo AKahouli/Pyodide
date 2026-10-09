@@ -16,7 +16,7 @@ import { graphExposureOf } from '../domain/semantic-graph-exposure';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
-import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
+import { derivationsRefreshedWith, type RuntimeDerivation } from '../domain/semantic-derived-source.types';
 import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticGraphSearchService } from './semantic-graph-search.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
@@ -856,12 +856,15 @@ export class SemanticPopulationRefreshService {
       : null;
     if (manual) sources.push(...manual.sources);
     // Concepts made from another concept's records, when that concept is read by this run.
-    const derivations = wholeModel && this.derivedSources
+    const modelDerivations = wholeModel && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
         new Set(sources.map((source) => source.conceptId)), identityRules,
         effectiveAiSettings(await this.adminAiSettings()), labelFields)
       : [];
-    const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
+    // A concept refresh makes again only the concepts made from it (or itself, when it is made from another);
+    // the other derived concepts stay as they are in the data in use but still belong to the specification.
+    const derivations = scope.kind === 'concept' ? derivationsRefreshedWith(modelDerivations, scope.conceptId) : modelDerivations;
+    const derivedConceptIds = new Set(modelDerivations.map((derivation) => derivation.conceptId));
     // Every concept a run fills needs the field that names its records, chosen by a person.
     for (const conceptId of new Set([...usableMappings.map((mapping) => mapping.conceptId), ...derivedConceptIds])) {
       const node = nodes.find((candidate) => candidate.id === conceptId);
@@ -936,7 +939,7 @@ export class SemanticPopulationRefreshService {
         matchingStrategy: rule?.strategy ?? 'normalized',
       });
       if (rule) {
-        const derivedField = (conceptId: string, attribute: string) => derivations.some((derivation) =>
+        const derivedField = (conceptId: string, attribute: string) => modelDerivations.some((derivation) =>
           derivation.conceptId === conceptId && derivation.fieldMappings.some((field) => field.targetAttribute === attribute));
         const sourceFieldMapped = derivedField(relation.sourceNodeTypeId, rule.sourceAttribute) || sources.some((source) => {
           if (source.conceptId !== relation.sourceNodeTypeId) return false;

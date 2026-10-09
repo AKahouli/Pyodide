@@ -109,12 +109,15 @@ def population_lease_seconds(source_count: int, parser_timeout: int) -> int:
 class PopulationProgress:
     """What a run has done so far, reported (at most about once a second) to whoever watches the job."""
 
-    def __init__(self, report=None, *, min_interval: float = 1.0):  # type: ignore[no-untyped-def]
+    def __init__(self, report=None, *, min_interval: float = 1.0,  # type: ignore[no-untyped-def]
+                 scope_concept_id: str | None = None):
         import time
         from datetime import datetime, timezone
 
         self._report = report
         self._min_interval = min_interval
+        # The one concept a concept refresh makes again; absent for a run of the whole model.
+        self.scope_concept_id = scope_concept_id
         self._last_sent = float("-inf")
         self._clock = time.monotonic
         self.started_at = datetime.now(timezone.utc).isoformat()
@@ -142,6 +145,8 @@ class PopulationProgress:
         snapshot = {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
                     "records": self.records, "gaps": self.gaps, "current": self.current,
                     "recent": list(self.recent), "startedAt": self.started_at}
+        if self.scope_concept_id:
+            snapshot["scopeConceptId"] = self.scope_concept_id
         if not self.cancellable:
             # Past the last chance to stop: a stop request changes nothing, so the UI does not offer it.
             snapshot["cancellable"] = False
@@ -1455,7 +1460,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             if await repository.cancel_requested(lease.job_id):
                 raise RunCancelled()
 
-        progress = PopulationProgress(report)
+        progress = PopulationProgress(
+            report, scope_concept_id=(lease.payload.get("scope") or {}).get("conceptId")
+            if is_concept_refresh(lease.payload) else None)
         model_id = str(lease.payload.get("modelId") or lease.payload.get("model_id") or "")
         carried = await load_carried_data(pool, lease.payload) if is_concept_refresh(lease.payload) else None
         try:

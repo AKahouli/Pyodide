@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
-import { PopulationStartedPanel, populationServing, runCanStop } from './PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing, runCanStop, runSourceCount } from './PopulationStartedPanel';
 
 const mappings = [
   { id: 'mapping-1', documentName: 'master-agreement-0041.pdf' },
@@ -180,5 +180,24 @@ describe('PopulationStartedPanel stop', () => {
 
     rerender(<PopulationStartedPanel outcome={outcome} sourceMappings={mappings} stopping stoppingSlow onClose={vi.fn()} onOpenHealth={vi.fn()} />);
     expect(screen.getByText('runStatus.stoppingSlowHint')).toBeInTheDocument();
+  });
+});
+
+describe('runSourceCount', () => {
+  const model = [
+    { id: 'm-1', conceptId: 'participation' }, { id: 'm-2', conceptId: 'message' }, { id: 'm-3', conceptId: 'attachment' },
+  ] as ConceptSourceMapping[];
+
+  it('counts every mapping of the model for a whole-model run that reported nothing yet', () => {
+    expect(runSourceCount({ skipped: [] }, undefined, model)).toBe(3);
+  });
+
+  it('counts only the mappings of the refreshed concept for a concept refresh followed without its start figures', () => {
+    expect(runSourceCount({ skipped: [] }, { scopeConceptId: 'participation', total: 0 }, model)).toBe(1);
+  });
+
+  it('prefers what the run reports, then what was counted when it started', () => {
+    expect(runSourceCount({ sourceCount: 2, skipped: [] }, { scopeConceptId: 'participation', total: 0 }, model)).toBe(2);
+    expect(runSourceCount({ sourceCount: 2, skipped: [] }, { total: 1 }, model)).toBe(1);
   });
 });

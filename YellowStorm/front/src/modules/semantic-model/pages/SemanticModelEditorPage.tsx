@@ -73,6 +73,7 @@ import { SemanticDataPreview, type DataPreviewFocus } from '../components/previe
 import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
+import { conceptsRefreshedWith } from '../components/population/runScope';
 import { PopulationStartedPanel, populationServing, runCanStop, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
 import { SearchIndexPanel } from '../components/population/SearchIndexPanel';
@@ -372,6 +373,9 @@ export function SemanticModelEditorPage() {
   useEffect(() => { if (!indexBuilding) setStoppingIndex(false); }, [indexBuilding]);
   const runProgress = populationJob.data?.jobId === populationJobId ? populationJob.data?.progress : population?.progress;
   const runStoppable = runCanStop(runProgress);
+  // A run followed from elsewhere (a conversation, another tab, the history) names its own concept in its progress.
+  const refreshingConcepts: 'all' | string[] = runConceptIds
+    ?? (runProgress?.scopeConceptId ? conceptsRefreshedWith(runProgress.scopeConceptId, derivedSources.data ?? []) : 'all');
   const runStopRequested = stoppingRun || populationJob.data?.state === 'cancel_requested';
   const stopPending = populationJobId ? runStopRequested : stoppingIndex;
   const stopSlow = useAfterDelay(Boolean(stopPending), STOP_SLOW_MS);
@@ -753,7 +757,7 @@ export function SemanticModelEditorPage() {
       const run = await semanticModelApi.requestPopulationRefresh(modelId, {
         purpose: 'build', scope: { kind: 'concept', conceptId }, ...(rereadDocuments ? { rereadDocuments } : {}),
       });
-      setRunConceptIds([conceptId]);
+      setRunConceptIds(conceptsRefreshedWith(conceptId, derivedSources.data ?? []));
       setPopulationJobId(run.jobId);
       setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
     } catch (error) {
@@ -1018,7 +1022,7 @@ export function SemanticModelEditorPage() {
             sourcePositions={sourcePositions}
             onMoveSource={canEdit ? moveSource : undefined}
             onBrowseRecords={browseRecords}
-            refreshingConcepts={populationJobId ? runConceptIds ?? 'all' : undefined}
+            refreshingConcepts={populationJobId ? refreshingConcepts : undefined}
             checkIssues={checkResult?.issues}
             onOpenCheckIssue={openCheckIssue}
           />

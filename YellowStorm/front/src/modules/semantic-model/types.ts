@@ -842,6 +842,8 @@ export interface PopulationProgress {
   step?: { unit: 'rows' | 'files' | 'opening' | 'entries' | 'elements' | 'loading' | string; done: number; total: number | null };
   /** False once the new data is being saved: a stop request is then not acted on. Absent while the run can still be stopped. */
   cancellable?: boolean;
+  /** The one concept a concept refresh makes again; absent for a run of the whole model. */
+  scopeConceptId?: string;
   /** AI calls of the whole run so far. */
   ai?: { planned: number; answered: number; reused: number; skipped: number; failed: number };
 }
