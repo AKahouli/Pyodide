@@ -824,6 +824,95 @@ async def count_revision_entities_by_concept(pool: Any, revision_id: str) -> dic
     return {str(row["concept_id"]): int(row["entities"]) for row in rows}
 
 
+def visible_entity_clause(alias: str, param: str) -> str:
+    """SQL predicate: every workspace the record was read from is in ``param`` (a text[]).
+    A record typed by hand carries no workspace in its provenance, so any scope keeps it;
+    one source from a workspace outside the scope hides the whole record. Canonical-store
+    twin of the search index's ``_visible`` — one visibility rule for every reader."""
+    sources = (f"CASE WHEN jsonb_typeof({alias}.provenance -> 'sources') = 'array' "
+               f"THEN {alias}.provenance -> 'sources' ELSE '[]'::jsonb END")
+    return ("NOT EXISTS (SELECT 1 FROM jsonb_array_elements(" + sources + ") AS src(item) "
+            "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '' "
+            f"AND NOT ((src.item -> 'assetRef' ->> 'workspaceId') = ANY({param}::text[])))")
+
+
+async def split_entity_visibility(pool: Any, revision_id: str,
+                                  allowed_workspace_ids: list[str]) -> tuple[set[str], set[str]]:
+    """Ids of the revision's records this scope may see, and the rest. A record shows only when
+    the canonical rows vouch for it AND every workspace it was read from is in the scope —
+    so an id the store cannot account for stays hidden."""
+    rows = await pool.fetch(
+        f"SELECT id, NOT {visible_entity_clause('e', '$2')} AS hidden "
+        "FROM semantic_population.entities e WHERE data_revision_id = $1",
+        revision_id, list(allowed_workspace_ids),
+    )
+    visible = {row["id"] for row in rows if not row["hidden"]}
+    return visible, {row["id"] for row in rows if row["hidden"]}
+
+
+async def count_revision_rows_visible(pool: Any, revision_id: str,
+                                      allowed_workspace_ids: list[str]) -> dict[str, int]:
+    """Row counts over the records this scope may see (records, their assertions, links whose
+    two ends are visible)."""
+    row = await pool.fetchrow(
+        "SELECT (SELECT count(*) FROM semantic_population.entities e "
+        f"WHERE e.data_revision_id = $1 AND {visible_entity_clause('e', '$2')}) AS entities, "
+        "(SELECT count(*) FROM semantic_population.assertions a WHERE a.data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities e WHERE e.data_revision_id = a.data_revision_id "
+        f"AND e.id = a.entity_id AND {visible_entity_clause('e', '$2')})) AS assertions, "
+        "(SELECT count(*) FROM semantic_population.relationships r WHERE r.data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities se WHERE se.data_revision_id = r.data_revision_id "
+        f"AND se.id = r.source_entity_id AND {visible_entity_clause('se', '$2')}) "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities te WHERE te.data_revision_id = r.data_revision_id "
+        f"AND te.id = r.target_entity_id AND {visible_entity_clause('te', '$2')})) AS relationships",
+        revision_id, list(allowed_workspace_ids),
+    )
+    return {"entities": int(row["entities"]), "assertions": int(row["assertions"]),
+            "relationships": int(row["relationships"])}
+
+
+async def count_revision_entities_by_concept_visible(pool: Any, revision_id: str,
+                                                     allowed_workspace_ids: list[str]) -> dict[str, int]:
+    rows = await pool.fetch(
+        "SELECT concept_id, count(*) AS entities FROM semantic_population.entities e "
+        f"WHERE data_revision_id = $1 AND {visible_entity_clause('e', '$2')} GROUP BY concept_id",
+        revision_id, list(allowed_workspace_ids),
+    )
+    return {str(row["concept_id"]): int(row["entities"]) for row in rows}
+
+
+async def list_revision_entities_visible(pool: Any, revision_id: str, limit: int,
+                                         concept_id: str | None,
+                                         allowed_workspace_ids: list[str]) -> list[dict[str, Any]]:
+    """A page of the revision's records this scope may see, in id order."""
+    rows = await pool.fetch(
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        "FROM semantic_population.entities e WHERE data_revision_id = $1 "
+        f"AND ($3::text IS NULL OR concept_id = $3) AND {visible_entity_clause('e', '$4')} "
+        "ORDER BY id LIMIT $2",
+        revision_id, limit, concept_id, list(allowed_workspace_ids),
+    )
+    return [_entity_row(dict(row)) for row in rows]
+
+
+async def list_revision_relationships_visible(pool: Any, revision_id: str,
+                                              allowed_workspace_ids: list[str],
+                                              limit: int = 20000) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy, state "
+        "FROM semantic_population.relationships r WHERE data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities se WHERE se.data_revision_id = r.data_revision_id "
+        f"AND se.id = r.source_entity_id AND {visible_entity_clause('se', '$2')}) "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities te WHERE te.data_revision_id = r.data_revision_id "
+        f"AND te.id = r.target_entity_id AND {visible_entity_clause('te', '$2')}) "
+        "ORDER BY relation_id, source_entity_id, target_entity_id LIMIT $3",
+        revision_id, list(allowed_workspace_ids), limit,
+    )
+    return [{"relationId": row["relation_id"], "sourceEntityId": row["source_entity_id"],
+             "targetEntityId": row["target_entity_id"],
+             "matchingStrategy": row["matching_strategy"], "state": row.get("state") or "accepted"} for row in rows]
+
+
 async def iter_revision_entities(pool: Any, revision_id: str, page_size: int = 5000):  # type: ignore[no-untyped-def]
     """Every entity of a revision, a page at a time in id order (a revision can hold hundreds of
     thousands): yields lists shaped like :func:`list_revision_entities`."""
@@ -890,9 +979,12 @@ def _like_pattern(text: str) -> str:
 async def search_revision_entities(pool: Any, revision_id: str, concept_id: str, *,
                                    query: str | None = None, limit: int = 50,
                                    offset: int = 0,
-                                   filters: dict[str, str] | None = None) -> tuple[int, list[dict[str, Any]]]:
+                                   filters: dict[str, str] | None = None,
+                                   allowed_workspace_ids: list[str] | None = None) -> tuple[int, list[dict[str, Any]]]:
     """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``,
-    and to those whose given fields each contain their filter text (``__label__`` is the record's name)."""
+    and to those whose given fields each contain their filter text (``__label__`` is the record's name).
+    ``allowed_workspace_ids`` hides the records read from a workspace outside the scope; ``None`` (the
+    worker's own reads) sees everything."""
     pattern = _like_pattern(query) if query and query.strip() else None
     where = ("data_revision_id = $1 AND concept_id = $2 "
              "AND ($3::text IS NULL OR label ILIKE $3 OR attributes::text ILIKE $3 "
@@ -911,6 +1003,9 @@ async def search_revision_entities(pool: Any, revision_id: str, concept_id: str,
         # A key field lives in the matching key, not among the attributes.
         where += (f" AND (attributes->>{key} ILIKE {value} OR (CASE WHEN left(identity_key, 1) = '{{' "
                   f"THEN identity_key::jsonb->>{key} END) ILIKE {value})")
+    if allowed_workspace_ids is not None:
+        arguments.append(list(allowed_workspace_ids))
+        where += f" AND {visible_entity_clause('semantic_population.entities', f'${len(arguments)}')}"
     total = await pool.fetchval(
         f"SELECT count(*) FROM semantic_population.entities WHERE {where}", *arguments)
     page = len(arguments)

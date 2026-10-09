@@ -68,10 +68,21 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('allows bound reads when runtime writes are disabled', async () => {
+  it('allows bound reads when runtime writes are disabled, scoped to the allowed workspaces', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ dataRevisionId: 'dr_1', nodes: [], edges: [] }));
     const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
-    await expect(client.getBoundGraph('m1', 'u1')).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
+    await expect(client.getBoundGraph('m1', 'u1', undefined, ['ws-1'])).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m1/graph/read');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ actorUserId: 'u1', environment: 'draft', allowedWorkspaceIds: ['ws-1'] });
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('refuses to read the graph without a workspace scope', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.getBoundGraph('m1', 'u1', undefined, undefined as unknown as string[])).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('maps runtime 409 to conflict and 404 to not-found', async () => {

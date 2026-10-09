@@ -49,10 +49,19 @@ class _Pinned(BaseModel):
     actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
     model_id: str = Field(alias="modelId", min_length=1, max_length=200)
     environment: Environment = "production"
-    allowed_workspace_ids: list[str] | None = Field(default=None, alias="allowedWorkspaceIds",
-                                                    max_length=2000)
+    # The caller computes this from the actor's current workspace access. Required: a missing
+    # or null scope is a validation failure, never "every workspace". An empty list is honest —
+    # only records read from no workspace at all (typed by hand) show.
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=2000)
     expected_data_revision_id: str | None = Field(default=None, alias="expectedDataRevisionId",
                                                   max_length=200)
+
+    @field_validator("allowed_workspace_ids")
+    @classmethod
+    def _bounded_workspaces(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 200 for item in value):
+            raise ValueError("workspace id must be 1..200 characters")
+        return value
 
 
 class RequestSettings(BaseModel):

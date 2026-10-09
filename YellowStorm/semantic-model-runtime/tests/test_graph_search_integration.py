@@ -126,12 +126,12 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert index_task["queue_name"] == "semantic-model-search.index"
         pending = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-            "query": "support agreement"})).json()
+            "query": "support agreement", "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
         assert pending["index"]["state"] == "queued" and pending["status"] == "index_not_ready"
         assert any("not ready" in note for note in pending["notes"])
         exact_before = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-            "query": "CT003"})).json()
+            "query": "CT003", "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
         assert [seed["label"] for seed in exact_before["seeds"]] == ["CT003"]  # labels are the key values here
         assert exact_before["modeUsed"] == "exact_only"
 
@@ -171,7 +171,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         # 4. Words and vectors rank the support contract first; the key wins outright.
         def query(text: str, **extra) -> dict:  # type: ignore[no-untyped-def]
             return {"actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-                    "query": text, **extra}
+                    "query": text, "allowedWorkspaceIds": [WORKSPACE_ID], **extra}
 
         found = (await client.post("/v1/semantic-model-search/query", json=query("support agreement"))).json()
         assert found["status"] == "found" and found["modeUsed"] == "hybrid"

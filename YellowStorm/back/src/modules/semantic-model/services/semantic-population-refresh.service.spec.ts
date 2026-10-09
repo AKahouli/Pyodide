@@ -88,6 +88,12 @@ const setup = (
     getGraphStatus: jest.fn(async () => ({ modelId: 'model-1', environments: [] })),
     reprojectModelGraphs: jest.fn(async () => ({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true }] })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
+    getBoundGraph: jest.fn(async () => ({
+      dataRevisionId: 'dr-1',
+      specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: [] }], relations: [] },
+      nodes: [{ id: 'n-1', label: 'c-customer', properties: { record_id: 'n-1', concept_id: 'c-customer', record_label: 'Acme' } }],
+      edges: [] as unknown[],
+    })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
       entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {} }],
@@ -102,11 +108,15 @@ const setup = (
   const aiExtractionAgent = {
     resolveAgent: jest.fn(async () => ({ slug: 'semantic-field-extraction', llmModel: 'gpt-5.4-nano' })),
   };
+  const graphSearch = {
+    allowedWorkspaceIds: jest.fn(async () => ['ws-1', 'ws-2']),
+  };
   const service = new SemanticPopulationRefreshService(
     database as any, models as any, documents as any,
     new ModelSpecificationService(), runtime as any, aiExtractionAgent as any,
+    undefined, undefined, graphSearch as any,
   );
-  return { database, models, documents, runtime, service, aiExtractionAgent };
+  return { database, models, documents, runtime, service, aiExtractionAgent, graphSearch };
 };
 
 describe('SemanticPopulationRefreshService', () => {
@@ -322,8 +332,8 @@ describe('SemanticPopulationRefreshService', () => {
     await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', { q: '  acme ', limit: 20, offset: 40 })).resolves.toMatchObject({
       dataRevisionId: 'dr-1', total: 120, offset: 40, records: [{ id: 'e-1', label: 'Acme', values: { name: 'Acme' } }],
     });
-    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1',
-      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined });
+    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1', ['ws-1', 'ws-2'],
+      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined, filters: undefined });
     (runtime as any).searchConceptRecords.mockRejectedValueOnce(Object.assign(new Error('HTTP 404'), { status: 404 }));
     await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', {})).resolves.toMatchObject({ total: 0, records: [] });
   });
@@ -1139,5 +1149,37 @@ describe('SemanticPopulationRefreshService', () => {
     };
     expect(new ModelSpecificationService().hashCanonical(body))
       .toBe('sha256:ab3abd75d44f5015cbd71b617e7662c7f81db605e751cb0a2bf9575f0fdd1207');
+  });
+
+  describe('scoped graph reads', () => {
+    it('reads the graph only through the workspaces the person may access', async () => {
+      const { runtime, service, graphSearch } = setup();
+      await service.graphOutline('u-1', 'model-1');
+      expect(graphSearch.allowedWorkspaceIds).toHaveBeenCalledWith('u-1', 'model-1');
+      expect(runtime.getBoundGraph).toHaveBeenCalledWith('model-1', 'u-1', undefined, ['ws-1', 'ws-2']);
+    });
+
+    it('reuses the cached graph within its TTL for the same scope, and re-reads when the scope changes', async () => {
+      const { runtime, service, graphSearch } = setup();
+      await service.graphOutline('u-1', 'model-1');
+      await service.graphRecord('u-1', 'model-1', 'n-1');
+      expect(runtime.getBoundGraph).toHaveBeenCalledTimes(1);
+
+      // A workspace share was revoked: the next read recomputes the scope and runs again.
+      graphSearch.allowedWorkspaceIds.mockResolvedValueOnce(['ws-1']);
+      await service.graphOutline('u-1', 'model-1');
+      expect(runtime.getBoundGraph).toHaveBeenLastCalledWith('model-1', 'u-1', undefined, ['ws-1']);
+      expect(runtime.getBoundGraph).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses every graph read without source authorization wired', async () => {
+      const built = setup();
+      const bare = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any,
+        new ModelSpecificationService(), built.runtime as any, built.aiExtractionAgent as any,
+      );
+      await expect(bare.graphOutline('u-1', 'model-1')).rejects.toThrow('Source authorization is not available');
+      expect(built.runtime.getBoundGraph).not.toHaveBeenCalled();
+    });
   });
 });

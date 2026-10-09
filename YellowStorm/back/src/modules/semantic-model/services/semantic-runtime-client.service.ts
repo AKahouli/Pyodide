@@ -961,6 +961,32 @@ export class SemanticRuntimeClientService {
     }
   }
 
+  /** A read that is too wide for a query string: POST on the read base, same auth and error mapping as `get`. */
+  private async readPost<T>(path: string, actorUserId: string, body: unknown): Promise<T> {
+    const base = this.requireRuntime();
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+      if (!res.ok) {
+        throw Object.assign(new Error(`HTTP ${res.status}`), {
+          status: res.status,
+          data: await this.readErrorPayload(res),
+        });
+      }
+      return await res.json() as T;
+    } catch (error) {
+      throw this.translate(error);
+    }
+  }
+
   private async readErrorPayload(res: Response): Promise<unknown> {
     const text = await res.text().catch(() => '');
     try {
@@ -1151,33 +1177,77 @@ export class SemanticRuntimeClientService {
     });
   }
 
+  /** Empty means "only source-free records" and is fine; nothing at all is a caller bug, never all workspaces. */
+  private requireScope(allowedWorkspaceIds: string[] | null | undefined): string[] {
+    if (!Array.isArray(allowedWorkspaceIds)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A workspace scope is required to read semantic data');
+    }
+    return allowedWorkspaceIds;
+  }
+
   async searchConceptRecords(modelId: string, conceptId: string, actorUserId: string,
+    allowedWorkspaceIds: string[],
     query: { q?: string; limit: number; offset: number; dataRevisionId?: string; filters?: string }): Promise<RuntimeConceptRecordsPage> {
-    const params = new URLSearchParams({ environment: 'draft', limit: String(query.limit), offset: String(query.offset) });
-    if (query.q) params.set('q', query.q);
-    if (query.dataRevisionId) params.set('dataRevisionId', query.dataRevisionId);
-    if (query.filters) params.set('filters', query.filters);
-    return this.get<RuntimeConceptRecordsPage>(
-      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/concepts/${encodeURIComponent(conceptId)}/records?${params}`,
+    return this.readPost<RuntimeConceptRecordsPage>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/concepts/${encodeURIComponent(conceptId)}/records/read`,
       actorUserId,
+      {
+        actorUserId,
+        environment: 'draft',
+        allowedWorkspaceIds: this.requireScope(allowedWorkspaceIds),
+        ...(query.q ? { q: query.q } : {}),
+        limit: query.limit,
+        offset: query.offset,
+        ...(query.dataRevisionId ? { dataRevisionId: query.dataRevisionId } : {}),
+        ...(query.filters ? { filters: this.parseRecordFilters(query.filters) } : {}),
+      },
     );
   }
 
-  async getBoundRecords(modelId: string, actorUserId: string, limit: number, conceptId?: string, dataRevisionId?: string): Promise<RuntimeBoundRecords> {
-    const concept = conceptId ? `&conceptId=${encodeURIComponent(conceptId)}` : '';
-    const revision = dataRevisionId ? `&dataRevisionId=${encodeURIComponent(dataRevisionId)}` : '';
-    return this.get<RuntimeBoundRecords>(
-      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/records?environment=draft&limit=${limit}${concept}${revision}`,
+  async getBoundRecords(modelId: string, actorUserId: string, limit: number, allowedWorkspaceIds: string[],
+    conceptId?: string, dataRevisionId?: string): Promise<RuntimeBoundRecords> {
+    return this.readPost<RuntimeBoundRecords>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/records/read`,
       actorUserId,
+      {
+        actorUserId,
+        environment: 'draft',
+        allowedWorkspaceIds: this.requireScope(allowedWorkspaceIds),
+        limit,
+        ...(conceptId ? { conceptId } : {}),
+        ...(dataRevisionId ? { dataRevisionId } : {}),
+      },
     );
   }
 
-  async getBoundGraph(modelId: string, actorUserId: string, dataRevisionId?: string): Promise<RuntimeBoundGraph> {
-    const revision = dataRevisionId ? `&dataRevisionId=${encodeURIComponent(dataRevisionId)}` : '';
-    return this.get<RuntimeBoundGraph>(
-      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/graph?environment=draft${revision}`,
+  async getBoundGraph(modelId: string, actorUserId: string, dataRevisionId: string | undefined,
+    allowedWorkspaceIds: string[]): Promise<RuntimeBoundGraph> {
+    return this.readPost<RuntimeBoundGraph>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/graph/read`,
       actorUserId,
+      {
+        actorUserId,
+        environment: 'draft',
+        allowedWorkspaceIds: this.requireScope(allowedWorkspaceIds),
+        ...(dataRevisionId ? { dataRevisionId } : {}),
+      },
     );
+  }
+
+  /** Per-field record filters travel as a JSON object; invalid ones are refused here. */
+  private parseRecordFilters(raw: string): Record<string, string> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.length <= 8000 ? raw : '');
+    } catch {
+      parsed = undefined;
+    }
+    const entries = Object.entries(parsed ?? {});
+    if (!(parsed instanceof Object) || Array.isArray(parsed) || entries.length > 30
+      || entries.some(([key, value]) => !key || key.length > 200 || typeof value !== 'string' || value.length > 200)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'These record filters cannot be used');
+    }
+    return Object.fromEntries(entries.filter(([, value]) => value.trim().length > 0));
   }
 
   async mirrorSpecification(command: {

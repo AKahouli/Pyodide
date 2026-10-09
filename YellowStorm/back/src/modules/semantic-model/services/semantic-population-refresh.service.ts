@@ -1,6 +1,6 @@
 import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions, mappingFileCap, mappingRecordCap } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
@@ -16,6 +16,7 @@ import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
 import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticGraphSearchService } from './semantic-graph-search.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 import { graphExport, graphFieldKey, graphOutline, graphRecordValues, searchGraphValues, type ExportFieldChoice } from '../domain/graph-outline';
@@ -106,6 +107,7 @@ export class SemanticPopulationRefreshService {
     private readonly aiExtractionAgent: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
     private readonly derivedSources?: SemanticDerivedSourceService,
+    @Optional() private readonly graphSearch?: SemanticGraphSearchService,
   ) {}
 
   private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
@@ -210,6 +212,7 @@ export class SemanticPopulationRefreshService {
     let page;
     try {
       page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
+        await this.allowedWorkspaces(userId, model.id),
         { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId, filters: query.filters || undefined });
     } catch (error) {
       if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
@@ -240,7 +243,8 @@ export class SemanticPopulationRefreshService {
   async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
+    const records = await this.runtime.getBoundRecords(model.id, userId, limit,
+      await this.allowedWorkspaces(userId, model.id), conceptId, dataRevisionId);
     const entities = records.entities;
     const [nodes, sources] = await Promise.all([
       this.database.query<NodeTypeRow>(
@@ -538,10 +542,24 @@ export class SemanticPopulationRefreshService {
     };
   }
 
+  /**
+   * The workspaces the person may read among this model's sources, computed on every call:
+   * the runtime hides any record read from a workspace outside it (and never answers an
+   * unscoped read). Delegated to the one authorization policy of the graph reads. Missing
+   * authorization wiring fails closed: no scope, no data.
+   */
+  private allowedWorkspaces(userId: string, modelId: string): Promise<string[]> {
+    if (!this.graphSearch) {
+      return Promise.reject(new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Source authorization is not available'));
+    }
+    return this.graphSearch.allowedWorkspaceIds(userId, modelId);
+  }
+
   async boundGraph(userId: string, modelId: string, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId);
+    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId,
+      await this.allowedWorkspaces(userId, model.id));
     const conceptById = new Map(graph.specification.concepts.map((concept) => [concept.conceptId, concept]));
     const relationLabels = new Map(graph.specification.relations.map((relation) => [relation.relationId, relation.label]));
     return {
@@ -571,20 +589,24 @@ export class SemanticPopulationRefreshService {
     };
   }
 
-  /** The runtime graph read lately, per person, model and revision: the outline, a record and a search read it in turn. */
+  /** The scoped graph read lately, per person, model, revision and allowed workspaces: the outline, a record and a search read it in turn. */
   private readonly graphCache = new Map<string, { at: number; graph: Promise<RuntimeBoundGraph> }>();
 
   private async cachedGraph(userId: string, modelId: string, roles: Array<'owner' | 'editor' | 'viewer'>, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, roles);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const key = `${userId}|${model.id}|${dataRevisionId ?? 'current'}`;
+    // The scope is computed before any cache lookup, so a revoked workspace leaves the cache on
+    // its next read: the key changes and the scoped read runs again.
+    const allowedWorkspaceIds = await this.allowedWorkspaces(userId, model.id);
+    const scopeKey = JSON.stringify([...allowedWorkspaceIds].sort());
+    const key = `${userId}|${model.id}|${dataRevisionId ?? 'current'}|${scopeKey}`;
     // A named revision never changes; "the current one" may move on, so it is read again sooner.
     const ttl = dataRevisionId ? 5 * 60_000 : 30_000;
     const now = Date.now();
     for (const [cached, entry] of this.graphCache) if (now - entry.at > 5 * 60_000) this.graphCache.delete(cached);
     let entry = this.graphCache.get(key);
     if (!entry || now - entry.at > ttl) {
-      entry = { at: now, graph: this.runtime.getBoundGraph(model.id, userId, dataRevisionId) };
+      entry = { at: now, graph: this.runtime.getBoundGraph(model.id, userId, dataRevisionId, allowedWorkspaceIds) };
       entry.graph.catch(() => this.graphCache.delete(key));
       this.graphCache.delete(key);
       this.graphCache.set(key, entry);
@@ -765,6 +787,7 @@ export class SemanticPopulationRefreshService {
     const saveLimits: Partial<RunLimits> = {
       ...(saveBatchRows !== undefined ? { saveBatchRows } : {}),
       ...(saveStatementSeconds !== undefined ? { saveStatementSeconds } : {}),
+      ...(projectionBatchRows !== undefined ? { projectionBatchRows } : {}),
       ...(embeddingBatchSize !== undefined ? { embeddingBatchSize } : {}),
       ...(embeddingParallelCalls !== undefined ? { embeddingParallelCalls } : {}),
       ...(embeddingTimeoutSeconds !== undefined ? { embeddingTimeoutSeconds } : {}),
@@ -787,7 +810,6 @@ export class SemanticPopulationRefreshService {
     const relations: RelationSpec[] = [];
     const relationBindings: { relationId: string; referenceField: string; targetField: string }[] = [];
     for (const relation of relationRows.filter(
-      ...(projectionBatchRows !== undefined ? { projectionBatchRows } : {}),
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {
       const rule = relationRules.find((candidate) => candidate.relationId === relation.id);
@@ -1015,7 +1037,8 @@ export class SemanticPopulationRefreshService {
       throw error;
     }
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
+    const active = await this.runtime.getBoundRecords(model.id, userId, 1,
+      await this.allowedWorkspaces(userId, model.id)).catch(() => null);
     const waiting = waitingFiles > 0 ? { waitingFiles } : {};
     if (!active) return { state: 'never_run', ...waiting };
     return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated', ...waiting };

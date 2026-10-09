@@ -4,6 +4,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { checkDerivedSource, type DerivedSource } from '../domain/semantic-derived-source.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticBusinessTrustService } from './semantic-business-trust.service';
+import { SemanticGraphSearchService } from './semantic-graph-search.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
@@ -62,6 +63,7 @@ export class SemanticReviewQueueService {
     private readonly trust: SemanticBusinessTrustService,
     private readonly runtime: SemanticRuntimeClientService,
     @Optional() private readonly refresh?: SemanticPopulationRefreshService,
+    @Optional() private readonly graphSearch?: SemanticGraphSearchService,
   ) {}
 
   async reviewQueue(userId: string, modelId: string) {
@@ -402,8 +404,11 @@ export class SemanticReviewQueueService {
    * Absent when nothing has been prepared yet.
    */
   private async dataGaps(userId: string, modelId: string): Promise<ReviewQueueItem[]> {
+    // No source-authorization wiring, no data read: the gaps would be someone else's counts.
+    if (!this.graphSearch) return [];
     try {
-      const records = await this.runtime.getBoundRecords(modelId, userId, 1);
+      const records = await this.runtime.getBoundRecords(modelId, userId, 1,
+        await this.graphSearch.allowedWorkspaceIds(userId, modelId));
       const concepts = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
       // The prepared data names a link by its key ("repond_a"); a person reads its label ("répond à").
       const relationLabels = await this.database.query<{ id: string; label: string }>(

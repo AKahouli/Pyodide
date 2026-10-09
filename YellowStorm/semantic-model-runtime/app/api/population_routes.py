@@ -10,10 +10,10 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Header, HTTPException, Path, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
@@ -121,87 +121,145 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
-def _record_filters(raw: str | None) -> dict[str, str]:
+class _WorkspaceScoped(BaseModel):
+    """Body of a workspace-scoped read. NestJS computes the scope from the actor's current
+    workspace access; a missing, null or oversized one is a validation failure — never
+    "all workspaces". An empty list is honest: only source-free (manual) records show."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    environment: Literal["draft"] = "draft"
+    data_revision_id: str | None = Field(default=None, alias="dataRevisionId", max_length=200)
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=2000)
+
+    @field_validator("allowed_workspace_ids")
+    @classmethod
+    def _bounded_ids(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 200 for item in value):
+            raise ValueError("workspace id must be 1..200 characters")
+        return value
+
+
+class ScopedGraphRead(_WorkspaceScoped):
+    pass
+
+
+class ScopedRecordsRead(_WorkspaceScoped):
+    limit: int = Field(25, ge=1, le=50)
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
+
+
+class ScopedConceptRecordsRead(_WorkspaceScoped):
+    q: str | None = Field(default=None, max_length=200)
+    limit: int = Field(50, ge=1, le=200)
+    offset: int = Field(0, ge=0, le=1_000_000)
+    filters: dict[str, str] | None = None
+
+
+def _bounded_record_filters(filters: dict[str, str] | None) -> dict[str, str]:
     """Per-field filters of the records table: at most 30 fields, each text at most 200 characters."""
-    if not raw:
-        return {}
-    import json
-
-    try:
-        parsed = json.loads(raw) if len(raw) <= 8000 else None
-    except ValueError:
-        parsed = None
-    if (not isinstance(parsed, dict) or len(parsed) > 30
+    filters = filters or {}
+    if (len(filters) > 30
             or any(not isinstance(key, str) or not key or len(key) > 200
-                   or not isinstance(value, str) or len(value) > 200 for key, value in parsed.items())):
+                   or not isinstance(value, str) or len(value) > 200
+                   for key, value in filters.items())):
         raise HTTPException(status_code=422, detail="invalid_record_filters")
-    return {key: value for key, value in parsed.items() if value.strip()}
+    return {key: value for key, value in filters.items() if value.strip()}
 
 
-@router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_200_OK)
-async def search_concept_records(model_id: str, concept_id: str, request: Request,
-                                 environment: str = "draft", q: str | None = None,
-                                 limit: int = 50, offset: int = 0,
-                                 data_revision_id: str | None = Query(default=None,
-                                                                      alias="dataRevisionId"),
-                                 filters: str | None = None,
-                                 ) -> dict[str, object]:
-    """Browse one concept's records in the data in use: searchable, filterable per field
-    (``filters`` is a JSON object of field to text), a page at a time."""
-    if (environment != "draft" or limit < 1 or limit > 200 or offset < 0 or offset > 1_000_000
-            or (q is not None and len(q) > 200)):
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
-    field_filters = _record_filters(filters)
-    pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
+async def _pinned_draft_revision(pool: Any, model_id: str, data_revision_id: str | None) -> dict[str, Any]:
+    """The draft binding, pinned to the asked revision when one is named (409 when it moved)."""
+    binding = await store.get_active_binding(pool, model_id, "draft")
     if binding is None:
         raise HTTPException(status_code=404, detail="active_binding_not_found")
-    revision_id = binding["data_revision_id"]
-    if data_revision_id is not None and data_revision_id != revision_id:
+    if data_revision_id is not None and data_revision_id != binding["data_revision_id"]:
         raise HTTPException(status_code=409, detail="active_binding_changed")
+    return binding
+
+
+def _scoped_gaps(gaps: Any, allowed: list[str], hidden: set[str]) -> Any:
+    """Gaps narrowed to the records this scope may see. The stored groups count the whole
+    revision, so with anything hidden they would leak hidden record counts: the samples stay
+    (scoped), the counts go. With nothing hidden the stored groups are already this scope's."""
+    if not isinstance(gaps, dict):
+        gaps = None
+    gaps = gaps or {"missingValues": [], "unresolvedLinks": [], "other": []}
+    if not hidden:
+        return gaps
+    workspaces = set(allowed)
+
+    def sample_visible(sample: dict[str, Any]) -> bool:
+        workspace_id = (sample.get("asset") or {}).get("workspaceId")
+        return workspace_id is None or workspace_id in workspaces
+
+    return {
+        "missingValues": [], "unresolvedLinks": [], "other": [],
+        "rowSamples": [sample for sample in (gaps.get("rowSamples") or [])
+                       if isinstance(sample, dict) and sample_visible(sample)],
+        "linkSamples": [sample for sample in (gaps.get("linkSamples") or [])
+                        if isinstance(sample, dict) and sample.get("sourceEntityId") not in hidden],
+    }
+
+
+@router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_410_GONE)
+async def search_concept_records_gone(model_id: str, concept_id: str) -> dict[str, object]:
+    """Removed: it returned every record of the concept, whatever the caller may read.
+    The workspace-scoped read is POST .../records/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/concepts/{concept_id}/records/read", status_code=status.HTTP_200_OK)
+async def search_scoped_concept_records(model_id: str, concept_id: str, command: ScopedConceptRecordsRead,
+                                        request: Request) -> dict[str, object]:
+    """Browse one concept's records in the data in use, narrowed to the workspaces NestJS
+    authorized for this actor: searchable, filterable per field, a page at a time."""
+    field_filters = _bounded_record_filters(command.filters)
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     total, entities = await store.search_revision_entities(
-        pool, revision_id, concept_id, query=q, limit=limit, offset=offset, filters=field_filters)
+        pool, binding["data_revision_id"], concept_id, query=command.q, limit=command.limit,
+        offset=command.offset, filters=field_filters,
+        allowed_workspace_ids=command.allowed_workspace_ids)
+    origins = await store.list_entity_origins(pool, binding["data_revision_id"],
+                                              sorted(entity["entityId"] for entity in entities))
+    for entity in entities:
+        entity["origins"] = origins.get(entity["entityId"], {})
+    return {"modelId": model_id, "conceptId": concept_id, "dataRevisionId": binding["data_revision_id"],
+            "total": total, "offset": command.offset, "limit": command.limit, "entities": entities}
+
+
+@router.get("/models/{model_id}/records", status_code=status.HTTP_410_GONE)
+async def read_bound_records_gone(model_id: str) -> dict[str, object]:
+    """Removed: it returned every record, whatever the caller may read.
+    The workspace-scoped read is POST .../records/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/records/read", status_code=status.HTTP_200_OK)
+async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request: Request) -> dict[str, object]:
+    """The data in use, narrowed to the workspaces NestJS authorized for this actor: the page's
+    records, the links whose two ends are visible, visible counts, and gaps of visible records."""
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
+    revision_id = binding["data_revision_id"]
+    allowed = command.allowed_workspace_ids
+    _visible, hidden = await store.split_entity_visibility(pool, revision_id, allowed)
+    entities = await store.list_revision_entities_visible(
+        pool, revision_id, command.limit, command.concept_id, allowed)
     origins = await store.list_entity_origins(pool, revision_id,
                                               sorted(entity["entityId"] for entity in entities))
     for entity in entities:
         entity["origins"] = origins.get(entity["entityId"], {})
-    return {"modelId": model_id, "conceptId": concept_id, "dataRevisionId": revision_id,
-            "total": total, "offset": offset, "limit": limit, "entities": entities}
-
-
-@router.get("/models/{model_id}/records", status_code=status.HTTP_200_OK)
-async def read_bound_records(model_id: str, request: Request, environment: str = "draft",
-                             limit: int = 25,
-                             concept_id: str | None = Query(default=None, alias="conceptId"),
-                             data_revision_id: str | None = Query(default=None,
-                                                                  alias="dataRevisionId"),
-                             ) -> dict[str, object]:
-    if environment != "draft" or limit < 1 or limit > 50:
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
-    pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
-    if binding is None:
-        raise HTTPException(status_code=404, detail="active_binding_not_found")
-    revision_id = binding["data_revision_id"]
-    if data_revision_id is not None and data_revision_id != revision_id:
-        raise HTTPException(status_code=409, detail="active_binding_changed")
-    counts = await store.count_revision_rows(pool, revision_id)
-    # Records per concept, over the whole revision: the entity list below is only a page of it.
-    concept_counts = await store.count_revision_entities_by_concept(pool, revision_id)
-    entities = await store.list_revision_entities(pool, revision_id, limit, concept_id)
-    entity_ids = {entity["entityId"] for entity in entities}
-    origins = await store.list_entity_origins(pool, revision_id, sorted(entity_ids))
-    for entity in entities:
-        entity["origins"] = origins.get(entity["entityId"], {})
+    counts = await store.count_revision_rows_visible(pool, revision_id, allowed)
+    # Records per concept over the visible records: the entity list below is only a page of it.
+    concept_counts = await store.count_revision_entities_by_concept_visible(pool, revision_id, allowed)
+    relationships = await store.list_revision_relationships_visible(pool, revision_id, allowed)
     revision = await store.get_data_revision(pool, revision_id)
     coverage = (revision or {}).get("coverage") or {}
     if isinstance(coverage, str):
         coverage = json.loads(coverage)
-    gaps = coverage.get("gaps") if isinstance(coverage, dict) else None
-    relationships = [relationship for relationship in
-                     await store.list_revision_relationships(pool, revision_id)
-                     if relationship["sourceEntityId"] in entity_ids
-                     and relationship["targetEntityId"] in entity_ids]
+    gaps = _scoped_gaps(coverage.get("gaps") if isinstance(coverage, dict) else None, allowed, hidden)
     specification = await store.get_revision_specification(pool, revision_id)
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
@@ -210,28 +268,37 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
             "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
             # Lets the caller tell whether this data was built from the model as it is now.
             "executionFingerprint": (revision or {}).get("execution_fingerprint"),
-            "gaps": gaps or {"missingValues": [], "unresolvedLinks": [], "other": []},
+            "gaps": gaps,
             "specification": specification}
 
 
-@router.get("/models/{model_id}/graph", status_code=status.HTTP_200_OK)
-async def read_bound_graph(model_id: str, request: Request,
-                           environment: str = "draft",
-                           data_revision_id: str | None = Query(default=None,
-                                                                alias="dataRevisionId"),
-                           ) -> dict[str, object]:
-    if environment != "draft":
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
+@router.get("/models/{model_id}/graph", status_code=status.HTTP_410_GONE)
+async def read_bound_graph_gone(model_id: str) -> dict[str, object]:
+    """Removed: it returned the whole graph, whatever the caller may read.
+    The workspace-scoped read is POST .../graph/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/graph/read", status_code=status.HTTP_200_OK)
+async def read_scoped_graph(model_id: str, command: ScopedGraphRead, request: Request) -> dict[str, object]:
+    """The draft graph, narrowed to the workspaces NestJS authorized for this actor: a node
+    shows only when every workspace its record was read from is in the scope, and a link only
+    when both of its ends do. Provenance is read from the canonical revision rows, never from
+    the graph copy, and a record the store cannot vouch for stays hidden."""
     pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
-    if binding is None:
-        raise HTTPException(status_code=404, detail="active_binding_not_found")
-    if data_revision_id is not None and data_revision_id != binding["data_revision_id"]:
-        raise HTTPException(status_code=409, detail="active_binding_changed")
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     try:
         graph = await read_projection_graph(_age_pool(request), binding["projection_ref"])
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
+    visible, _hidden = await store.split_entity_visibility(
+        pool, binding["data_revision_id"], command.allowed_workspace_ids)
+    if visible != {node["id"] for node in graph["nodes"]}:
+        graph = {
+            "nodes": [node for node in graph["nodes"] if node["id"] in visible],
+            "edges": [edge for edge in graph["edges"]
+                      if edge["sourceId"] in visible and edge["targetId"] in visible],
+        }
     specification = await store.get_revision_specification(pool, binding["data_revision_id"])
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")

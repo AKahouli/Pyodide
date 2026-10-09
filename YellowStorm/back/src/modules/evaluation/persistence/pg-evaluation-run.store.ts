@@ -1,5 +1,5 @@
 import { Inject } from '@nestjs/common';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { isObjectId, newObjectId, normalizeObjectId, stripNul } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
@@ -59,28 +59,32 @@ export class PgEvaluationRunStore implements EvaluationRunStore {
     return toRecord(row);
   }
 
-  async findById(id: string): Promise<EvaluationRecord | null> {
-    if (!isObjectId(id)) return null;
+  /** Null when the run does not exist OR was created by someone else — the two are indistinguishable. */
+  async findById(id: string, userId: string): Promise<EvaluationRecord | null> {
+    if (!isObjectId(id) || !isObjectId(userId)) return null;
     const [row] = await this.q
       .select()
       .from(schema.agentEvaluationEvaluations)
-      .where(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)))
+      .where(and(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)),
+        eq(schema.agentEvaluationEvaluations.createdBy, normalizeObjectId(userId))))
       .limit(1);
     return row ? toRecord(row) : null;
   }
 
-  async findByAgent(agentId: string): Promise<EvaluationRecord[]> {
-    if (!isObjectId(agentId)) return [];
+  /** The creator's own runs for an agent, newest first — another manager's runs stay hidden. */
+  async findByAgent(agentId: string, userId: string): Promise<EvaluationRecord[]> {
+    if (!isObjectId(agentId) || !isObjectId(userId)) return [];
     const rows = await this.q
       .select()
       .from(schema.agentEvaluationEvaluations)
-      .where(eq(schema.agentEvaluationEvaluations.agentId, normalizeObjectId(agentId)))
+      .where(and(eq(schema.agentEvaluationEvaluations.agentId, normalizeObjectId(agentId)),
+        eq(schema.agentEvaluationEvaluations.createdBy, normalizeObjectId(userId))))
       .orderBy(desc(schema.agentEvaluationEvaluations.createdAt), desc(schema.agentEvaluationEvaluations.id));
     return rows.map(toRecord);
   }
 
-  async appendRunResults(id: string, results: EvaluationIteration[]): Promise<void> {
-    if (!isObjectId(id)) return;
+  async appendRunResults(id: string, userId: string, results: EvaluationIteration[]): Promise<void> {
+    if (!isObjectId(id) || !isObjectId(userId)) return;
     const t = schema.agentEvaluationEvaluations;
     await this.q
       .update(t)
@@ -90,15 +94,16 @@ export class PgEvaluationRunStore implements EvaluationRunStore {
         completedRuns: sql`${t.completedRuns} + 1`,
         updatedAt: new Date(),
       })
-      .where(eq(t.id, normalizeObjectId(id)));
+      .where(and(eq(t.id, normalizeObjectId(id)), eq(t.createdBy, normalizeObjectId(userId))));
   }
 
   async finalize(
     id: string,
+    userId: string,
     status: Exclude<EvaluationRunStatus, 'processing'>,
     error?: string,
   ): Promise<EvaluationRecord | null> {
-    if (!isObjectId(id)) return null;
+    if (!isObjectId(id) || !isObjectId(userId)) return null;
     const [row] = await this.q
       .update(schema.agentEvaluationEvaluations)
       .set({
@@ -107,15 +112,17 @@ export class PgEvaluationRunStore implements EvaluationRunStore {
         ...(error ? { error: stripNul(error) } : {}),
         updatedAt: new Date(),
       })
-      .where(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)))
+      .where(and(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)),
+        eq(schema.agentEvaluationEvaluations.createdBy, normalizeObjectId(userId))))
       .returning();
     return row ? toRecord(row) : null;
   }
 
-  async deleteById(id: string): Promise<void> {
-    if (!isObjectId(id)) return;
+  async deleteById(id: string, userId: string): Promise<void> {
+    if (!isObjectId(id) || !isObjectId(userId)) return;
     await this.q
       .delete(schema.agentEvaluationEvaluations)
-      .where(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)));
+      .where(and(eq(schema.agentEvaluationEvaluations.id, normalizeObjectId(id)),
+        eq(schema.agentEvaluationEvaluations.createdBy, normalizeObjectId(userId))));
   }
 }

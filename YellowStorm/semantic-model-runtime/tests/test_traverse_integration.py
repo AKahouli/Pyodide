@@ -189,7 +189,8 @@ async def test_conditions_at_each_step_and_on_the_records_reached(pool) -> None:
     # Alice sent M1 only (she received M3): its penalty fact. Carol sent M3 through a hidden participation.
     assert names(result) == ["F1"] and result["total"] == 1
     everyone = await post(pool, "traverse", {"start": {"concept": "Correspondant", "filters": [
-        {"field": "Domaine", "op": "eq", "value": "acme.com"}]}, "steps": steps, "allowedWorkspaceIds": None})
+        {"field": "Domaine", "op": "eq", "value": "acme.com"}]}, "steps": steps,
+        "allowedWorkspaceIds": ["ws1", "ws2"]})
     assert names(everyone) == ["F1", "F4"]
     started = await post(pool, "traverse", {"start": {"concept": "Correspondant", "recordIds": ["corr:bob"]},
                                             "steps": TO_FACTS, "limit": 0})
@@ -268,7 +269,7 @@ async def test_the_shortest_chains_between_two_records(pool) -> None:  # type: i
                                               "relations": ["désigne", "a pour participant"]}, age)
         assert hidden["status"] == "not_connected" and hidden["truncated"] is False
         seen = await post(pool, "connect", {"fromEntityId": "corr:carol", "toEntityId": "msg:3",
-                                            "allowedWorkspaceIds": None}, age)
+                                            "allowedWorkspaceIds": ["ws1", "ws2"]}, age)
         assert seen["status"] == "connected" and seen["links"] == 2
         assert [step["relationKey"] for step in seen["paths"][0]["steps"]] == ["designates", "has_participant"]
     finally:
