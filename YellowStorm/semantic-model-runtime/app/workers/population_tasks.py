@@ -1186,7 +1186,7 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
     import asyncpg
     import os
 
-    from app.population.age_projection import finalize_draft_revision
+    from app.population.age_projection import finalize_draft_revision, normalize_graph_exposure
 
     database_url = os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL")
     if not database_url:
@@ -1199,9 +1199,13 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
                          "idle_in_transaction_session_timeout": "30s"})
     try:
         # The graph is written on the AGE connection; progress reports on the worker's own pool.
+        payload = command_dump.get("payload") or {}
+        # Absent (an older caller): the graph keeps the exposure it has; present, even empty, it is the choice.
+        exposure = (normalize_graph_exposure(payload.get("graphExposure"))
+                    if "graphExposure" in payload and payload["graphExposure"] is not None else None)
         return await finalize_draft_revision(
             pool, age_pool, revision_id, progress.advance if progress is not None else None,
-            batch_rows=run_limits(command_dump.get("payload"))["projectionBatchRows"])
+            batch_rows=run_limits(payload)["projectionBatchRows"], exposure=exposure)
     finally:
         await age_pool.close()
 

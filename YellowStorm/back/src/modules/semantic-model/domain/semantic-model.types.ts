@@ -28,6 +28,13 @@ export interface AttributeDefinition {
   aliases?: string[];
   /** This field's own search passage settings (graph search); anything left out uses the admin's. */
   searchIndex?: FieldSearchIndexSettings;
+  /** How the graph shows this field: `expose: false` leaves it out of the graph (default: shown), `maxChars` cuts a long text. Records, search and the records tables are not affected. */
+  graph?: FieldGraphSettings;
+}
+
+export interface FieldGraphSettings {
+  expose?: boolean;
+  maxChars?: number;
 }
 
 export interface SemanticNodeType {

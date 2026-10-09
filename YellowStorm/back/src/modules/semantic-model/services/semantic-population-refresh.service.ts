@@ -11,6 +11,7 @@ import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesA
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { graphExposureOf } from '../domain/semantic-graph-exposure';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
@@ -995,7 +996,9 @@ export class SemanticPopulationRefreshService {
       ...(derivations.length ? { derivations } : {}),
       ...(Object.keys(limits).length ? { limits } : {}),
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles };
+    // The fields each concept shows in the graph: it shapes the graph only, so it is in neither the specification nor the fingerprint.
+    const graphExposure = graphExposureOf(nodes);
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles, graphExposure };
   }
 
   /**
@@ -1033,7 +1036,7 @@ export class SemanticPopulationRefreshService {
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles, graphExposure }
       = await this.planRefresh(userId, modelId, input, 'run');
     // Forgotten only once the run is known to start, so a refused run keeps the readings.
     const rereadAt = input.rereadDocuments
@@ -1063,6 +1066,9 @@ export class SemanticPopulationRefreshService {
         sources: runtimeSources,
         relationBindings,
         ...(derivations.length ? { derivations } : {}),
+        // Only present when a concept hides or cuts a field, so other models keep their key. The runtime
+        // builds the graph with it, so a run asked with another exposure is another run.
+        ...(Object.keys(graphExposure).length ? { graphExposure } : {}),
         // The same run again must not be taken for the one already done: its readings are gone.
         ...(rereadAt ? { rereadAt } : {}),
       }))
@@ -1083,6 +1089,8 @@ export class SemanticPopulationRefreshService {
         ...(derivations.length ? { derivations } : {}),
         aiExtraction,
         ...(Object.keys(limits).length || Object.keys(saveLimits).length ? { limits: { ...limits, ...saveLimits } } : {}),
+        // Always sent ({} shows every field), so a graph built with an exposure is rebuilt when it is removed.
+        graphExposure,
       },
     }, idempotencyKey);
     return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };
@@ -1108,10 +1116,19 @@ export class SemanticPopulationRefreshService {
     return this.runtime.getGraphStatus(model.id, userId);
   }
 
-  /** Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made. */
+  /**
+   * Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made.
+   * The graphs show the fields the draft's concepts expose (see {@link graphExposureOf}).
+   */
   async reprojectGraphs(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor']);
-    return this.runtime.reprojectModelGraphs(model.id, userId);
+    const nodes = model.currentDraftVersionId
+      ? (await this.database.query<NodeTypeRow>(
+        'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        [model.currentDraftVersionId],
+      )).rows
+      : [];
+    return this.runtime.reprojectModelGraphs(model.id, userId, graphExposureOf(nodes));
   }
 
   /**

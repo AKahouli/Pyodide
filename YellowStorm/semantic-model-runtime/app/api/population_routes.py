@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Path, Request, Response, status
+from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.indexer import request_index_quietly
@@ -27,8 +27,9 @@ from app.population.age_projection import (ProjectionUnavailable, projection_gra
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
                                              graph_counts, is_typed_projection,
-                                             read_projection_graph, read_projection_nodes,
-                                             reproject_revision)
+                                             normalize_graph_exposure, read_projection_graph,
+                                             read_projection_nodes, reproject_revision,
+                                             restore_hidden_values, stored_graph_exposure)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.population.model_check import check_model
@@ -209,6 +210,15 @@ async def _pinned_draft_revision(pool: Any, model_id: str, data_revision_id: str
     return binding
 
 
+async def _restore_graph_values(pool: Any, binding: dict[str, Any], nodes: list[dict[str, Any]]) -> None:
+    """A graph built with hidden or cut fields lacks their values: give them back to the nodes read
+    from it, from the records stored with the revision (the same values the records table shows).
+    ``binding`` is the draft binding read, which carries the exposure its graph was built with."""
+    exposure = stored_graph_exposure({"graphExposure": binding.get("graph_exposure")})
+    if exposure:
+        await restore_hidden_values(pool, binding["data_revision_id"], nodes, exposure)
+
+
 def _scoped_gaps(gaps: Any, allowed: list[str], hidden: set[str]) -> Any:
     """Gaps narrowed to the records this scope may see. The stored groups count the whole
     revision, so with anything hidden they would leak hidden record counts: the samples stay
@@ -330,6 +340,7 @@ async def read_scoped_graph(model_id: str, command: ScopedGraphRead, request: Re
             "edges": [edge for edge in graph["edges"]
                       if edge["sourceId"] in visible and edge["targetId"] in visible],
         }
+    await _restore_graph_values(pool, binding, graph["nodes"])
     specification = await store.get_revision_specification(pool, binding["data_revision_id"])
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
@@ -371,6 +382,7 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
                                             [record_id for record_id, _concept in records])
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
+    await _restore_graph_values(pool, binding, nodes)
     shown = {node["id"] for node in nodes}
     edges = [{"id": f"{link['relationId']}:{link['sourceId']}:{link['targetId']}", "label": link["relationId"],
               "sourceId": link["sourceId"], "targetId": link["targetId"],
@@ -552,11 +564,19 @@ async def read_graph_status(model_id: str, request: Request) -> dict[str, object
 
 
 @router.post("/models/{model_id}/reproject", status_code=status.HTTP_200_OK)
-async def reproject_model_graphs(model_id: str, request: Request) -> dict[str, object]:
+async def reproject_model_graphs(model_id: str, request: Request,
+                                 body: dict[str, Any] | None = Body(default=None)) -> dict[str, object]:
     """Rebuild the graphs of the data a model serves from its stored records and links: no
-    source is read again and no record changes. Refused while a build runs."""
+    source is read again and no record changes. Refused while a build runs. ``graphExposure`` in the
+    body (see :func:`normalize_graph_exposure`) is the fields each concept shows in the rebuilt
+    graphs; without it they keep the exposure they have."""
     if not model_id or len(model_id) > 200:
         raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        exposure = (normalize_graph_exposure(body["graphExposure"])
+                    if isinstance(body, dict) and body.get("graphExposure") is not None else None)
+    except PopulationError as exc:
+        raise HTTPException(status_code=422, detail=exc.code) from exc
     pool = _population_pool(request)
     age_pool = _age_pool(request)
     if await store.population_running(pool, model_id):
@@ -564,7 +584,7 @@ async def reproject_model_graphs(model_id: str, request: Request) -> dict[str, o
     rebuilt: list[dict[str, Any]] = []
     for revision_id in await store.served_revisions(pool, model_id):
         try:
-            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True))
+            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True, exposure=exposure))
         except PopulationError as exc:
             raise HTTPException(status_code=409, detail=exc.code) from exc
         except ProjectionUnavailable as exc:

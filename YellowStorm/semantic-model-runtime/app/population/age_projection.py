@@ -13,6 +13,13 @@ so visibility can be checked inside a Cypher query. Graphs built before
 (``age:v1:``) hold ``Entity`` vertices and ``RELATED_TO`` edges; readers match
 without labels so both serve until ``reproject_revision`` rebuilds them.
 
+Which fields a vertex carries is a per-concept choice (``graph exposure``, see
+``normalize_graph_exposure``): a hidden field is not stored in the graph, a long text can be cut. The
+choice is no part of the data revision (records, search index and record tables read the runtime
+database and never change); it is stored with the revision and applied when its graph is built, so
+changing it rebuilds the graph only. Readers of a vertex's properties give a hidden field its value
+back from the stored records (``restore_hidden_values``).
+
 Business labels render from the specification, never from mutable user labels
 in executable SQL or Cypher. Graph and label names are server-generated and checked; values
 travel as bound parameters when loading and as escaped literals in allowlisted read queries (P6.19).
@@ -165,18 +172,86 @@ def _workspaces(entity: dict[str, Any]) -> list[str]:
                    for source in sources if ((source or {}).get("assetRef") or {}).get("workspaceId")})
 
 
+MAX_EXPOSURE_CONCEPTS = 500
+MAX_EXPOSURE_FIELDS = 500
+MAX_FIELD_CHARS = 100_000
+# Names the vertex always carries, whatever the exposure: its id, concept, label and workspaces.
+PROTECTED_PROPERTIES = frozenset({"record_id", "concept_id", "label", WORKSPACES_PROPERTY})
+
+
+def normalize_graph_exposure(raw: Any) -> dict[str, dict[str, Any]]:
+    """The fields each concept shows in the graph, in the one shape stored with a revision.
+
+    ``{conceptId: {"hidden": [field, ...], "maxChars": {field: n}}}``: a concept absent from it, a
+    field not listed, shows as before. Empty entries are dropped, so "everything shown" is ``{}``.
+    Raises ``PopulationError("invalid_graph_exposure")`` for any other shape."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_EXPOSURE_CONCEPTS:
+        raise PopulationError("invalid_graph_exposure")
+    result: dict[str, dict[str, Any]] = {}
+    for concept_id, rule in raw.items():
+        if not isinstance(concept_id, str) or not concept_id or not isinstance(rule, dict):
+            raise PopulationError("invalid_graph_exposure")
+        hidden = rule.get("hidden", [])
+        limits = rule.get("maxChars", {})
+        if (not isinstance(hidden, list) or not isinstance(limits, dict)
+                or len(hidden) > MAX_EXPOSURE_FIELDS or len(limits) > MAX_EXPOSURE_FIELDS
+                or not all(isinstance(name, str) and name for name in hidden)
+                or not all(isinstance(name, str) and name and isinstance(value, int) and not isinstance(value, bool)
+                           and 1 <= value <= MAX_FIELD_CHARS for name, value in limits.items())):
+            raise PopulationError("invalid_graph_exposure")
+        entry: dict[str, Any] = {}
+        if hidden:
+            entry["hidden"] = sorted(set(hidden))
+        # A hidden field is not cut: it is not there.
+        kept = {name: value for name, value in limits.items() if name not in hidden}
+        if kept:
+            entry["maxChars"] = dict(sorted(kept.items()))
+        if entry:
+            result[concept_id] = entry
+    return result
+
+
+def stored_graph_exposure(coverage: Any) -> dict[str, dict[str, Any]]:
+    """The exposure a revision's graph was built with (from its coverage); ``{}`` when none was set."""
+    if isinstance(coverage, str):
+        try:
+            coverage = json.loads(coverage)
+        except ValueError:
+            return {}
+    value = coverage.get("graphExposure") if isinstance(coverage, dict) else None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
+    try:
+        return normalize_graph_exposure(value)
+    except PopulationError:
+        return {}
+
+
 def compile_projection(entities: list[dict[str, Any]],
-                       relationships: list[dict[str, Any]]) -> dict[str, Any]:
+                       relationships: list[dict[str, Any]],
+                       exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Compile canonical rows to a plan of vertices and edges (P6.17-P6.18). A record or
-    a link given twice is projected once."""
+    a link given twice is projected once. ``exposure`` (normalized) leaves out the fields a concept
+    hides and cuts the long texts it limits; the vertex keeps its id, concept, label and workspaces."""
+    exposure = exposure or {}
     vertices: dict[str, dict[str, Any]] = {}
     for entity in entities:
         properties: dict[str, Any] = {}
+        rule = exposure.get(entity.get("conceptId", "")) or {}
+        hidden = set(rule.get("hidden") or ())
+        limits = rule.get("maxChars") or {}
         # Key fields live in the identity, not the attributes; the graph shows them as
         # properties too, so a Customer node shows its customer number.
         for values in (entity.get("identity"), entity.get("attributes")):
             for key, value in (values or {}).items():
-                if isinstance(key, str) and key:
+                if isinstance(key, str) and key and key not in hidden:
+                    if key in limits and isinstance(value, str):
+                        value = value[:limits[key]]
                     properties[_safe_key(key)] = value
         # Set last: a field named like these never replaces the node's own id, label or workspaces.
         properties.update({"record_id": entity["entityId"], "concept_id": entity.get("conceptId", ""),
@@ -487,8 +562,12 @@ async def drop_projection(connection: Any, graph: str) -> None:
 
 async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
                                      report: StepReport | None = None,
-                                     batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
-    """Build, validate and record one immutable revision projection."""
+                                     batch_rows: int = DEFAULT_BATCH_ROWS,
+                                     exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build, validate and record one immutable revision projection.
+
+    ``exposure`` (normalized; ``None`` leaves it as stored, ``{}`` shows every field) is the fields each
+    concept shows. A graph already built with another exposure is rebuilt, from the stored records."""
     from app.persistence import population_store as store
 
     revision = await store.get_data_revision(pool, revision_id)
@@ -497,6 +576,8 @@ async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
     if revision["validation_state"] != "valid":
         raise PopulationError("revision_not_valid")
     if is_live_projection_ref(revision["projection_ref"]):
+        if exposure is not None and exposure != stored_graph_exposure(revision.get("coverage")):
+            return await reproject_revision(pool, age_pool, revision_id, force=True, exposure=exposure)
         return {"revisionId": revision_id, "projectionRef": revision["projection_ref"],
                 "reused": True}
     graph = projection_graph_name(revision_id)
@@ -510,14 +591,41 @@ async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
                 return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
                         "reused": True}
             return await _build_revision_projection(
-                pool, connection, revision_id, graph, current["projection_ref"], report, batch_rows)
+                pool, connection, revision_id, graph, current["projection_ref"], report, batch_rows,
+                exposure or {})
         finally:
             await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
 
 
+# Records whose stored values are read back at once.
+RESTORE_CHUNK = 5000
+
+
+async def restore_hidden_values(pool: Any, revision_id: str, nodes: list[dict[str, Any]],
+                                exposure: dict[str, dict[str, Any]]) -> None:
+    """Give the nodes read from a graph the fields that graph does not hold: the hidden ones and the
+    cut texts, with the value stored with the record. ``nodes`` are shaped like :func:`_node`'s (``label``
+    is the concept id); nothing is read when no concept limits its fields."""
+    from app.persistence import graph_search_store as search_store
+
+    limited = [node for node in nodes if exposure.get(node["label"])]
+    for start in range(0, len(limited), RESTORE_CHUNK):
+        chunk = limited[start:start + RESTORE_CHUNK]
+        stored = await search_store.entity_attributes(pool, revision_id, [node["id"] for node in chunk])
+        for node in chunk:
+            rule = exposure[node["label"]]
+            values = stored.get(node["id"]) or {}
+            for name in [*(rule.get("hidden") or ()), *(rule.get("maxChars") or {})]:
+                key = _safe_key(name)
+                value = _property_value(values.get(name))
+                if value is not None and key not in PROTECTED_PROPERTIES:
+                    node["properties"][key] = value
+
+
 async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, graph: str,
                                report: StepReport | None = None,
-                               batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, int]:
+                               batch_rows: int = DEFAULT_BATCH_ROWS,
+                               exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, int]:
     """Build ``graph`` from the revision's stored records and links, and check its counts."""
     from app.persistence import population_store as store
 
@@ -536,7 +644,7 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
         raise PopulationError("projection_incoherent")
     # Only accepted links are facts; a suppressed or retracted one is never followed.
     plan = compile_projection(entities, [relationship for relationship in relationships
-                                         if relationship.get("state", "accepted") == "accepted"])
+                                         if relationship.get("state", "accepted") == "accepted"], exposure)
     expected = {"vertices": len(plan["vertices"]), "edges": len(plan["edges"])}
     try:
         async with connection.transaction():
@@ -558,14 +666,15 @@ async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, gra
 async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
                                      graph: str, previous_ref: str | None,
                                      report: StepReport | None = None,
-                                     batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
+                                     batch_rows: int = DEFAULT_BATCH_ROWS,
+                                     exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     from app.persistence import population_store as store
 
-    expected = await _project_stored_rows(pool, connection, revision_id, graph, report, batch_rows)
+    expected = await _project_stored_rows(pool, connection, revision_id, graph, report, batch_rows, exposure)
     projection_ref = live_projection_ref(graph)
     try:
         recorded = await store.set_revision_projection(
-            pool, revision_id, projection_ref, previous_ref)
+            pool, revision_id, projection_ref, previous_ref, graph_exposure=exposure)
     except Exception as exc:
         logger.warning("Projection persistence failed for revision %s: %s",
                        revision_id, type(exc).__name__)
@@ -586,16 +695,20 @@ async def _build_revision_projection(pool: Any, connection: Any, revision_id: st
 
 
 async def reproject_revision(pool: Any, age_pool: Any, revision_id: str, *,
-                             force: bool = False) -> dict[str, Any]:
+                             force: bool = False,
+                             exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Rebuild a revision's graph as a typed one from its stored records and links (no source
     is read again), then move the revision, its bindings and its search index to it at once
-    and drop the old graph. A typed graph is left as it is unless ``force``."""
+    and drop the old graph. A typed graph is left as it is unless ``force``. ``exposure`` is the
+    fields each concept shows (see :func:`normalize_graph_exposure`); ``None`` keeps the stored one."""
     from app.persistence import population_store as store
 
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")
     old_ref = revision["projection_ref"]
+    if exposure is None:
+        exposure = stored_graph_exposure(revision.get("coverage"))
     if is_typed_projection(old_ref) and not force:
         return {"revisionId": revision_id, "projectionRef": old_ref, "reprojected": False}
     old_graph = projection_graph(old_ref)
@@ -605,9 +718,10 @@ async def reproject_revision(pool: Any, age_pool: Any, revision_id: str, *,
     async with age_pool.acquire() as connection:
         await connection.fetchval("SELECT pg_advisory_lock(hashtextextended($1, 0))", graph)
         try:
-            expected = await _project_stored_rows(pool, connection, revision_id, graph)
+            expected = await _project_stored_rows(pool, connection, revision_id, graph, exposure=exposure)
             new_ref = live_projection_ref(graph)
-            if not await store.replace_revision_projection(pool, revision_id, old_ref, new_ref):
+            if not await store.replace_revision_projection(pool, revision_id, old_ref, new_ref,
+                                                           graph_exposure=exposure):
                 await _discard_projection(connection, graph, revision_id)
                 raise PopulationError("projection_record_conflict")
             await _discard_projection(connection, old_graph, revision_id)
@@ -638,11 +752,14 @@ async def _discard_projection(connection: Any, graph: str, revision_id: str) -> 
 
 async def finalize_draft_revision(pool: Any, age_pool: Any, revision_id: str,
                                   report: StepReport | None = None,
-                                  batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
+                                  batch_rows: int = DEFAULT_BATCH_ROWS,
+                                  exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Project and atomically move only the draft serving binding."""
     from app.persistence import population_store as store
 
-    projected = await ensure_revision_projection(pool, age_pool, revision_id, report, batch_rows)
+    # Left out when unset, so the graph keeps the exposure it was built with.
+    projected = await ensure_revision_projection(
+        pool, age_pool, revision_id, report, batch_rows, **({} if exposure is None else {'exposure': exposure}))
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")

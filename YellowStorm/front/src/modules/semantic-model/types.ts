@@ -66,6 +66,14 @@ export interface AttributeDefinition {
   aliases?: string[];
   /** Text fields: how the search index cuts this field into passages; absent = the global settings. */
   searchIndex?: FieldSearchIndex;
+  /** How the graph shows this field; absent = shown, whole. Records, search and the health check are not affected. */
+  graph?: FieldGraph;
+}
+
+/** A field's place in the graph: `expose: false` leaves it out, `maxChars` cuts a long text. */
+export interface FieldGraph {
+  expose?: boolean;
+  maxChars?: number;
 }
 
 /** A text field's own search index settings, over the global ones. */

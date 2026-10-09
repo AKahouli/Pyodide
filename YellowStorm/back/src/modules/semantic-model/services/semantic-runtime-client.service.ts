@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import type { GraphExposure } from '../domain/semantic-graph-exposure';
 import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
 import { runtimeErrorMessage, runtimeUnreachableMessage } from '../domain/runtime-error-messages';
 import type { ModelCheckIssue } from '../domain/semantic-model-check';
@@ -1174,13 +1175,19 @@ export class SemanticRuntimeClientService {
    * Rebuild the graphs of the data a model serves from its stored records and links: no source is
    * read again and no record changes. Large graphs take a while, so the deadline is longer.
    */
-  async reprojectModelGraphs(modelId: string, actorUserId: string): Promise<RuntimeReprojectedGraphs> {
+  async reprojectModelGraphs(modelId: string, actorUserId: string, graphExposure?: GraphExposure): Promise<RuntimeReprojectedGraphs> {
     const base = this.requireWrites();
     let res: Response;
     try {
       res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/reproject`, {
         method: 'POST',
-        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey, 'X-Actor-User-Id': actorUserId },
+        headers: {
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+          ...(graphExposure ? { 'Content-Type': 'application/json' } : {}),
+        },
+        // The fields each concept shows in the rebuilt graphs; without it they keep the ones they have.
+        ...(graphExposure ? { body: JSON.stringify({ graphExposure }) } : {}),
         signal: AbortSignal.timeout(Math.max(this.config.runtimeRequestTimeoutMs, 300_000)),
       });
     } catch (error) {

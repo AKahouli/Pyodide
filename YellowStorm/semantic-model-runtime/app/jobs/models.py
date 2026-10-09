@@ -214,6 +214,20 @@ class PopulationPayload(BaseModel):
         default="default", alias="budgetProfileId", max_length=200)
     # Run size limits set by an admin (app.population.run_limits); absent means the built-in ones.
     limits: dict[str, int] | None = Field(default=None)
+    # The fields each concept shows in the graph (app.population.age_projection.normalize_graph_exposure).
+    # It shapes the graph only: it is no part of the specification or the execution fingerprint.
+    graph_exposure: dict[str, dict[str, Any]] | None = Field(default=None, alias="graphExposure")
+
+    @model_validator(mode="after")
+    def check_graph_exposure(self) -> "PopulationPayload":
+        from app.population.age_projection import normalize_graph_exposure
+        from app.population.compiler import PopulationError
+
+        try:
+            normalize_graph_exposure(self.graph_exposure)
+        except PopulationError as exc:
+            raise ValueError("the graph exposure is not valid") from exc
+        return self
 
     @model_validator(mode="after")
     def check_sources(self) -> "PopulationPayload":
@@ -233,6 +247,9 @@ class PopulationPayload(BaseModel):
             data.pop("derivations", None)
         if self.limits is None:
             data.pop("limits", None)
+        if self.graph_exposure is None:
+            data.pop("graphExposure", None)
+            data.pop("graph_exposure", None)
         return data
 
 

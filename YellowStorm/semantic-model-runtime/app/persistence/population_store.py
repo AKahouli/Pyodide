@@ -137,8 +137,9 @@ async def update_revision_reading(pool: Any, revision_id: str, *, coverage: dict
                                   source_observations: list[dict[str, Any]]) -> None:
     """What a revision's rows were read from and how completely, when the rows themselves are kept."""
     await pool.execute(
-        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb, source_observations = $3::jsonb "
-        "WHERE id = $1", revision_id, _json(coverage), _json(source_observations))
+        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb || CASE WHEN coverage ? 'graphExposure' "
+        "THEN jsonb_build_object('graphExposure', coverage -> 'graphExposure') ELSE '{}'::jsonb END, "
+        "source_observations = $3::jsonb WHERE id = $1", revision_id, _json(coverage), _json(source_observations))
 
 
 # Rows written per call: each call must finish within the worker pool's statement limit,
@@ -673,7 +674,10 @@ async def get_active_binding(pool: Any, model_id: str,
                              environment: str = "production") -> dict[str, Any] | None:
     row = await pool.fetchrow(
         "SELECT model_id, environment, model_version_id, data_revision_id, "
-        "projection_ref, correction_sequence, version "
+        "projection_ref, correction_sequence, version, "
+        # The fields the served graph shows: its readers give the others back from the stored records.
+        "(SELECT r.coverage -> 'graphExposure' FROM semantic_population.data_revisions r "
+        "WHERE r.id = active_bindings.data_revision_id) AS graph_exposure "
         "FROM semantic_runtime.active_bindings WHERE model_id = $1 AND environment = $2",
         model_id, environment,
     )
@@ -754,25 +758,47 @@ async def set_revision_validation(pool: Any, revision_id: str, state: str) -> bo
     return row is not None
 
 
+# Sets a revision's coverage.graphExposure (the fields its graph shows) to $4; an empty one removes it.
+_SET_GRAPH_EXPOSURE = (
+    "coverage = CASE WHEN $4::jsonb = '{}'::jsonb THEN COALESCE(coverage, '{}'::jsonb) - 'graphExposure' "
+    "ELSE COALESCE(coverage, '{}'::jsonb) || jsonb_build_object('graphExposure', $4::jsonb) END")
+
+
 async def set_revision_projection(pool: Any, revision_id: str, projection_ref: str,
-                                  expected_projection_ref: str | None = None) -> bool:
-    row = await pool.fetchrow(
-        "UPDATE semantic_population.data_revisions SET projection_ref = $2 "
-        "WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
-        revision_id, projection_ref, expected_projection_ref,
-    )
+                                  expected_projection_ref: str | None = None,
+                                  graph_exposure: dict[str, Any] | None = None) -> bool:
+    """Record the graph a revision is projected to, with the exposure it was built with (when given)."""
+    if graph_exposure is None:
+        row = await pool.fetchrow(
+            "UPDATE semantic_population.data_revisions SET projection_ref = $2 "
+            "WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
+            revision_id, projection_ref, expected_projection_ref,
+        )
+    else:
+        row = await pool.fetchrow(
+            "UPDATE semantic_population.data_revisions SET projection_ref = $2, " + _SET_GRAPH_EXPOSURE
+            + " WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
+            revision_id, projection_ref, expected_projection_ref, _json(graph_exposure),
+        )
     return row is not None
 
 
-async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str, new_ref: str) -> bool:
+async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str, new_ref: str,
+                                      graph_exposure: dict[str, Any] | None = None) -> bool:
     """Point a revision, the bindings serving it and its search index generations at a
     rebuilt graph, together; False (nothing changed) when the revision no longer uses
-    ``old_ref``."""
+    ``old_ref``. ``graph_exposure`` is the fields the rebuilt graph shows, stored in the same step."""
     async with pool.acquire() as connection:
         async with connection.transaction():
-            moved = await connection.fetchval(
-                "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
-                "WHERE id = $1 AND projection_ref = $2 RETURNING id", revision_id, old_ref, new_ref)
+            if graph_exposure is None:
+                moved = await connection.fetchval(
+                    "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
+                    "WHERE id = $1 AND projection_ref = $2 RETURNING id", revision_id, old_ref, new_ref)
+            else:
+                moved = await connection.fetchval(
+                    "UPDATE semantic_population.data_revisions SET projection_ref = $3, " + _SET_GRAPH_EXPOSURE
+                    + " WHERE id = $1 AND projection_ref = $2 RETURNING id",
+                    revision_id, old_ref, new_ref, _json(graph_exposure))
             if moved is None:
                 return False
             await connection.execute(

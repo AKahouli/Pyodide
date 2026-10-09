@@ -443,6 +443,30 @@ describe('SemanticPopulationRefreshService', () => {
     expect(onlySave.payload.populationExecutionFingerprint).toBe((await runWith({})).payload.populationExecutionFingerprint);
   });
 
+  it('sends the fields a concept shows in the graph with the run and the rebuild, outside its specification and fingerprint', async () => {
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainCall = (plain.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0];
+    expect(plainCall[0].payload.graphExposure).toEqual({});
+    const [customer] = NODES;
+    const previous = customer.attributes;
+    customer.attributes = [{ ...previous[0], graph: { maxChars: 200 } }, { ...previous[1], graph: { expose: false } }] as never;
+    try {
+      const hiding = setup();
+      await hiding.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const [command, key] = (hiding.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0];
+      expect(command.payload.graphExposure).toEqual({ 'c-customer': { hidden: ['name'], maxChars: { customer_id: 200 } } });
+      // The graph is not the data: same specification hash, same fingerprint (stays current), a run of its own.
+      expect(command.payload.specHash).not.toBeUndefined();
+      expect(command.payload.populationExecutionFingerprint).toBe(plainCall[0].payload.populationExecutionFingerprint);
+      expect(key).not.toBe(plainCall[1]);
+      await hiding.service.reprojectGraphs('u-1', 'model-1');
+      expect(hiding.runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1', { 'c-customer': { hidden: ['name'], maxChars: { customer_id: 200 } } });
+    } finally {
+      customer.attributes = previous;
+    }
+  });
+
   it('sends the index build limits with the run without changing its fingerprint or key', async () => {
     const runWith = async (configured: Record<string, number>) => {
       const built = setup();
@@ -466,7 +490,7 @@ describe('SemanticPopulationRefreshService', () => {
     const { models, runtime, service } = setup();
     const result = await service.reprojectGraphs('u-1', 'model-1');
     expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor']);
-    expect(runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1', {});
     expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
     expect(result.revisions).toHaveLength(1);
   });
