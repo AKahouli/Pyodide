@@ -42,7 +42,7 @@ import { EmailModule } from './modules/email';
 import { HealthModule } from './modules/health';
 import { AuthModule, JwtAuthGuard } from './modules/auth';
 import { UserModule, AccountApprovalGuard } from './modules/user';
-import { AuthorizationModule } from './modules/authorization';
+import { AuthorizationModule, GlobalPermissionsGuard } from './modules/authorization';
 import { SystemModule } from './modules/system';
 import { UsageModule } from './modules/usage';
 import { NotificationsModule } from './modules/notifications';
@@ -164,6 +164,10 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     {
       provide: APP_GUARD,
       useClass: AccountApprovalGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: GlobalPermissionsGuard,
     },
   ],
 })
