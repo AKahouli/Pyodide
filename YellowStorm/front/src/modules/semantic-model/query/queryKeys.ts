@@ -31,5 +31,7 @@ export const semanticModelQueryKeys = {
   canvasPositions: (id: string) => ['semantic-models','canvas-positions',id] as const,
   readiness: (id: string) => ['semantic-models','readiness',id] as const,
   reviewQueue: (id: string) => ['semantic-models','review-queue',id] as const,
+  // Under the review queue's key: whatever refreshes the queue refreshes the health report it is part of.
+  health: (id: string) => ['semantic-models','review-queue',id,'health'] as const,
   reviewItems: (id: string, status: 'open' | 'resolved') => ['semantic-models','review-items',id,status] as const,
 };

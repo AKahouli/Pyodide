@@ -396,7 +396,6 @@ export class SemanticPopulationRefreshService {
         resolvedRelations: records.counts.relationships,
         unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
         ambiguousRelations: 0,
-        conflicts: 0,
       },
     };
   }

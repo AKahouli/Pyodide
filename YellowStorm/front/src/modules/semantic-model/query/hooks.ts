@@ -74,6 +74,11 @@ export function useVersionComparison(id: string | undefined, left: string | unde
     retry: false,
   });
 }
+/** How the last run turned rows into records, concept by concept (the model health screen). */
+export function useModelHealth(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.health(id ?? 'none'), queryFn: () => semanticModelApi.modelHealth(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
+}
+
 export function useReviewQueue(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.reviewQueue(id ?? 'none'), queryFn: () => semanticModelApi.reviewQueue(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
 }

@@ -109,7 +109,7 @@ export interface RuntimeCorrection {
 export interface RuntimeRevisionGaps {
   missingValues: { conceptId: string; attribute: string; missing: number; total: number }[];
   unresolvedLinks: { relationId: string; kind: string; count: number }[];
-  other: { conceptId: string | null; kind: string; count: number; fields?: string[] }[];
+  other: { conceptId: string | null; kind: string; count: number; fields?: string[]; details?: Record<string, unknown> }[];
   /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
   rowSamples?: {
     conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
@@ -119,6 +119,48 @@ export interface RuntimeRevisionGaps {
     relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
     referenceValue?: unknown; targetField?: string
   }[];
+}
+
+/** A row behind a finding, with where it comes from. */
+export interface RuntimeHealthExample {
+  source?: string;
+  sheet?: string;
+  row?: number | string;
+  record?: string;
+  workspaceId?: string;
+  key?: Record<string, string>;
+  values: Record<string, unknown>;
+}
+
+export type RuntimeHealthFinding =
+  | { kind: 'identity_too_coarse'; rows: number; entities: number; keyFields: string[]; discardedValues: number;
+      topKeyValues: { values: Record<string, string>; rows: number }[]; keyCardinality?: Record<string, number>;
+      suggestedKey?: { fields: string[]; estimatedRecords: number; sampleRows: number }; examples: RuntimeHealthExample[] }
+  | { kind: 'missing_identity'; field: string; rows: number; aiRead?: boolean; examples: RuntimeHealthExample[] }
+  | { kind: 'conflicting_values'; field: string; rows: number; distinctValues: number; values: string[]; examples: RuntimeHealthExample[] }
+  | { kind: 'ai_row_limit' | 'ai_read'; limit: number; rowsRead: number; rowsLimited: number; rowsFailed: number;
+      fields?: string[]; examples: RuntimeHealthExample[] };
+
+/** How one concept's rows became records. */
+export interface RuntimeConceptHealth {
+  conceptId: string;
+  keyFields: string[];
+  workspaceIds: string[];
+  sources: { name?: string | null; sheet?: string | null; workspaceId?: string | null; rowsAvailable: number | null;
+    rowsRead: number; derivedFrom?: string }[];
+  rowsAvailable: number | null;
+  rowsRead: number;
+  rowsKeyed: number;
+  recordsMade: number;
+  dropped: { reason: string; rows: number; field?: string }[];
+  ai?: { limit: number; rowsRead: number; rowsLimited: number; rowsFailed: number; fields?: string[] };
+  findings: RuntimeHealthFinding[];
+}
+
+/** The run's account of every concept it read; absent from data prepared before it was kept. */
+export interface RuntimeModelHealth {
+  version: number;
+  concepts: Record<string, RuntimeConceptHealth>;
 }
 
 export interface RuntimeConceptRecordsPage {
@@ -146,6 +188,7 @@ export interface RuntimeBoundRecords {
     identity?: Record<string, unknown>;
   }[];
   gaps?: RuntimeRevisionGaps;
+  health?: RuntimeModelHealth | null;
   relationships: {
     relationId: string;
     sourceEntityId: string;

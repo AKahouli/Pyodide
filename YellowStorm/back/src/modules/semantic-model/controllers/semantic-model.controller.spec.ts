@@ -26,6 +26,7 @@ describe('SemanticModelController validation synchronization', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     await expect(controller.validate({ _id: { toString: () => 'user-id' } } as never, 'model-id'))
@@ -47,7 +48,7 @@ describe('SemanticModelController graph search', () => {
     };
     const unused = {} as never;
     const controller = new SemanticModelController(
-      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never, unused, unused,
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never, unused, unused, unused,
     );
     const user = { _id: { toString: () => 'user-id' } } as never;
 
@@ -72,10 +73,23 @@ describe('SemanticModelController model check', () => {
     const modelCheck = { check: jest.fn().mockResolvedValue({ errorCount: 0, issues: [] }) };
     const unused = {} as never;
     const controller = new SemanticModelController(
-      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, modelCheck as never,
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, modelCheck as never, unused,
     );
 
     await expect(controller.check({ _id: { toString: () => 'user-id' } } as never, 'model-id')).resolves.toEqual({ errorCount: 0, issues: [] });
     expect(modelCheck.check).toHaveBeenCalledWith('user-id', 'model-id');
+  });
+});
+
+describe('SemanticModelController model health', () => {
+  it('passes the person and model to the health service', async () => {
+    const modelHealth = { health: jest.fn().mockResolvedValue({ state: 'ready', concepts: [] }) };
+    const unused = {} as never;
+    const controller = new SemanticModelController(
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, modelHealth as never,
+    );
+
+    await expect(controller.health({ _id: { toString: () => 'user-id' } } as never, 'model-id')).resolves.toEqual({ state: 'ready', concepts: [] });
+    expect(modelHealth.health).toHaveBeenCalledWith('user-id', 'model-id');
   });
 });

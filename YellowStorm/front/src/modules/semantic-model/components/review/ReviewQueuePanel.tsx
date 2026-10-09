@@ -6,7 +6,6 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
-import { useReviewQueue } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { ReviewQueueItem } from '../../types';
 import { useSemanticModelEditorStore } from '../../store';
@@ -37,18 +36,16 @@ export function opensElsewhere(item: ReviewQueueItem) {
   return item.action.kind !== 'choose_match';
 }
 
-/** Everything that needs a person, in one list: grouped, most important first, one action each. */
-export function ReviewQueueList({ modelId, canEdit, onOpenIssue, activeKey, groups }: Readonly<{
+/** What blocks or weakens the next run, as the model health screen lists it: grouped, most important first, one action each. */
+export function ReviewQueueList({ modelId, canEdit, items, onOpenIssue, activeKey }: Readonly<{
   modelId: string;
   canEdit: boolean;
+  items: ReviewQueueItem[];
   /** The item being fixed, highlighted so the list shows where the person left off. */
   activeKey?: string | null;
-  /** Only these groups, when a readiness area was picked. */
-  groups?: ReviewQueueGroup[];
 } & ReviewQueueHandlers>) {
   const { t } = useModuleTranslation('semantic-model');
   const translate = t as Translate;
-  const queue = useReviewQueue(modelId);
   const client = useQueryClient();
   const [choices, setChoices] = useState<Record<string, string>>({});
   const resolve = useMutation({
@@ -70,10 +67,7 @@ export function ReviewQueueList({ modelId, canEdit, onOpenIssue, activeKey, grou
     onError: () => showError(t('trust.reviewError')),
   });
 
-  if (queue.isLoading) return <p className='mt-3 flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-4 w-4 animate-spin' />{t('reviewQueue.loading')}</p>;
-  if (queue.isError) return <p className='mt-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('reviewQueue.unavailable')}</p>;
-  const items = (queue.data?.items ?? []).filter((item) => !groups || groups.includes(item.group));
-  if (!items.length) return <p className='mt-3 flex items-center gap-2 rounded-xl border border-dashed p-4 text-sm text-muted-foreground'><CheckCircle2 className='h-4 w-4 text-emerald-600' />{t(groups ? 'reviewQueue.emptyArea' : 'reviewQueue.empty')}</p>;
+  if (!items.length) return <p className='mt-3 flex items-center gap-2 rounded-xl border border-dashed p-4 text-sm text-muted-foreground'><CheckCircle2 className='h-4 w-4 text-emerald-600' />{t('health.setup.empty')}</p>;
 
   const actionButton = (item: ReviewQueueItem) => {
     const action = item.action;

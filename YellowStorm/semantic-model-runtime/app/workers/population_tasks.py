@@ -20,7 +20,7 @@ from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.payload_rules import analyze_payload
-from app.population.derived import derivation_items, derive_concept, merge_derived, read_derived_fields
+from app.population.derived import derivation_items, derive_concept, field_plan, merge_derived, read_derived_fields
 from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
 from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
 from app.population.document_rules import answer_options, normalize_ai_settings
@@ -30,6 +30,7 @@ from app.population.run_limits import (MAX_SOURCES_PER_TASK, ai_pacing, identity
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import expand_rows, is_item_attribute, normalize_expand
+from app.population.row_health import ConceptHealth
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -50,7 +51,8 @@ PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
 # Bump when the way a sheet is read changes, so earlier readings are not reused.
 # t2: a sheet cut at its mapping's own record limit is a complete reading (a sample), not a capped one.
-TABULAR_READ_VERSION = "t2"
+# t3: a sheet's reading also keeps what the model health report needs (its row journey and findings).
+TABULAR_READ_VERSION = "t3"
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
@@ -340,6 +342,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     # Sheets cut at their mapping's own record limit: a deliberate sample, served as a complete reading.
     user_samples: list[dict] = []
     manual_links: list[tuple[str, dict]] = []
+    # How each concept's rows became records, for the model health report.
+    concept_health: dict[str, ConceptHealth] = {}
     progress = progress or PopulationProgress()
     await progress.begin(len(validated["sources"]))
     # One index connection for the whole run, opened on the first document: a workspace can hold
@@ -496,6 +500,14 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         key = derivation_cache_key(source)
         return key is not None and await extraction_cache.get(key) is not None
 
+    def health_of(concept_id: str) -> ConceptHealth:
+        if concept_id not in concept_health:
+            concept = compiled["concepts"][concept_id]
+            keys = list(concept["keyComponents"])
+            concept_health[concept_id] = ConceptHealth(
+                concept_id, keys, [name for name in concept["allowedFields"] if name not in keys])
+        return concept_health[concept_id]
+
     async def reuse_reading(entry: dict, cached: dict) -> bool:
         """Take a sheet's earlier reading as this run's; False when it is not usable."""
         nonlocal complete_enumeration
@@ -503,6 +515,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             return False
         for output in cached["outputs"]:
             per_concept.setdefault(entry["conceptId"], []).append(output)
+        earlier = ConceptHealth.restore(cached.get("health"))
+        if earlier is not None:
+            health_of(entry["conceptId"]).absorb(earlier)
         if not cached.get("completeEnumeration", True):
             complete_enumeration = False
         if isinstance(cached.get("userSample"), dict):
@@ -650,6 +665,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         concurrency=pacing["concurrency"], progress=progress) if extractions else None
                     row_total = manifest.get("rowCount") if isinstance(manifest, dict) else None
                     row_total = row_total if isinstance(row_total, int) else None
+                    sheet_health = ConceptHealth(entry["conceptId"], health_of(entry["conceptId"]).key_fields,
+                                                 health_of(entry["conceptId"]).fields)
+                    sheet_health.begin_source(source.get("originalName"), sheet=(options or {}).get("sheetName"),
+                                              workspace_id=source.get("workspaceId"), rows_available=row_total)
                     await progress.advance("rows", 0, row_total)
                     missing_cells: dict[str, int] = {}
                     read_rows = 0
@@ -673,6 +692,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             else:
                                 complete_enumeration = sheet_complete = False
                         rows_taken += len(raws)
+                        sheet_health.rows_read(len(raws))
                         expand_gaps: list = []
                         if expand:
                             raws, expand_gaps = expand_rows(raws, expand, lambda raw: raw.get(expand_column),
@@ -696,6 +716,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     renamed[attribute] = outcome["values"].get(attribute)
                                     if attribute not in outcome["values"]:
                                         missing_cells[attribute] = missing_cells.get(attribute, 0) + 1
+                                # Fields the AI never read because of its row limit are no missing values.
+                                limited = [attribute for attribute in extractions
+                                           if (outcome["fields"].get(attribute) or {}).get("detail") == "ai_row_limit"]
+                                if limited:
+                                    renamed["_ai_limited"] = limited
                                 cell_evidence[(renamed["_row"], renamed.get("_item"))] = outcome["evidence"]
                             read_rows += len(raws)
                         # Shaped before the identity is read, so the key uses the shaped value.
@@ -707,7 +732,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             concept, rows, {"assetRef": asset_ref,
                                            "mappingVersion": entry["mappingVersion"],
                                            "labelField": entry.get("labelField"),
-                                           "constantFields": list(constants)})
+                                           "constantFields": list(constants)}, observer=sheet_health)
                         # A value read out of a cell keeps where it was found: row, column and span.
                         for assertion in output["assertions"]:
                             item = assertion["evidence"].get("item")
@@ -742,6 +767,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 return {"ok": False, "errorCode": str(exc) or "parser_failed"}
             except AssetFetchError as exc:
                 return {"ok": False, "errorCode": exc.code}
+            if cells is not None:
+                sheet_health.set_ai(pacing["aiRows"], cells.stats, extractions)
+            health_of(entry["conceptId"]).absorb(sheet_health)
             fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
             if isinstance(fingerprint, str) and fingerprint:
                 dataset_fingerprints.add(fingerprint)
@@ -764,7 +792,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     cache_key, concept_id=entry["conceptId"],
                     asset_id=f"{asset_ref.get('assetId') or ''}#{sheet}",
                     output={"outputs": outputs, "observation": observation,
-                            "completeEnumeration": sheet_complete,
+                            "completeEnumeration": sheet_complete, "health": sheet_health.snapshot(),
                             **({"userSample": sample} if sample is not None else {})})
             await progress.read(entry, records=records, gaps=gaps, status="read")
         return None
@@ -830,9 +858,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                        or derivation["sourceConceptId"]},
             "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
             cache=extraction_cache, limits=limits, progress=progress)
+        derived_health = ConceptHealth(
+            derivation["conceptId"], list(target["keyComponents"]),
+            [name for name in target["allowedFields"] if name not in target["keyComponents"]])
+        derived_health.begin_source(compiled["concepts"][derivation["sourceConceptId"]].get("label"),
+                                    rows_available=len(items), derived_from=derivation["sourceConceptId"])
+        derived_health.rows_read(len(items))
+        if read.get("stats"):
+            derived_health.set_ai(limits["maxAiRowsPerSource"], read["stats"], field_plan(derivation)["extractions"])
         derived = derive_concept(target, derivation, items, source["assertions"], read["readings"],
                                  max_entities=max(limits["maxRecordsPerSource"], MAX_MATERIALIZED_ENTITIES),
-                                 max_assertions=max(limits["maxValuesPerRun"], MAX_ASSERTIONS))
+                                 max_assertions=max(limits["maxValuesPerRun"], MAX_ASSERTIONS),
+                                 observer=derived_health)
+        health_of(derivation["conceptId"]).absorb(derived_health)
         relation_id = (derivation.get("expand") or {}).get("relationId")
         if relation_id:
             forward = compiled["relations"][relation_id]["sourceConceptId"] == derivation["sourceConceptId"]
@@ -919,9 +957,12 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     if not complete_enumeration:
         gaps.append({"kind": "enumeration_capped", "conceptId": None, "rowNumber": None,
                      "detail": f"per-source enumeration capped at {QUERY_ROW_LIMIT} rows"})
+    health = build_health_report(concept_health, merged_by_concept, kept, validated["derivations"],
+                                 (carried or {}).get("health"))
+    gaps.extend(coarse_key_gaps(concept_health, health))
     counts["materialized"] = len(kept)
     counts["gaps"] = len(gaps)
-    return {"ok": True, "specHash": validated["specHash"],
+    return {"ok": True, "specHash": validated["specHash"], "health": health,
             "executionFingerprint": validated["executionFingerprint"],
             "purpose": validated["purpose"],
             "completeEnumeration": complete_enumeration, "userSampleLimits": user_samples, "entities": kept,
@@ -930,6 +971,46 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
              "sourceObservations": observations,
              "documentCoverage": document_coverage, "indexObservations": index_observations,
              "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+def build_health_report(concept_health: dict[str, ConceptHealth], merged_by_concept: dict[str, dict],
+                        kept: list[dict], derivations: list[dict], earlier: dict | None = None) -> dict:
+    """Each concept's row journey and findings (see ``ConceptHealth.report``). A concept this run did
+    not read again (a concept refresh) keeps the report of the data in use."""
+    kept_by_concept: dict[str, int] = {}
+    for entity in kept:
+        kept_by_concept[entity["conceptId"]] = kept_by_concept.get(entity["conceptId"], 0) + 1
+    reports: dict[str, dict] = {}
+    for concept_id, health in concept_health.items():
+        merged = merged_by_concept.get(concept_id)
+        reports[concept_id] = health.report(records=kept_by_concept.get(concept_id, 0),
+                                            entities=len(merged["entities"]) if merged else None)
+    # Whoever may read a concept's source may read what a concept made from it reports.
+    for _ in derivations:
+        for derivation in derivations:
+            target, source = reports.get(derivation["conceptId"]), reports.get(derivation["sourceConceptId"])
+            if target is not None and source is not None:
+                target["workspaceIds"] = sorted(set(target["workspaceIds"]) | set(source["workspaceIds"]))
+    previous = (earlier or {}).get("concepts") if isinstance(earlier, dict) else None
+    for concept_id, report in (previous or {}).items():
+        if concept_id not in reports and isinstance(report, dict):
+            reports[concept_id] = report
+    return {"version": 1, "concepts": reports}
+
+
+def coarse_key_gaps(concept_health: dict[str, ConceptHealth], health: dict) -> list[dict]:
+    """One gap for each concept whose key is too coarse, so the gap lists name it like any other."""
+    gaps = []
+    for concept_id in concept_health:
+        for finding in (health["concepts"].get(concept_id) or {}).get("findings", []):
+            if finding["kind"] != "identity_too_coarse":
+                continue
+            gaps.append({"kind": "identity_too_coarse", "conceptId": concept_id, "rowNumber": None,
+                         "detail": f"{finding['rows']} rows share {finding['entities']} keys",
+                         "details": {name: finding[name] for name in ("rows", "entities", "keyFields", "topKeyValues",
+                                                                      "discardedValues", "suggestedKey") if name in finding},
+                         "examples": finding["examples"]})
+    return gaps
 
 
 def derivations_to_rerun(derivations: list[dict], read_concepts: set[str],
@@ -1249,6 +1330,7 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
     links: dict[tuple, int] = {}
     other: dict[tuple, int] = {}
     fields: dict[tuple, set] = {}
+    details: dict[tuple, dict] = {}
     row_samples: list[dict] = []
     link_samples: list[dict] = []
     for gap in outcome.get("gaps", []):
@@ -1266,6 +1348,8 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
             other[key] = other.get(key, 0) + 1
             if gap.get("field"):
                 fields.setdefault(key, set()).add(gap["field"])
+            if gap.get("details") and key not in details:
+                details[key] = {**gap["details"], **({"examples": gap["examples"]} if gap.get("examples") else {})}
             if other[key] <= MAX_GAP_SAMPLES_PER_GROUP and len(row_samples) < MAX_GAP_SAMPLES:
                 row_samples.append({"conceptId": gap.get("conceptId"), "kind": kind,
                                     **({"field": gap["field"]} if gap.get("field") else {}),
@@ -1277,7 +1361,8 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
         "unresolvedLinks": [{"relationId": r, "kind": k, "count": c}
                             for (r, k), c in sorted(links.items())][:MAX_GAP_GROUPS],
         "other": [{"conceptId": cid, "kind": k, "count": c,
-                   **({"fields": sorted(fields[(cid, k)])} if (cid, k) in fields else {})}
+                   **({"fields": sorted(fields[(cid, k)])} if (cid, k) in fields else {}),
+                   **({"details": details[(cid, k)]} if (cid, k) in details else {})}
                   for (cid, k), c in sorted(other.items(), key=lambda i: (str(i[0][0]), i[0][1]))
                   ][:MAX_GAP_GROUPS],
         "rowSamples": row_samples,
@@ -1364,6 +1449,7 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict,
                  **({"userSampleLimits": outcome["userSampleLimits"]} if outcome.get("userSampleLimits") else {}),
                  "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
                  "documents": outcome.get("documentCoverage", []),
+                 **({"health": outcome["health"]} if outcome.get("health") else {}),
                  "gaps": summarize_gaps(outcome, specification)}
     await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
                                 model_version_id=model_version_id,

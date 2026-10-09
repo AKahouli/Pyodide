@@ -240,6 +240,11 @@ export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ mod
     onError: (error) => showError(t('identity.saveError'), { description: parseApiError(error).message }),
   });
   const toggle = (key: string) => save.mutate(fields.includes(key) ? fields.filter((field) => field !== key) : [...fields, key]);
+  // Fields the last run's health report suggests: offered here, applied only when the person says so.
+  const suggestion = useSemanticModelEditorStore((state) => state.identitySuggestion);
+  const clearSuggestion = useSemanticModelEditorStore((state) => state.clearIdentitySuggestion);
+  const offered = suggestion?.conceptId === node.id && canEdit
+    ? suggestion.fields.filter((key) => node.attributes.some((attribute) => attribute.key === key)) : [];
   const labels = useLabelFields(modelId);
   const labelField = labels.data?.find((rule) => rule.conceptId === node.id)?.field;
   const labelValid = Boolean(labelField && node.attributes.some((attribute) => attribute.key === labelField));
@@ -261,6 +266,13 @@ export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ mod
   return <div className='space-y-2'>
     {!bare && <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />}
     {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
+    {offered.length > 0 && <div role='status' className='space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3 text-xs'>
+      <p>{t('identity.suggested', { fields: offered.map((key) => node.attributes.find((attribute) => attribute.key === key)?.label ?? key).join(' + ') })}</p>
+      <div className='flex gap-2'>
+        <Button size='sm' className='h-8' disabled={save.isPending} onClick={() => save.mutate(offered, { onSuccess: clearSuggestion })}>{t('identity.useSuggested')}</Button>
+        <Button size='sm' variant='ghost' className='h-8' onClick={clearSuggestion}>{t('identity.dismissSuggested')}</Button>
+      </div>
+    </div>}
     {node.attributes.length === 0 ? <p className='text-xs text-muted-foreground'>{t('identity.noFields')}</p>
       : <div className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
         const active = fields.includes(attribute.key);

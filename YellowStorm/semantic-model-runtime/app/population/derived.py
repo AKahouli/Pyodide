@@ -345,6 +345,12 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
         readings[entity["entityId"]] = {
             "values": {field: values.get(field) for field, item in by_field.items() if _mode(item) != "direct"},
             "evidence": evidence}
+        if outcome is not None:
+            # Fields the AI never read because of its row limit: left to the rules, not missing values.
+            limited = [attribute for attribute in plan["extractions"]
+                       if (outcome["fields"].get(attribute) or {}).get("detail") == "ai_row_limit"]
+            if limited:
+                readings[entity["entityId"]]["aiLimited"] = limited
     gaps = cell_gaps(derivation["conceptId"], None, plan["extractions"], missing, len(ordered),
                      reader.stats, unit="records") if reader is not None else []
     for gap in gaps:
@@ -354,7 +360,8 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
 
 def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                    source_assertions: list[dict], readings: dict[str, dict] | None = None, *,
-                   max_entities: int = MAX_MATERIALIZED_ENTITIES, max_assertions: int = MAX_ASSERTIONS) -> dict:
+                   max_entities: int = MAX_MATERIALIZED_ENTITIES, max_assertions: int = MAX_ASSERTIONS,
+                   observer: Any = None) -> dict:
     """One target record per distinct key found in the source records, shaped like a source's output.
 
     ``readings`` (from :func:`read_derived_fields`) holds, per source record, the values and evidence
@@ -401,11 +408,24 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
             identity[component] = normalized
         if len(identity) != len(key_components):
             missing = next(component for component in key_components if component not in identity)
+            if missing in ((readings.get(entity["entityId"]) or {}).get("aiLimited") or ()):
+                # The AI never read this record (its row limit): the run reports the limit once.
+                if observer is not None:
+                    observer.ai_limited_row(missing)
+                continue
             gaps.append({"kind": "missing_identity", "conceptId": target["conceptId"], "rowNumber": None,
                          "detail": f"{entity.get('label') or entity['entityId']} has no value for '{by_target[missing] or missing}'",
                          "field": missing, "derivationId": derivation["derivationId"],
                          "values": {"record": entity.get("label") or entity["entityId"]}})
+            if observer is not None:
+                observer.missing_row(missing, lambda entity=entity: {name: _text(value_of(entity, name))
+                                                                     for name in by_target if name in by_field},
+                                     record=str(entity.get("label") or entity["entityId"]))
             continue
+        if observer is not None:
+            observer.keyed_row(identity, lambda entity=entity: {name: _text(value_of(entity, name))
+                                                                for name in by_target if name in by_field},
+                               record=str(entity.get("label") or entity["entityId"]))
         key = entity_key(target["namespace"], identity)
         group = groups.get(key)
         if group is None:
@@ -434,6 +454,11 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                 gaps.append({"kind": "conflicting_values", "conceptId": target["conceptId"], "rowNumber": None,
                              "detail": f"attribute '{target_attribute}' has {distinct} different values",
                              "field": target_attribute, "derivationId": derivation["derivationId"]})
+                if observer is not None:
+                    observer.conflict(target_attribute, candidates[0][0], next(
+                        text for text, _member in candidates if text != candidates[0][0]), group["identity"],
+                        record=str(members[0].get("label") or members[0]["entityId"]),
+                        rows=len(candidates), distinct=distinct)
                 continue
             if len(assertions) >= max_assertions:
                 gaps.append({"kind": "assertion_cap", "conceptId": target["conceptId"], "rowNumber": None,

@@ -243,6 +243,17 @@ def _scoped_gaps(gaps: Any, allowed: list[str], hidden: set[str]) -> Any:
     }
 
 
+def _scoped_health(health: Any, allowed: list[str], hidden: set[str]) -> Any:
+    """The health report narrowed to this scope. A concept's figures count rows of its sources, so with
+    anything hidden only the concepts whose sources are all in the scope stay."""
+    if not isinstance(health, dict) or not hidden:
+        return health if isinstance(health, dict) else None
+    workspaces = set(allowed)
+    return {**health, "concepts": {
+        concept_id: report for concept_id, report in (health.get("concepts") or {}).items()
+        if isinstance(report, dict) and set(report.get("workspaceIds") or []) <= workspaces}}
+
+
 @router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_410_GONE)
 async def search_concept_records_gone(model_id: str, concept_id: str) -> dict[str, object]:
     """Removed: it returned every record of the concept, whatever the caller may read.
@@ -286,15 +297,22 @@ async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request
     revision_id = binding["data_revision_id"]
     allowed = command.allowed_workspace_ids
     _visible, hidden = await store.split_entity_visibility(pool, revision_id, allowed)
-    entities = await store.list_revision_entities_visible(
-        pool, revision_id, command.limit, command.concept_id, allowed)
+    # Records per concept over the visible records: the entity list below is only a page of it.
+    concept_counts = await store.count_revision_entities_by_concept_visible(pool, revision_id, allowed)
+    if command.concept_id is None:
+        # Ids sort by concept: the first records by id would all belong to the first concepts, so each
+        # concept gets its share of the page.
+        entities = await store.list_revision_entities_visible(
+            pool, revision_id, command.limit, None, allowed,
+            quotas=window_store.allocate_quotas(concept_counts, command.limit))
+    else:
+        entities = await store.list_revision_entities_visible(
+            pool, revision_id, command.limit, command.concept_id, allowed)
     origins = await store.list_entity_origins(pool, revision_id,
                                               sorted(entity["entityId"] for entity in entities))
     for entity in entities:
         entity["origins"] = origins.get(entity["entityId"], {})
     counts = await store.count_revision_rows_visible(pool, revision_id, allowed)
-    # Records per concept over the visible records: the entity list below is only a page of it.
-    concept_counts = await store.count_revision_entities_by_concept_visible(pool, revision_id, allowed)
     relationships = await store.list_revision_relationships_visible(pool, revision_id, allowed)
     revision = await store.get_data_revision(pool, revision_id)
     coverage = (revision or {}).get("coverage") or {}
@@ -310,6 +328,8 @@ async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request
             # Lets the caller tell whether this data was built from the model as it is now.
             "executionFingerprint": (revision or {}).get("execution_fingerprint"),
             "gaps": gaps,
+            # How each concept's rows became records (row journey and findings); absent for older data.
+            "health": _scoped_health(coverage.get("health") if isinstance(coverage, dict) else None, allowed, hidden),
             "specification": specification}
 
 

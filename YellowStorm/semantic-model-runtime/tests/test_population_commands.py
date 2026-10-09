@@ -205,10 +205,10 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
                                "total": 1}], "unresolvedLinks": [], "other": []}
     revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps}), "execution_fingerprint": "sha256:run"}
     scope = {"actorUserId": "u1", "allowedWorkspaceIds": ["ws-1"]}
-    # binding, hidden ids, page, origins, counts, counts per concept, links, revision, specification
-    _inject(client, ScriptedPool([binding, [], [entity], origins, counts,
-                                  [{"concept_id": "c1", "entities": 1}], [relationship],
-                                  revision, {"specification": specification}]))
+    # binding, hidden ids, counts per concept (the page's shares), page, origins, counts, links, revision,
+    # specification
+    _inject(client, ScriptedPool([binding, [], [{"concept_id": "c1", "entities": 1}], [entity], origins, counts,
+                                  [relationship], revision, {"specification": specification}]))
     records = client.post("/v1/semantic-model-population/models/m1/records/read",
                           headers=AUTH, json={**scope, "limit": 25})
     assert records.status_code == 200

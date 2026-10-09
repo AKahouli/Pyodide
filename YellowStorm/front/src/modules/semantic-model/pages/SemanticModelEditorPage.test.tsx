@@ -78,7 +78,8 @@ vi.mock("../query/hooks", () => ({
   }),
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
   useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
-  useReviewQueue: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
+  useModelHealth: () => ({ data: { state: 'no_data', dataRevisionId: null, verdict: null, concepts: [], setup: [],
+    summary: { concepts: 0, healthy: 0, rowsRead: 0, recordsKept: 0, fixesNeeded: 0, limits: 0, setupItems: 0 } }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
   useIdentityRules: () => ({ data: [], isLoading: false }),
   useLabelFields: () => ({ data: [], isLoading: false }),
@@ -214,7 +215,7 @@ describe("SemanticModelEditorPage", () => {
     expect(screen.getByText('designer.status.draft')).toBeInTheDocument();
     expect(screen.getByText('designer.empty.title')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'designer.empty.start' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /reviewQueue.button/ })).not.toHaveTextContent('%');
+    expect(screen.getByRole('button', { name: /health.button/ })).not.toHaveTextContent('%');
     expect(screen.queryByRole('navigation', { name: 'journey.title' })).not.toBeInTheDocument();
   });
 
@@ -238,13 +239,17 @@ describe("SemanticModelEditorPage", () => {
     expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
-  it('opens model health from the review action', async () => {
+  it('opens model health in place of the canvas and goes back to it', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: /reviewQueue.button/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /health.button/ }));
 
-    expect(await screen.findByText('trust.title')).toBeInTheDocument();
+    expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /health.button/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('semantic-model-canvas')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
+    expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
   it('establishes an origin workspace before opening source mapping', async () => {

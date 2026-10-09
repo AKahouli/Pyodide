@@ -949,10 +949,25 @@ async def count_revision_entities_by_concept_visible(pool: Any, revision_id: str
 
 async def list_revision_entities_visible(pool: Any, revision_id: str, limit: int,
                                          concept_id: str | None,
-                                         allowed_workspace_ids: list[str]) -> list[dict[str, Any]]:
-    """A page of the revision's records this scope may see, in id order."""
+                                         allowed_workspace_ids: list[str],
+                                         quotas: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    """A page of the revision's records this scope may see, in id order. With ``quotas`` (records
+    wanted per concept) the page holds the first records of each concept, as many as its quota."""
+    columns = "id, concept_id, namespace, label, attributes, provenance, identity_key"
+    if quotas is not None:
+        if not quotas:
+            return []
+        concepts = sorted(quotas)
+        rows = await pool.fetch(
+            f"SELECT x.* FROM unnest($2::text[], $3::int[]) AS q(concept_id, quota) "
+            f"CROSS JOIN LATERAL (SELECT {columns} FROM semantic_population.entities e "
+            f"WHERE e.data_revision_id = $1 AND e.concept_id = q.concept_id AND {visible_entity_clause('e', '$4')} "
+            "ORDER BY e.id LIMIT q.quota) x ORDER BY x.id",
+            revision_id, concepts, [quotas[concept] for concept in concepts], list(allowed_workspace_ids),
+        )
+        return [_entity_row(dict(row)) for row in rows]
     rows = await pool.fetch(
-        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        f"SELECT {columns} "
         "FROM semantic_population.entities e WHERE data_revision_id = $1 "
         f"AND ($3::text IS NULL OR concept_id = $3) AND {visible_entity_clause('e', '$4')} "
         "ORDER BY id LIMIT $2",
@@ -1210,7 +1225,8 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
     coverage = _json_object(row["coverage"])
     return {"sourceObservations": [item for item in observations if isinstance(item, dict)],
             "completeEnumeration": bool(coverage.get("completeEnumeration", True)),
-            "userSampleLimits": [item for item in coverage.get("userSampleLimits") or [] if isinstance(item, dict)]}
+            "userSampleLimits": [item for item in coverage.get("userSampleLimits") or [] if isinstance(item, dict)],
+            "health": coverage.get("health") if isinstance(coverage.get("health"), dict) else None}
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,

@@ -46,7 +46,7 @@
   "concept": { "add": "Add concept", "createTitle": "Add a business concept", "createDescription": "Use the wording colleagues already use in their daily work.", "placeholder": "Example: Contract", "descriptionPlaceholder": "What does this concept mean in your organization?", "quickAdd": "Add a linked concept", "quickName": "New linked concept name", "quickPlaceholder": "New concept name", "quickCreate": "Create linked concept", "quickHelp": "Press Enter to create it with a related-to link." },
   "relation": { "add": "Add relationship", "createTitle": "Connect two concepts", "createDescription": "Describe the connection as a simple business sentence.", "placeholder": "Example: places", "placeholderShort": "is related to", "defaultWording": "related to", "wording": "Relationship wording", "from": "From", "to": "To", "chooseConcept": "Choose a concept", "swap": "Reverse direction", "connect": "Connect concepts", "connectFrom": "Drag to connect this concept", "connectTo": "Drop here to connect" },
   "relationMatching": { "sourceField": "Source matching field", "targetField": "Target matching field", "chooseField": "Choose a field", "strategy": "Matching strategy", "strategyOption": { "exact": "Exact", "case_insensitive": "Ignore capitalization", "normalized": "Normalize business names" }, "ambiguity": "When more than one match exists", "review": "Send to review", "leaveUnresolved": "Leave unresolved", "save": "Save rule", "preview": "Preview", "saved": "Relationship matching rule saved", "saving": "Saving…", "autoSaved": "Rule saved; changes save automatically", "saveError": "The matching rule could not be saved", "previewError": "The relationship preview could not be run", "resolved": "Resolved", "ambiguous": "Ambiguous", "unresolved": "Unresolved", "status": { "resolved": "Resolved", "ambiguous": "Needs review", "unresolved": "Unresolved" } },
-  "dataPreview": {"builtFrom": "built from {{fields}}", "takenFrom": "from {{concept}} “{{record}}”", "takenFromAny": "from {{concept}}", "takenField": "field {{field}}", "takenRecords": "chosen among {{count}} records", "readRules": "read with rules", "readAi": "read with AI", "readRecipe": "by a recipe", "readConstant": "fixed value", "typedByHand": "Typed by hand", "page": "page {{page}}", "gapsTitle": "What's missing", "gapsNone": "Nothing is missing from the prepared records.", "gapMissingValue": "{{missing}} of {{total}} {{concept}} records have no {{field}}.", "gapUnresolvedLink": "{{count}} “{{relationship}}” links could not be matched to a record.", "gapOther": "{{count}} {{concept}} rows could not be turned into records.", "gapOtherModel": "{{count}} rows could not be turned into records.", "gapFixConcept": "Open {{concept}}", "gapFixRelationship": "Check how records are linked", "title": "Explore data", "description": "See real records, their relationships, and where each value came from.", "loading": "Resolving a bounded data sample...", "error": "The data preview could not be prepared", "noRecordsYet": "No records yet", "noRecordsYetHint": "Create records from the Sources tab to see them here, with where each value came from.", "errorHint": "The records changed or could not be read. Try again to load the latest ones.", "refresh": "Refresh sample", "entities": "Records", "resolved": "Resolved links", "unresolved": "Unresolved", "ambiguous": "Ambiguous", "conflicts": "Conflicts", "conflictDetails": "Conflicting source values", "sourceIssuesTitle": "{{count}} source(s) could not be read", "sourceIssueDetail": "Technical detail", "sourceIssueGroup": "{{count}} sources could not be read: {{reason}}", "search": "Search records", "concept": "Object", "allConcepts": "All objects", "sample": "Sample limit", "showUnresolved": "Show unresolved", "conflictBadge": "{{count}} conflict(s)", "matchingEvidence": "How this was matched", "valuesAndSources": "Values and sources", "chooseRecord": "Choose a record", "row": "row {{row}}", "column": "column {{column}}", "empty": "No mapped or manual records match this view.", "relationships": "Relationships", "noRelationships": "No relationship rules have produced matches in this sample.", "missingFilter": "{{count}} {{concept}} records in this sample have no {{field}}. Use Fix on the highlighted value.", "showAllRecords": "Show all records", "noValue": "No value", "gapsCount_one": "{{count}} problem in this data.", "gapsCount_other": "{{count}} problems in this data.", "gapsCount": "{{count}} problems in this data.", "reviewGaps": "Review them"},
+  "dataPreview": {"builtFrom": "built from {{fields}}", "takenFrom": "from {{concept}} “{{record}}”", "takenFromAny": "from {{concept}}", "takenField": "field {{field}}", "takenRecords": "chosen among {{count}} records", "readRules": "read with rules", "readAi": "read with AI", "readRecipe": "by a recipe", "readConstant": "fixed value", "typedByHand": "Typed by hand", "page": "page {{page}}", "gapsTitle": "What's missing", "gapsNone": "Nothing is missing from the prepared records.", "gapMissingValue": "{{missing}} of {{total}} {{concept}} records have no {{field}}.", "gapUnresolvedLink": "{{count}} “{{relationship}}” links could not be matched to a record.", "gapOther": "{{count}} {{concept}} rows could not be turned into records.", "gapOtherModel": "{{count}} rows could not be turned into records.", "gapFixConcept": "Open {{concept}}", "gapFixRelationship": "Check how records are linked", "title": "Explore data", "description": "See real records, their relationships, and where each value came from.", "loading": "Resolving a bounded data sample...", "error": "The data preview could not be prepared", "noRecordsYet": "No records yet", "noRecordsYetHint": "Create records from the Sources tab to see them here, with where each value came from.", "errorHint": "The records changed or could not be read. Try again to load the latest ones.", "refresh": "Refresh sample", "entities": "Records", "resolved": "Resolved links", "unresolved": "Unresolved", "ambiguous": "Ambiguous", "conflictDetails": "Conflicting source values", "sourceIssuesTitle": "{{count}} source(s) could not be read", "sourceIssueDetail": "Technical detail", "sourceIssueGroup": "{{count}} sources could not be read: {{reason}}", "search": "Search records", "concept": "Object", "allConcepts": "All objects", "sample": "Sample limit", "showUnresolved": "Show unresolved", "conflictBadge": "{{count}} conflict(s)", "matchingEvidence": "How this was matched", "valuesAndSources": "Values and sources", "chooseRecord": "Choose a record", "row": "row {{row}}", "column": "column {{column}}", "empty": "No mapped or manual records match this view.", "relationships": "Relationships", "noRelationships": "No relationship rules have produced matches in this sample.", "missingFilter": "{{count}} {{concept}} records in this sample have no {{field}}. Use Fix on the highlighted value.", "showAllRecords": "Show all records", "noValue": "No value", "gapsCount_one": "{{count}} problem in this data.", "gapsCount_other": "{{count}} problems in this data.", "gapsCount": "{{count}} problems in this data.", "reviewGaps": "Review them"},
   "mappingsView": { "title": "Sources", "description": "See what feeds each business object and how records are matched.", "error": "Sources could not be loaded", "empty": "Connect a source to a business object to see it here.", "relationships": "How relationships are matched", "notConfigured": "Matching not configured", "sourceCount": "{{count}} connected sources", "primary": "Primary source", "prioritySaved": "Source priority saved", "priorityError": "Source priority could not be saved" },
   "sourceStatus": { "title": "Source status", "count": "{{count}} sources", "description": "Current ingestion state for mapped sources.", "error": "Source status could not be loaded.", "empty": "No mapped sources yet.", "retry": "Retry", "revision": "Revision {{revision}}", "state": { "ready": "Ready", "syncing": "Syncing", "awaiting": "Awaiting first event", "failed": "Failed", "deleted": "Deleted" } },
   "mappingHealth": { "title": "Source health", "none": "No source is connected yet. Drop a spreadsheet or document on a business object to start.", "healthy": "Every mapped source is current and available.", "issueCount": "{{count}} source issue(s) need attention.", "refresh": "Check again", "allReady": "All mapped sources are ready.", "repair": "Repair mapping", "missing": "Missing fields: {{fields}}.", "state": { "healthy": "Ready", "changed": "Changed", "unavailable": "Unavailable", "broken": "Broken", "checking": "Checking" }, "message": { "healthy": "The source is current.", "changed": "The source changed since this mapping was validated.", "unavailable": "The mapped source cannot be accessed.", "broken": "One or more mapped fields no longer exist.", "checking": "We are reading this source. This usually takes under a minute; if it stays here, the data processing service may be offline." } },
@@ -69,7 +69,7 @@
   "validate": {"title": "Generate data"},
   "workspace": { "eyebrow": "Workspace business map", "title": "Semantic Model", "description": "Give the documents in this workspace a shared business structure.", "documents": "Back to documents", "defaultDescription": "This automatic model always includes the workspace Documents collection.", "openDefault": "Open automatic model", "otherModels": "Other connected models", "otherModelsDescription": "Models that also use knowledge from this workspace.", "browse": "Browse models", "noOtherModels": "No other model uses this workspace yet.", "loadError": "Semantic Models could not be loaded" }
   ,"readinessState": { "notConfigured": "Not configured", "notConfiguredAction": "Start by adding the business concepts this model should connect.", "loading": "Checking readiness…", "unavailable": "Readiness unavailable" }
-  ,"identity": {"none": "No identifying field chosen", "title": "What makes each {{name}} unique?", "help": "Pick the field, or the fields together, that tell two {{name}} records apart, such as a customer number.", "noFields": "Add fields first, then choose which one identifies each record.", "missing": "Choose what makes each {{name}} unique, otherwise records from your sources cannot be recognised.", "saveError": "This choice could not be saved"}
+  ,"identity": {"suggested": "The last run suggests {{fields}} as the unique fields: together they tell every row apart.", "useSuggested": "Use these fields", "dismissSuggested": "Not now", "none": "No identifying field chosen", "title": "What makes each {{name}} unique?", "help": "Pick the field, or the fields together, that tell two {{name}} records apart, such as a customer number.", "noFields": "Add fields first, then choose which one identifies each record.", "missing": "Choose what makes each {{name}} unique, otherwise records from your sources cannot be recognised.", "saveError": "This choice could not be saved"}
   ,"relationSentence": {"each": "Each", "one": "one", "many": "many", "sentence_one": "Each {{subject}} {{verb}} one {{object}}", "sentence_many": "Each {{subject}} {{verb}} many {{object}}", "defaultInverse": "is linked to", "verbFor": "What each {{subject}} does with {{object}}", "howManyFor": "How many {{object}} for each {{subject}}", "verbPlaceholder": "belongs to", "inversePlaceholder": "has", "title": "How they relate", "help": "Read the two sentences out loud: they should both be true.", "linkTitle": "How to link records", "linkHelp": "Choose the field on each side that holds the same value.", "matchSentence": "Match {{source}} {{sourceField}} with {{target}} {{targetField}}", "chooseBoth": "Choose a field on each side to link records."}
   ,"aliases": {"title": "Also known as", "help": "Other names colleagues use for {{name}}, such as Client for Customer. Chat understands them too.", "placeholder": "Add another name", "fieldPlaceholder": "Other names for {{name}}", "remove": "Remove {{name}}"}
   ,"suggest": {"open": "Suggest concepts from a file", "openFromFile": "Suggest concepts from this file", "title": "Suggest concepts from a file", "description": "We read the spreadsheet and propose one concept per sheet, its fields, what makes each record unique and how sheets link together. Keep, rename or untick anything before creating it.", "chooseFile": "Spreadsheet", "chooseFilePlaceholder": "Choose a spreadsheet", "noFiles": "No spreadsheet is available yet. Add one to a connected workspace first.", "loading": "Reading {{name}}…", "error": "This file could not be read. Try again in a moment.", "empty": "No sheet with columns was found in this file.", "includeConcept": "Create a concept from {{sheet}}", "rename": "Name of the concept made from {{sheet}}", "fromSheet": "from sheet {{sheet}}", "noKey": "Nothing unique yet", "relations": "Links between sheets", "relationSentence": "Each {{from}} belongs to one {{to}}, matched by {{column}}", "belongsTo": "belongs to", "has": "has", "apply": "Create these concepts", "applied": "{{count}} concept(s) created and connected to the file", "applyError": "The concepts could not all be created"},
@@ -92,5 +92,232 @@
   "derived": { "expand": {"title": "Records per source record", "summaryOn": "One record per item of {{field}}", "row": {"label": "Several records per row", "tip": "Split one column that holds several values into items, and read each item as a row of its own: the recipients a row lists, as text, an address list or a JSON array. Fields then read the item (Item) and still any other column. Records of the same key merge into one.", "on": "One row per item of the column; fields read the item.", "off": "One record per row.", "field": "Column holding the values", "chooseField": "Choose a column", "found": "{{count}} items on {{rows}} sample rows.", "found_one": "{{count}} item on {{rows}} sample rows.", "itemOf": "item {{number}}: {{item}}", "problem": "Choose the column whose values make several records.", "itemWithoutExpand": "A field reads an item: turn on several records per row, or choose a column."}, "label": "Several records per {{source}} record", "tip": "Split one field that holds several values into items, and make one record of each: the recipients of a message, as text, an address list or a JSON array. Records of the same key still merge into one.", "off": "One record per {{source}} record.", "on": "One record per item of the field; its fields read the item.", "field": "Field holding the values", "chooseField": "Choose a field", "split": "Split by", "splits": {"auto": "Detect automatically", "list": "List or JSON array", "emails": "E-mail addresses", "delimiters": "Delimiters", "lines": "Lines"}, "splitHelp": {"auto": "A list or JSON array gives its elements; otherwise e-mail addresses, then lines, then ; and , are tried.", "list": "A list, or a JSON array (also inside a JSON object, at the path below). Object items offer their values by path.", "emails": "An address list: \"Dupont, Jean\" <j@x.fr> stays one recipient.", "delimiters": "The text between the delimiters you type.", "lines": "One item per line."}, "delimiters": "Delimiters", "delimitersHelp": "Separated by spaces, e.g. ; , | (type space for a space).", "path": "Path to the list (optional)", "pathHelp": "When the field holds a JSON object, where its list is: to, data.recipients[*].", "relation": "Link each record to its items' records", "relationHelp": "The relationship that links a source record to the records made from its items.", "noRelation": "Do not link", "found": "{{count}} items on {{records}} sample records.", "found_one": "{{count}} item on {{records}} sample records.", "truncated": "Some items were not read in this preview.", "item": "Item", "itemPath": "Item › {{path}}", "itemOf": "item {{number}}: {{item}}", "problem": {"field": "Choose the field whose values make several records.", "delimiters": "Type at least one delimiter.", "itemWithoutExpand": "A field reads an item: turn on several records per record, or choose another source field."}},"title": "Fill {{concept}} from another concept", "description": "One {{concept}} record is made for each distinct key value found in the records of the concept you pick. It is updated on every run.", "source": "Take the values from", "chooseSource": "Choose a concept", "noCandidate": "No other concept has fields yet.", "fields": "Fields", "fieldsHelp": "How each field is filled from a {{source}} record: copied from one of its fields, extracted from a field’s text (with rules and/or AI, as for documents), taken from another field, or fixed.", "fieldFor": "{{field}} is filled from", "notFilled": "Not filled", "key": "Key", "keyFor": "{{field}} is a key", "keysSummary": "One {{concept}} for each distinct {{fields}} found in {{source}} records", "conflict": "When records with the same key disagree", "rule": {"most_frequent": "Keep the most common value", "latest": "Keep the value of the most recent record", "longest": "Keep the longest value", "leave_empty": "Leave the field empty"}, "ruleHelp": {"most_frequent": "If two contracts say “Acme” and one says “ACME SAS”, “Acme” is kept.", "latest": "The record with the latest date wins, so a renamed customer gets its new name.", "longest": "Useful for names: “Acme Corporation” is kept over “Acme”.", "leave_empty": "Nothing is guessed: the field stays empty and the disagreement is listed in To review."}, "orderBy": "Most recent by this {{source}} field", "chooseOrderBy": "Choose a date field", "problem": {"aiLimits": "Fix the AI reading limits: each must be within its range.", "source": "Choose the concept whose records carry the values.", "fillsAnother": "{{concept}} already fills another concept, so it cannot be made from one.", "noField": "Fill at least one field.", "noKey": "Mark at least one field as a key.", "keyNotFilled": "The key field {{field}} must be filled.", "orderBy": "Choose the field that tells which record is the most recent."}, "save": "Save", "saving": "Saving...", "remove": "Remove", "saved": "{{concept}} will be filled from {{source}} on the next run.", "saveError": "The derived source could not be saved", "removeError": "The derived source could not be removed", "fromConcept": "From {{source}}", "sectionTitle": "Made from another concept", "add": "Fill from another concept", "summary": "One record per distinct {{fields}} · {{rule}}", "samplesTitle": "Sample records", "samplesHelp": "Tick up to {{max}} {{source}} records: every field is read on them as a run would read it. The fields of the shown record that are read are shown here, with what was found marked.", "recordsPicked_one": "{{count}} of {{total}} record", "recordsPicked_other": "{{count}} of {{total}} records", "recordsPicked": "{{count}} of {{total}} records", "loadingSamples": "Loading records…", "noSamples": "No {{source}} records yet: read the sources once to try the fields on records. The fields can still be set up.", "recordsFilter": "Filter the records", "recordFor": "Read the fields on {{record}}", "showRecord": "Show {{record}}", "incomplete": "Complete the fields to read the records.", "readingRecords_one": "Reading {{count}} record…", "readingRecords_other": "Reading {{count}} records…", "readingRecords": "Reading {{count}} records…", "readRecords_one": "Read from {{count}} record", "readRecords_other": "Read from {{count}} records", "readRecords": "Read from {{count}} records", "readNow": "Read these records", "labelFound": "“{{label}}” is in {{count}} of {{total}} picked records", "fieldOf": "{{field}}, {{record}}", "aiEstimate": "AI reads one call per {{source}} record with text, at most {{max}} records per run: about {{calls}} AI calls ({{records}} records). Unchanged texts reuse their earlier answer.", "findLabel": "Find label in the records", "keysTitle": "Matching key", "aiFooter": "About {{calls}} AI calls per run", "conflictTitle": "Disagreements", "noSamplesShort": "No record yet", "textsTitle": "Texts read", "fieldsSummary": "{{count}} filled · {{ai}} with AI", "resultSummary_one": "{{count}} record read", "resultSummary_other": "{{count}} records read", "resultSummary": "{{count}} records read", "keysHelp": "The fields that tell {{concept}} records apart: records with the same values make one {{concept}}.", "resultTitle": "Result preview", "suggestionsTitle": "Found in these fields", "suggestionsRead_one": "{{count}} record read", "suggestionsRead_other": "{{count}} records read", "suggestionsRead": "{{count}} records read", "sourceFieldFor": "Field {{field}} is read from", "chooseSourceField": "Choose a field", "noSourceField": "Choose the source field this field is read from.", "recipe": {"sourceFieldOption": "{{source}} field “{{field}}”", "fieldOption": "Field “{{field}}” of this record", "rowsPicked_one": "{{count}} of {{total}} record", "rowsPicked_other": "{{count}} of {{total}} records", "rowsPicked": "{{count}} of {{total}} records", "previewRows": "Result on your records", "rowsHelp": "Tick records to see what the field gives for each, step by step. {{max}} at most.", "noRows": "No record to try it on yet.", "rowsToTry": "Records to try it on", "rowsFilter": "Filter the records", "rowFor": "Try it on {{row}}", "rowsNoMatch": "No record matches.", "rowsNone": "Tick a record to see the result.", "inputHelp": "The source field this field reads. Pick another one, or another field of the record being made (after its own reading).", "problemInput": "Choose a field of the source concept, or another field of the record that does not read this one."}},
   "runHistory": {"title": "Run history", "hint": "Your latest data updates of this model, newest first.", "blocked": "The next run cannot start", "openReview": "Open Review to fix it", "unavailable": "The run history could not be loaded.", "empty": "No run yet.", "records_one": "{{count}} record", "records_other": "{{count}} records", "links_one": "{{count}} link", "links_other": "{{count}} links", "gaps_one": "{{count}} gap", "gaps_other": "{{count}} gaps", "changes": "{{added}} added, {{changed}} changed, {{removed}} removed", "reused": "unchanged, reused", "follow": "Follow this run", "seconds_one": "{{count}} second", "seconds_other": "{{count}} seconds", "minutes": "{{minutes}} min {{seconds}} s", "purpose": {"build": "Full run", "refresh": "Update"}, "state": {"queued": "Waiting to start", "waiting_dependencies": "Waiting to start", "running": "Running", "cancel_requested": "Stopping", "completed": "Completed", "completed_with_gaps": "Completed with gaps", "failed": "Failed", "cancelled": "Stopped", "superseded": "Replaced by a newer run"}, "error": {"unknown": "The run failed without saying why.", "other": "The run failed ({{code}}).", "attempts_exhausted": "The run failed several times in a row and was given up. Try again; if it fails again, check the sources in Review.", "execution_fingerprint_mismatch": "The model changed while the run was starting. Run again.", "invalid_derivations": "A concept filled from another concept is set up wrongly. Open the derived source in Review.", "invalid_document_mapping": "A document source is set up wrongly. Open the document source in Review.", "lease_expired": "The worker running it stopped answering. Run again.", "delivery_not_claimed": "No worker picked the run up. Check that the runtime is running, then run again.", "no_data_in_use": "Run the whole model once before refreshing a single concept: there is no data to keep yet.", "invalid_relation_bindings": "A link matches records on a field no source fills. Open Review to fix it.", "invalid_sources": "The run has no source it can read.", "invalid_column_mapping": "A spreadsheet source is set up wrongly. Open it in Review.", "unmapped_identity": "A concept has no identifying field mapped. Open Review to choose it.", "unknown_concept": "A source points to a concept that no longer exists.", "unknown_relation": "A link rule points to a link that no longer exists.", "spec_hash_mismatch": "The model changed while the run was starting. Run again.", "workspace_forbidden": "You no longer have access to one of the workspaces.", "workspace_required": "Connect a workspace to this model first.", "manual_snapshot_unavailable": "The records typed by hand could not be read. Run again.", "revision_too_large": "The result is too large to show. Map fewer rows or raise the limits in Admin > Semantic models.", "asset_not_found": "A source file was deleted.", "asset_unavailable": "A source file could not be opened.", "parser_failed": "A source file could not be read.", "parser_timeout": "A source took too long to read."}},
   "labelField": {"title": "Which field names each {{name}}?", "help": "Its value is the name shown for each {{name}} record on the canvas, in lists and in answers, such as a company name or a subject. Required before running.", "missing": "Choose the field that names each {{name}}: runs are refused until it is chosen.", "saveError": "This choice could not be saved"},
-  "citedRecord": {"record": "Record", "fromModel": "From the semantic model {{model}}", "quoted": "Quoted in the answer", "quotedFrom": "Quoted in the answer, from {{field}}", "loading": "Reading the record…", "failed": "The record could not be read. You may no longer have access to this model.", "hidden": "This record comes from documents you cannot open, so it is not shown.", "missing": "This record is no longer in the model's data.", "changed": "The data was updated since this answer: the record is shown as it is now.", "values": "Values", "sources": "Read from", "rows": "rows {{rows}}", "unavailableSources": "{{count}} other documents you cannot open.", "unavailableSources_one": "{{count}} other document you cannot open.", "unavailableSources_other": "{{count}} other documents you cannot open.", "openInGraph": "Open in graph", "noValue": "No value", "showMore": "Show more", "showLess": "Show less", "page": "page {{page}}", "row": "row {{row}}", "column": "column {{column}}", "fromRecord": "Taken from the record {{name}}", "readByAi": "Read by AI", "corrected": "Corrected by hand", "graphRecordMissing": "This record is not in the data shown in the graph (the draft's)."}
+  "citedRecord": {"record": "Record", "fromModel": "From the semantic model {{model}}", "quoted": "Quoted in the answer", "quotedFrom": "Quoted in the answer, from {{field}}", "loading": "Reading the record…", "failed": "The record could not be read. You may no longer have access to this model.", "hidden": "This record comes from documents you cannot open, so it is not shown.", "missing": "This record is no longer in the model's data.", "changed": "The data was updated since this answer: the record is shown as it is now.", "values": "Values", "sources": "Read from", "rows": "rows {{rows}}", "unavailableSources": "{{count}} other documents you cannot open.", "unavailableSources_one": "{{count}} other document you cannot open.", "unavailableSources_other": "{{count}} other documents you cannot open.", "openInGraph": "Open in graph", "noValue": "No value", "showMore": "Show more", "showLess": "Show less", "page": "page {{page}}", "row": "row {{row}}", "column": "column {{column}}", "fromRecord": "Taken from the record {{name}}", "readByAi": "Read by AI", "corrected": "Corrected by hand", "graphRecordMissing": "This record is not in the data shown in the graph (the draft's)."},
+  "health": {
+    "title": "Model health",
+    "button": "Model health",
+    "badge": "{{count}} to fix",
+    "loading": "Reading the last run…",
+    "unavailable": "The last run could not be explained. Try again in a moment.",
+    "retry": "Try again",
+    "noData": {
+      "title": "Nothing to explain yet",
+      "hint": "Run the model once. This screen then shows what happened to every row of every source."
+    },
+    "ring": {
+      "label": "healthy",
+      "aria": "{{healthy}} of {{total}} concepts are healthy"
+    },
+    "verdict": {
+      "heading": "What this run means",
+      "clean": {
+        "title": "Every row read became a record.",
+        "body": "Nothing needs a person right now."
+      },
+      "identity_too_coarse": {
+        "title": "{{concept}} lost {{lostPercent}}% of its rows. One setting explains it.",
+        "body": "Its records are told apart by {{keyFields}} alone, which only takes {{keyValues}} values. Fix the key and the rest follows."
+      },
+      "rows_without_key": {
+        "title": "{{concept}} left out {{rows}} of {{of}} rows.",
+        "body": "They have no value for {{field}}, the field that names each record."
+      },
+      "ai_row_limit": {
+        "title": "{{concept}} used an AI sample of {{read}} rows, as your limits say.",
+        "body": "The other {{left}} rows were not read by the AI, so they have no AI values yet."
+      },
+      "values_disagree": {
+        "title": "{{concept}} has rows that disagree about {{field}}.",
+        "body": "{{rows}} rows gave {{distinct}} different values to records that share a key."
+      },
+      "missing_values": {
+        "title": "{{field}} is empty on {{missing}} of {{total}} {{concept}} records.",
+        "body": "No source filled it in."
+      },
+      "links_unmatched": {
+        "title": "{{count}} {{concept}} records found no match for “{{relationship}}”.",
+        "body": "Check the fields the link matches on."
+      },
+      "documents_not_read": {
+        "title": "Some documents of {{concept}} could not be read.",
+        "body": "Open its sources to see which ones and why."
+      },
+      "extraction_failed": {
+        "title": "The AI could not read some {{concept}} data.",
+        "body": "Open its sources, then run again."
+      },
+      "reading_limit": {
+        "title": "A run limit stopped {{concept}} before everything was read.",
+        "body": "An admin set that limit."
+      },
+      "inherited": {
+        "title": "{{concept}} depends on {{upstream}}, which has a problem.",
+        "body": "Fix {{upstream}} first."
+      },
+      "other_gap": {
+        "title": "The run reported something about {{concept}}.",
+        "body": "See the records for details."
+      }
+    },
+    "stats": {
+      "rowsRead": "source rows read",
+      "records": "records kept",
+      "fixes": "fixes needed",
+      "limits": "limits you set"
+    },
+    "rail": {
+      "title": "Concepts · worst first",
+      "aria": "Concepts"
+    },
+    "status": {
+      "blocked": "Blocked",
+      "warning": "Warning",
+      "info": "Sample",
+      "healthy": "Healthy",
+      "inherited": "Inherited"
+    },
+    "flow": {
+      "rowsToRecords": "{{rows}} rows → {{records}} records",
+      "recordsToRecords": "{{rows}} records → {{records}} records",
+      "aiToRecords": "{{rows}} rows → {{ai}} read by AI → {{records}}",
+      "records": "{{records}} records"
+    },
+    "origin": {
+      "from": "from {{sources}}",
+      "fromDocuments": "from documents",
+      "derived": "made from {{concept}}",
+      "manual": "typed records",
+      "key": "key: {{fields}}"
+    },
+    "journey": {
+      "title": "Row journey",
+      "available": "Rows in the source",
+      "availableRecords": "Records of the source concept",
+      "read": "Rows read",
+      "readRecords": "Records read",
+      "aiRead": "Read by the AI",
+      "made": "Records made",
+      "noCounts": "This run did not count the rows of this concept.",
+      "dropped": {
+        "same_key": "{{rows}} rows were merged into records that share their key.",
+        "missing_identity": "{{rows}} rows were left out: no value for {{field}}.",
+        "ai_limit": "{{rows}} rows were not read by the AI (your limit).",
+        "run_cap": "{{rows}} records were dropped by the run’s record limit."
+      }
+    },
+    "seeData": "See the data",
+    "filter": {
+      "label": "Filter by cause",
+      "all": "All"
+    },
+    "cause": {
+      "design": "Model design",
+      "limit": "Limit you set",
+      "mapping": "Source & mapping",
+      "values": "Values"
+    },
+    "empty": "Nothing to fix here. Every row read became a record.",
+    "issue": {
+      "identity_too_coarse": {
+        "title": "The key “{{keyFields}}” is too broad to tell records apart",
+        "why": "A record is made for each distinct key value. {{keyFields}} only takes {{keyValues}} values, so {{rows}} rows collapse into {{records}} records and their other values are thrown away.",
+        "impact": "{{rows}} of {{of}} rows merged · {{values}} values discarded",
+        "breakdown": "Rows per value of the current key ({{keyFields}})",
+        "examples": "Rows merged into the same record"
+      },
+      "rows_without_key": {
+        "title": "{{rows}} rows have no value for {{field}}",
+        "whyMapping": "{{field}} names each record, and these rows leave it empty, so no record could be made from them. Check the column that feeds it.",
+        "whyAi": "{{field}} is read by the AI, and it found nothing in these rows. They are often replies or short acknowledgements.",
+        "impact": "{{rows}} of {{of}} rows read",
+        "examples": "Rows left out"
+      },
+      "ai_row_limit": {
+        "title": "The AI read {{read}} rows, as your limit says",
+        "why": "“AI rows per source” is {{limit}}. This is a choice, not an error: the other {{left}} rows were not read by the AI, so they have no AI values yet.",
+        "impact": "{{rows}} of {{of}} rows not read by the AI",
+        "breakdown": "AI calls at each limit",
+        "now": "now"
+      },
+      "values_disagree": {
+        "title": "Rows that share a key disagree on {{field}}",
+        "why": "{{rows}} rows gave {{distinct}} different values for {{field}} to the same records. Only the first value was kept.",
+        "impact": "{{rows}} rows",
+        "examples": "Rows that disagree"
+      },
+      "missing_values": {
+        "title": "{{field}} is empty on {{missing}} of {{total}} records",
+        "whyRequired": "{{field}} is required, but no source filled it for these records.",
+        "whyOptional": "No source field feeds {{field}}. It is optional, so the records are kept.",
+        "impact": "{{missing}} of {{total}} records"
+      },
+      "links_unmatched": {
+        "title": "{{count}} records found no match for “{{relationship}}”",
+        "why": "The link looks for a matching record in the other concept and found none. Check the fields it matches on.",
+        "impact": "{{count}} records"
+      },
+      "documents_not_read": {
+        "title": "Some documents of {{concept}} could not be read",
+        "why": "The run could not open or index them, so no record was made from them.",
+        "impact": "{{count}} problems"
+      },
+      "extraction_failed": {
+        "title": "The AI could not read some {{concept}} data",
+        "why": "A call to the AI failed, so those values stay empty. Running again retries them.",
+        "impact": "{{count}} problems"
+      },
+      "reading_limit": {
+        "title": "A run limit stopped {{concept}} before everything was read",
+        "why": "A limit set by an admin cut the reading, so the data shown is only part of the source.",
+        "impact": "{{count}} cut"
+      },
+      "inherited": {
+        "title": "Fed by a concept that lost data",
+        "why": "{{concept}} is made from {{upstream}}. Once {{upstream}} is fixed, {{concept}} follows.",
+        "impact": "depends on {{upstream}}"
+      },
+      "other_gap": {
+        "title": "The run reported something about {{concept}}",
+        "why": "It does not stop the records from being made. The records show the details.",
+        "impact": "{{count}}"
+      }
+    },
+    "fix": {
+      "label": "Suggested fix",
+      "choose_unique_field_suggested": "Use {{suggested}} as the key",
+      "choose_unique_field": "Choose the fields that make each record unique",
+      "raise_ai_limit": "Keep the sample, or read every row",
+      "open_run_limits": "Change the run limits (an admin does this)",
+      "open_sources": "Check the source and its mapping",
+      "fix_values": "Fill in the empty values",
+      "check_links": "Check the fields the link matches on",
+      "go_to_concept": "Fix {{concept}} first",
+      "view_records": "Look at the records"
+    },
+    "forecast": {
+      "records": "On this run’s rows: about {{records}} records",
+      "aiCalls": "Reading every row: about {{calls}} more AI calls",
+      "inherited": "Nothing to change here"
+    },
+    "action": {
+      "choose_unique_field_suggested": "Use this key",
+      "choose_unique_field": "Choose other fields",
+      "raise_ai_limit": "Raise the limit",
+      "open_run_limits": "Open the run limits",
+      "open_sources": "Open the source",
+      "fix_values": "See the empty values",
+      "check_links": "See the records",
+      "go_to_concept": "Go to {{concept}}",
+      "view_records": "See the data"
+    },
+    "example": {
+      "row": "row {{row}}",
+      "record": "record {{record}}"
+    },
+    "setup": {
+      "title": "Before you run",
+      "description": "What blocks or weakens the next run: sources, unique fields, links and decisions waiting for you.",
+      "empty": "Nothing is blocking the next run."
+    }
+  }
 }

@@ -42,6 +42,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   readiness: 'curated-read',
   reviewItems: 'curated-read',
   reviewQueue: 'curated-read',
+  modelHealth: 'curated-read',
   create: 'command',
   update: 'command',
   archive: 'command',

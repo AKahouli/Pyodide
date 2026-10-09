@@ -51,6 +51,7 @@ import { SemanticBusinessTrustService } from '../services/semantic-business-trus
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
 import { SemanticModelCheckService } from '../services/semantic-model-check.service';
 import { ModelCheckDto } from '../dto/semantic-model-check.dto';
+import { SemanticModelHealthService } from '../services/semantic-model-health.service';
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
@@ -79,6 +80,7 @@ export class SemanticModelController {
     private readonly graphSearch: SemanticGraphSearchService,
     private readonly recordCitations: SemanticRecordCitationService,
     private readonly modelCheck: SemanticModelCheckService,
+    private readonly modelHealth: SemanticModelHealthService,
   ) {}
 
   @Get()
@@ -612,6 +614,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   reviewQueueList(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.reviewQueue.reviewQueue(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/health')
+  @ApiOperation({ summary: 'How the last run turned rows into records, concept by concept: what went wrong, why, and the fix to try' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  health(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.modelHealth.health(user._id.toString(), modelId);
   }
 
   @Get(':modelId/review-items')

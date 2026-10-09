@@ -66,7 +66,11 @@ export class SemanticReviewQueueService {
     @Optional() private readonly graphSearch?: SemanticGraphSearchService,
   ) {}
 
-  async reviewQueue(userId: string, modelId: string) {
+  /**
+   * `dataGaps: false` leaves out what the last run's data is missing: the model health screen
+   * explains that with the run's own account, and lists only what is wrong before any run.
+   */
+  async reviewQueue(userId: string, modelId: string, options: { dataGaps?: boolean } = {}) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const versionId = model.currentDraftVersionId;
@@ -90,7 +94,7 @@ export class SemanticReviewQueueService {
          ORDER BY relation.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),
-      this.dataGaps(userId, model.id),
+      options.dataGaps === false ? Promise.resolve([] as ReviewQueueItem[]) : this.dataGaps(userId, model.id),
       // Concepts that hold data but read it from nowhere: no ready source in a connected workspace.
       this.database.query<{ id: string; label: string }>(
         `SELECT n.id::text AS id, n.label FROM semantic_model.node_types n

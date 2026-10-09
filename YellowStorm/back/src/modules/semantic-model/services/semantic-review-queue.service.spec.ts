@@ -191,6 +191,14 @@ describe('SemanticReviewQueueService', () => {
     expect({ calledModelId, calledUser, limit, scope }).toEqual({ calledModelId: 'model', calledUser: 'user', limit: 1, scope: ['ws-1'] });
   });
 
+  it('leaves the last run\'s data gaps to the model health screen when asked', async () => {
+    const { service, runtime } = setup();
+    const queue = await service.reviewQueue('user', 'model', { dataGaps: false });
+    expect(runtime.getBoundRecords).not.toHaveBeenCalled();
+    expect(queue.items.some((item) => item.group === 'data' || item.kind === 'rows_not_read')).toBe(false);
+    expect(queue.items.some((item) => item.kind === 'concept_without_source')).toBe(true);
+  });
+
   it('lists no data gaps without source authorization wired', async () => {
     const database = { query: jest.fn(async () => ({ rows: [] })) };
     const models = { requireRole: jest.fn(async () => ({ id: 'model', currentDraftVersionId: 'v-1' })) };
