@@ -118,13 +118,23 @@ def source_limits(limits: dict[str, int], source: Any) -> dict[str, int]:
     return merged
 
 
-def source_record_cap(limits: dict[str, int], entry: Any) -> int:
-    """Most records one source gives: its mapping's own choice (``readLimits.maxRecords``), never above the run's."""
+def _mapping_record_limit(entry: Any) -> int | None:
     read_limits = entry.get("readLimits") if isinstance(entry, dict) else None
     value = read_limits.get("maxRecords") if isinstance(read_limits, dict) else None
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
-        return min(value, limits["maxRecordsPerSource"])
-    return limits["maxRecordsPerSource"]
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else None
+
+
+def source_record_cap(limits: dict[str, int], entry: Any) -> int:
+    """Most records one source gives: its mapping's own choice (``readLimits.maxRecords``), never above the run's."""
+    value = _mapping_record_limit(entry)
+    return limits["maxRecordsPerSource"] if value is None else min(value, limits["maxRecordsPerSource"])
+
+
+def source_cap_is_users(limits: dict[str, int], entry: Any) -> bool:
+    """Whether a source's record cap is its mapping's own (a deliberate sample) rather than the admin's
+    ceiling. A mapping limit at or above the ceiling is the ceiling."""
+    value = _mapping_record_limit(entry)
+    return value is not None and value < limits["maxRecordsPerSource"]
 
 
 def ai_pacing(limits: dict[str, int], settings: dict[str, Any] | None) -> dict[str, int]:

@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from app.persistence.partitions import (drop_generation_partitions, drop_revision_partitions,
+from app.persistence.partitions import (REVISION_TABLES, drop_generation_partitions, drop_revision_partitions,
                                         ensure_revision_partitions, with_partition_locks)
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
@@ -30,11 +30,13 @@ def _json(value: Any) -> str:
 
 def revision_id_for(model_version_id: str, execution_fingerprint: str,
                     dataset_fingerprints: list[str], correction_sequence: int,
-                    reset_generation: int = 0) -> str:
+                    reset_generation: int = 0, variant: str = "") -> str:
     """Deterministic data-revision id for a fixed spec, inputs and watermark.
 
     A model whose data was cleared counts its resets, so its next build is a
-    new revision rather than one kept for another environment."""
+    new revision rather than one kept for another environment. ``variant`` (the digest of the
+    records) tells apart a run that read other values from the same inputs, when the revision
+    it would reuse is already projected and cannot change."""
     from app.population.engine_version import population_engine_version
 
     body = _json({"modelVersionId": model_version_id,
@@ -42,7 +44,8 @@ def revision_id_for(model_version_id: str, execution_fingerprint: str,
                   "executionFingerprint": execution_fingerprint,
                   "datasets": sorted(dataset_fingerprints),
                   "correctionSequence": correction_sequence,
-                  **({"resetGeneration": reset_generation} if reset_generation else {})})
+                  **({"resetGeneration": reset_generation} if reset_generation else {}),
+                  **({"variant": variant} if variant else {})})
     return "dr_" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
 
 
@@ -99,6 +102,43 @@ async def create_data_revision(pool: Any, *, revision_id: str, model_id: str,
         )
     row = await with_partition_locks(pool, create)
     return row["id"] if row else revision_id
+
+
+def content_digest(entities: list[dict[str, Any]], assertions: list[dict[str, Any]],
+                   relationships: list[dict[str, Any]]) -> str:
+    """What a population holds, whatever the order: its records, the values they carry and the links."""
+    body = _json({
+        "entities": sorted([entity["entityId"], entity.get("label", ""), entity.get("attributes", {})]
+                           for entity in entities),
+        "assertions": sorted([assertion["entityId"], assertion["attribute"], assertion.get("value")]
+                             for assertion in assertions),
+        "relationships": sorted([link["relationId"], link["sourceEntityId"], link["targetEntityId"]]
+                                for link in relationships)})
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+async def replace_revision_rows(connection: Any, revision_id: str, *, coverage: dict[str, Any],
+                                source_observations: list[dict[str, Any]],
+                                timeout: float | None = None) -> None:
+    """Empty a revision's partitions and record what its new rows were read from. The caller writes the
+    new rows in the same transaction, so readers see the old rows or the new ones, never a mix.
+
+    Deletes follow the partitions' lock order: the tables referencing the records first, the records last."""
+    options = {} if timeout is None else {"timeout": timeout}
+    for table in REVISION_TABLES:
+        await connection.execute(
+            f"DELETE FROM {table.schema}.{table.name} WHERE data_revision_id = $1", revision_id, **options)
+    await connection.execute(
+        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb, source_observations = $3::jsonb "
+        "WHERE id = $1", revision_id, _json(coverage), _json(source_observations), **options)
+
+
+async def update_revision_reading(pool: Any, revision_id: str, *, coverage: dict[str, Any],
+                                  source_observations: list[dict[str, Any]]) -> None:
+    """What a revision's rows were read from and how completely, when the rows themselves are kept."""
+    await pool.execute(
+        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb, source_observations = $3::jsonb "
+        "WHERE id = $1", revision_id, _json(coverage), _json(source_observations))
 
 
 # Rows written per call: each call must finish within the worker pool's statement limit,
@@ -1143,7 +1183,8 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
     observations = json.loads(observations) if isinstance(observations, str) else list(observations or [])
     coverage = _json_object(row["coverage"])
     return {"sourceObservations": [item for item in observations if isinstance(item, dict)],
-            "completeEnumeration": bool(coverage.get("completeEnumeration", True))}
+            "completeEnumeration": bool(coverage.get("completeEnumeration", True)),
+            "userSampleLimits": [item for item in coverage.get("userSampleLimits") or [] if isinstance(item, dict)]}
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,

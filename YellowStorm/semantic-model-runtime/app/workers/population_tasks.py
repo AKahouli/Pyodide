@@ -25,7 +25,8 @@ from app.population.computed_fields import apply_row_recipes, recipe_columns, re
 from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
 from app.population.document_rules import answer_options, normalize_ai_settings
 from app.population.run_limits import (MAX_SOURCES_PER_TASK, ai_pacing, identity_limits, index_build_limits,
-                                        max_run_sources, run_limits, source_limits, source_record_cap)
+                                        max_run_sources, run_limits, source_cap_is_users, source_limits,
+                                        source_record_cap)
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import expand_rows, is_item_attribute, normalize_expand
@@ -48,7 +49,8 @@ QUERY_ROW_LIMIT = 1000
 PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
 # Bump when the way a sheet is read changes, so earlier readings are not reused.
-TABULAR_READ_VERSION = "t1"
+# t2: a sheet cut at its mapping's own record limit is a complete reading (a sample), not a capped one.
+TABULAR_READ_VERSION = "t2"
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
@@ -330,6 +332,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     document_coverage: list[dict] = []
     index_observations: list[dict] = []
     complete_enumeration = True
+    # Sheets cut at their mapping's own record limit: a deliberate sample, served as a complete reading.
+    user_samples: list[dict] = []
     manual_links: list[tuple[str, dict]] = []
     progress = progress or PopulationProgress()
     await progress.begin(len(validated["sources"]))
@@ -496,6 +500,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             per_concept.setdefault(entry["conceptId"], []).append(output)
         if not cached.get("completeEnumeration", True):
             complete_enumeration = False
+        if isinstance(cached.get("userSample"), dict):
+            user_samples.append(cached["userSample"])
         observation = cached.get("observation") or {}
         if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
             dataset_fingerprints.add(observation["contentHash"])
@@ -592,6 +598,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             records = gaps = 0
             outputs: list[dict] = []
             sheet_complete = True
+            sample: dict | None = None
             try:
                 with tempfile.TemporaryDirectory(prefix="semantic-populate-",
                                                  dir=temp_root) as directory:
@@ -641,6 +648,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     await progress.advance("rows", 0, row_total)
                     missing_cells: dict[str, int] = {}
                     read_rows = 0
+                    rows_taken = 0
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
@@ -653,7 +661,13 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         capped = len(raws) > record_cap - records
                         if capped:
                             raws = raws[:max(0, record_cap - records)]
-                            complete_enumeration = sheet_complete = False
+                            if source_cap_is_users(limits, entry):
+                                # The mapping's own limit is a chosen sample: the reading is complete for serving.
+                                sample = {"conceptId": entry["conceptId"], "sheetName": (options or {}).get("sheetName"),
+                                          "limit": record_cap, "total": row_total}
+                            else:
+                                complete_enumeration = sheet_complete = False
+                        rows_taken += len(raws)
                         expand_gaps: list = []
                         if expand:
                             raws, expand_gaps = expand_rows(raws, expand, lambda raw: raw.get(expand_column),
@@ -734,6 +748,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 "sizeBytes": manifest.get("sizeBytes"),
                 "rowCount": manifest.get("rowCount")}
             observations.append(observation)
+            if sample is not None:
+                sample["read"] = rows_taken
+                user_samples.append(sample)
             # A failed call to the extraction agent is worth retrying next run.
             ai_failed = cells is not None and cells.stats["aiFailedRows"] > 0
             if cache_key is not None and not ai_failed:
@@ -742,7 +759,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     cache_key, concept_id=entry["conceptId"],
                     asset_id=f"{asset_ref.get('assetId') or ''}#{sheet}",
                     output={"outputs": outputs, "observation": observation,
-                            "completeEnumeration": sheet_complete})
+                            "completeEnumeration": sheet_complete,
+                            **({"userSample": sample} if sample is not None else {})})
             await progress.read(entry, records=records, gaps=gaps, status="read")
         return None
 
@@ -780,6 +798,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         # The kept data is part of this result, so a refresh of the same sources over other data differs.
         dataset_fingerprints.add(f"carried:{carried['revisionId']}")
         complete_enumeration = complete_enumeration and carried.get("completeEnumeration", True)
+        # A kept concept stays the sample it was; a concept read again reports its own.
+        user_samples.extend(item for item in carried.get("userSampleLimits", [])
+                            if isinstance(item, dict) and item.get("conceptId") not in read_concepts)
     # Concepts made from another concept's records, once every source has been read.
     derived_links: list[dict] = []
     for derivation in validated["derivations"]:
@@ -898,7 +919,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     return {"ok": True, "specHash": validated["specHash"],
             "executionFingerprint": validated["executionFingerprint"],
             "purpose": validated["purpose"],
-            "completeEnumeration": complete_enumeration, "entities": kept,
+            "completeEnumeration": complete_enumeration, "userSampleLimits": user_samples, "entities": kept,
             "assertions": assertions, "relationships": relationships, "gaps": gaps,
             "counts": counts, "datasetFingerprints": sorted(dataset_fingerprints),
              "sourceObservations": observations,
@@ -1081,6 +1102,7 @@ def summarize_job_result(revision_id: str, outcome: dict, persisted: dict) -> di
         "dataRevisionId": revision_id, "specHash": outcome.get("specHash"),
         "purpose": outcome.get("purpose"),
         "completeEnumeration": outcome.get("completeEnumeration"),
+        **({"userSampleLimits": outcome["userSampleLimits"]} if outcome.get("userSampleLimits") else {}),
         "counts": outcome.get("counts"),
         "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
         "entityCount": persisted["entities"],
@@ -1266,6 +1288,10 @@ def saved_rows_reporter(progress: PopulationProgress, total: int):  # type: igno
     return on_rows
 
 
+def _stored_revision(row: dict | None, revision_id: str) -> bool:
+    return row is not None and row.get("id") == revision_id
+
+
 async def persist_population_revision(pool, command_dump: dict, outcome: dict,
                                       progress: PopulationProgress | None = None) -> str:
     """Persist a computed population as an inert data revision (P6A, P6.16).
@@ -1273,18 +1299,22 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict,
     ``progress`` is told after each written batch how many of all the rows (records, values and
     links) are stored; it reports on the worker's pool, outside the save connection's writes.
 
-    Idempotent (ON CONFLICT DO NOTHING): a retried task re-stores the same
-    revision without duplicates. The revision is inert until an explicit
+    Idempotent: a retried task re-stores the same revision without duplicates (a revision not yet in
+    the graph has its rows replaced by the new ones; one already in the graph is kept, and rows read
+    differently from the same inputs go to a revision of their own). The revision is inert until an explicit
     activation swaps the serving binding, so a stored-but-uncompleted task
     leaves serving state untouched.
     """
-    from app.persistence.population_store import (SaveBudget, create_data_revision, list_model_corrections,
-                                                  mirror_specification,
+    from app.persistence.population_store import (SaveBudget, _json_object, content_digest,
+                                                  create_data_revision, get_data_revision,
+                                                  list_model_corrections, mirror_specification,
                                                   model_correction_sequence,
-                                                  model_reset_generation, revision_id_for,
-                                                  save_connection,
+                                                  model_reset_generation, replace_revision_rows,
+                                                  revision_id_for, save_connection,
                                                   set_revision_validation, store_assertions,
-                                                  store_entities, store_relationships)
+                                                  store_entities, store_relationships,
+                                                  update_revision_reading)
+    from app.population.age_projection import is_live_projection_ref
     from app.population.corrections import apply_corrections
 
     payload = command_dump.get("payload", {})
@@ -1299,15 +1329,30 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict,
         # applied so activation can refuse a revision built before a newer fix.
         outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id, correction_sequence))
     execution_fingerprint = outcome["executionFingerprint"]
+    reset_generation = await model_reset_generation(pool, model_id)
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),
-                                  correction_sequence,
-                                  await model_reset_generation(pool, model_id))
+                                  correction_sequence, reset_generation)
+    digest = content_digest(outcome.get("entities", []), outcome.get("assertions", []),
+                            outcome.get("relationships", []))
+    # The same inputs give the same revision, yet a run may read other values from them (the AI asked
+    # again, other answers). A revision nobody has put in the graph yet is replaced by the new rows; one
+    # already in the graph is immutable, so other rows make a revision of their own.
+    existing = await get_data_revision(pool, revision_id)
+    if (_stored_revision(existing, revision_id) and is_live_projection_ref(existing.get("projection_ref"))
+            and _json_object(existing.get("coverage")).get("contentDigest") != digest):
+        revision_id = revision_id_for(model_version_id, execution_fingerprint,
+                                      outcome.get("datasetFingerprints", []), correction_sequence,
+                                      reset_generation, variant=digest)
+        existing = await get_data_revision(pool, revision_id)
+    stored = _stored_revision(existing, revision_id)
+    replace = stored and not is_live_projection_ref(existing.get("projection_ref"))
     await mirror_specification(pool, home_workspace_id=home_ws, model_id=model_id,
                                model_version_id=model_version_id,
                                spec_hash=outcome["specHash"], specification=specification)
-    coverage = {"counts": outcome.get("counts", {}),
+    coverage = {"counts": outcome.get("counts", {}), "contentDigest": digest,
                  "completeEnumeration": outcome.get("completeEnumeration", False),
+                 **({"userSampleLimits": outcome["userSampleLimits"]} if outcome.get("userSampleLimits") else {}),
                  "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
                  "documents": outcome.get("documentCoverage", []),
                  "gaps": summarize_gaps(outcome, specification)}
@@ -1318,6 +1363,10 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict,
                                source_observations=outcome.get("sourceObservations", []),
                                correction_sequence=correction_sequence,
                                coverage=coverage)
+    if stored and not replace:
+        # The rows are kept as they are; how completely they were read may have changed.
+        await update_revision_reading(pool, revision_id, coverage=coverage,
+                                      source_observations=outcome.get("sourceObservations", []))
     # The admin's batch size and time per batch; the pool's own 10 s limit would cut a large run short.
     limits = run_limits(payload)
     entities = outcome.get("entities", [])
@@ -1329,13 +1378,24 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict,
         on_rows = saved_rows_reporter(
             progress, len(entities) + len(split[0]) + len(split[1]) + len(outcome.get("relationships", [])))
     budget = SaveBudget(rows=limits["saveBatchRows"], seconds=limits["saveStatementSeconds"], on_rows=on_rows)
-    async with save_connection(pool, budget) as connection:
+    async def write(connection) -> None:  # type: ignore[no-untyped-def]
         await store_entities(connection, model_id=model_id, revision_id=revision_id,
                              entities=entities, budget=budget)
         await store_assertions(connection, model_id=model_id, revision_id=revision_id,
                                assertions=outcome.get("assertions", []), budget=budget, split=split)
         await store_relationships(connection, model_id=model_id, revision_id=revision_id,
                                   relationships=outcome.get("relationships", []), budget=budget)
+
+    async with save_connection(pool, budget) as connection:
+        if replace:
+            # One transaction: the earlier rows go and the new ones come, so a failure leaves the earlier ones.
+            async with connection.transaction():
+                await replace_revision_rows(connection, revision_id, coverage=coverage,
+                                            source_observations=outcome.get("sourceObservations", []),
+                                            timeout=budget.seconds)
+                await write(connection)
+        else:
+            await write(connection)
     from app.persistence.index_observations import record_index_observation
     for observation in outcome.get("indexObservations", []):
         await record_index_observation(pool, observation)

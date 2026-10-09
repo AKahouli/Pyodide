@@ -128,6 +128,20 @@ describe('PopulationStartedPanel', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(populationServing({ dataRevisionId: 'r' })).toBeUndefined();
   });
+
+  it('tells a source limit the person set apart from missing data: an info line, no warning', () => {
+    const serving = populationServing({ servingDecision: 'activate', blockingGapKinds: [],
+      userSampleLimits: [{ conceptId: 'c1', read: 10, total: 25000, limit: 10 }, { conceptId: 'c2', read: 5 }, { read: 1 }] });
+    expect(serving?.samples).toEqual([{ conceptId: 'c1', read: 10, total: 25000 }, { conceptId: 'c2', read: 5 }]);
+    render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'completed', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()}
+      serving={serving} conceptLabels={{ c1: 'Message' }} />);
+    expect(screen.getByText('runServing.sampleTitle')).toBeInTheDocument();
+    expect(screen.getByText('runServing.userSample')).toBeInTheDocument();
+    expect(screen.getByText('runServing.userSampleUnknownTotal')).toBeInTheDocument();
+    expect(screen.queryByText('runServing.kept')).not.toBeInTheDocument();
+    expect(screen.queryByText('runServing.firstIncomplete')).not.toBeInTheDocument();
+    expect(populationServing({ servingDecision: 'activate', blockingGapKinds: [] })?.samples).toBeUndefined();
+  });
 });
 
 describe('PopulationStartedPanel stop', () => {

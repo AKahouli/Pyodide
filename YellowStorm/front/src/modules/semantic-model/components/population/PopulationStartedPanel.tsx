@@ -40,13 +40,27 @@ export interface PopulationServing {
   decision: 'activate' | 'keep_previous';
   /** What the result is missing (source not read, a cap reached…); empty when complete. */
   blocking: string[];
+  /** Sources read up to the limit their mapping sets: a chosen sample, served as it is, not missing data. */
+  samples?: PopulationSample[];
+}
+
+export interface PopulationSample {
+  conceptId: string;
+  read: number;
+  /** Rows the source holds; absent when the reader did not count them. */
+  total?: number;
 }
 
 export function populationServing(result: Record<string, unknown> | null | undefined): PopulationServing | undefined {
   const decision = result?.servingDecision;
   if (decision !== 'activate' && decision !== 'keep_previous') return undefined;
   const blocking = Array.isArray(result?.blockingGapKinds) ? result.blockingGapKinds.filter((kind): kind is string => typeof kind === 'string') : [];
-  return { decision, blocking };
+  const samples = Array.isArray(result?.userSampleLimits) ? result.userSampleLimits.flatMap((item): PopulationSample[] => {
+    const sample = item as Partial<Record<keyof PopulationSample, unknown>> | null;
+    return sample && typeof sample.conceptId === 'string' && typeof sample.read === 'number'
+      ? [{ conceptId: sample.conceptId, read: sample.read, ...(typeof sample.total === 'number' ? { total: sample.total } : {}) }] : [];
+  }) : [];
+  return { decision, blocking, ...(samples.length ? { samples } : {}) };
 }
 
 /** Phases after the last chance to stop: the new data is being saved, compared or put in the graph. */
@@ -138,6 +152,15 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
         <p className='mt-1'>{t(serving.decision === 'keep_previous' ? 'runServing.keptHint' : 'runServing.firstIncompleteHint')}</p>
         <ul className='mt-2 list-disc space-y-0.5 pl-4'>
           {serving.blocking.map((kind) => <li key={kind}>{t((KNOWN_BLOCKING.has(kind) ? `runServing.kind_${kind}` : 'runServing.kind_other') as 'runServing.kind_other')}</li>)}
+        </ul>
+      </section>}
+      {/* A limit the person set on a source is respected, not a gap: the sample is served as the data. */}
+      {serving?.samples && tone !== 'running' && <section role='note' className='rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground'>
+        <p className='font-semibold text-foreground'>{t('runServing.sampleTitle')}</p>
+        <p className='mt-1'>{t('runServing.sampleHint')}</p>
+        <ul className='mt-2 list-disc space-y-0.5 pl-4'>
+          {serving.samples.map((sample) => <li key={sample.conceptId}>{t(sample.total === undefined ? 'runServing.userSampleUnknownTotal' : 'runServing.userSample', {
+            concept: conceptLabels?.[sample.conceptId] ?? '', read: sample.read.toLocaleString(), total: (sample.total ?? 0).toLocaleString() })}</li>)}
         </ul>
       </section>}
       {/* A reused terminal job means this click changed nothing — say so rather than implying progress. */}
