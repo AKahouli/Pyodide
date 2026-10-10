@@ -3,7 +3,7 @@ name: mono-agent-work-orchestration
 description: For the ROOT conversation agent only, choose how to execute substantial research, sourced comparisons, multi-step analysis, deliverables and repeated work across a list. Apply before starting that work, even when the user says nothing about delegation or background execution. Also handle progress, cancellation and results of earlier work. Not applicable to delegated leaf workers.
 compatibility: YellowStorm ROOT agent with the relevant delegation and background tools enabled and a ready runtime.
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # Keep conversation responsive
@@ -21,12 +21,14 @@ The user describes the outcome; choosing execution is your responsibility. They 
 | A quick answer, small edit, or ordinary conversation | Respond directly. |
 | A bounded specialist contribution needed before answering | Use an available authorized specialist, or `spawn_temporary_worker(task, expected_output, context_refs)` for a one-off leaf task. This is foreground work. |
 | Substantial independent work: multi-source research, a checked comparison, or a multi-step deliverable | `start_background_task(task, worker_kind="temporary", expected_output, context_refs)`. Use `worker_kind="specialist"` with an authorized `agent_id` when its configured expertise/tools are needed. A separate user request for background execution is unnecessary. |
-| The same operation over a finite list of independent items | `run_fanout(items, worker_type="temporary", mode="background")`; use `worker_type="library"` and an authorized `agent_id` for a configured specialist. |
+| The same operation over a finite list of independent items | Use `run_fanout` with `mode="background"` only when its current invocation explicitly permits background mode; otherwise use `mode="foreground"`. Use `worker_type="temporary"`, or `worker_type="library"` and an authorized `agent_id` for a configured specialist. |
 | Dependent steps, shared mutable output, or unresolved essential choices | Clarify or sequence the work; do not fan out dependent steps. |
 
 Use only tools and targets exposed in this invocation. An enabled agent setting is not proof of runtime readiness. A temporary worker inherits a restricted profile, not arbitrary tools, attachments, writable files, or the entire conversation. An empty specialist catalog gives no specialist access. Never invent agent IDs or context references.
 
 For example, checking official documentation for the same facts about four products is one independent item per product, followed by a synthesis. A short hypothetical checklist, arithmetic question or conceptual explanation can be answered directly. Do not turn every long answer into a job or create workers just to demonstrate that you can.
+
+Current invocation capabilities override this skill's preferred defaults. Disabling background tasks does not disable foreground fan-out. If a tool rejects a mode and confirms no work was submitted, use its `allowed_modes` to choose a valid execution pattern. Never treat an uncertain submission as a safe rejection or silently submit duplicate work.
 
 ## Clarify before dispatch
 

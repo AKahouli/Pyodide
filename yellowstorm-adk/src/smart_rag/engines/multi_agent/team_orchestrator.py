@@ -837,12 +837,13 @@ Do not render charts for single values or non-numeric content.
                 agent_config['_delegation_root'] = True
             if delegation_tool is not None:
                 agent.tools = [*(agent.tools or []), delegation_tool]
-                agent.instruction = agent.instruction + chr(10) + delegation_instruction
                 agent_config["_delegation_root"] = True
                 logger.info(
                     "[DELEGATE] dispatcher attached session_id=%s agent=%s",
                     session_id, agent_name,
                 )
+            if delegation_instruction:
+                agent.instruction += '\n' + delegation_instruction
 
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.

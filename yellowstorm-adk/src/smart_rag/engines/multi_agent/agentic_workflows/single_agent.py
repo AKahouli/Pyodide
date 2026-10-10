@@ -108,6 +108,7 @@ async def handle_single_agent_workflow(
         if root_context and root_context.get('fanout_enabled') is True:
             from src.root_runtime.fanout import build_fanout_dispatcher
             fanout_tool = build_fanout_dispatcher(team, user_request, root_context, scope)
+            delegation_instruction += '\nCurrent fan-out capability (overrides skill defaults): ' + fanout_tool.description
         if root_context and root_context.get('background_enabled') is True:
             from src.root_runtime.background_dispatcher import build_background_dispatcher
             background_task_tool = build_background_dispatcher(root_context, scope)

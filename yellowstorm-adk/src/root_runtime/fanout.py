@@ -13,8 +13,10 @@ from src.logger.logging import get_logger
 from src.root_runtime.contracts import ExecutionRole
 from src.root_runtime.delegate_resolver import _post, settle_delegate
 from src.root_runtime.dispatcher import build_worker_dispatcher, child_execution_id
+from yellowmind_observability import get_logger as get_observability_logger
 
 logger = get_logger('root_runtime.fanout')
+outcome_logger = get_observability_logger(__name__)
 
 
 async def run_supervised_items(items, execute, parallel: int, abort_signal=None):
@@ -160,8 +162,11 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             raise ValueError('Invalid fan-out target')
         branch = f'{tool_context.branch}.run_fanout@{call_id}' if tool_context.branch else f'run_fanout@{call_id}'
         target = {'kind': worker_type, **({'agentId': agent_id} if worker_type == 'library' else {})}
-        if mode not in ('foreground', 'background') or mode == 'background' and root_context.get('background_fanout_enabled') is not True:
-            raise ValueError('Fan-out execution mode is unavailable')
+        allowed_modes = ['foreground', 'background'] if root_context.get('background_fanout_enabled') is True else ['foreground']
+        if mode not in allowed_modes:
+            outcome_logger.warning('tool.call.failed', tool_name='run_fanout', operation='validate_mode', run_id=scope.execution_id)
+            return {'status': 'failed', 'error_code': 'fanout_mode_unavailable', 'allowed_modes': allowed_modes,
+                'safe_error': 'No work was submitted. Choose an allowed mode or answer directly; do not claim work has started.'}
         if mode == 'background':
             execution_id = hashlib.sha256(f'{scope.execution_id}:{branch}:background_fanout'.encode()).hexdigest()[:24]
             try:
@@ -181,4 +186,8 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             run_id=f"manifest_{manifest['manifestId']}", override_branch=branch,
             use_sub_branch=False, raise_on_wait=True)
 
-    return FunctionTool(func=run_fanout)
+    tool = FunctionTool(func=run_fanout)
+    tool.description += (' This invocation permits foreground and background modes.'
+        if root_context.get('background_fanout_enabled') is True else
+        ' This invocation permits only mode="foreground". Background fan-out is disabled; use foreground fan-out for independent items.')
+    return tool
