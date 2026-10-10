@@ -9,6 +9,9 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
 import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
 import { PgSessionStore } from './persistence/pg-session.store';
+import { JWT_ALGORITHM } from './constants/jwt.constants';
+import { AuthThrottleService } from './throttle/auth-throttle.service';
+import { LoginLockoutService } from './throttle/login-lockout.service';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -24,6 +27,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('jwt.secret'),
         signOptions: {
+          algorithm: JWT_ALGORITHM,
           issuer: configService.get<string>('jwt.issuer'),
           audience: configService.get<string>('jwt.audience'),
         },
@@ -43,9 +47,11 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     JwtAuthGuard,
     InternalServiceGuard,
     AgentCrudActorGuard,
+    AuthThrottleService,
+    LoginLockoutService,
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     PgSessionStore,
   ],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
+  exports: [AuthService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
 })
 export class AuthModule {}

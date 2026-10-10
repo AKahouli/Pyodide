@@ -69,6 +69,7 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
       }) } as never, // platformSettings
       {} as never, // workspaceInitializer
       { ensureForUser: jest.fn() } as never, // humainAgentService
+      { assertNotLocked: jest.fn(), reserveAttempt: jest.fn().mockReturnValue(null), recordSuccess: jest.fn(), release: jest.fn() } as never, // loginLockout
     );
     return { service, store, jwtService, predecessor };
   };

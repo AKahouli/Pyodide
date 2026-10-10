@@ -13,6 +13,8 @@ import { getAccountAccessDenial } from '../../user/utils/assert-account-accessib
 import { classifySessionStoreError, isTransientSessionStoreError } from '../utils/session-store-errors';
 import { PgSessionStore } from '../persistence/pg-session.store';
 
+import { JWT_ALGORITHM } from '../constants/jwt.constants';
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -28,14 +30,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
 
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
-        (req) => {
-          return req?.query?.token;
-        },
-      ]),
+      // Header-only: a query-string JWT lands in access logs, history and
+      // Referer. EventSource routes (conversation/notification/playbook
+      // streams) are @Public and authenticate with their own query-token
+      // guards, so they never reach this strategy.
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: secret,
+      algorithms: [JWT_ALGORITHM],
       issuer: configService.get<string>('jwt.issuer'),
       audience: configService.get<string>('jwt.audience'),
     });

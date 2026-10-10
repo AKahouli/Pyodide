@@ -32,6 +32,7 @@
   "login.error.notVerified": "Veuillez vérifier votre adresse email. Vérifiez votre boîte de réception pour le lien de vérification.",
   "login.error.suspended": "Votre compte a été suspendu. Veuillez contacter le support.",
   "login.error.failed": "Échec de la connexion. Vérifiez vos identifiants et réessayez.",
+  "login.error.rateLimit": "Trop de tentatives de connexion. Veuillez patienter quelques minutes et réessayer.",
   "login.forgotPassword": "Mot de passe oublié ?",
   "forgotPassword.title": "Mot de passe oublié",
   "forgotPassword.description": "Entrez votre adresse email et nous vous enverrons un lien pour réinitialiser votre mot de passe.",

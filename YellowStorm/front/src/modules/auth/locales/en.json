@@ -24,6 +24,7 @@
   "login.error.notVerified": "Please verify your email address. Check your inbox for the verification link.",
   "login.error.suspended": "Your account has been suspended. Please contact support.",
   "login.error.failed": "Login failed. Please check your credentials and try again.",
+  "login.error.rateLimit": "Too many sign-in attempts. Please wait a few minutes and try again.",
   "login.forgotPassword": "Forgot password?",
   "forgotPassword.title": "Forgot password",
   "forgotPassword.description": "Enter your email address and we'll send you a link to reset your password.",

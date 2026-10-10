@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -37,9 +37,10 @@ import {
 } from './utils/session-store-errors';
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
 import { PgSessionStore } from './persistence/pg-session.store';
+import { LoginLockoutService } from './throttle/login-lockout.service';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   /**
    * How long a standalone claimed-but-unattached rotation window is treated
    * as an in-flight concurrent rotation (retryable conflict) rather than a
@@ -54,6 +55,7 @@ export class AuthService {
   private readonly passwordResetExpiryHours: number;
   private readonly receiptCrypto: RotationReceiptCrypto;
   private readonly receiptWindowSeconds: number;
+  private dummyPasswordHash?: Promise<string>;
   constructor(
     private readonly sessionStore: PgSessionStore,
     private readonly userService: UserService,
@@ -71,6 +73,7 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly loginLockout: LoginLockoutService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -82,6 +85,20 @@ export class AuthService {
       this.configService.get<string>('auth.rotationReceiptKeyId', 'receipt-v1'),
     );
     this.receiptWindowSeconds = this.configService.get<number>('auth.rotationReceiptWindowSeconds', 120);
+  }
+
+  /** Warm the decoy hash so the first unknown-email login is not measurably slower. */
+  async onModuleInit(): Promise<void> {
+    await this.getDummyPasswordHash();
+  }
+
+  /**
+   * Decoy bcrypt hash at the configured cost, compared against when the email
+   * is unknown so response time does not reveal whether an account exists.
+   */
+  private getDummyPasswordHash(): Promise<string> {
+    this.dummyPasswordHash ??= bcrypt.hash(crypto.randomBytes(16).toString('hex'), this.bcryptRounds);
+    return this.dummyPasswordHash;
   }
 
   /**
@@ -144,10 +161,10 @@ export class AuthService {
       email: user.email,
     });
 
-    this.logger.log('User registered', { userId: user._id, email: user.email });
+    this.logger.log('User registered', { userId: user._id });
 
     // Send verification email
-    await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
+    await this.sendVerificationEmail(user._id.toString(), user.email, user.emailVerificationToken!);
 
     return {
       message: 'Registration successful. Please check your email to verify your account.',
@@ -163,19 +180,39 @@ export class AuthService {
     ipAddress: string,
     userAgent: string,
   ): Promise<{ loginResponse: LoginResponse; refreshToken: string }> {
-    // Find user
-    const user = await this.userService.findByEmail(dto.email);
-    if (!user) {
+    // Lock is per (IP, email) so an attacker cannot lock the real owner out;
+    // the attempt is counted before the comparison so concurrent bursts are bounded.
+    this.loginLockout.assertNotLocked(dto.email, ipAddress);
+    const lockSeconds = this.loginLockout.reserveAttempt(dto.email, ipAddress);
+
+    let user: Awaited<ReturnType<UserService['findByEmail']>>;
+    let isPasswordValid: boolean;
+    try {
+      user = await this.userService.findByEmail(dto.email);
+      // Unknown email and wrong password must be indistinguishable: same error,
+      // and one bcrypt comparison either way (decoy hash when there is no user).
+      isPasswordValid = user
+        ? await this.userService.validatePassword(user, dto.password)
+        : await bcrypt.compare(dto.password, await this.getDummyPasswordHash());
+    } catch (error) {
+      // Store outage etc.: not a credential failure, do not count it.
+      this.loginLockout.release(dto.email, ipAddress);
+      throw error;
+    }
+    if (!user || !isPasswordValid) {
+      if (lockSeconds !== null) {
+        // userId only; absent for unknown emails so the log cannot confirm an account.
+        this.logger.warn('Login temporarily locked after repeated failures', {
+          userId: user?._id,
+          lockSeconds,
+        });
+      }
       throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
     }
+    this.loginLockout.recordSuccess(dto.email, ipAddress);
 
+    // Account state is only revealed to someone who proved the password.
     assertAccountAccessible(user);
-
-    // Validate password
-    const isPasswordValid = await this.userService.validatePassword(user, dto.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
-    }
 
     // Check if email is verified
     if (!user.emailVerified) {
@@ -214,13 +251,12 @@ export class AuthService {
 
     this.logger.log('User logged in', {
       userId: user._id,
-      email: user.email,
       newLocation: isNewLocation,
     });
 
     // Send new location alert email (async, don't block login)
     if (isNewLocation) {
-      this.sendNewLocationAlertEmail(user.email, ipAddress, deviceInfo).catch((err) => {
+      this.sendNewLocationAlertEmail(user._id.toString(), user.email, ipAddress, deviceInfo).catch((err) => {
         this.logger.warn('Failed to send new location alert email', { error: err.message });
       });
     }
@@ -844,8 +880,8 @@ export class AuthService {
    */
   async resendVerificationEmail(userId: string, email: string): Promise<void> {
     const token = await this.userService.generateEmailVerificationToken(userId);
-    await this.sendVerificationEmail(email, token);
-    this.logger.log('Verification email resent', { userId, email });
+    await this.sendVerificationEmail(userId, email, token);
+    this.logger.log('Verification email resent', { userId });
   }
 
   /**
@@ -872,7 +908,7 @@ export class AuthService {
     if (rawToken) {
       await this.sendPasswordResetEmail(email, rawToken);
     } else {
-      this.logger.debug('Forgot password requested for non-existent email', { email });
+      this.logger.debug('Forgot password requested for non-existent email');
     }
   }
 
@@ -916,7 +952,7 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send password reset email', { email, error: result.error });
+      this.logger.error('Failed to send password reset email', { error: result.error });
     }
   }
 
@@ -931,7 +967,7 @@ export class AuthService {
   /**
    * Send verification email
    */
-  private async sendVerificationEmail(email: string, token: string): Promise<void> {
+  private async sendVerificationEmail(userId: string, email: string, token: string): Promise<void> {
     if (!this.emailService.isAvailable()) {
       this.logger.warn('Email service not available, skipping verification email');
       return;
@@ -956,7 +992,7 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send verification email', { email, error: result.error });
+      this.logger.error('Failed to send verification email', { userId, error: result.error });
     }
   }
 
@@ -964,6 +1000,7 @@ export class AuthService {
    * Send new login location alert email
    */
   private async sendNewLocationAlertEmail(
+    userId: string,
     email: string,
     ipAddress: string,
     deviceInfo: DeviceInfoData,
@@ -1013,9 +1050,9 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send new location alert email', { email, error: result.error });
+      this.logger.error('Failed to send new location alert email', { userId, error: result.error });
     } else {
-      this.logger.log('New location alert email sent', { email, ipAddress });
+      this.logger.log('New location alert email sent', { userId });
     }
   }
 }

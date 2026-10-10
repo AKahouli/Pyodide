@@ -26,7 +26,8 @@ import type { AuthUser } from '@common/auth/auth-user';
 import { BadRequestException, UnauthorizedException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { getClientIp } from '@common/utils';
-import { RateLimit } from '../rate-limiter';
+import { AuthThrottleService } from './throttle/auth-throttle.service';
+import { LoginLockedException } from './throttle/login-lockout.service';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -39,6 +40,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly userService: UserService,
     private readonly configService: ConfigService,
+    private readonly throttle: AuthThrottleService,
   ) {
     this.cookieName = this.configService.get<string>('auth.refreshTokenCookieName', 'refresh_token');
     this.cookieSecure = this.configService.get<boolean>('auth.cookieSecure', false);
@@ -48,33 +50,36 @@ export class AuthController {
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'auth:register' }) // 5 requests per minute
   @ApiOperation({ summary: 'Register a new user' })
   @ApiResponse({ status: 201, description: 'User registered successfully' })
   @ApiResponse({ status: 409, description: 'Email already exists' })
   @ApiResponse({ status: 429, description: 'Too many registration attempts' })
-  async register(@Body() dto: RegisterDto) {
+  async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.throttle.enforceIp('register', req, res);
     return this.authService.register(dto);
   }
 
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'auth:login' }) // 10 requests per minute
   @ApiOperation({ summary: 'Login with email and password' })
   @ApiResponse({ status: 200, description: 'Login successful' })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   @ApiResponse({ status: 403, description: 'Email not verified or account suspended' })
   @ApiResponse({ status: 429, description: 'Too many login attempts' })
   async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.throttle.enforceIp('login', req, res);
     const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] || 'unknown';
 
-    const { loginResponse, refreshToken } = await this.authService.login(
-      dto,
-      ipAddress,
-      userAgent,
-    );
+    const { loginResponse, refreshToken } = await this.authService
+      .login(dto, ipAddress, userAgent)
+      .catch((error: unknown) => {
+        if (error instanceof LoginLockedException) {
+          res.setHeader('Retry-After', String(error.retryAfterSeconds));
+        }
+        throw error;
+      });
 
     // Set refresh token in HTTP-only cookie
     this.setRefreshTokenCookie(res, refreshToken);
@@ -100,11 +105,11 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 30, windowMs: 60000, keyPrefix: 'auth:refresh' }) // 30 requests per minute
   @ApiOperation({ summary: 'Refresh access token' })
   @ApiResponse({ status: 200, description: 'Token refreshed successfully' })
   @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.throttle.enforceIp('refresh', req, res);
     const refreshToken = req.cookies?.[this.cookieName];
     if (!refreshToken) {
       throw new UnauthorizedException(ErrorCode.AUTH_REFRESH_TOKEN_INVALID, 'Refresh token not provided');
@@ -133,12 +138,16 @@ export class AuthController {
 
   @Public()
   @Get('verify-email')
-  @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'auth:verify-email' }) // 5 requests per minute
   @ApiOperation({ summary: 'Verify email with token (magic link)' })
   @ApiQuery({ name: 'token', description: 'Email verification token', required: true })
   @ApiResponse({ status: 200, description: 'Email verified successfully' })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  async verifyEmail(@Query('token') token: string) {
+  async verifyEmail(
+    @Query('token') token: string,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('verifyEmail', req, res);
     if (!token || token.length !== 64) {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Invalid verification token');
     }
@@ -148,13 +157,18 @@ export class AuthController {
 
   @Post('resend-verification')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 3, windowMs: 300000, keyPrefix: 'auth:resend-verification' }) // 3 requests per 5 minutes
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Resend email verification' })
   @ApiResponse({ status: 200, description: 'Verification email sent' })
   @ApiResponse({ status: 400, description: 'Email already verified' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async resendVerification(@CurrentUser() user: AuthUser) {
+  async resendVerification(
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('resendVerification', req, res);
+    await this.throttle.enforceAccount('resendVerification', user.email, res);
     await this.authService.resendVerificationEmail(user._id.toString(), user.email);
     return { message: 'Verification email has been sent' };
   }
@@ -162,15 +176,21 @@ export class AuthController {
   @Public()
   @Post('resend-verification-public')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 3, windowMs: 300000, keyPrefix: 'auth:resend-verification-public' }) // 3 requests per 5 minutes
   @ApiOperation({ summary: 'Resend verification email using previous token (no auth required)' })
   @ApiResponse({ status: 200, description: 'Verification email sent' })
   @ApiResponse({ status: 400, description: 'Invalid token or email already verified' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async resendVerificationPublic(@Body() body: { token: string }) {
+  async resendVerificationPublic(
+    @Body() body: { token: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('resendVerification', req, res);
     if (!body.token || body.token.length !== 64) {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Invalid verification token');
     }
+    // The token identifies the account without revealing its email.
+    await this.throttle.enforceAccount('resendVerification', body.token, res);
     await this.authService.resendVerificationByToken(body.token);
     return { message: 'Verification email has been sent' };
   }
@@ -178,11 +198,16 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 3, windowMs: 300000, keyPrefix: 'auth:forgot-password' }) // 3 requests per 5 minutes
   @ApiOperation({ summary: 'Request a password reset email' })
   @ApiResponse({ status: 200, description: 'Password reset email sent (if account exists)' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('forgotPassword', req, res);
+    await this.throttle.enforceAccount('forgotPassword', dto.email, res);
     await this.authService.forgotPassword(dto.email);
     return { message: 'If an account exists with this email, a password reset link has been sent.' };
   }
@@ -190,12 +215,16 @@ export class AuthController {
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'auth:reset-password' }) // 5 requests per minute
   @ApiOperation({ summary: 'Reset password with token' })
   @ApiResponse({ status: 200, description: 'Password reset successfully' })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async resetPassword(@Body() dto: ResetPasswordDto) {
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('resetPassword', req, res);
     await this.authService.resetPassword(dto.token, dto.password);
     return { message: 'Password has been reset successfully. Please sign in with your new password.' };
   }

@@ -16,6 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { getClientIp } from '@common/utils';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { RateLimit } from '@modules/rate-limiter';
+import { AuthThrottleService } from '@modules/auth/throttle/auth-throttle.service';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
@@ -35,6 +36,7 @@ export class OAuthController {
     private readonly oauthFlowService: OAuthFlowService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly throttle: AuthThrottleService,
   ) {
     this.logger.setContext(OAuthController.name);
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
@@ -53,14 +55,15 @@ export class OAuthController {
 
   @Public()
   @Get(':providerKey/authorize')
-  @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'oauth:authorize' })
   @ApiOperation({ summary: 'Redirect to OAuth provider authorization' })
   @ApiParam({ name: 'providerKey', description: 'Provider key (e.g., microsoft, google)' })
   @ApiResponse({ status: 302, description: 'Redirect to OAuth provider' })
   async authorize(
     @Param('providerKey') providerKey: string,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
+    if (await this.redirectIfThrottled('oauthStart', req, res)) return;
     try {
       const authUrl = await this.oauthFlowService.buildAuthorizationUrl(providerKey);
       res.redirect(authUrl); return;
@@ -92,6 +95,8 @@ export class OAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    if (await this.redirectIfThrottled('oauthCallback', req, res)) return;
+
     // Provider returned an error (e.g., user denied consent)
     if (error) {
       res.redirect(
@@ -202,4 +207,24 @@ export class OAuthController {
     }
   }
 
+  /**
+   * OAuth start/callback are browser navigations: a throttled request goes
+   * back to the frontend with the rate-limit code rather than a bare JSON 429.
+   */
+  private async redirectIfThrottled(
+    scope: 'oauthStart' | 'oauthCallback',
+    req: Request,
+    res: Response,
+  ): Promise<boolean> {
+    try {
+      await this.throttle.enforceIp(scope, req);
+      return false;
+    } catch (error) {
+      if ((error as { code?: string }).code !== ErrorCode.TOO_MANY_REQUESTS) throw error;
+      res.redirect(
+        `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(ErrorCode.TOO_MANY_REQUESTS)}`,
+      );
+      return true;
+    }
+  }
 }

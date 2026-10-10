@@ -467,4 +467,6 @@ export const configValidationSchema = Joi.object({
   WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
   WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
   WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
-});
+})
+  // Auth throttling/lockout overrides (see auth.config.ts): AUTH_RATE_LIMIT_<KEY>_LIMIT|_WINDOW_SECONDS, AUTH_LOCKOUT_*
+  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1));

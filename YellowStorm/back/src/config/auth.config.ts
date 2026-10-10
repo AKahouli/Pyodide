@@ -1,5 +1,37 @@
 import { registerAs } from '@nestjs/config';
 
+/** Fixed-window rule: at most `limit` hits per `windowMs`. */
+export interface AuthRateLimitRule {
+  limit: number;
+  windowMs: number;
+}
+
+/** Endpoints throttled per client IP (Express-resolved, see TRUST_PROXY). */
+export type AuthIpRateLimitScope =
+  | 'register'
+  | 'login'
+  | 'refresh'
+  | 'verifyEmail'
+  | 'resendVerification'
+  | 'forgotPassword'
+  | 'resetPassword'
+  | 'oauthStart'
+  | 'oauthCallback';
+
+/** Flows additionally throttled per target account (email or token identity); 'login' counts failed attempts only. */
+export type AuthAccountRateLimitScope = 'login' | 'forgotPassword' | 'resendVerification';
+
+export interface AuthLockoutConfig {
+  /** Consecutive failed logins for one email before it is temporarily locked. */
+  threshold: number;
+  /** First lock duration; doubles with every further failure. */
+  baseSeconds: number;
+  /** Upper bound of the lock duration. */
+  maxSeconds: number;
+  /** Failure streak is forgotten after this long without a new failure. */
+  resetSeconds: number;
+}
+
 export interface AuthConfig {
   bcryptRounds: number;
   passwordResetExpiry: number; // hours
@@ -15,6 +47,24 @@ export interface AuthConfig {
   rotationReceiptKey?: string;
   rotationReceiptKeyId: string;
   rotationReceiptWindowSeconds: number;
+  rateLimits: {
+    ip: Record<AuthIpRateLimitScope, AuthRateLimitRule>;
+    account: Record<AuthAccountRateLimitScope, AuthRateLimitRule>;
+  };
+  lockout: AuthLockoutConfig;
+}
+
+function readInt(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Env: AUTH_RATE_LIMIT_<KEY>_LIMIT and AUTH_RATE_LIMIT_<KEY>_WINDOW_SECONDS. */
+function rule(key: string, limit: number, windowSeconds: number): AuthRateLimitRule {
+  return {
+    limit: readInt(`AUTH_RATE_LIMIT_${key}_LIMIT`, limit),
+    windowMs: readInt(`AUTH_RATE_LIMIT_${key}_WINDOW_SECONDS`, windowSeconds) * 1000,
+  };
 }
 
 export default registerAs(
@@ -31,5 +81,30 @@ export default registerAs(
       process.env.AUTH_ROTATION_RECEIPT_WINDOW_SECONDS || '120',
       10,
     ),
+    rateLimits: {
+      ip: {
+        register: rule('REGISTER_IP', 5, 60),
+        login: rule('LOGIN_IP', 10, 60),
+        refresh: rule('REFRESH_IP', 30, 60),
+        verifyEmail: rule('VERIFY_EMAIL_IP', 5, 60),
+        resendVerification: rule('RESEND_VERIFICATION_IP', 3, 300),
+        forgotPassword: rule('FORGOT_PASSWORD_IP', 5, 300),
+        resetPassword: rule('RESET_PASSWORD_IP', 5, 60),
+        oauthStart: rule('OAUTH_START_IP', 10, 60),
+        oauthCallback: rule('OAUTH_CALLBACK_IP', 20, 60),
+      },
+      account: {
+        // Failed attempts only (across all IPs); successful logins never count.
+        login: rule('LOGIN_ACCOUNT', 20, 900),
+        forgotPassword: rule('FORGOT_PASSWORD_ACCOUNT', 3, 900),
+        resendVerification: rule('RESEND_VERIFICATION_ACCOUNT', 3, 900),
+      },
+    },
+    lockout: {
+      threshold: readInt('AUTH_LOCKOUT_THRESHOLD', 5),
+      baseSeconds: readInt('AUTH_LOCKOUT_BASE_SECONDS', 30),
+      maxSeconds: readInt('AUTH_LOCKOUT_MAX_SECONDS', 900),
+      resetSeconds: readInt('AUTH_LOCKOUT_RESET_SECONDS', 900),
+    },
   }),
 );

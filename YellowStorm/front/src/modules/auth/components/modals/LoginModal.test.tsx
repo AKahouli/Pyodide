@@ -66,4 +66,18 @@ describe('LoginModal', () => {
       expect(screen.getByText('login.error.suspended')).toBeInTheDocument();
     });
   });
+
+  it('shows a readable rate-limit message when login returns ERR_1007 / HTTP 429', async () => {
+    loginMock.mockRejectedValue({ code: 'ERR_1007', statusCode: 429, message: 'Rate limit exceeded. Try again in 42 seconds.' });
+
+    render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText('login.email.label'), 'user@example.com');
+    await userEvent.type(screen.getByLabelText('login.password.label'), testPassword);
+    await userEvent.click(screen.getByRole('button', { name: 'login.submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('login.error.rateLimit')).toBeInTheDocument();
+    });
+  });
 });

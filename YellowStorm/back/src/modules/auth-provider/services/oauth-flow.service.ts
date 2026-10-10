@@ -376,7 +376,6 @@ export class OAuthFlowService {
     this.logger.log('New OAuth user created', {
       userId: newUser._id,
       providerKey,
-      email,
     });
 
     return {
@@ -576,7 +575,7 @@ export class OAuthFlowService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send link verification email', { email, error: result.error });
+      this.logger.error('Failed to send link verification email', { error: result.error });
     }
   }
 }
