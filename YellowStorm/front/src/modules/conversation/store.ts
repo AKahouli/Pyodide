@@ -11,6 +11,7 @@ import { getStreamErrorMessage } from './utils';
 import { insertMessageChronologically } from './utils/message-order';
 import { conversationStreamService } from './stream';
 import { useRootInputUiStore } from './rootInputUiStore';
+import { useRootWorkStore } from './rootWorkStore';
 import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
@@ -1755,6 +1756,7 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamComplete: async (event) => {
+        if (event.conversationId === get().currentConversationId) useRootWorkStore.getState().refresh();
         const accountGeneration = liveAccountGeneration;
         finishLiveAnswer(event.conversationId, event.messageId);
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
@@ -1918,6 +1920,7 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamError: (event) => {
+        if (event.conversationId === get().currentConversationId) useRootWorkStore.getState().refresh();
         useRootInputUiStore.getState().failContinuation(event.conversationId, event.messageId);
         const hadLiveAnswer = !!get().liveAnswers[streamKey(event.conversationId, event.messageId)];
         finishLiveAnswer(event.conversationId, event.messageId);

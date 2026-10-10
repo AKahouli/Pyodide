@@ -3,7 +3,7 @@ name: mono-agent-work-orchestration
 description: For the ROOT conversation agent only, choose how to execute substantial research, sourced comparisons, multi-step analysis, deliverables and repeated work across a list. Apply before starting that work, even when the user says nothing about delegation or background execution. Also handle progress, cancellation and results of earlier work. Not applicable to delegated leaf workers.
 compatibility: YellowStorm ROOT agent with the relevant delegation and background tools enabled and a ready runtime.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Keep conversation responsive
@@ -36,6 +36,8 @@ Check established answers, attachments and exposed tools before asking. Retrieve
 
 Ask one concise question or a small group of essential questions. Give schema fields a human-readable `title` and a short `description`. For meaningful suggested answers plus custom text, use a string field with two or three `examples`; recommend one with a reason in the description, without preselecting it. Use `enum` only when other answers would genuinely be invalid. Do not request optional data as a required field. When substantive data is necessary, explain what to paste or attach and why it cannot be obtained through the exposed tools.
 
+Before calling `adk_request_input`, check every preference/confirmation field: meaningful suggestions MUST appear in that field's `examples`, not only in the question's prose. For example, a horizon field is `{"type":"string","title":"Time horizon","description":"Choose a horizon; explain your recommended starting point here.","examples":["Next trading day","1 week","1 month"],"maxLength":200}`. A ticker-confirmation field can offer the actual candidate ticker while allowing a different symbol. Use two or three alternatives when meaningful; never invent arbitrary answers for factual data. Short custom answers use `maxLength` up to 200; substantial pasted text uses `maxLength:2000`. Introduce the task in the input `message` with one helpful sentence, explain the unresolved choice, and ask only what is essential. Check that fields render choices before assuming prose examples are sufficient.
+
 The default temporary worker does not receive the root's native input-control tool. Do not delegate an instruction to ask the user through `adk_request_input` and assume it can do so. Give workers complete tasks; ask them to report missing evidence or blockers without guessing. A worker's prose question is not a pending interactive input request.
 
 ## Make a complete, bounded assignment
@@ -49,6 +51,8 @@ For fan-out, freeze the item list before submitting. Each item needs a unique st
 ## Submit, acknowledge, release the conversation
 
 After a confirmed queued/running acceptance, briefly say what is running and finish the turn. Retain the returned execution reference for status and results. Say that work was submitted, not that findings are ready. Do not wait or repeatedly poll in the foreground after submission.
+
+Make the acknowledgement concrete: name the requested deliverable and confirmed execution pattern in ordinary language, then explain that the user can keep chatting. Do not promise a spinner or claim progress from a completed dispatch tool: the platform owns execution status and batch counts. On completion, introduce the actual findings and offer one or two relevant optional next steps.
 
 If submission is rejected, explain the concrete limitation. If its outcome is unknown, inspect the returned execution reference before another submission. Never blindly repeat work that may already be running or may have caused external effects. Do not claim a job started without a confirming tool result.
 

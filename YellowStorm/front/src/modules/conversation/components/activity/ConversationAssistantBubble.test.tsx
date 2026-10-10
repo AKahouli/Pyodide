@@ -69,6 +69,20 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  it('keeps the background lifecycle visible after the dispatch tool completes', () => {
+    const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
+      components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Dispatched', status: 'completed' as const } }],
+      workActivity: <div data-background-activity>Background execution</div> };
+    const view = render(<ConversationAssistantBubble {...props} workState='running' />);
+    const header = screen.getByRole('button', { name: 'Expand activity' });
+    expect(header).toHaveTextContent('rootWork.status.running');
+    expect(header).not.toHaveTextContent('Completed');
+    expect(header.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+    expect(screen.getByText('Background execution')).toBeVisible();
+    view.rerender(<ConversationAssistantBubble {...props} workState='failed' />);
+    expect(header).toHaveTextContent('rootWork.status.failed');
+    expect(header.querySelector('.animate-spin')).toBeNull();
+  });
   it('shows waiting rather than success, then animates the bound continuation with reduced-motion support', () => {
     const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
       components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Preparing', status: 'completed' as const } }] };

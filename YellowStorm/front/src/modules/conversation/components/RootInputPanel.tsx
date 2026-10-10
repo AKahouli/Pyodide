@@ -43,6 +43,7 @@ function PendingInputForm({ root, input, conversationId, onSubmitted, scope, inp
     if (root.mode === 'background') {
       await submitBackgroundRootInput(conversationId, root.executionId,
         [{ inputId: input.inputId, inputVersion: input.inputVersion ?? 1, response }]);
+      useRootWorkStore.getState().refresh();
       return true;
     }
     await sendMessage(conversationId, { content, rootContinuation: {
@@ -104,10 +105,14 @@ function RootInputPanelContent({ conversationId, creatorId, variant = 'dock', me
   const { t } = useModuleTranslation('conversation');
   const scope = `${user?.id || ''}:${conversationId}`;
   const state = useRootInputUiStore();
+  const revision = useRootWorkStore((work) => work.revision);
   const { execute } = useApiAction(fetchRootInputs, { showErrorToast: false });
   useEffect(() => {
     if (variant !== 'dock') return;
     useRootInputUiStore.getState().reset(scope);
+  }, [scope, variant]);
+  useEffect(() => {
+    if (variant !== 'dock') return;
     if (user?.id !== creatorId) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -125,7 +130,7 @@ function RootInputPanelContent({ conversationId, creatorId, variant = 'dock', me
     void refresh();
     window.addEventListener('focus', onFocus);
     return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('focus', onFocus); };
-  }, [conversationId, creatorId, user?.id, execute, variant, scope]);
+  }, [conversationId, creatorId, user?.id, execute, variant, scope, revision]);
   if (user?.id !== creatorId || state.scope !== scope) return null;
   const pending = state.roots.flatMap((root) => root.inputs.map((input) => ({ root, input,
     key: nativeInputKey(root, input) })))

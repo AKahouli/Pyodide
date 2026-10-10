@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2, MessageCircle } from 'lucide-react';
+import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, Clock, Download, Eye, FileText, Loader2, MessageCircle } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { useAgentStore } from '@/modules/agent/store';
 import type { Agent } from '@/modules/agent/types';
@@ -29,6 +29,8 @@ interface NarrativeProps {
   /** True right after this message's stream completed: the pane starts open, then animates closed. */
   justCompleted?: boolean;
   requestInputState?: 'waiting' | 'sending' | 'continuing';
+  workActivity?: ReactNode;
+  workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown';
   children?: ReactNode;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
@@ -376,6 +378,9 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   // messages, which render collapsed from the start.
   const [paneCollapsed, setPaneCollapsed] = useState(!props.isStreaming && props.justCompleted !== true);
   useEffect(() => {
+    if (props.requestInputState === 'waiting') setPaneCollapsed(true);
+  }, [props.requestInputState]);
+  useEffect(() => {
     if (props.justCompleted !== true) return;
     const timer = setTimeout(() => setPaneCollapsed(true), PANE_COLLAPSE_DELAY_MS);
     return () => clearTimeout(timer);
@@ -582,11 +587,15 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
               {runningStatus}
               <span className='h-0.5 min-w-8 flex-1 bg-border' aria-hidden='true' />
-              {props.requestInputState === 'waiting' ? <MessageCircle className='size-4 shrink-0 text-primary' aria-hidden='true' />
+              {props.requestInputState === 'waiting' || props.workState === 'waiting' ? <MessageCircle className='size-4 shrink-0 text-primary' aria-hidden='true' />
+                : props.workState === 'queued' ? <Clock className='size-4 shrink-0' aria-hidden='true' />
+                : props.workState === 'failed' || props.workState === 'outcome_unknown' ? <AlertCircle className='size-4 shrink-0 text-destructive' aria-hidden='true' />
+                : props.workState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />
                 : props.requestInputState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />
                 : answerNodes.length > 0 ? <Check className='size-4 shrink-0 text-green-500' aria-hidden='true' /> : null}
-              <span className='shrink-0 text-xs' role={props.requestInputState ? 'status' : undefined}>{props.requestInputState
+              <span className='shrink-0 text-xs' role={props.requestInputState || props.workState ? 'status' : undefined}>{props.requestInputState
                 ? t(`rootInput.${props.requestInputState}`)
+                : props.workState ? t(props.workState === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${props.workState}`)
                 : !answerNodes.length ? t('rootInput.requestActivity')
                 : activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
               <span aria-hidden='true'>·</span>
@@ -600,6 +609,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
               {runningStatus}
           {props.requestInputState && <span className='text-xs text-primary' role='status'>{t(`rootInput.${props.requestInputState}`)}</span>}
+          {!props.requestInputState && props.workState && <span className='text-xs text-primary' role='status'>{t(props.workState === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${props.workState}`)}</span>}
           <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
             {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
           </span>
@@ -634,6 +644,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           </div>
         </div>
       )}
+      {props.workActivity}
       {artifactNodes.length > 0 && <div data-artifacts className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{artifactNodes}</div>}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
       {props.children}

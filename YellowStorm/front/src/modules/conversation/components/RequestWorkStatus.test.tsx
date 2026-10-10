@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { RequestWorkStatus } from './RequestWorkStatus';
@@ -9,6 +9,20 @@ vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: 'owner'
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string, args?: object) => key + (args ? JSON.stringify(args) : '') }) }));
 vi.mock('../uiStore', () => ({ useConversationUiStore: (selector: (state: unknown) => unknown) => selector({ setContextPanel: open }) }));
 beforeEach(() => { useRootWorkStore.setState(initialRootWorkState); open.mockClear(); });
+it('keeps queued and waiting execution rows visible without a running spinner', () => {
+  useRootWorkStore.setState({ userId: 'owner', snapshots: { conversation: { epoch: 1, watermark: '1', stopRequestId: 'stop', jobs: [{
+    executionId: 'job', parentExecutionId: 'root', role: 'temporary_worker', originAssistantMessageId: 'ack', status: 'queued', createdAt: '', deadline: '',
+  }] } } });
+  const view = render(<RequestWorkStatus conversationId='conversation' messageId='ack' />);
+  expect(screen.getByRole('status')).toHaveTextContent('rootWork.status.queued');
+  expect(view.container.querySelector('.animate-spin')).toBeNull();
+  act(() => useRootWorkStore.setState({ snapshots: { conversation: { epoch: 1, watermark: '2', stopRequestId: 'stop', jobs: [{
+    executionId: 'job', parentExecutionId: 'root', role: 'temporary_worker', originAssistantMessageId: 'ack', status: 'waiting', createdAt: '', deadline: '',
+  }] } } }));
+  view.rerender(<RequestWorkStatus conversationId='conversation' messageId='ack' />);
+  expect(screen.getByRole('status')).toHaveTextContent('rootWork.status.waiting');
+  expect(view.container.querySelector('.animate-spin')).toBeNull();
+});
 it('shows request-bound uncertain work in chat and opens its details without a spinner', async () => {
   useRootWorkStore.setState({ userId: 'owner', snapshots: { conversation: { epoch: 1, watermark: '1', stopRequestId: 'stop', jobs: [{
     executionId: 'batch', parentExecutionId: 'root', originAssistantMessageId: 'ack', role: 'fanout_driver',

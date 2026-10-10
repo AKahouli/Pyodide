@@ -10,7 +10,7 @@ import { BackgroundResultContext } from './BackgroundResultContext';
 import { LiveAnswerBubble } from './LiveAnswerBubble';
 import { liveAnswerTimestamp } from '../live-streams';
 import { BackgroundResultNotice } from './BackgroundResultNotice';
-import { RequestWorkStatus } from './RequestWorkStatus';
+import { RequestWorkStatus, useRequestWorkGroups } from './RequestWorkStatus';
 import { RootInputPanel } from './RootInputPanel';
 import { useRequestInputState } from './useRequestInputState';
 import { MessageActions } from './MessageActions';
@@ -56,6 +56,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const isUser = message.conversationType === 'user';
   const creatorId = useConversationStore((state) => state.currentConversation?.createdBy);
   const requestInputState = useRequestInputState(conversationId, message.id);
+  const workGroup = useRequestWorkGroups(conversationId, message.id).find((group) => group.attention || group.active);
+  const workState = workGroup && workGroup.state !== 'completed' && workGroup.state !== 'cancelled' && workGroup.state !== 'partial'
+    ? workGroup.state : undefined;
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
@@ -167,11 +170,10 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} requestInputState={requestInputState} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets>
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} requestInputState={requestInputState} workState={workState} workActivity={<RequestWorkStatus conversationId={conversationId} messageId={message.id} />} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets>
               {creatorId && <RootInputPanel conversationId={conversationId} creatorId={creatorId} messageId={message.id} variant='inline' />}
             </ConversationAssistantBubble>}
       </MessageProvider>
-      {!isUser && <RequestWorkStatus conversationId={conversationId} messageId={message.id} />}
       {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}

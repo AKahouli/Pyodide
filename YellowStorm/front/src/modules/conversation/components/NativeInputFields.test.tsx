@@ -7,6 +7,16 @@ import { nativeInputSummary } from './native-input-presentation';
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 
 describe('Native enum input', () => {
+  it('keeps an empty required enum invalid', () => {
+    render(<NativeInputFields schema={{ type: 'string', enum: [] }} value='' onChange={vi.fn()} label='Unavailable choice' required />);
+    expect(screen.getByRole('combobox')).toBeInvalid();
+  });
+  it('uses a compact field for short answers and multiline for explicit long text', () => {
+    const view = render(<NativeInputFields schema={{ type: 'string' }} value='' onChange={vi.fn()} label='Answer' />);
+    expect(screen.getByRole('textbox').tagName).toBe('INPUT');
+    view.rerender(<NativeInputFields schema={{ type: 'string', maxLength: 2000 }} value='' onChange={vi.fn()} label='Data' />);
+    expect(screen.getByRole('textbox').tagName).toBe('TEXTAREA');
+  });
   it('uses readable labels and editable suggestions without silently selecting one', () => {
     const changed = vi.fn();
     render(<NativeInputFields schema={{ type: 'string', title: 'Chart interval', description: 'Daily is a useful starting point.',
@@ -35,15 +45,14 @@ describe('Native enum input', () => {
       </form>;
     }
     render(<Form />);
-    const select = screen.getByRole('combobox', { name: 'Setting' });
-    expect(select).toHaveValue('');
-    expect(select).toHaveDisplayValue('rootInput.select');
-    expect(select).toBeInvalid();
+    const choice = screen.getByRole('radio', { name: 'forest' });
+    expect(choice).not.toBeChecked();
+    expect(choice).toBeInvalid();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     expect(submitted).not.toHaveBeenCalled();
-    fireEvent.change(select, { target: { value: JSON.stringify('forest') } });
-    expect(select).toHaveDisplayValue('forest');
-    expect(select).toBeValid();
+    fireEvent.click(choice);
+    expect(choice).toBeChecked();
+    expect(choice).toBeValid();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     expect(submitted).toHaveBeenCalledWith({ result: '"forest"' });
   });

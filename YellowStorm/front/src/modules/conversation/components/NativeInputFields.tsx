@@ -1,4 +1,5 @@
 import { Input } from '@/components/ui/input';
+import { useId } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -21,11 +22,13 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
   label: string; required?: boolean; disabled?: boolean;
 }) {
   const { t } = useModuleTranslation('conversation');
+  const choiceName = useId();
   label = schema.title || label;
   if (schema.type === 'object') {
     const object = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     return <fieldset disabled={disabled} className='space-y-3'>
       <legend className='text-sm font-medium'>{label}</legend>
+      {schema.description && <p className='text-sm text-muted-foreground'>{schema.description}</p>}
       {Object.entries(schema.properties || {}).map(([key, child]) => <NativeInputFields key={key}
         schema={child} label={nativeInputLabel(child, key)} value={object[key]} required={schema.required?.includes(key)} disabled={disabled}
         onChange={(next) => onChange({ ...object, [key]: next })} />)}
@@ -35,7 +38,7 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
     const items: unknown[] = Array.isArray(value) ? value : [];
     return <fieldset disabled={disabled} className='space-y-2'>
       <legend className='text-sm font-medium'>{label}</legend>
-      {items.map((item, index) => <div key={index} className='flex items-end gap-2'>
+      {items.map((item, index) => <div key={index} className='flex flex-wrap items-end gap-2 [&>div]:min-w-0 [&>div]:flex-1'>
         <NativeInputFields schema={schema.items!} label={`${label} ${index + 1}`} value={item} disabled={disabled}
           onChange={(next) => onChange(items.map((old, itemIndex) => itemIndex === index ? next : old))} />
         <Button type='button' variant='outline' disabled={disabled} onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}>
@@ -48,6 +51,17 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
       </Button>
     </fieldset>;
   }
+  if (schema.enum && schema.enum.length > 0 && schema.enum.length <= 4) return <fieldset disabled={disabled} className='space-y-2'>
+    <legend className='text-sm font-medium'>{label}</legend>
+    {schema.description && <p className='text-sm text-muted-foreground'>{schema.description}</p>}
+    <div className='flex flex-wrap gap-2'>
+      {schema.enum.map((option, index) => <label key={index} className='cursor-pointer'>
+        <input type='radio' name={choiceName} value={JSON.stringify(option)} checked={value === option}
+          required={required} disabled={disabled} className='peer sr-only' onChange={() => onChange(option)} />
+        <span className='flex min-h-9 items-center rounded-md border px-3 py-2 text-sm peer-checked:bg-secondary peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-disabled:opacity-50'>{String(option)}</span>
+      </label>)}
+    </div>
+  </fieldset>;
   if (schema.enum) return <label className='block space-y-1 text-sm'>
     <span>{label}</span>
     {schema.description && <span className='block text-muted-foreground'>{schema.description}</span>}
@@ -71,9 +85,12 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
       min={schema.minimum} max={schema.maximum}
       value={typeof value === 'string' || typeof value === 'number' ? value : ''}
       onChange={(event) => onChange(event.target.value !== '' ? Number(event.target.value) : '')} />
-      : <Textarea required={required} disabled={disabled} rows={schema.examples?.length ? 2 : 3}
+      : (schema.maxLength ?? 200) > 500 ? <Textarea required={required} disabled={disabled} rows={3}
         minLength={schema.minLength} maxLength={Math.min(2000, schema.maxLength ?? 2000)}
-        value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} />}
+        value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} />
+      : <Input required={required} disabled={disabled} minLength={schema.minLength}
+        maxLength={Math.min(2000, schema.maxLength ?? 2000)} value={typeof value === 'string' ? value : ''}
+        onChange={(event) => onChange(event.target.value)} />}
     </label>
     {!!schema.examples?.length && <div className='flex flex-wrap gap-2' role='group' aria-label={t('rootInput.suggestions')}>
       {schema.examples.filter((example) => numeric ? typeof example === 'number' : typeof example === 'string').map((example, index) =>

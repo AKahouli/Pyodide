@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootInputPanel as Panel } from './RootInputPanel';
 import { useRootInputUiStore, initialRootInputUiState } from '../rootInputUiStore';
+import { initialRootWorkState, useRootWorkStore } from '../rootWorkStore';
 function RootInputPanel(props: { conversationId: string; creatorId: string }) { return <><Panel {...props} /><Panel {...props} variant='details' /></>; }
 import { encodeNativeInput } from './NativeInputFields';
 
@@ -13,7 +14,17 @@ vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: mocks.user })
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 
 describe('Native pending input', () => {
-  beforeEach(() => { vi.clearAllMocks(); useRootInputUiStore.setState(initialRootInputUiState); mocks.user.id = 'owner'; mocks.send.mockResolvedValue(undefined); });
+  beforeEach(() => { vi.clearAllMocks(); useRootInputUiStore.setState(initialRootInputUiState); useRootWorkStore.setState(initialRootWorkState); mocks.user.id = 'owner'; mocks.send.mockResolvedValue(undefined); });
+  it('refreshes immediately after a lifecycle event without resetting the scoped draft', async () => {
+    mocks.fetch.mockResolvedValue([{ executionId: 'execution', epoch: 2, inputs: [{ inputId: 'input', kind: 'input' }] }]);
+    render(<RootInputPanel conversationId='conversation' creatorId='owner' />);
+    await userEvent.type(await screen.findByRole('textbox'), 'Preserve this answer');
+    const previousSignal = mocks.fetch.mock.calls[0][1] as AbortSignal;
+    act(() => useRootWorkStore.getState().refresh());
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(2));
+    expect(previousSignal.aborted).toBe(true);
+    expect(screen.getByRole('textbox')).toHaveValue('Preserve this answer');
+  });
   it('restores a submitted answer with an inline error on a correlated native failure', async () => {
     mocks.fetch.mockResolvedValue([{ executionId: 'execution', epoch: 2, inputs: [{ inputId: 'ask', kind: 'input' }] }]);
     mocks.send.mockImplementation(async (_conversation, _payload, accepted) => accepted('failed-message'));

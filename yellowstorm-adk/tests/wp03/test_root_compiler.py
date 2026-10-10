@@ -47,7 +47,9 @@ def test_native_input_control_is_versioned_root_only_and_keeps_callbacks():
     attach_root_input_control(root, _root_scope(), 1)
     assert root.tools == [request_input]
     assert root.before_tool_callback is callback
-    assert 'two or three examples' in root.instruction
+    assert 'two or three concrete examples on EACH' in root.instruction
+    assert 'listing alternatives only in message' in root.instruction
+    assert '"examples":["Next trading day","1 week","1 month"]' in root.instruction
     assert 'End every user-facing answer' in root.instruction
     assert 'never request the missing inputs of an earlier request' in root.instruction
     assert 'do not ask the user to supply it unnecessarily' in root.instruction

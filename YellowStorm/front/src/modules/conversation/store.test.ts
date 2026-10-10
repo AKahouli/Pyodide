@@ -4,6 +4,7 @@ import { applyChunksToComponents, useAllMessages, useConversationStore, useDispl
 import { useModelsStore } from '@/modules/models';
 import { toast } from 'sonner';
 import { useRootInputUiStore, initialRootInputUiState } from './rootInputUiStore';
+import { initialRootWorkState, useRootWorkStore } from './rootWorkStore';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -15,6 +16,17 @@ const fetchActiveStreamsMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const ensureConnectedMock = vi.hoisted(() => vi.fn());
 const stopStreamMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+it('invalidates active conversation work immediately on terminal events, without refreshing unrelated work', async () => {
+  useRootWorkStore.setState(initialRootWorkState);
+  useConversationStore.setState({ currentConversationId: 'conv-1' });
+  await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'none' });
+  expect(useRootWorkStore.getState().revision).toBe(1);
+  useConversationStore.getState().onStreamError({ conversationId: 'conv-1', messageId: 'none', errorCode: 'CHAT_STREAM_FAILED', message: 'Failed' });
+  expect(useRootWorkStore.getState().revision).toBe(2);
+  useConversationStore.getState().onStreamError({ conversationId: 'other', messageId: 'none', errorCode: 'CHAT_STREAM_FAILED', message: 'Failed' });
+  expect(useRootWorkStore.getState().revision).toBe(2);
+});
 
 it('restores only the bound clarification draft when a stream error beats HTTP acceptance', async () => {
   const key = 'execution:2:ask:1';
