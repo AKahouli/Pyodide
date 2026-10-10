@@ -50,7 +50,8 @@ async def test_streaming_rpcs_emit_heartbeats_while_processing_is_silent(
     monkeypatch.setattr(
         servicer,
         converter_name,
-        AsyncMock(return_value=SimpleNamespace(correction_replay_context=None, attached_files=[])),
+        AsyncMock(return_value=SimpleNamespace(correction_replay_context=None, attached_files=[],
+                                              session_id="conversation-1")),
     )
     monkeypatch.setattr(chatbot_servicer, "STREAM_HEARTBEAT_INTERVAL_SECONDS", 0.005)
 
@@ -111,7 +112,8 @@ async def test_stream_cancellation_stops_owned_tasks(
     monkeypatch.setattr(
         servicer,
         converter_name,
-        AsyncMock(return_value=SimpleNamespace(correction_replay_context=None, attached_files=[])),
+        AsyncMock(return_value=SimpleNamespace(correction_replay_context=None, attached_files=[],
+                                              session_id="conversation-1")),
     )
     stream = getattr(servicer, rpc_name)(grpc_request, MagicMock())
     baseline_tasks = set(asyncio.all_tasks())

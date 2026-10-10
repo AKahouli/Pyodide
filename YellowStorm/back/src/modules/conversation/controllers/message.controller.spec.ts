@@ -153,6 +153,19 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
   });
 
+  it('preserves governed root authority for an exact bound-root mention', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ createdBy: userId.toString(),
+      runtimeMode: 'governed', runtimePurpose: 'chat', rootAgentId: stickyAgentId,
+      isFirstMessage: false, isGroup: false, taggedAgentIds: [] });
+    const runtime = { rootWork: {}, primaryAgentId: stickyAgentId, allowedAgentIds: [stickyAgentId],
+      workspaceIds: [], revisionId: 'revision', scopeId: 'scope' };
+    (controller as any).governedRuntimeService.resolveRuntime.mockResolvedValue(runtime);
+    (controller as any).governedRuntimeService.resolveEffectiveAgents.mockReturnValue([stickyAgentId]);
+    await controller.sendMessage(user, conversationId, { content: 'Answer', agentIds: [stickyAgentId] });
+    expect(streamService.startStream.mock.calls[0][7]).toEqual(expect.objectContaining({ rootBound: true, primaryAgentId: stickyAgentId }));
+    expect(messageService.createUserMessageWithAiPlaceholder.mock.calls[0][0].replayContext.governanceOverride.rootBound).toBe(true);
+  });
+
   it('forwards on-demand tool result lookups with route identifiers', async () => {
     messageService.findToolActivityResult.mockResolvedValue({ resultJson: '{"ok":true}' });
 

@@ -1,4 +1,10 @@
 {
+  "input.stopFailed": "Could not stop this reply. It is still running; try again.",
+  "input.runningReplies": "Replies running: {{count}}. You can send another message.",
+  "input.recoveryFailed": "Could not refresh running replies. Reopen this conversation to retry.",
+  "input.waitForReply": "Wait for the current reply before changing agents or teams.",
+
+  "input.stopReply": "Stop this reply",
   "rootWork.title": "Background work",
   "rootWork.canContinue": "You can keep chatting while these tasks run.",
   "rootWork.stopTask": "Stop task",

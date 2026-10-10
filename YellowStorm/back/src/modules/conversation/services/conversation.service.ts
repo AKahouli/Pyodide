@@ -323,9 +323,12 @@ export class ConversationService {
         ...record.members.map((member) => member.userId),
       ]),
     );
+    const rootIds = [...new Set(result.records.flatMap((record) => record.rootAgentId ? [record.rootAgentId] : []))];
+    const enrolledRoots = new Map((rootIds.length ? await this.agentRepository.findByIds(rootIds) : [])
+      .map((agent) => [agent._id, Boolean(agent.rootExecutionPolicy)]));
     return {
       conversations: await Promise.all(
-        result.records.map((record) => this.mapToResponse(record, users)),
+        result.records.map((record) => this.mapToResponse(record, users, enrolledRoots)),
       ),
       pagination: { page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) },
     };
@@ -679,6 +682,7 @@ export class ConversationService {
   private async mapToResponse(
     record: ConversationRecord,
     users?: Map<string, Pick<AuthUser, 'email' | 'profile'>>,
+    enrolledRoots?: Map<string, boolean>,
   ): Promise<ConversationResponse> {
     const resolvedUsers =
       users ??
@@ -689,6 +693,9 @@ export class ConversationService {
       ));
     const owner = resolvedUsers.get(record.createdBy);
     const governance = record.governanceContext;
+    const concurrentRepliesEnabled = Boolean(record.rootAgentId && !record.isGroup && record.runtimePurpose === 'chat'
+      && (record.runtimeMode === 'governed' || (enrolledRoots ? enrolledRoots.get(record.rootAgentId)
+        : (await this.agentRepository.findById(record.rootAgentId))?.rootExecutionPolicy)));
     const provenance = record.branchProvenance
       ? {
           sourceConversationId: record.branchProvenance.sourceConversationId,
@@ -706,6 +713,7 @@ export class ConversationService {
       taggedAgentIds: record.taggedAgentIds,
       systemWorkspaceId: record.systemWorkspaceId,
       rootAgentId: record.rootAgentId,
+      concurrentRepliesEnabled,
       lastMessageAt: record.lastMessageAt?.toISOString(),
       messageCount: record.messageCount,
       isArchived: record.isArchived,

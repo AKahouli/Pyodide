@@ -30,6 +30,8 @@ export interface GroupConversationMeta {
 }
 
 export interface Conversation {
+  rootAgentId?: string | null;
+  concurrentRepliesEnabled?: boolean;
   id: string;
   title: string;
   createdBy: string;
@@ -731,11 +733,15 @@ export interface CreateReportPayload {
 
 // SSE Stream Events
 export interface StreamStartEvent {
+  createdAt?: string;
+  questionMessageId?: string;
   conversationId: string;
   messageId: string;
 }
 
 export interface ActiveStreamSnapshot {
+  createdAt?: string;
+  questionMessageId?: string;
   conversationId: string;
   messageId: string;
   revision: number;

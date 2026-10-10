@@ -51,7 +51,7 @@ export class ConversationOwnerGuard implements CanActivate {
     const hasFullAccess = isCreator || isMember;
     const isJoiningAction = request.method === 'POST' && request.url.endsWith('/join');
     const requestPath = request.url.split('?')[0].replace(/\/$/, '');
-    const exposesActiveStream = request.method === 'GET' && requestPath.endsWith('/active-stream');
+    const exposesActiveStream = request.method === 'GET' && /\/active-streams?$/.test(requestPath);
     const hasGuestAccess =
       isInvited && !exposesActiveStream && (request.method === 'GET' || isJoiningAction);
     const hasProjectReadAccess =

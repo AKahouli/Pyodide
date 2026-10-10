@@ -458,7 +458,8 @@ export class MessageController {
             playbookHandoffId: dto.playbookHandoffId,
             governanceOverride: governedRuntime ? {
               runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
               primaryAgentId: governedRuntime.primaryAgentId,
               allowedAgentIds: governedRuntime.allowedAgentIds,
               workspaceIds: governedRuntime.workspaceIds,
@@ -511,7 +512,8 @@ export class MessageController {
             playbookHandoffId: dto.playbookHandoffId,
             governanceOverride: governedRuntime ? {
               runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
               primaryAgentId: governedRuntime.primaryAgentId,
               allowedAgentIds: governedRuntime.allowedAgentIds,
               workspaceIds: governedRuntime.workspaceIds,
@@ -605,7 +607,8 @@ export class MessageController {
           playbookHandoffId: dto.playbookHandoffId,
         }, requestId, undefined, this.resolveDisplayName(user), governedRuntime ? {
           runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
           primaryAgentId: governedRuntime.primaryAgentId,
           allowedAgentIds: governedRuntime.allowedAgentIds,
           workspaceIds: governedRuntime.workspaceIds,

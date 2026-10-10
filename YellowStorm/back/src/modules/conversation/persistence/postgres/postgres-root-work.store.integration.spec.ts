@@ -176,6 +176,31 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
     expect(newer.cancelRequestedAt).toBeNull();
   });
 
+  it('freezes all parallel foreground cancellation targets and excludes later turns on replay', async () => {
+    await database.db.update(conversations).set({ createdBy: nativeState.actorId })
+      .where(eq(conversations.id, conversationId));
+    const first = newId(); const second = newId();
+    await database.db.insert(conversationExecutions).values([first, second].map((messageId) => ({
+      id: newId(), conversationId, userId: nativeState.actorId, messageId,
+      nativeSessionId: `turn_${messageId}`, expiresAt: new Date(Date.now() + 60000),
+    })));
+    const request = { conversationId, actorId: nativeState.actorId, expectedEpoch: 0, stopRequestId: newStopRequestId() };
+    const stopped = await store.stopRootWork(request);
+    expect(stopped.foregroundMessageIds).toEqual(expect.arrayContaining([first, second]));
+    expect(stopped.foregroundMessageIds).toHaveLength(2);
+    const newer = newId();
+    await database.db.insert(conversationExecutions).values({ id: newId(), conversationId,
+      userId: nativeState.actorId, messageId: newer, nativeSessionId: `turn_${newer}`,
+      expiresAt: new Date(Date.now() + 60000) });
+    const replay = await store.stopRootWork(request);
+    expect(replay.applied).toBe(false);
+    expect(replay.foregroundMessageIds).toEqual(expect.arrayContaining([first, second]));
+    expect(replay.foregroundMessageIds).not.toContain(newer);
+    const [untouched] = await database.db.select().from(conversationExecutions)
+      .where(eq(conversationExecutions.messageId, newer));
+    expect(untouched.cancelRequestedAt).toBeNull();
+  });
+
   it.each(['completed', 'failed'] as const)('seals finite background result membership when ROOT becomes %s', async (status) => {
     enableFanout();
     nativeState.hasBackgroundJobs = true;

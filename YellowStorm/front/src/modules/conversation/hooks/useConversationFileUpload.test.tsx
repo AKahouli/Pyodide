@@ -127,6 +127,20 @@ describe('useConversationFileUpload', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it('releases only submitted files without deleting documents or aborting a new upload', async () => {
+    const { result } = renderHook(() => useConversationFileUpload({ conversationId: 'conv-1' }));
+    act(() => result.current.addFiles([new File(['a'], 'a.txt')], ['first']));
+    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(1));
+    act(() => MockXMLHttpRequest.instances[0].emitLoad());
+    await waitFor(() => expect(result.current.files[0].status).toBe('completed'));
+    act(() => result.current.addFiles([new File(['b'], 'b.txt')], ['second']));
+    await waitFor(() => expect(MockXMLHttpRequest.instances).toHaveLength(2));
+    act(() => result.current.clearSubmitted(['first']));
+    expect(result.current.files.map((file) => file.localId)).toEqual(['second']);
+    expect(MockXMLHttpRequest.instances[1].aborted).toBe(false);
+    expect(deleteConversationFileMock).not.toHaveBeenCalled();
+  });
+
   it('marks files as failed when conversation creation fails', async () => {
     const createConversation = vi.fn().mockRejectedValue(new Error('boom'));
     const file = new File(['abc'], 'note.txt', { type: 'text/plain' });

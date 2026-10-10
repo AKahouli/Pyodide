@@ -2,6 +2,16 @@
 
 Date: 2026-10-06
 
+## Concurrent ordinary replies (2026-10-10)
+
+User explicitly selected concurrent answers in the same normal Conversation. Implemented per-message frontend streams and independent Stop controls, Send availability for server-qualified roots, draft/attachment preservation, and plural reconnect snapshots. Enrolled root turns use isolated native `turn_<assistantMessageId>` sessions with canonical conversation identity retained for authorization/cancellation. Seeded history is bounded and includes only completed exchanges at question submission; clarification continues its saved session without reseeding. Admission preserves quotas and legacy shared-session exclusivity. Stop All freezes foreground IDs atomically; replay never targets a later turn.
+
+Migration 0046 applied to isolated test and local application databases after zero-active preflight. Existing ledger hashes/timestamps drift: only this idempotent migration SQL was applied; ledger was not advanced. Historical Stop records lack the new frozen array. Active-stream recovery remains process-local (replica affinity required); native session retention/deletion remains existing debt and must not be replaced by deletion at completion.
+
+Source review and browser QA PASS. Live ordinary replies in test conversation `0227d5dc45082cead3c639a1` overlapped for 7.3 seconds; short answer 12 completed while the long answer streamed, and a newly typed draft remained. Reload restored both active replies; independent Stop left its sibling running to completion. Fixed durable ROOT settlement and the early lease-registration race: partial reply/root both cancel, and final immediate Stop cancelled in 437ms before ROOT admission. The exact earlier test orphan was settled using the existing store method after identity/owner/no-active checks. Screenshots `%TEMP%/concurrent-replies-live.jpg`, `%TEMP%/concurrent-replies-recovery.jpg`, `%TEMP%/concurrent-replies-stop-confirmed.jpg`.
+
+Frontend 126 targeted tests, final TypeScript, isolated Vite build, native 58 tests, backend cancellation/routing 84 tests and final bootstrap 42 focused tests PASS (backend runs overlap). Backend build, independent reviewer, source QA, primary browser QA and observability policy PASS. Final shared Stop callback wrapper was tested/typechecked after the isolated frontend build. Desktop and 390px Send hit-testing PASS after launcher avoidance fix; viewport reset. Current backend 3001 PID122728 serves final build; native 8002/50052 PID125776 and frontend5174 remain available. Detailed evidence/operational limits: `docs/conversation-concurrent-replies-plan.md`. User's `.codex/agents/coding-agent.toml` remains untouched.
+
 ## Clarification retest and mono-agent skill (2026-10-10)
 
 UI work committed as `4c28faeba`. Created `skills/mono-agent-work-orchestration/SKILL.md`, imported through Admin Skills, and attached to Smart Agent without removing docx/code-interpreter. Live trace showed Activate Skill. Skill distinguishes foreground/background/fan-out, requires complete bounded tasks and clarification before dispatch, and preserves authorization, cancellation and paged-result semantics. YellowStorm's supported compatibility frontmatter is accepted by its importer (Codex-only quick validator does not support this field).

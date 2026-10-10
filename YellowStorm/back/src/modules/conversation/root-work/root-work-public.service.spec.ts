@@ -15,7 +15,7 @@ describe('Creator-owned Root work controls', () => {
     ] }) };
     const events = { replay: jest.fn().mockResolvedValue([]) };
     const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
-    const stream = { getActiveStreamSnapshot: jest.fn().mockReturnValue(null), stopStream: jest.fn().mockResolvedValue(undefined) };
+    const stream = { getActiveStreamSnapshots: jest.fn().mockReturnValue([]), stopStream: jest.fn().mockResolvedValue(undefined) };
     const messages = { findById: jest.fn().mockResolvedValue({ conversationId: 'conversation' }) };
     const service = new RootWorkPublicService(conversations as never, work as never, jobs as never, events as never,
       results as never, stream as never, messages as never, { get: jest.fn().mockReturnValue(enabled) } as never);
@@ -118,6 +118,24 @@ describe('Creator-owned Root work controls', () => {
     expect(await h.service.stop('conversation', 'owner', request)).toMatchObject({ applied: true, foregroundCancellationPending: false });
     expect(h.work.stopRootWork).toHaveBeenCalledWith({ conversationId: 'conversation', actorId: 'owner', ...request });
     expect(h.stream.stopStream).not.toHaveBeenCalled();
+  });
+
+  it('stops every frozen foreground response even if one cancellation fails, and never retargets a replay', async () => {
+    const h = fixture();
+    const request = { expectedEpoch: 4, stopRequestId: newStopRequestId() };
+    h.stream.getActiveStreamSnapshots.mockReturnValue([{ messageId: 'first' }, { messageId: 'second' }]);
+    h.work.stopRootWork.mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 2,
+      foregroundMessageIds: ['first', 'second'] } as never);
+    h.stream.stopStream.mockRejectedValueOnce(new Error('observer detached'));
+    expect(await h.service.stop('conversation', 'owner', request)).toMatchObject({ foregroundCancellationPending: true });
+    expect(h.stream.stopStream).toHaveBeenCalledWith('owner', 'conversation', 'first');
+    expect(h.stream.stopStream).toHaveBeenCalledWith('owner', 'conversation', 'second');
+    h.stream.getActiveStreamSnapshots.mockReturnValue([{ messageId: 'newer' }]);
+    h.work.stopRootWork.mockResolvedValue({ barrierEpoch: 5, applied: false, markedCount: 0,
+      foregroundMessageIds: ['first'] } as never);
+    await h.service.stop('conversation', 'owner', request);
+    expect(h.stream.stopStream).toHaveBeenLastCalledWith('owner', 'conversation', 'first');
+    expect(h.stream.stopStream).not.toHaveBeenCalledWith('owner', 'conversation', 'newer');
   });
 
   it('binds foreground cancellation to its conversation and commits the barrier first', async () => {

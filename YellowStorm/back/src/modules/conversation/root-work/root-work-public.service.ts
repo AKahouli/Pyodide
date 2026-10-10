@@ -103,24 +103,28 @@ export class RootWorkPublicService {
 
   async stop(conversationId: string, actorId: string, request: RootStopDto) {
     await this.creator(conversationId, actorId);
-    const foregroundMessageId = request.foregroundMessageId ?? this.stream.getActiveStreamSnapshot(conversationId)?.messageId;
+    const liveMessageIds = this.stream.getActiveStreamSnapshots(conversationId).map((snapshot) => snapshot.messageId);
+    const foregroundMessageId = request.foregroundMessageId ?? liveMessageIds[0];
     if (foregroundMessageId && (await this.messages.findById(foregroundMessageId)).conversationId !== conversationId) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Foreground execution is unavailable');
     }
     const barrier = await this.work.stopRootWork({ conversationId, actorId,
       stopRequestId: request.stopRequestId, expectedEpoch: request.expectedEpoch,
       ...(foregroundMessageId ? { foregroundMessageId } : {}) });
-    const cancellationMessageId = barrier.foregroundMessageId ?? (barrier.applied ? foregroundMessageId : undefined);
-    if (cancellationMessageId) {
-      try { await this.stream.stopStream(actorId, conversationId, cancellationMessageId); }
-      catch (error) {
+    const durableIds = barrier.foregroundMessageIds ?? (barrier.foregroundMessageId ? [barrier.foregroundMessageId] : []);
+    const cancellationMessageIds = [...new Set([...durableIds,
+      ...(barrier.applied ? [...liveMessageIds, ...(foregroundMessageId ? [foregroundMessageId] : [])] : [])])];
+    const outcomes = await Promise.allSettled(cancellationMessageIds.map((messageId) =>
+      this.stream.stopStream(actorId, conversationId, messageId)));
+    const failure = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+    if (failure) {
+        const error: unknown = failure.reason;
         this.logger.warn(`Root Stop barrier committed; foreground cancellation requires reconciliation (${error instanceof Error ? error.name : 'unknown'})`);
         return { ...barrier, foregroundCancellationPending: true };
-      }
     }
     // A legacy stream without a durable execution row cannot be safely
     // retargeted on replay. Keep its cancellation outcome explicitly unknown.
     return { ...barrier, foregroundCancellationPending: Boolean(
-      !barrier.applied && foregroundMessageId && !barrier.foregroundMessageId) };
+      !barrier.applied && foregroundMessageId && !barrier.foregroundMessageIds && !barrier.foregroundMessageId) };
   }
 }

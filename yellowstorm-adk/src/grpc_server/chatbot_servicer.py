@@ -818,7 +818,7 @@ class ChatbotServicer(
                 yield chunk_pb
 
             self._log_temporary_child_summary(
-                request.conversation_id,
+                internal_request.session_id,
                 "RunSingleAgent",
             )
             logger.info(
@@ -1388,7 +1388,11 @@ class ChatbotServicer(
 
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,
-            session_id=pb_request.conversation_id,
+            # Isolate workflow locks and component caches as well as the ADK
+            # runner. The protobuf conversation ID remains the external identity.
+            session_id=(execution_scope.native_session_id
+                        if execution_scope and execution_scope.native_session_id
+                        else pb_request.conversation_id),
             message=pb_request.query,
             execution_scope=execution_scope,
             root_context=root_context,

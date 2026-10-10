@@ -7,6 +7,8 @@ import { useConversationUiStore } from '../uiStore';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import { BackgroundResultContext } from './BackgroundResultContext';
+import { LiveAnswerBubble } from './LiveAnswerBubble';
+import { liveAnswerTimestamp } from '../live-streams';
 import { BackgroundResultNotice } from './BackgroundResultNotice';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
@@ -175,6 +177,8 @@ export function ConversationContent() {
   const settings = useConversationSettings();
   const latencyInstrumentationEnabled = settings?.latencyInstrumentationEnabled;
   const messages = useDisplayMessages();
+  const liveAnswers = useConversationStore((state) => state.liveAnswers);
+  const canonicalMessages = useConversationStore((state) => state.messages);
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
   const streamingConversationId = useConversationStore((s) => s.streamingConversationId);
@@ -190,8 +194,10 @@ export function ConversationContent() {
   const branchCache = useConversationStore((s) => s.branchCache);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
+  const activeAnswers = Object.values(liveAnswers ?? {}).filter((answer) => answer.conversationId === currentConversationId);
+  const timeline = [...messages.map((message) => ({ id: message.id, createdAt: message.createdAt, message })), ...activeAnswers.map((answer) => ({ id: answer.messageId, createdAt: liveAnswerTimestamp(answer, canonicalMessages ?? messages), answer }))].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
-  const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
+  const showStreamingActivity = activeAnswers.length > 0 || (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
 
   // Remember which message the live stream just completed so its bubble can
   // mount with the activity pane open and animate it closed. The flag is
@@ -308,9 +314,9 @@ export function ConversationContent() {
             </div>
           )}
 
-          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} justCompleted={message.id === justCompletedMessageId} />)}
+          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : timeline.map((entry) => 'answer' in entry ? <LiveAnswerBubble key={entry.id} answer={entry.answer} choiceInteractions={choiceInteractions} /> : <MemoizedMessageBubble key={entry.id} message={entry.message} isLastAiMessage={entry.id === lastAiMessageId} isLastUserMessage={entry.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} justCompleted={entry.id === justCompletedMessageId} />)}
 
-          {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
+          {activeAnswers.length === 0 && (showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
                 <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />

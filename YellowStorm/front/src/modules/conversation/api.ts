@@ -364,3 +364,8 @@ export async function viewPublicShare(accessToken: string): Promise<PublicShareV
   const response = await apiClient.get<ApiResponse<PublicShareViewResponse>>(API_ENDPOINTS.conversations.publicShare(accessToken));
   return response.data.data;
 }
+
+export async function fetchActiveStreams(conversationId: string): Promise<ActiveStreamSnapshot[]> {
+  const response = await apiClient.get<ApiResponse<ActiveStreamSnapshot[]>>(API_ENDPOINTS.conversations.activeStreams(conversationId));
+  return response.data.data;
+}

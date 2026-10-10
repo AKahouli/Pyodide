@@ -47,6 +47,7 @@ export interface StopRootWorkResult {
   applied: boolean;
   markedCount: number;
   foregroundMessageId?: string;
+  foregroundMessageIds?: string[];
 }
 
 export interface RootWorkStore {

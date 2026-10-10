@@ -198,7 +198,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
           backgroundJobId: previous.backgroundJobId, backgroundFanout: previous.backgroundFanout,
           backgroundFanoutItem: previous.backgroundFanoutItem,
           hasBackgroundJobs: previous.hasBackgroundJobs, schedulingSeal: previous.schedulingSeal,
-          followup: previous.followup, origin: previous.origin } }, updatedAt: new Date(),
+          followup: previous.followup, origin: previous.origin, sessionSeed: previous.sessionSeed } }, updatedAt: new Date(),
       }).where(and(eq(schema.rootExecutions.id, executionId),
         inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
       if (row && job) {
@@ -268,6 +268,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
         .select({
           epoch: schema.conversations.rootWorkEpoch,
           lastStopRequestId: schema.conversations.rootWorkLastStopRequestId,
+          stoppedForegroundIds: schema.conversations.rootWorkLastStopForegroundMessageIds,
           actorId: schema.conversations.createdBy,
           archived: schema.conversations.isArchived,
           group: schema.conversations.isGroup,
@@ -282,27 +283,25 @@ export class PostgresRootWorkStore implements RootWorkStore {
       if (input.actorId !== undefined && (conversation.actorId !== input.actorId || conversation.archived || conversation.group)) {
         throw new Error('Root Stop creator authority changed');
       }
-      if (input.expectedEpoch !== undefined && input.expectedEpoch !== conversation.epoch) {
-        const [pending] = input.foregroundMessageId && conversation.lastStopRequestId === input.stopRequestId
+      if ((input.expectedEpoch !== undefined && input.expectedEpoch !== conversation.epoch)
+        || (conversation.lastStopRequestId !== null && conversation.lastStopRequestId >= input.stopRequestId)) {
+        const stoppedIds = conversation.stoppedForegroundIds ?? [];
+        const pending = stoppedIds.length && conversation.lastStopRequestId === input.stopRequestId
           ? await tx.select({ messageId: schema.conversationExecutions.messageId })
             .from(schema.conversationExecutions).where(and(
               eq(schema.conversationExecutions.conversationId, input.conversationId),
-              eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
+              inArray(schema.conversationExecutions.messageId, stoppedIds),
               sql`${schema.conversationExecutions.cancelRequestedAt} IS NOT NULL`,
-              eq(schema.conversationExecutions.status, 'running'))).limit(1) : [];
+              eq(schema.conversationExecutions.status, 'running'))) : [];
+        const original = pending.find((entry) => entry.messageId === input.foregroundMessageId);
         return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0,
-          ...(pending ? { foregroundMessageId: pending.messageId } : {}) };
+          foregroundMessageIds: pending.map((entry) => entry.messageId),
+          ...(original ? { foregroundMessageId: original.messageId } : {}) };
       }
       // Stop ids are UUIDv7 (time-ordered, see newStopRequestId), so
       // lexicographic order is chronological. Equal id = idempotent replay;
       // a smaller id arriving after a newer one is a stale/retried Stop and
       // is ignored so it cannot cancel work admitted under the newer barrier.
-      if (
-        conversation.lastStopRequestId !== null &&
-        conversation.lastStopRequestId >= input.stopRequestId
-      ) {
-        return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0 };
-      }
       const barrierEpoch = conversation.epoch + 1;
       await tx.execute(sql`UPDATE conversation.conversation_executions SET status = 'cancelled',
         cancel_requested_at = clock_timestamp(), terminal_at = clock_timestamp(), updated_at = clock_timestamp()
@@ -311,12 +310,11 @@ export class PostgresRootWorkStore implements RootWorkStore {
             AND role = 'followup' AND conversation_epoch <= ${conversation.epoch})`);
       // Persist the exact foreground cancellation intent with the barrier, so
       // retrying an observer failure cannot target a newly admitted stream.
-      const [foreground] = input.foregroundMessageId ? await tx.update(schema.conversationExecutions)
+      const foreground = await tx.update(schema.conversationExecutions)
         .set({ cancelRequestedAt: new Date(), updatedAt: new Date() }).where(and(
           eq(schema.conversationExecutions.conversationId, input.conversationId),
-          eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
           eq(schema.conversationExecutions.status, 'running')))
-        .returning({ messageId: schema.conversationExecutions.messageId }) : [];
+        .returning({ messageId: schema.conversationExecutions.messageId });
       const marked = await tx
         .update(schema.rootExecutions)
         .set({ status: 'cancellation_requested', stopRequestId: input.stopRequestId, updatedAt: new Date() })
@@ -340,11 +338,15 @@ export class PostgresRootWorkStore implements RootWorkStore {
       }
       await tx.execute(sql`
         UPDATE conversation.conversations
-        SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId}, updated_at = now()
+        SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId},
+          root_work_last_stop_foreground_message_ids = ${JSON.stringify(foreground.map((entry) => entry.messageId))}::jsonb,
+          updated_at = now()
         WHERE id = ${input.conversationId}::char(24)
       `);
       return { barrierEpoch, applied: true, markedCount: marked.length,
-        ...(foreground ? { foregroundMessageId: foreground.messageId } : {}) };
+        foregroundMessageIds: foreground.map((entry) => entry.messageId),
+        ...(foreground.some((entry) => entry.messageId === input.foregroundMessageId)
+          ? { foregroundMessageId: input.foregroundMessageId } : {}) };
     });
   }
 }

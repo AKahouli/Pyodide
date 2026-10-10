@@ -53,7 +53,7 @@ describe('ConversationOwnerGuard', () => {
     expect(conversationStore.findActiveAccessById).not.toHaveBeenCalled();
   });
 
-  it('denies active stream snapshots to invited non-members', async () => {
+  it.each(['active-stream', 'active-streams'])('denies %s snapshots to invited non-members', async (route) => {
     const userId = new Types.ObjectId();
     const conversationId = new Types.ObjectId();
     const conversationStore = {
@@ -71,7 +71,7 @@ describe('ConversationOwnerGuard', () => {
           user: { _id: userId, email: 'invitee@example.com' },
           params: { id: conversationId.toString() },
           method: 'GET',
-          url: `/conversations/${conversationId}/active-stream`,
+          url: `/conversations/${conversationId}/${route}`,
         }),
       }),
     } as unknown as ExecutionContext;

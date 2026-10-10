@@ -78,7 +78,7 @@ describe('StreamService root enrollment', () => {
       undefined, undefined, {}, 'conversation-1', 'correlation', 'answer-2')).rejects.toThrow('origin message');
   });
 
-  it('routes a governed default Root with published authority while explicit targets stay direct', async () => {
+  it('routes the governed bound Root with published authority, including an explicit root mention', async () => {
     const h = harness();
     const governedConversation = { rootAgentId: rootId, runtimeMode: 'governed', runtimePurpose: 'chat', isGroup: false,
       groupTaggedAgentIds: [], systemWorkspaceId: 'system-1', governanceContext: { revisionId: 'published-revision' } };
@@ -97,7 +97,7 @@ describe('StreamService root enrollment', () => {
     Object.assign(h.request, { governanceOverride: { runtimeMode: 'governed', primaryAgentId: rootId,
       allowedAgentIds: [rootId], workspaceIds: [], revisionId: 'published-revision', scopeId: 'scope', rootBound: false } });
     const direct = await h.run();
-    expect(direct.payload.execution_scope).toBeUndefined();
+    expect(direct.payload.execution_scope).toBeDefined();
   });
 
   it.each([false, true])('denies source revocation during final preparation (continuation=%s)', async (resume) => {
@@ -223,12 +223,20 @@ describe('StreamService root enrollment', () => {
     await expect(h.run()).rejects.toThrow('Root definition changed');
   });
 
-  it('does not enroll an explicit selection of the same root', async () => {
+  it('enrolls an explicit selection of the same bound root', async () => {
     const h = harness();
     h.request.agentIds = [rootId];
     const result = await h.run();
+    expect(result.payload.execution_scope).toBeDefined();
+    expect(h.findUserAgentById).toHaveBeenCalled();
+    expect(h.resolveForActor).toHaveBeenCalled();
+  });
+
+  it('does not enroll an explicit selection of a different agent', async () => {
+    const h = harness();
+    h.request.agentIds = ['222222222222222222222222'];
+    const result = await h.run();
     expect(result.payload.execution_scope).toBeUndefined();
-    expect(h.findUserAgentById).not.toHaveBeenCalled();
     expect(h.resolveForActor).not.toHaveBeenCalled();
   });
 
@@ -250,5 +258,55 @@ describe('StreamService root enrollment', () => {
     const h = harness();
     Object.assign(h.service, { rootWorkService: undefined });
     await expect(h.run()).rejects.toThrow('Root execution store is unavailable');
+  });
+
+  it('seeds an isolated turn once, persists its snapshot and resumes the original native session', async () => {
+    const h = harness();
+    const seedConversationSession = jest.fn().mockResolvedValue(undefined);
+    Object.assign(h.service, { seedConversationSession, messageService: { findById: jest.fn().mockResolvedValue({
+      conversationId: 'conversation-1', conversationType: 'ai', questionMessageId: 'question-1',
+    }) } });
+    const history = [{ role: 'CONVERSATION_HISTORY_ROLE_USER' as const, text: 'previous' }];
+    const built = await h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', history);
+    expect(built.payload.conversation_id).toBe('conversation-1');
+    expect(built.payload.execution_scope).toEqual(expect.objectContaining({ native_session_id: 'turn_answer-1' }));
+    expect(seedConversationSession).toHaveBeenCalledWith('user-1', 'turn_answer-1', 'turn_answer-1', history);
+    const state = h.recordNativeState.mock.calls[0][1];
+    expect(state.sessionSeed.history).toEqual(history);
+    state.invocationId = 'native-invocation';
+    state.pendingInputs = [{ inputId: 'pending-input', functionName: 'adk_request_input' }];
+    h.validateContinuation.mockResolvedValue(state);
+    Object.assign(h.request, { rootContinuation: { executionId: state.scope.executionId,
+      inputResponses: [{ inputId: 'pending-input', response: {} }] } });
+    const resumed = await h.run();
+    expect(resumed.payload.conversation_id).toBe('conversation-1');
+    expect(resumed.payload.execution_scope).toEqual(expect.objectContaining({ native_session_id: 'turn_answer-1' }));
+    expect(seedConversationSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the enrolled root when seeding fails and never dispatches it', async () => {
+    const h = harness();
+    const completeExecution = jest.fn().mockResolvedValue({});
+    Object.assign((h.service as any).rootWorkService, { completeExecution });
+    Object.assign(h.service, { seedConversationSession: jest.fn().mockRejectedValue(new Error('unavailable')),
+      messageService: { findById: jest.fn().mockResolvedValue({ conversationId: 'conversation-1', conversationType: 'ai' }) } });
+    await expect(h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', []))
+      .rejects.toThrow('Conversation context preparation failed');
+    expect(completeExecution).toHaveBeenCalledWith(expect.any(String), 'failed', null);
+  });
+  it('cancels a root registered after bootstrap stop without seeding or dispatching it', async () => {
+    const h = harness();
+    const completeExecution = jest.fn().mockResolvedValue({});
+    const seedConversationSession = jest.fn();
+    Object.assign((h.service as any).rootWorkService, { completeExecution });
+    Object.assign(h.service, { bootstrapCancelRequested: new Set(['user-1:conversation-1:answer-1']), seedConversationSession,
+      messageService: { findById: jest.fn().mockResolvedValue({ conversationId: 'conversation-1', conversationType: 'ai' }) } });
+    await expect(h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', []))
+      .rejects.toThrow('Stream was cancelled during preparation');
+    expect(completeExecution).toHaveBeenCalledWith(h.registerExecution.mock.calls[0][0].executionId, 'cancelled', null);
+    expect(seedConversationSession).not.toHaveBeenCalled();
   });
 });

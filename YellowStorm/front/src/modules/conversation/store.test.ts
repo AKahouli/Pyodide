@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useAllMessages, useConversationStore, useDisplayMessages } from './store';
 import { useModelsStore } from '@/modules/models';
+import { toast } from 'sonner';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -9,8 +10,10 @@ const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
+const fetchActiveStreamsMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const ensureConnectedMock = vi.hoisted(() => vi.fn());
+const stopStreamMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 it('refreshes background results without dropping loaded history, pagination, or the selected draft model', async () => {
   const old = { id: 'old', conversationId: 'conv-1', conversationType: 'user' as const, createdAt: '2026-01-01T00:00:00Z', components: [] };
@@ -39,10 +42,14 @@ vi.mock('./api', async (importOriginal) => ({
   fetchMessage: fetchMessageMock,
   fetchMessages: fetchMessagesMock,
   fetchActiveStream: fetchActiveStreamMock,
+  fetchActiveStreams: fetchActiveStreamsMock,
   fetchBranches: fetchBranchesMock,
+  stopStream: stopStreamMock,
 }));
 
 beforeEach(() => {
+  useConversationStore.getState().clearAll();
+  fetchActiveStreamsMock.mockReset().mockResolvedValue([]);
   fetchConversationMock.mockReset();
   fetchConversationsMock.mockReset();
   sendMessageMock.mockReset();
@@ -112,6 +119,7 @@ describe('conversation optimistic messages', () => {
   });
 
   it('sends the POST immediately while nudging the shared SSE pipe without awaiting it', async () => {
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
     sendMessageMock.mockResolvedValue({
       userMessage: {
         id: 'message-1',
@@ -125,7 +133,7 @@ describe('conversation optimistic messages', () => {
     await useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
 
     expect(ensureConnectedMock).toHaveBeenCalledTimes(1);
-    expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello' });
+    expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello', requestId: expect.any(String) });
     // Optimistic message replaced by the persisted user message.
     expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
     expect(useConversationStore.getState().messages).toEqual([
@@ -1651,5 +1659,64 @@ describe('conversation streaming component updates', () => {
     expect(components).toHaveLength(2);
     expect(components[0].data).toMatchObject({ status: 'completed', paramsJson: '{"q":"one"}', resultJson: '{"matches":1}' });
     expect(components[1].data).toMatchObject({ status: 'running', paramsJson: '{"q":"two"}' });
+  });
+});
+
+describe('concurrent reply lifecycle', () => {
+  it.each(['navigate', 'logout'])('ignores a completion recovery after %s', async (action) => {
+    let resolve!: (message: unknown) => void;
+    fetchMessageMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    useConversationStore.setState({ currentConversationId: 'a' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'a', messageId: 'old' });
+    const pending = useConversationStore.getState().onStreamComplete({ conversationId: 'a', messageId: 'old' });
+    if (action === 'logout') useConversationStore.getState().clearAll();
+    else useConversationStore.setState({ currentConversationId: 'b', messages: [] });
+    resolve({ id: 'old', conversationId: 'a', conversationType: 'ai', isComplete: true, createdAt: '2026-01-01' });
+    await pending;
+    expect(useConversationStore.getState().messages).toEqual([]);
+  });
+
+  it('reports a failed per-reply stop and preserves both live replies', async () => {
+    const errorToast = vi.spyOn(toast, 'error');
+    stopStreamMock.mockRejectedValueOnce(new Error('offline'));
+    for (const messageId of ['a', 'b']) useConversationStore.getState().onStreamStart({ conversationId: 'c', messageId });
+    await useConversationStore.getState().stopStream('a', 'c');
+    expect(errorToast).toHaveBeenCalled();
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a', 'c:b']);
+    errorToast.mockRestore();
+  });
+
+  it('keeps conversation B awaiting when an old A submission fails after navigation', async () => {
+    let reject!: (error: Error) => void;
+    sendMessageMock.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    useConversationStore.setState({ currentConversationId: 'a' });
+    const pending = useConversationStore.getState().sendMessage('a', { content: 'old' });
+    useConversationStore.setState({ currentConversationId: 'b', awaitingConversationId: 'b', isAwaitingFirstChunk: true });
+    reject(new Error('offline'));
+    await expect(pending).rejects.toThrow('offline');
+    expect(useConversationStore.getState()).toMatchObject({ awaitingConversationId: 'b', isAwaitingFirstChunk: true });
+  });
+
+  it('finishes the second reply first without deleting the first live answer', async () => {
+    useConversationStore.setState({ currentConversationId: 'c' });
+    for (const messageId of ['a', 'b']) useConversationStore.getState().onStreamStart({ conversationId: 'c', messageId });
+    useConversationStore.getState().onStreamChunk({ conversationId: 'c', messageId: 'a', revision: 1, action: 'add', component: { id: 'text', type: 'text', data: { content: 'first' } } });
+    useConversationStore.getState().onStreamChunk({ conversationId: 'c', messageId: 'b', revision: 1, action: 'add', component: { id: 'text', type: 'text', data: { content: 'second' } } });
+    fetchMessageMock.mockResolvedValue({ id: 'b', conversationId: 'c', conversationType: 'ai', createdAt: '2026-01-01', isComplete: true });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'c', messageId: 'b' });
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a']);
+    await useConversationStore.getState().stopStream('a', 'c');
+    expect(stopStreamMock).toHaveBeenCalledWith('c', 'a');
+    expect(useConversationStore.getState().messages.some((message) => message.id === 'b')).toBe(true);
+  });
+
+  it('recovers every active reply after navigation and clears private state on account reset', async () => {
+    fetchActiveStreamsMock.mockResolvedValue(['a', 'b'].map((messageId) => ({ conversationId: 'c', messageId, revision: 2, components: [{ id: 'text', type: 'text', data: { content: messageId } }] })));
+    await useConversationStore.getState().recoverLiveAnswers('c');
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a', 'c:b']);
+    useConversationStore.getState().clearMessages();
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toHaveLength(2);
+    useConversationStore.getState().clearAll();
+    expect(useConversationStore.getState().liveAnswers).toEqual({});
   });
 });

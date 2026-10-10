@@ -56,7 +56,7 @@ export interface FileUploadInfo {
 
 interface InputProps {
   toolLabels?: { attachments: string; knowledge: string; data: string };
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | Promise<void>;
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | boolean | Promise<void | boolean>;
   draftKey?: string;
   initialInput?: string;
   initialMention?: { id: string; name: string; kind: 'agent' | 'team' };
@@ -473,14 +473,14 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
     async (message: PromptInputMessage) => {
       // Block submission while an answer is being generated
       if (submitDisabled || derivedStatus === 'streaming' || derivedStatus === 'submitted') {
-        return;
+        return false;
       }
 
       const hasText = Boolean(message.text);
       const hasAttachments = Boolean(message.files?.length);
 
       if (!(hasText || hasAttachments)) {
-        return;
+        return false;
       }
 
       const { agentIds, memberIds, teamIds } = resolveMentions(message.text ?? '', mentionMap, memoizedAgents, memoizedTeams, members);
@@ -497,7 +497,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
           selectedConnectorRepo || undefined,
           teamIds.length > 0 ? teamIds : undefined,
         );
-        setMentionMap(new Map());
+        if (result === false) return false;
+        setMentionMap((current) => current === mentionMap ? new Map() : current);
         if (!preserveWorkspaceSelectionOnSubmit) {
           resetSelectedWorkspaceIds();
         }

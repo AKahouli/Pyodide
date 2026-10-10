@@ -125,6 +125,9 @@ export interface RootNativeState {
     agentId?: string;
   };
   requestProfile?: MessageReplayContext;
+  sessionSeed?: { idempotencyKey: string; history: Array<{
+    role: 'CONVERSATION_HISTORY_ROLE_USER' | 'CONVERSATION_HISTORY_ROLE_ASSISTANT'; text: string;
+  }> };
   actorId: string;
   scope: ExecutionScopeV1;
   rootContext: Record<string, unknown>;

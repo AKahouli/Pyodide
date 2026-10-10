@@ -1,4 +1,10 @@
 {
+  "input.stopFailed": "Impossible d’arrêter cette réponse. Elle continue ; réessayez.",
+  "input.runningReplies": "Réponses en cours : {{count}}. Vous pouvez envoyer un autre message.",
+  "input.recoveryFailed": "Impossible d’actualiser les réponses en cours. Rouvrez cette conversation pour réessayer.",
+  "input.waitForReply": "Attendez la réponse en cours avant de changer d’agent ou d’équipe.",
+
+  "input.stopReply": "Arrêter cette réponse",
   "rootWork.title": "Travail en arrière-plan",
   "rootWork.canContinue": "Vous pouvez continuer à discuter pendant ces tâches.",
   "rootWork.stopTask": "Arrêter la tâche",

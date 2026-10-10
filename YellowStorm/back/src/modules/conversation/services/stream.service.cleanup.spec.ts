@@ -20,6 +20,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
   }) => {
     const leaseIdRef = { current: '' };
     const messageService = {
+      findById: jest.fn().mockResolvedValue({ conversationId, conversationType: 'ai', createdAt: '2026-10-10T10:00:00.000Z' }),
       claimStreamExecution: jest.fn(async (_m: string, leaseId: string) => {
         leaseIdRef.current = leaseId;
         return overrides.claimResult ?? true;
@@ -46,7 +47,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
       // after local registration that surfaces the injected failure is the
       // agent-request build's conversation document lookup.
       findById: jest.fn().mockResolvedValue({ createdBy: 'owner-1' }),
-      getConversationDocument: jest.fn().mockRejectedValue(new Error('conversation lookup failed')),
+      getConversationDocument: jest.fn().mockResolvedValueOnce({}).mockRejectedValue(new Error('conversation lookup failed')),
     };
     const executionStore = {
       admit: jest.fn().mockResolvedValue({ admitted: true }),

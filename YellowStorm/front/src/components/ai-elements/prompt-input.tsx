@@ -30,7 +30,7 @@ export type AttachmentsContext = {
   files: (FileUIPart & { id: string })[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
-  clear: () => void;
+  clear: (submittedIds?: string[]) => void;
   openFileDialog: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
 };
@@ -39,6 +39,7 @@ export type TextInputContext = {
   value: string;
   setInput: (v: string) => void;
   clear: () => void;
+  clearSubmitted: (submittedValue: string) => void;
 };
 
 export type PromptInputControllerProps = {
@@ -96,13 +97,8 @@ export function PromptInputProvider({ initialInput: initialTextInput = '', draft
       return initialTextInput;
     }
   });
-  const clearInput = useCallback(() => {
-    setTextInput('');
-    try {
-      if (storageKey) sessionStorage.removeItem(storageKey);
-    } catch {
-      // Browser storage may be unavailable; the in-memory draft still clears.
-    }
+  const clearInput = useCallback((submittedValue?: string) => {
+    setTextInput((current) => submittedValue === undefined || current === submittedValue ? '' : current);
   }, [storageKey]);
 
   useEffect(() => {
@@ -180,14 +176,14 @@ export function PromptInputProvider({ initialInput: initialTextInput = '', draft
     [onFileRemoved],
   );
 
-  const clear = useCallback(() => {
+  const clear = useCallback((submittedIds?: string[]) => {
     setAttachmentFiles((prev) => {
       for (const f of prev) {
-        if (f.url) {
+        if (f.url && (!submittedIds || submittedIds.includes(f.id))) {
           URL.revokeObjectURL(f.url);
         }
       }
-      return [];
+      return submittedIds ? prev.filter((file) => !submittedIds.includes(file.id)) : [];
     });
   }, []);
 
@@ -232,7 +228,8 @@ export function PromptInputProvider({ initialInput: initialTextInput = '', draft
       textInput: {
         value: textInput,
         setInput: setTextInput,
-        clear: clearInput,
+        clear: () => clearInput(),
+        clearSubmitted: clearInput,
       },
       attachments,
       __registerFileInput,
@@ -397,7 +394,7 @@ export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, 'onSubmit' 
   maxFiles?: number;
   maxFileSize?: number; // bytes
   onError?: (err: { code: 'max_files' | 'max_file_size' | 'accept'; message: string }) => void;
-  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => void | boolean | Promise<void | boolean>;
 };
 
 export const PromptInput = ({ className, accept, multiple, globalDrop, syncHiddenInput, maxFiles, maxFileSize, onError, onSubmit, children, ...props }: PromptInputProps) => {
@@ -502,14 +499,14 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, syncHidde
   );
 
   const clearLocal = useCallback(
-    () =>
+    (submittedIds?: string[]) =>
       setItems((prev) => {
         for (const file of prev) {
-          if (file.url) {
+          if (file.url && (!submittedIds || submittedIds.includes(file.id))) {
             URL.revokeObjectURL(file.url);
           }
         }
-        return [];
+        return submittedIds ? prev.filter((file) => !submittedIds.includes(file.id)) : [];
       }),
     [],
   );
@@ -642,11 +639,16 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, syncHidde
           return (formData.get('message') as string) || '';
         })();
 
-    // Reset form immediately after capturing text to avoid race condition
-    // where user input during async blob conversion would be lost
-    if (!usingProvider) {
-      form.reset();
-    }
+    const submittedIds = files.map((file) => file.id);
+    const clearAcceptedSubmission = (accepted: void | boolean) => {
+      if (accepted === false) return;
+      clear(submittedIds);
+      if (usingProvider) controller.textInput.clearSubmitted(text);
+      else {
+        const field = form.elements.namedItem('message');
+        if (field instanceof HTMLTextAreaElement && field.value === text) field.value = '';
+      }
+    };
 
     // Convert blob URLs to data URLs asynchronously
     Promise.all(
@@ -669,21 +671,13 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, syncHidde
           // Handle both sync and async onSubmit
           if (result instanceof Promise) {
             result
-              .then(() => {
-                clear();
-                if (usingProvider) {
-                  controller.textInput.clear();
-                }
-              })
+              .then(clearAcceptedSubmission)
               .catch(() => {
                 // Don't clear on error - user may want to retry
               });
           } else {
             // Sync function completed without throwing, clear attachments
-            clear();
-            if (usingProvider) {
-              controller.textInput.clear();
-            }
+            clearAcceptedSubmission(result);
           }
         } catch {
           // Don't clear on error - user may want to retry
@@ -876,7 +870,7 @@ export const PromptInputSubmit = ({ className, variant = 'default', size = 'icon
   const isStreaming = status === 'streaming';
 
   return (
-    <InputGroupButton aria-label={isStreaming ? t('promptInput.stop') : t('promptInput.submit')} className={cn('min-h-11 min-w-11 md:min-h-8 md:min-w-8', className)} size={size} type={isStreaming ? 'button' : 'submit'} variant={variant} onClick={isStreaming ? onStop : undefined} {...props} disabled={isStreaming ? false : props.disabled}>
+    <InputGroupButton aria-label={isStreaming ? t('promptInput.stop') : t('promptInput.submit')} className={cn('min-h-11 min-w-11 md:min-h-8 md:min-w-8', className)} size={size} type={isStreaming ? 'button' : 'submit'} variant={variant} onClick={isStreaming ? () => onStop?.() : undefined} {...props} disabled={isStreaming ? false : props.disabled}>
       {children ?? Icon}
     </InputGroupButton>
   );

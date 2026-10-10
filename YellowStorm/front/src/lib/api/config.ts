@@ -297,6 +297,7 @@ export const API_ENDPOINTS = {
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    activeStreams: (id: string) => `/conversations/${id}/active-streams`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
     rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
     rootBackgroundInput: (id: string, executionId: string) => `/conversations/${id}/root-inputs/background/${executionId}`,

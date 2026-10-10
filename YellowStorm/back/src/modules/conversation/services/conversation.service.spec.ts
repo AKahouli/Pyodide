@@ -63,6 +63,7 @@ describe('ConversationService neutral persistence', () => {
     agentRepository = {
       findActiveDefaultIdBySlugAndType: jest.fn(),
       findByIds: jest.fn(),
+      findById: jest.fn().mockResolvedValue(null),
     };
     featureVisibility = { getVisibility: jest.fn().mockResolvedValue({ platformCopilot: true }) };
     userLookup = {
@@ -273,8 +274,9 @@ describe('ConversationService neutral persistence', () => {
       const rootId = new Types.ObjectId().toString();
       conversationStore.create.mockImplementation(async (input) => record(input));
       (service as any).agentService.resolveRootForConversation.mockResolvedValue({ _id: rootId });
+      agentRepository.findById.mockResolvedValue({ _id: rootId, rootExecutionPolicy: {} });
 
-      await service.create(ownerId, {});
+      expect(await service.create(ownerId, {})).toMatchObject({ concurrentRepliesEnabled: true });
 
       expect((service as any).agentService.resolveRootForConversation).toHaveBeenCalledWith(ownerId, undefined);
       expect(conversationStore.create).toHaveBeenCalledWith(
