@@ -175,7 +175,9 @@ describe('RootWorkService', () => {
       webSearchEnabled: false, deepSearchEnabled: false };
     const continuation = { executionId: EXECUTION_ID,
       inputResponses: [{ inputId: 'request', response: { answer: 'yes' } }] };
-    expect(await service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).toBe(state);
+    expect(await service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).toMatchObject({
+      ...state, clarifications: [expect.objectContaining({ inputId: 'request', response: { answer: 'yes' } })],
+    });
     await expect(service.validateContinuation(continuation, 'other-actor', CONVERSATION_ID, 2))
       .rejects.toThrow(BadRequestException);
     await expect(service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 3))

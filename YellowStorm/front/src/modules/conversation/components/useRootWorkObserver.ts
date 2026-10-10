@@ -36,11 +36,11 @@ export function useRootWorkObserver(conversationId: string, userId: string | und
           const events = await fetchEvents(conversationId, snapshot.epoch, replay.cursor, abort.signal);
           if (!current()) return;
           if (events) useRootWorkStore.getState().update(conversationId, snapshot, appendRootWorkEvents(replay, snapshot.epoch, events));
-          const messages = useConversationStore.getState().messages;
           const missing = snapshot.jobs.flatMap((job) => job.publicationMessageId && !refreshedPublications.has(job.publicationMessageId)
-            && !messages.some((message) => message.id === job.publicationMessageId) ? [job.publicationMessageId] : []);
+            ? [job.publicationMessageId] : []);
           if (missing.length) {
-            // Older results can remain outside the loaded page; hydrate once per observer/reconnect.
+            // A cached copy may predate final source metadata. Hydrate each
+            // publication once even when its message ID is already loaded.
             missing.forEach((id) => refreshedPublications.add(id));
             await useConversationStore.getState().fetchMessages(conversationId);
           }

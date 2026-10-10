@@ -1302,6 +1302,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           ...prepared.runCodeSources.map((source) => source.workspaceId),
         ].filter(Boolean))]);
       }
+      // Keep accepted answers with the same frozen invocation for later synthesis.
+      const recorded = await this.rootWorkService!.recordNativeState(continuation.scope.executionId,
+        { ...continuation, scope: rootDelegation!.scope }, 'running');
+      if (!recorded) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root execution was stopped during continuation');
       return this.agentRequestBuilder.build({ userId, username, conversationId,
         request, agents, ...prepared, rootDelegation, executionScope: rootDelegation!.scope,
         nativeInputResponses });

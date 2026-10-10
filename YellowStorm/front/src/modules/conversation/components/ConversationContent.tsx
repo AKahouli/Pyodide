@@ -10,6 +10,7 @@ import { BackgroundResultContext } from './BackgroundResultContext';
 import { LiveAnswerBubble } from './LiveAnswerBubble';
 import { liveAnswerTimestamp } from '../live-streams';
 import { BackgroundResultNotice } from './BackgroundResultNotice';
+import { RequestWorkStatus } from './RequestWorkStatus';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
@@ -164,6 +165,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
             : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets />}
       </MessageProvider>
+      {!isUser && <RequestWorkStatus conversationId={conversationId} messageId={message.id} />}
       {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}

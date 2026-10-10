@@ -189,13 +189,16 @@ describe('StreamService root enrollment', () => {
     state.pendingInputs = [{ inputId: 'pending-input', functionName: 'adk_request_input' }];
     h.validateContinuation.mockResolvedValue(state);
     h.buildAgentsForStream.mockResolvedValue([agent('new-message', 'refreshed-credential')]);
+    state.clarifications = [{ invocationId: 'native-invocation', inputId: 'pending-input', inputVersion: 1,
+      question: 'Origin?', response: { answer: 'Paris' }, responseDigest: 'validated-digest' }];
     Object.assign(h.request, { modelId: 'replacement-model', rootContinuation: {
       executionId: state.scope.executionId,
       inputResponses: [{ inputId: 'pending-input', response: { answer: 'yes' } }],
     } });
     const result = await h.run();
     expect(h.registerExecution).toHaveBeenCalledTimes(1);
-    expect(h.recordNativeState).toHaveBeenCalledTimes(1);
+    expect(h.recordNativeState).toHaveBeenCalledTimes(2);
+    expect(h.recordNativeState.mock.calls[1][1].clarifications).toEqual(state.clarifications);
     expect((h.service as any).buildAttachedFiles).toHaveBeenCalledTimes(1);
     expect(h.buildAgentsForStream.mock.calls[1][1]).toBeUndefined();
     expect(result.payload.execution_scope).toEqual(expect.objectContaining({

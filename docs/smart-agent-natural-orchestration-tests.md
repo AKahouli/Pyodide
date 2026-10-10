@@ -2,6 +2,8 @@
 
 ## Purpose and method
 
+The assessment outcomes below preserve the original baseline and repair history. Subsequent runtime fixes and current qualification are recorded in [execution repair](smart-agent-execution-repair.md) and its [browser evidence](smart-agent-execution-repair-browser-results.md); use those reports for the latest observed status.
+
 Evaluate the existing signed-in Smart Agent in normal Conversation at http://localhost:5174. The tester is a temporary GPT-6 Sol agent; do not change Smart Agent's model or configuration for baseline testing. Smart Agent has web search, code interpreter and mono-agent-work-orchestration available. All prompts below deliberately avoid implementation terms. Do not coach the agent into using a named tool or skill after an unsuccessful attempt.
 
 Record the actual model/configuration shown, conversation IDs, submitted prompts, wall-clock submit/acknowledgement/completion times, visible tool/activity names, Tasks state, result attribution, unexpected errors and screenshots. Use browser UI for all user interactions. Primary may corroborate execution type and status through read-only repository/database evidence; a prose promise alone is not proof of execution. Never infer parallelism from a fast answer.

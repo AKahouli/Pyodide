@@ -877,6 +877,8 @@ export interface RootExecutionTextResult {
 }
 
 export interface RootExecutionEvidenceLocation {
+  /** Classification from the authorized producer record, independent of cached message metadata. */
+  sourceKind?: 'web';
   page?: number;
   mimeType?: string;
   evidenceId: string;

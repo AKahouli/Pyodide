@@ -53,6 +53,12 @@ def attach_root_input_control(agent, scope, version: int = 0) -> None:
     from src.guardrails.tool_registry import tool_policy
     request_input.metadata = tool_policy(request_input.name)
     agent.tools = [*agent.tools, request_input]
+    agent.instruction += (
+        '\nWhen essential task inputs are missing, use adk_request_input with a clear message and '
+        'response_schema before dispatching work. It binds the answer to this request and tracks '
+        'waiting/resolution. Reserve present_choices for optional conversational shortcuts, '
+        'not a replacement for a required clarification. Other chat requests may continue while waiting.'
+    )
 
 
 @dataclass
@@ -90,7 +96,7 @@ async def compile_worker(
     if 'skills' in worker_config:
         worker_config['skills'] = [skill for skill in worker_config['skills'] or []
             if str(skill.get('name', '') if isinstance(skill, dict) else getattr(skill, 'name', ''))
-            != 'mono-agent-work-orchestration']
+            not in ('mono-agent-work-orchestration', 'smart-navigation-search')]
     agent, toolkit = await factory(
         worker_config, agent_name, normalized_name, "", False, citation_manager
     )
@@ -101,10 +107,13 @@ async def compile_worker(
         "Complete this bounded assignment yourself using your exposed research or analysis tools. "
         "Root conversation orchestration skills do not apply to this role: do not load them or "
         "plan delegation/background work. Load any relevant retrieval skill at most once, then "
-        "perform the work using its instructions already in your history. Return the requested "
+        "perform the work using its instructions already in your history. Do not ask the user "
+        "questions or offer navigation choices; report missing inputs to the root instead. Return the requested "
         "result and sources, or a concrete blocker if the required capability is unavailable."
     )
     from src.root_runtime.leaf_tools import install_leaf_tool_gate
+    from src.root_runtime.worker_execution import install_worker_execution
+    install_worker_execution(agent, scope)
     install_leaf_tool_gate(agent)
     from src.skills.runtime import limit_loaded_skill_activation
     from src.guardrails.adapters.google_adk import append_callback

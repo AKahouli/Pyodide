@@ -7,6 +7,9 @@ from typing import AsyncGenerator
 from unittest.mock import MagicMock
 
 import pytest
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types as genai_types
 
 from src.grpc_generated import chatbot_pb2
 from src.grpc_server import chatbot_servicer
@@ -296,8 +299,8 @@ class _FakeSuperLiteLlm:
     @classmethod
     async def stream_two(cls, *_args, **_kwargs) -> AsyncGenerator[str, None]:
         cls.calls += 1
-        yield "response-1"
-        yield "response-2"
+        yield LlmResponse(content=genai_types.Content(parts=[genai_types.Part(text="response-1")]))
+        yield LlmResponse(content=genai_types.Content(parts=[genai_types.Part(text="response-2")]))
 
     @classmethod
     async def stream_fail(cls, *_args, **_kwargs) -> AsyncGenerator[str, None]:
@@ -307,6 +310,12 @@ class _FakeSuperLiteLlm:
 
 
 class TestInstrumentedLiteLlm:
+    @pytest.fixture(autouse=True)
+    def disable_capacity_for_adapter_unit_tests(self, monkeypatch):
+        from src.config.settings import get_settings
+        settings = get_settings().model_copy(update={'ROOT_WORK_LLM_CAPACITY_ENABLED': False})
+        monkeypatch.setattr('src.config.settings.get_settings', lambda: settings)
+
     def test_wraps_lite_llm(self):
         assert issubclass(InstrumentedLiteLlm, __import__(
             "google.adk.models.lite_llm", fromlist=["LiteLlm"]
@@ -322,10 +331,10 @@ class TestInstrumentedLiteLlm:
         trace = _make_trace()
         token = current_conversation_latency_trace.set(trace)
         try:
-            responses = [r async for r in llm.generate_content_async(llm_request=object(), stream=True)]
+            responses = [r async for r in llm.generate_content_async(llm_request=LlmRequest(), stream=True)]
         finally:
             current_conversation_latency_trace.reset(token)
-        assert responses == ["response-1", "response-2"]
+        assert [r.content.parts[0].text for r in responses] == ["response-1", "response-2"]
         assert trace.llm_request_start_perf_ns is not None
         assert trace.llm_first_delta_perf_ns is not None
         assert trace.llm_first_delta_perf_ns >= trace.llm_request_start_perf_ns
@@ -341,11 +350,11 @@ class TestInstrumentedLiteLlm:
         trace = _make_trace()
         token = current_conversation_latency_trace.set(trace)
         try:
-            _ = [r async for r in llm.generate_content_async(llm_request=object(), stream=True)]
+            _ = [r async for r in llm.generate_content_async(llm_request=LlmRequest(), stream=True)]
             first_start = trace.llm_request_start_perf_ns
             first_delta = trace.llm_first_delta_perf_ns
             time.sleep(0.001)
-            _ = [r async for r in llm.generate_content_async(llm_request=object(), stream=True)]
+            _ = [r async for r in llm.generate_content_async(llm_request=LlmRequest(), stream=True)]
         finally:
             current_conversation_latency_trace.reset(token)
         assert trace.llm_request_start_perf_ns == first_start
@@ -358,8 +367,8 @@ class TestInstrumentedLiteLlm:
             _FakeSuperLiteLlm.stream_two,
         )
         llm = InstrumentedLiteLlm(model="test-model")
-        responses = [r async for r in llm.generate_content_async(llm_request=object(), stream=True)]
-        assert responses == ["response-1", "response-2"]
+        responses = [r async for r in llm.generate_content_async(llm_request=LlmRequest(), stream=True)]
+        assert [r.content.parts[0].text for r in responses] == ["response-1", "response-2"]
         assert get_current_conversation_latency_trace() is None
 
     @pytest.mark.asyncio
@@ -373,11 +382,28 @@ class TestInstrumentedLiteLlm:
         token = current_conversation_latency_trace.set(trace)
         try:
             with pytest.raises(RuntimeError):
-                _ = [r async for r in llm.generate_content_async(llm_request=object(), stream=True)]
+                _ = [r async for r in llm.generate_content_async(llm_request=LlmRequest(), stream=True)]
         finally:
             current_conversation_latency_trace.reset(token)
         assert trace.llm_request_start_perf_ns is not None
         assert trace.llm_first_delta_perf_ns is None
+
+    @pytest.mark.asyncio
+    async def test_toolless_arguments_are_local_to_each_concurrent_request(self, monkeypatch):
+        seen = []
+        async def generate(provider, request, stream=False):
+            await asyncio.sleep(0)
+            seen.append((bool(request.config.tools), provider._additional_args.copy()))
+            yield LlmResponse(content=genai_types.Content(parts=[genai_types.Part(text='Answer')]))
+        monkeypatch.setattr('google.adk.models.lite_llm.LiteLlm.generate_content_async', generate)
+        llm = InstrumentedLiteLlm(model='test-model', parallel_tool_calls=True)
+        with_tools = LlmRequest(config=genai_types.GenerateContentConfig(tools=[genai_types.Tool(
+            function_declarations=[genai_types.FunctionDeclaration(name='lookup')])]))
+        async def run(request):
+            return [item async for item in llm.generate_content_async(request)]
+        await asyncio.gather(run(LlmRequest()), run(with_tools))
+        assert seen == [(False, {}), (True, {'parallel_tool_calls': True})]
+        assert llm._additional_args == {'parallel_tool_calls': True}
 
 
 class TestServicerLatencyStamping:

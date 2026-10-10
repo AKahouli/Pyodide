@@ -60,7 +60,8 @@ def test_public_proposals_reuse_shared_proto_conversion_and_usage_identity():
 
 
 @pytest.mark.asyncio
-async def test_real_owned_host_detaches_observer_and_joins_sink_before_acknowledgement(guarded_native, monkeypatch):
+@pytest.mark.parametrize('evidence_count', [0, 101])
+async def test_real_owned_host_detaches_observer_and_joins_sink_before_acknowledgement(guarded_native, monkeypatch, evidence_count):
     fixture_service, session, grant, engine = guarded_native
     control = await fixture_service.control_state()
     scope = ExecutionScopeV1(role=ExecutionRole.LIBRARY_WORKER, execution_id=grant.execution_id,
@@ -79,9 +80,15 @@ async def test_real_owned_host_detaches_observer_and_joins_sink_before_acknowled
         if path == 'background-events':
             durable.extend(payload['events'])
             return {'events': [{'eventId': item['eventId'], 'sequence': str(len(durable))} for item in payload['events']]}
+        if path == 'background-evidence-page':
+            assert payload['owner'] == grant.owner and len(payload['evidence']) <= 100
+            calls.append('page')
+            return {'count': len(payload['evidence'])}
         assert path == 'background-lifecycle'
         assert durable[-1]['trace']['lifecycle'] == 'INVOCATION_LIFECYCLE_STATE_COMPLETED'
         assert payload['fullText'] == 'actual output' and payload['status'] == 'completed'
+        if evidence_count:
+            assert payload['evidenceManifest']['count'] == evidence_count and 'evidence' not in payload
         calls.append('settled')
         return {'status': 'completed'}
 
@@ -95,13 +102,17 @@ async def test_real_owned_host_detaches_observer_and_joins_sink_before_acknowled
         await release.wait()
         await owned_service.append_event(session, Event(author='worker', invocation_id='native-invocation',
             content=types.Content(role='model', parts=[types.Part(text='actual output')])))
+        evidence = [{'executionId': grant.execution_id, 'nativeIdentity': f'call-{index}', 'outputOrdinal': 0,
+            'identity': f'source-{index}', 'kind': 'citation', 'payload': {'type': 'web', 'reference': str(index + 1),
+                'source': f'https://official.test/{index}'}} for index in range(evidence_count)]
         await owned_service.append_event(session, Event(author='worker', invocation_id='native-invocation',
-            actions=EventActions(end_of_agent=True)))
+            actions=EventActions(end_of_agent=True, state_delta={'_root_evidence:first': evidence[:100], '_root_evidence:second': evidence[100:]})))
         await projection.emit(queue, InvocationLifecycleState.COMPLETED)
         await queue.put(None)
         return 'actual output'
 
     monkeypatch.setattr('src.root_runtime.background_host._post', post)
+    monkeypatch.setattr('src.root_runtime.evidence_submission._post', post)
     converter = ChatbotServicer.__new__(ChatbotServicer)._dict_to_stream_chunk
     service = SimpleNamespace(process_team_request=AsyncMock(side_effect=workflow))
     host = BackgroundInvocationHost(engine, service, converter)
@@ -123,4 +134,4 @@ async def test_real_owned_host_detaches_observer_and_joins_sink_before_acknowled
     assert calls == ['runner'] and not handle.task.done()
     release.set()
     await handle.task
-    assert handle.status == 'completed' and calls == ['runner', 'settled']
+    assert handle.status == 'completed' and calls == ['runner', *(['page', 'page'] if evidence_count else []), 'settled']

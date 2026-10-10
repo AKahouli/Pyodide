@@ -92,6 +92,17 @@ export class RootDelegateInternalController {
     return this.background.itemSettle(executionId, itemId, request);
   }
 
+  @Post(':executionId/background-items/:itemId/evidence-page')
+  stageBackgroundItemEvidence(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
+    @Body() request: RootBackgroundSettlementDto) {
+    return this.background.stageEvidence(executionId, request, itemId);
+  }
+
+  @Post(':executionId/background-evidence-page')
+  stageBackgroundEvidence(@Param('executionId') executionId: string, @Body() request: RootBackgroundSettlementDto) {
+    return this.background.stageEvidence(executionId, request);
+  }
+
   @Post(':executionId/background-lifecycle')
   settleBackground(@Param('executionId') executionId: string, @Body() request: RootBackgroundSettlementDto) {
     return this.background.settle(executionId, request);
@@ -133,5 +144,11 @@ export class RootDelegateInternalController {
   settle(@Param('executionId') executionId: string, @Param('childId') childId: string,
     @Body() request: SettleRootDelegateDto) {
     return this.definitions.settle(executionId, childId, request);
+  }
+
+  @Post(':executionId/children/:childId/evidence-page')
+  stageEvidence(@Param('executionId') executionId: string, @Param('childId') childId: string,
+    @Body() request: SettleRootDelegateDto) {
+    return this.definitions.stageEvidence(executionId, childId, request);
   }
 }

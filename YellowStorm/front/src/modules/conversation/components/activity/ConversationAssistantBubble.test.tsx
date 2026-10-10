@@ -966,6 +966,23 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-payload="response"]')).not.toBeInTheDocument();
   });
 
+  it('waits for streaming persistence and reloads the response after completion', async () => {
+    mocks.fetchToolResult.mockRejectedValueOnce(new Error('not persisted'))
+      .mockResolvedValueOnce({ resultJson: JSON.stringify({ matches: 7 }) });
+    const components = [{ id: 'tool-search', type: 'toolActivity' as const,
+      data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search' } }];
+    const { rerender } = render(<ConversationAssistantBubble conversationId='conversation-1'
+      messageId='message-1' isStreaming components={components} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+    expect(await screen.findByText('Waiting for the tool response.')).toBeInTheDocument();
+    expect(screen.queryByText('The response could not be loaded.')).not.toBeInTheDocument();
+    rerender(<ConversationAssistantBubble conversationId='conversation-1'
+      messageId='message-1' isStreaming={false} components={components} />);
+    expect(await screen.findByText(/"matches": 7/)).toBeInTheDocument();
+    expect(mocks.fetchToolResult).toHaveBeenCalledTimes(2);
+  });
+
   it('surfaces a load failure for an on-demand tool response', async () => {
     mocks.fetchToolResult.mockRejectedValue(new Error('network down'));
     render(<ConversationAssistantBubble

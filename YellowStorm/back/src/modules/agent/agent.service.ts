@@ -985,6 +985,7 @@ export class AgentService {
         agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        connector_bindings: connectorBindings,
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,

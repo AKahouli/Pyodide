@@ -67,6 +67,13 @@ describe('Background work dock and details', () => {
     mocks.user.id = 'member'; render(<Work />); expect(mocks.fetch).not.toHaveBeenCalled();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
+  it('refreshes final publication metadata even when a cached message already exists', async () => {
+    mocks.stream.messages = [{ id: 'published' }];
+    mocks.fetch.mockResolvedValue({ ...snapshot, jobs: [{ ...snapshot.jobs[0], role: 'followup', status: 'completed', publicationMessageId: 'published' }] });
+    render(<Work />);
+    await waitFor(() => expect(mocks.stream.fetchMessages).toHaveBeenCalledTimes(1));
+    expect(mocks.stream.fetchMessages).toHaveBeenCalledWith('conversation');
+  });
   it('does not repeatedly hydrate historical publications outside the loaded message page', async () => {
     vi.useFakeTimers();
     try {

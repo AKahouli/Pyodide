@@ -1310,6 +1310,8 @@ def create_connector_tools(
                         connector_slug=_connector_slug,
                         action_key=_action_key,
                     )
+                    from src.web_citations.bounded_response import bound_web_response
+                    response = bound_web_response(response)
                 response = _buffer_mcp_images_for_model(response, tool_context)
                 registered_response = _register_connector_response_sources(
                     response,
@@ -1319,6 +1321,9 @@ def create_connector_tools(
                     citation_mode=_citation_mode,
                     source_context=context,
                 )
+                if _result_kind in {"web_search", "web_fetch"}:
+                    from src.web_citations.bounded_response import bound_web_response
+                    return bound_web_response(registered_response)
                 return registered_response
 
             logger.info(

@@ -21,17 +21,17 @@ export async function acquireFollowupWriter(tx: RootControlTransaction, executio
   const state = (execution.resultPayload as DelegateResultV1).nativeState!;
   const values = { id: execution.id, conversationId: execution.conversationId, userId: state.actorId,
     messageId: state.followup!.publicationMessageId, ownerReplicaId: 'root-followup', expiresAt: new Date(Date.now() + 30000) };
-  const [inserted] = await tx.insert(schema.conversationExecutions).values(values).onConflictDoNothing().returning();
-  if (inserted) return inserted;
-  const [legacy] = await tx.select().from(schema.conversationExecutions).where(eq(schema.conversationExecutions.id, execution.id))
-    .limit(1).for('update');
-  if (!legacy || legacy.conversationId !== values.conversationId || legacy.userId !== values.userId
-    || legacy.messageId !== values.messageId || legacy.ownerReplicaId !== values.ownerReplicaId
-    || legacy.cancelRequestedAt || legacy.status === 'cancelled') return null;
   try {
-    // The unique Conversation writer index also arbitrates a simultaneous user
-    // admission. A savepoint makes losing that race a publication deferral.
+    // Both insert and legacy reactivation can lose foreground admission. Roll
+    // back only this savepoint so publication can defer without aborting its transaction.
     return await tx.transaction(async (savepoint) => {
+      const [inserted] = await savepoint.insert(schema.conversationExecutions).values(values).onConflictDoNothing().returning();
+      if (inserted) return inserted;
+      const [legacy] = await savepoint.select().from(schema.conversationExecutions).where(eq(schema.conversationExecutions.id, execution.id))
+        .limit(1).for('update');
+      if (!legacy || legacy.conversationId !== values.conversationId || legacy.userId !== values.userId
+        || legacy.messageId !== values.messageId || legacy.ownerReplicaId !== values.ownerReplicaId
+        || legacy.cancelRequestedAt || legacy.status === 'cancelled') return null;
       const [writer] = await savepoint.update(schema.conversationExecutions).set({ status: 'running',
         expiresAt: values.expiresAt, terminalAt: null, updatedAt: new Date() })
         .where(eq(schema.conversationExecutions.id, execution.id)).returning();
@@ -40,7 +40,8 @@ export async function acquireFollowupWriter(tx: RootControlTransaction, executio
   } catch (error) {
     const cause = (error as { cause?: { code?: string; constraint?: string } }).cause ?? error;
     if ((cause as { code?: string }).code === '23505'
-      && (cause as { constraint?: string }).constraint === 'uq_conversation_executions_running_conversation') return null;
+      && ['uq_conversation_executions_running_conversation', 'uq_conversation_executions_running_session']
+        .includes((cause as { constraint?: string }).constraint ?? '')) return null;
     throw error;
   }
 }

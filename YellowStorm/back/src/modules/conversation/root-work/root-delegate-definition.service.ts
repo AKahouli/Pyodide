@@ -11,7 +11,8 @@ import { SettleRootDelegateDto } from '../dto/settle-root-delegate.dto';
 import { RootWorkService } from './root-work.service';
 import { scopeCandidateToFrozenCeiling } from './root-capability-ceiling';
 import type { RootNativeState } from './root-work.types';
-import { producerEvidence } from './root-producer-evidence';
+import { producerEvidence, flattenProducerEvidence } from './root-producer-evidence';
+import { logDomainEvent } from '../../logger/logger.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
 import { RootBackgroundJobStore, RootJobOwner } from '../persistence/postgres/root-background-job.store';
@@ -194,6 +195,9 @@ export class RootDelegateDefinitionService {
   }
 
   async settle(parentId: string, childId: string, request: SettleRootDelegateDto, backgroundOwner?: RootJobOwner) {
+    if (request.evidenceManifest && (request.status !== 'completed' || request.evidence?.length)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Staged and inline evidence cannot be mixed');
+    }
     if (request.fullText !== undefined && Buffer.byteLength(request.fullText, 'utf8') > 262144) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Child output exceeds the durable result limit');
     }
@@ -209,7 +213,19 @@ export class RootDelegateDefinitionService {
       return waiting.resultPayload;
     }
     if (child.terminalAt) return child.resultPayload;
-    const evidence = producerEvidence(child, request.evidence);
+    const evidence = request.evidenceManifest ? await this.work.stagedEvidence(childId, request.evidenceManifest)
+      : producerEvidence(child, request.evidence);
+    if (request.status === 'completed' && !(request.fullText ?? request.text)?.trim()
+      && !evidence.some((item) => {
+        const payload = flattenProducerEvidence(item.payload);
+        return item.kind === 'artifact' && payload.availability !== 'unavailable'
+          && ['artifact_id', 'path', 'filepath', 'file_path', 'document_id', 'source', 'url']
+            .some((field) => typeof payload[field] === 'string' && String(payload[field]).trim());
+      })) {
+      logDomainEvent('warn', 'worker.execution.rejected', { run_id: childId, conversation_id: child.conversationId,
+        reason_code: 'empty_deliverable', count: 0 });
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Completed worker must provide a deliverable');
+    }
     const result = { executionId: child.id, producerAgentId: String(state.rootContext.selected_agent_id),
       producerRole: child.role === 'temporary_worker' ? 'temporary_worker' as const : 'library_worker' as const,
       status: request.status, text: request.text ?? null,
@@ -217,9 +233,29 @@ export class RootDelegateDefinitionService {
       citationRefs: evidence.filter((item) => item.kind === 'citation').map((item) => item.evidenceId),
       artifactRefs: evidence.filter((item) => item.kind === 'artifact').map((item) => item.evidenceId),
       safeError: request.status === 'completed' ? null : 'Specialist outcome could not be confirmed' };
-    const settled = backgroundOwner ? await this.work.completeExecution(childId, request.status, result, evidence, backgroundOwner)
+    const settled = request.evidenceManifest
+      ? await this.work.completeExecution(childId, request.status, result, [], backgroundOwner, request.evidenceManifest)
+      : backgroundOwner ? await this.work.completeExecution(childId, request.status, result, evidence, backgroundOwner)
       : await this.work.completeExecution(childId, request.status, result, evidence);
     if (!settled) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Child completion is behind the control barrier');
     return settled.resultPayload;
+  }
+
+  async stageEvidence(parentId: string, childId: string, request: SettleRootDelegateDto, owner?: RootJobOwner) {
+    const child = await this.work.getExecution(childId);
+    if (!child?.resultPayload?.nativeState || child.parentExecutionId !== parentId || child.terminalAt
+      || request.evidenceManifest || request.text || request.fullText || request.status !== 'completed') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Evidence page must belong to an active producer');
+    }
+    const evidence = producerEvidence(child, request.evidence);
+    try {
+      await this.work.stageEvidence(childId, evidence, owner);
+    } catch (error) {
+      logDomainEvent('warn', 'worker.execution.rejected', { run_id: childId, conversation_id: child.conversationId,
+        reason_code: 'evidence_page_rejected', count: evidence.length });
+      throw error;
+    }
+    logDomainEvent('info', 'worker.evidence.staged', { run_id: childId, conversation_id: child.conversationId, count: evidence.length });
+    return { count: evidence.length };
   }
 }

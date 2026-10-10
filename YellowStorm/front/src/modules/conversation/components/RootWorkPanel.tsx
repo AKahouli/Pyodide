@@ -11,6 +11,7 @@ import { WorkMessageLink } from './WorkMessageLink';
 import { RootBackgroundJobRow } from './RootBackgroundJobRow';
 import { groupRootWork } from './root-work-groups';
 import { useRootWorkObserver } from './useRootWorkObserver';
+import { WorkDisclosure } from './WorkDisclosure';
 
 export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
   conversationId: string; creatorId: string; variant?: 'dock' | 'details';
@@ -43,7 +44,7 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
     return <section aria-label={t('rootWork.title')} className='mx-auto w-full max-w-6xl shrink-0 px-4'>
       <Button variant='ghost' className='h-9 w-full justify-between gap-3 overflow-hidden px-2 text-xs'
         aria-label={t('rootWork.openDetails')} onClick={() => setContextPanel('work')}>
-        <span className='truncate' aria-live='polite'>{summary || t('rootWork.noActiveWork')}</span>
+        <span className='truncate' aria-live='polite'>{t('rootWork.title')}: {summary || t('rootWork.noActiveWork')}</span>
         <span className='shrink-0 text-muted-foreground'>{t('rootWork.details')}</span>
       </Button>
     </section>;
@@ -59,11 +60,10 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
         executionId={group.jobs.find((job) => job.publicationMessageId === group.publicationMessageId)?.executionId} />}
       {group.jobs[0].originQuestionMessageId && <WorkMessageLink conversationId={conversationId}
         messageId={group.jobs[0].originQuestionMessageId} kind='request' />}
-    </div>    <details>
-      <summary className='cursor-pointer py-2 text-xs text-muted-foreground'>{t('rootWork.details')} ({group.jobs.length})</summary>
+    </div>    <WorkDisclosure label={<>{t('rootWork.details')} ({group.jobs.length})</>}>
       <ul className='space-y-3 pb-2 text-xs'><>{group.jobs.map((job) => <RootBackgroundJobRow key={job.executionId}
         job={job} conversationId={conversationId} epoch={snapshot!.epoch} onCancelled={refresh} />)}</></ul>
-    </details>
+    </WorkDisclosure>
   </li>;
   return <section aria-label={t('rootWork.title')} className='min-w-0 space-y-4 p-4'>
     {(unread ?? []).filter((id) => !groups.some((group) => group.publicationMessageId === id)).map((id) => <WorkMessageLink key={id} conversationId={conversationId} messageId={id} />)}
@@ -73,7 +73,7 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
       <ul className='mt-3'>{history.map(renderGroup)}</ul></details>}
     {error && <p role='alert' className='text-sm text-destructive'>{error.message}</p>}
     {pendingStop && <p role='status' className='text-sm text-muted-foreground'>{t('rootWork.cancellationPending')}</p>}
-    {snapshot && (!!active.length || pendingStop) && <Button variant='outline' className='text-destructive' disabled={isLoading} onClick={async () => {
+    {snapshot && (!!active.length || groups.some((group) => group.state === 'outcome_unknown') || pendingStop) && <Button variant='outline' className='text-destructive' disabled={isLoading} onClick={async () => {
       const stream = useConversationStore.getState();
       const request = pendingStop ?? { expectedEpoch: snapshot.epoch, stopRequestId: snapshot.stopRequestId,
         ...(stream.streamingConversationId === conversationId && stream.streamingMessageId ? { foregroundMessageId: stream.streamingMessageId } : {}) };
@@ -84,13 +84,12 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
         { ...snapshot, epoch: result.barrierEpoch, jobs: [], watermark: '0' });
       refresh();
     }}>{t(pendingStop ? 'rootWork.retryCancellation' : 'rootWork.stopAll')}</Button>}
-    {!!activity?.events.length && <details className='text-xs text-muted-foreground'>
-      <summary className='cursor-pointer py-2'>{t('rootWork.activity')}</summary>
+    {!!activity?.events.length && <WorkDisclosure label={t('rootWork.activity')} className='text-xs text-muted-foreground'>
       <p className='py-1'>{t('rootWork.activityBound')}</p>
       <ol className='max-h-48 space-y-2 overflow-y-auto break-words'>{activity.events.map((event) => <li key={event.eventId}>
         {rootWorkActivityText(event) ?? t(event.payload.kind === 'followup_published' ? 'rootWork.activityPublished'
           : event.payload.kind === 'component' ? 'rootWork.activityComponent' : event.payload.kind === 'usage' ? 'rootWork.activityUsage' : 'rootWork.activityProgress')}
       </li>)}</ol>
-    </details>}
+    </WorkDisclosure>}
   </section>;
 }

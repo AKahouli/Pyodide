@@ -125,6 +125,8 @@ export interface RootNativeState {
     agentId?: string;
   };
   requestProfile?: MessageReplayContext;
+  /** Validated user submissions accepted for this ROOT's native clarification slots; not an action receipt. */
+  clarifications?: import('./root-clarifications').RootClarification[];
   sessionSeed?: { idempotencyKey: string; history: Array<{
     role: 'CONVERSATION_HISTORY_ROLE_USER' | 'CONVERSATION_HISTORY_ROLE_ASSISTANT'; text: string;
   }> };

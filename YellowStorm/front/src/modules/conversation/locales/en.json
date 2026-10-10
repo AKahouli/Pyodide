@@ -7,6 +7,8 @@
   "input.stopReply": "Stop this reply",
   "rootWork.title": "Background work",
   "rootWork.canContinue": "You can keep chatting while these tasks run.",
+  "rootWork.unresolved": "{{count}} items need checking; they are no longer running.",
+  "rootWork.batchActivity": "{{running}} running · {{queued}} queued",
   "rootWork.stopTask": "Stop task",
   "rootWork.stopTaskLabel": "Stop task: {{task}}",
   "rootWork.taskCancelled": "Stopped. Previously started actions may still need checking.",

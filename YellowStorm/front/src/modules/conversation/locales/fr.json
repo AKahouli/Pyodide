@@ -7,6 +7,8 @@
   "input.stopReply": "Arrêter cette réponse",
   "rootWork.title": "Travail en arrière-plan",
   "rootWork.canContinue": "Vous pouvez continuer à discuter pendant ces tâches.",
+  "rootWork.unresolved": "{{count}} éléments doivent être vérifiés ; ils ne sont plus en cours.",
+  "rootWork.batchActivity": "{{running}} en cours · {{queued}} en attente",
   "rootWork.stopTask": "Arrêter la tâche",
   "rootWork.stopTaskLabel": "Arrêter la tâche : {{task}}",
   "rootWork.taskCancelled": "Arrêtée. Les actions déjà lancées peuvent encore nécessiter une vérification.",

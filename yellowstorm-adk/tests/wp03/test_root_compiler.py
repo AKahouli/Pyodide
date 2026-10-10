@@ -105,6 +105,23 @@ async def test_worker_catalog_excludes_root_orchestration_without_mutating_profi
 
 
 @pytest.mark.asyncio
+async def test_workers_cannot_present_conversation_choices_but_keep_retrieval():
+    from google.adk.tools import FunctionTool
+    from src.smart_rag.tools import present_choices
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    async def research(query: str):
+        return {'source': query}
+    register_tool_execution_kind(research, 'leaf')
+    async def factory(*_args):
+        return LlmAgent(name='worker', model='test-model', tools=[present_choices, research]), None
+    compiled = await compile_worker({}, 'Worker', 'worker', _worker_scope(), factory)
+    assert [tool.name for tool in compiled.agent.tools] == ['research']
+    gate = compiled.agent.before_tool_callback[0]
+    assert 'error' in await gate(FunctionTool(present_choices), {}, None)
+    assert await gate(compiled.agent.tools[0], {}, None) is None
+
+
+@pytest.mark.asyncio
 async def test_worker_compiler_rejects_root_scope_before_factory():
     from unittest.mock import AsyncMock
     factory = AsyncMock()

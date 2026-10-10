@@ -12,6 +12,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RootDelegateInternalController } from '../../controllers/root-delegate-internal.controller';
 import { RootFollowupService } from '../../root-work/root-followup.service';
+import { RootConversationReplyService } from '../../root-work/root-conversation-reply.service';
 import { RootBackgroundLifecycleService } from '../../root-work/root-background-lifecycle.service';
 import { RootBackgroundSubmissionService } from '../../root-work/root-background-submission.service';
 import { RootDelegateDefinitionService } from '../../root-work/root-delegate-definition.service';
@@ -20,6 +21,7 @@ import { RootFanoutService } from '../../root-work/root-fanout.service';
 import { RootBackgroundEventStore } from './root-background-event.store';
 import { RootBackgroundJobStore } from './root-background-job.store';
 import { RootBackgroundDriverService } from '../../root-work/root-background-driver.service';
+import { evidenceManifest } from '../../root-work/root-evidence-manifest';
 import { startNativeQualificationHost } from '../../../postgres/testing/native-qualification-host';
 
 jest.mock('../../../logger/logger.service', () => ({ ...jest.requireActual('../../../logger/logger.service'), logDomainEvent: jest.fn() }));
@@ -84,8 +86,12 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       expiresAt: new Date(Date.now() + 60000) });
   }
 
+
   it('releases an old synthesis reservation and reuses it for one publication after a user turn', async () => {
     const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const manifest = JSON.parse((reserved.resultPayload as any).nativeState.admittedRequest.task);
+    expect(manifest.itemCounts).toMatchObject({ requested: 1, completed: 1, cancelled: 0 });
+    expect(manifest.results).toEqual(expect.arrayContaining([expect.objectContaining({ executionId: childId, role: 'library_worker' })]));
     await legacyWriter(reserved);
     await followups.releaseLegacyWriters();
     const foregroundId = id();
@@ -99,6 +105,56 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     const publication = (await followups.publish(reserved.id, actorId, sealed.digest))!;
     expect(publication.isComplete).toBe(true);
     expect((await followups.publish(reserved.id, actorId, sealed.digest))!.id).toBe(publication.id);
+  });
+
+  it('uses the frozen Root request model when synthesis usage has no model metadata', async () => {
+    state.requestProfile = { modelId: 'frozen-root-model', content: 'Give a comparison table with direct links' } as any;
+    state.clarifications = [{ invocationId: 'invocation', inputId: 'origin', inputVersion: 1,
+      question: 'Departure city?', response: { city: 'Paris', budget: 800 }, responseDigest: 'accepted-digest' }];
+    await work.recordNativeState(rootId, state, 'running');
+    await work.recordNativeState(rootId, { ...state, clarifications: undefined }, 'running');
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const packet = JSON.parse((reserved.resultPayload as any).nativeState.admittedRequest.task);
+    expect(packet.originalRequest).toBe('Give a comparison table with direct links');
+    expect(packet.originalRequestTruncated).toBe(false);
+    expect(packet.clarifications).toEqual([{ inputId: 'origin', inputVersion: 1,
+      question: 'Departure city?', response: { city: 'Paris', budget: 800 } }]);
+    await nativeComplete(reserved.id);
+    const publication = (await followups.publish(reserved.id, actorId, sealed.digest))!;
+    expect(publication.modelId).toBe('frozen-root-model');
+  });
+
+  it('stages 101 producer identities idempotently and preserves all aliases through atomic settlement and synthesis paging', async () => {
+    const child = (await work.getExecution(childId))!;
+    const records = Array.from({ length: 101 }, (_, index) => producerEvidence(child, [{ kind: 'citation',
+      nativeIdentity: `call-${index}`, outputOrdinal: 0,
+      payload: { type: 'web', reference: String(index + 1), source: `https://official.test/page/${index}` },
+    }])[0]);
+    await work.stageEvidence(childId, records.slice(0, 100));
+    await work.stageEvidence(childId, records.slice(0, 100));
+    expect((await work.listEvidenceForExecution(childId))).toHaveLength(100);
+    await expect(work.stageEvidence(childId, [{ ...records[0], payload: { title: 'changed' } }])).rejects.toThrow('replay conflicts');
+    await expect(work.stageEvidence(childId, [{ ...records[100], executionId: rootId }])).rejects.toThrow('binding');
+    const manifest = evidenceManifest(records);
+    const result = { executionId: childId, producerAgentId: actorId, producerRole: 'library_worker' as const,
+      status: 'completed' as const, text: 'Sources [1] and [101]', citationRefs: records.map((item) => item.evidenceId), artifactRefs: [], safeError: null };
+    await expect(work.completeExecution(childId, 'completed', result, [], undefined, manifest)).rejects.toThrow('incomplete');
+    expect((await work.getExecution(childId))!.status).toBe('running');
+    await work.stageEvidence(childId, records.slice(100));
+    await expect(work.completeExecution(childId, 'completed', { ...result, citationRefs: [records[0].evidenceId] }, [], undefined, manifest))
+      .rejects.toThrow('references changed');
+    await work.completeExecution(childId, 'completed', result, [], undefined, manifest);
+    const root = (await work.completeExecution(rootId, 'completed', null))!;
+    const sealed = root.resultPayload!.nativeState!.schedulingSeal!;
+    const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const packet = JSON.parse((reserved.resultPayload as { nativeState: RootNativeState }).nativeState.admittedRequest!.task);
+    expect(packet.evidence).toHaveLength(100); expect(packet.evidenceTruncated).toBe(true);
+    const grant = await nativeClaim(reserved.id);
+    const page = await followups.readResult(grant, childId, 0);
+    expect(page.evidence).toHaveLength(101);
+    expect(new Set(page.evidence.map((item) => item.evidenceId))).toEqual(new Set(records.map((item) => item.evidenceId)));
+    expect(page.evidence.some((item) => item.nativeReference === '101')).toBe(true);
+    await expect(work.stageEvidence(childId, records.slice(0, 1))).rejects.toThrow('binding');
   });
 
   it('cancels a legacy followup reservation without leaving the Conversation writer occupied', async () => {
@@ -287,7 +343,7 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
       { provide: ConfigService, useValue: { get: () => token } },
       { provide: RootBackgroundLifecycleService, useValue: lifecycle },
-      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService]
+      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService, RootConversationReplyService]
         .map((provide) => ({ provide, useValue: {} })),
     ] }).compile();
     const app = module.createNestApplication({ logger: false });

@@ -1,7 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { RootProducerEvidenceDto } from './root-producer-evidence.dto';
+
+export class RootEvidenceManifestDto {
+  @IsInt() @Min(1) @Max(1000) count!: number;
+  @Matches(/^[0-9a-f]{64}$/) digest!: string;
+}
 
 export class SettleRootDelegateDto {
   @ApiProperty({ enum: ['waiting', 'completed', 'failed', 'outcome_unknown'] })
@@ -12,4 +17,5 @@ export class SettleRootDelegateDto {
   @ApiPropertyOptional({ type: [RootProducerEvidenceDto] })
   @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true })
   @Type(() => RootProducerEvidenceDto) evidence?: RootProducerEvidenceDto[];
+  @IsOptional() @ValidateNested() @Type(() => RootEvidenceManifestDto) evidenceManifest?: RootEvidenceManifestDto;
 }

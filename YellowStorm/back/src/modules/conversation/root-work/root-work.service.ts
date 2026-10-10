@@ -5,6 +5,8 @@ import { BadRequestException, ErrorCode } from '../../exceptions';
 import { isCanonicalObjectId } from '@common/postgres/object-id';
 import type { RootContinuationRequest } from '../interfaces/message.interface';
 import { validateNativeInputResponses } from './native-input-responses';
+import { acceptedRootClarifications } from './root-clarifications';
+import { verifyEvidenceManifest, type RootEvidenceManifest } from './root-evidence-manifest';
 import {
   RegisterEvidenceInput,
   RegisterExecutionInput,
@@ -75,16 +77,29 @@ export class RootWorkService {
     result: DelegateResultV1 | null,
     evidence: RegisterEvidenceInput[] = [],
     backgroundOwner?: RootBackgroundJobOwnerV1,
+    evidenceManifest?: RootEvidenceManifest,
   ): Promise<RootExecutionRecord | null> {
     if (!TERMINAL_RESULT_STATUSES.includes(status)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, `invalid terminal status ${status}`);
     }
+    if (evidenceManifest) return this.store.completeExecution(executionId, status, result, evidence, backgroundOwner, evidenceManifest);
     return backgroundOwner ? this.store.completeExecution(executionId, status, result, evidence, backgroundOwner)
       : this.store.completeExecution(executionId, status, result, evidence);
   }
 
   async markWaiting(executionId: string): Promise<void> {
     return this.store.markWaiting(executionId);
+  }
+
+  async stageEvidence(executionId: string, evidence: RegisterEvidenceInput[], owner?: RootBackgroundJobOwnerV1) {
+    if (!this.store.stageEvidence) throw new Error('Evidence staging is unavailable');
+    await this.store.stageEvidence(executionId, evidence, owner);
+  }
+
+  async stagedEvidence(executionId: string, manifest: RootEvidenceManifest): Promise<RegisterEvidenceInput[]> {
+    const records = await this.store.listEvidenceForExecution(executionId);
+    return verifyEvidenceManifest(records.map(({ id, executionId, conversationId, kind, producerAgentId, payload, dedupKey }) =>
+      ({ evidenceId: id, executionId, conversationId, kind, producerAgentId, payload, dedupKey })), manifest);
   }
 
   recordNativeState(executionId: string, state: RootNativeState, status: 'running' | 'waiting', backgroundOwner?: RootBackgroundJobOwnerV1) {
@@ -153,7 +168,7 @@ export class RootWorkService {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This root invocation cannot be continued');
     }
     validateNativeInputResponses(state.pendingInputs, request.inputResponses);
-    return state;
+    return { ...state, clarifications: acceptedRootClarifications(state, request.inputResponses) };
   }
 
   /**

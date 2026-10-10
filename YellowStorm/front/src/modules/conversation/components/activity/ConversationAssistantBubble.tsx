@@ -503,7 +503,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (component.type === 'toolActivity') {
       activityNodes.push(props.restrictActivityDetails
         ? <RestrictedToolRow key={component.id || index} data={component.data as ToolActivityData} />
-        : <ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
+        : <ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} isStreaming={props.isStreaming} />);
     }
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);

@@ -37,6 +37,7 @@
     "job.execution.started":      { "message": "Job execution started", "attributes": ["queue", "job_kind", "attempt"] },
     "job.execution.completed":    { "message": "Job execution completed", "attributes": ["queue", "job_kind", "attempt", "duration_ms"] },
     "job.execution.failed":       { "message": "Job execution failed", "attributes": ["queue", "job_kind", "attempt", "duration_ms"] },
+    "job.execution.outcome_unknown": { "message": "Job execution requires reconciliation", "attributes": ["job_kind", "reason_code", "count"] },
     "job.execution.retried":      { "message": "Job execution retried", "attributes": ["queue", "job_kind", "attempt"] },
     "job.execution.cancelled":    { "message": "Job execution cancelled", "attributes": ["queue", "job_kind"] },
 
@@ -46,6 +47,10 @@
     "run.execution.paused":       { "message": "Run execution paused", "attributes": ["reason"] },
     "run.execution.resumed":      { "message": "Run execution resumed", "attributes": ["reason"] },
 
+    "worker.profile.resolved":    { "message": "Worker tools resolved", "attributes": ["count", "detail"] },
+    "worker.execution.rejected":  { "message": "Worker execution rejected", "attributes": ["reason_code", "count"] },
+    "worker.evidence.staged":     { "message": "Worker evidence page staged", "attributes": ["count"] },
+
     "stream.completed":           { "message": "Stream completed", "attributes": ["stream_kind", "duration_ms", "event_count", "bytes"] },
     "stream.failed":              { "message": "Stream failed", "attributes": ["stream_kind", "duration_ms"] },
     "stream.disconnected":        { "message": "Stream disconnected", "attributes": ["stream_kind", "duration_ms", "cancellation_reason"] },
@@ -53,12 +58,12 @@
     "dependency.request.failed":  { "message": "Dependency request failed", "attributes": ["dependency", "operation", "status_code", "attempt"] },
     "dependency.request.retried": { "message": "Dependency request retried", "attributes": ["dependency", "operation", "status_code", "attempt"] },
     "dependency.recovered":       { "message": "Dependency recovered", "attributes": ["dependency"] },
+    "semantic.job.no_worker_online": { "message": "Job queued with no worker online", "attributes": ["queue", "job_kind", "count"] },
     "semantic.population.sources_skipped": { "message": "Population sources skipped", "attributes": ["scope", "reason_code", "count", "detail"] },
 
     "legacy.log":                 { "message": "Legacy log call", "attributes": ["logger_name", "level", "source", "detail"] },
     "framework.log":              { "message": "Framework log", "attributes": ["logger_name", "source"] },
     "infrastructure.log":         { "message": "Infrastructure log", "attributes": ["source_name", "source_fingerprint", "records"] },
-    "semantic.job.no_worker_online": { "message": "Job queued with no worker online", "attributes": ["queue", "job_kind", "count"] },
     "logger.event.invalid":       { "message": "Invalid log event rejected", "attributes": ["reason_code", "scope"] },
     "logger.transport.recovered": { "message": "Log transport recovered", "attributes": ["suppressed_count"] }
   }

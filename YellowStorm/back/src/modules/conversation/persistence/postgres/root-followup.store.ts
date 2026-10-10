@@ -10,6 +10,7 @@ import { requireBackgroundOwner, type RootControlTransaction } from './root-back
 import type { RootJobOwner } from './root-background-job.store';
 import { loadFollowupEvidence } from './root-followup-evidence';
 import { acquireFollowupWriter, releaseLegacyFollowupWriter } from './root-followup-writer';
+import { rootResultCounts } from '../../root-work/root-result-counts';
 
 type Execution = typeof schema.rootExecutions.$inferSelect;
 const stateOf = (execution: Execution) => (execution.resultPayload as DelegateResultV1 | null)?.nativeState;
@@ -89,16 +90,20 @@ export class RootFollowupStore {
       if (deadline.getTime() <= Date.now()) return null;
       const sessionId = `background_${seal.followupExecutionId}`;
       const evidence = await loadFollowupEvidence(tx, members);
-      const task = JSON.stringify({ rootStatus: root.status,
+      const task = JSON.stringify({ rootStatus: root.status, itemCounts: rootResultCounts(members),
+        originalRequest: state.requestProfile?.content?.slice(0, 8000) ?? '',
+        originalRequestTruncated: (state.requestProfile?.content?.length ?? 0) > 8000,
+        clarifications: (state.clarifications ?? []).map(({ inputId, inputVersion, question, response }) => ({ inputId, inputVersion, question, response })),
         evidence: evidence.slice(0, 100).map(({ record, displayReference, nativeReference }) => ({ evidenceId: record.id,
           executionId: record.executionId, kind: record.kind, displayReference, nativeReference })),
+        evidenceTruncated: evidence.length > 100,
         results: members.map((member) => {
         const result = member.resultPayload as DelegateResultV1 | null;
         const fullText = result?.fullText ?? result?.text ?? '';
         const previewLength = Math.min(8000, Math.floor(64000 / members.length));
-        return { executionId: member.id, status: member.status,
+        return { executionId: member.id, role: member.role, status: member.status,
           text: fullText.slice(0, previewLength),
-          citationCount: result?.citationRefs.length ?? 0, artifactCount: result?.artifactRefs.length ?? 0,
+          citationCount: result?.citationRefs?.length ?? 0, artifactCount: result?.artifactRefs?.length ?? 0,
           textTruncated: fullText.length > previewLength,
           nextOffset: fullText.length > previewLength ? previewLength : null,
           safeError: result?.safeError ?? null };
@@ -224,7 +229,7 @@ export class RootFollowupStore {
         ...evidence.map((item) => item.component)];
       const [message] = await tx.insert(schema.messages).values({ id: state.followup.publicationMessageId,
         conversationId: followup.conversationId, senderId: actorId, conversationType: 'ai', components,
-        agentIds: followup.rootAgentId ? [followup.rootAgentId] : [], modelId: usage?.model ?? null,
+        agentIds: followup.rootAgentId ? [followup.rootAgentId] : [], modelId: usage?.model ?? stateOf(root)?.requestProfile?.modelId ?? null,
         isComplete: true, isStreaming: false, executionStatus: 'completed', executionTerminalAt: now }).returning();
       await tx.update(schema.conversations).set({ messageCount: sql`${schema.conversations.messageCount} + 1`,
         lastMessageAt: now, updatedAt: now }).where(eq(schema.conversations.id, followup.conversationId));

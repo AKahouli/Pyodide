@@ -2,6 +2,7 @@ import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
+import { freezeRootCapabilityCeiling, scopeCandidateToFrozenCeiling } from '../conversation/root-work/root-capability-ceiling';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
@@ -320,6 +321,12 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].tools.map((tool) => tool.name)).toEqual(['workspace_run_code']);
     expect(JSON.parse(result[0].agent_params?.params.connector_bindings_json as string)[0])
       .toEqual(expect.objectContaining({ connector_slug: 'workspace' }));
+    expect(result[0].connector_bindings).toEqual(JSON.parse(result[0].agent_params!.params.connector_bindings_json));
+    const ceiling = freezeRootCapabilityCeiling(result[0]);
+    expect(ceiling.connectors).toHaveLength(1);
+    expect(scopeCandidateToFrozenCeiling(result[0], ceiling).connector_bindings).toEqual([
+      expect.objectContaining({ connector_slug: 'workspace' }),
+    ]);
     expect(result[0].skills?.map((skill) => skill.id as string)).toEqual([
       'type-skill',
       'agent-skill',

@@ -16,6 +16,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DB } from '../../../postgres/postgres.constants';
 import { cancelBackgroundJob } from './root-background-cancellation';
 import { logDomainEvent } from '../../../logger/logger.service';
+import { reconcileUncertainFanout } from './root-fanout-reconciliation';
 
 export type RootBackgroundJob = typeof schema.rootBackgroundJobs.$inferSelect;
 export type RootJobOwner = RootBackgroundJobOwnerV1;
@@ -201,7 +202,8 @@ export class RootBackgroundJobStore {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(owner) || !Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 300
       || !Number.isSafeInteger(limits.global) || limits.global < 1 || !Number.isSafeInteger(limits.perUser)
       || limits.perUser < 1 || limits.perUser > limits.global) throw new Error('Invalid trusted claim limits');
-    return this.db.transaction(async (tx) => {
+    const uncertain: Array<{ job: RootBackgroundJob; count: number }> = [];
+    const result = await this.db.transaction(async (tx) => {
       // Serialize cross-conversation global/per-user admission, then follow
       // the conversation→ROOT→job order shared by Stop and native writers.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(7391046)`);
@@ -230,6 +232,11 @@ export class RootBackgroundJobStore {
             || execution.id !== (parent.resultPayload as DelegateResultV1 | null)?.nativeState?.schedulingSeal?.followupExecutionId
           : !['library_worker', 'temporary_worker'].includes(execution.role));
       if (bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch || job.deadline.getTime() <= Date.now() || job.attempts >= job.maxAttempts) {
+        if (!bindingChanged && conversation.rootWorkEpoch === job.conversationEpoch && job.startedAt && coordinator) {
+          uncertain.push({ job, count: await reconcileUncertainFanout(tx, parent, execution!, job) });
+          await tx.update(schema.rootExecutions).set({ status: 'outcome_unknown', terminalAt: new Date(), updatedAt: new Date() })
+            .where(and(eq(schema.rootExecutions.id, execution!.id), inArray(schema.rootExecutions.status, ['running', 'waiting'])));
+        }
         await tx.update(schema.rootBackgroundJobs).set({ status: bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch ? 'cancelled'
           : job.startedAt ? 'outcome_unknown' : 'failed', owner: null, leaseUntil: null, fence: job.fence + 1, updatedAt: new Date() })
           .where(eq(schema.rootBackgroundJobs.executionId, job.executionId));
@@ -263,6 +270,10 @@ export class RootBackgroundJobStore {
       }
       return null;
     });
+    for (const { job, count } of uncertain) logDomainEvent('warn', 'job.execution.outcome_unknown', {
+      job_id: job.executionId, conversation_id: job.conversationId, user_id: job.actorId,
+      job_kind: 'fanout', reason_code: 'coordinator_expired', count });
+    return result;
   }
 
   async heartbeat(grant: RootJobOwner, leaseSeconds: number): Promise<boolean> {

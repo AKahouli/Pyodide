@@ -164,6 +164,9 @@ async def test_shared_owned_fanout_runs_original_items_and_reauthorizes_terminal
         activate_skill = make_activate_skill_tool([{'name': 'research', 'instructions': skill_body}])
 
         def finish_after_skill(req):
+            own_task = next(item['task'] for item in manifest['items'] if item['executionId'] == scope.execution_id)
+            assert any('<task>' + own_task + '</task>' in (part.text or '')
+                for content in req.contents or [] for part in content.parts or [])
             responses = [part.function_response.response
                 for content in req.contents or [] for part in content.parts or []
                 if part.function_response is not None]
