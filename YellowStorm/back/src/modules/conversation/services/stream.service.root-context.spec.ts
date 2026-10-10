@@ -63,6 +63,16 @@ describe('StreamService root enrollment', () => {
     expect(result.payload.execution_scope).toBeUndefined();
     expect(h.resolveForActor).not.toHaveBeenCalled();
   });
+  it('freezes both background flags from a single readiness snapshot', async () => {
+    const h = harness();
+    h.policy.background.enabled = true;
+    h.policy.fanout.enabled = true; h.policy.fanout.allowBackground = true;
+    const readiness = jest.fn().mockResolvedValue({ background: true, fanout: true });
+    Object.assign(h.service, { rootBackgroundReadiness: readiness });
+    const result = await h.run();
+    expect(result.payload.root_context).toMatchObject({ background_enabled: true, background_fanout_enabled: true });
+    expect(readiness).toHaveBeenCalledTimes(1);
+  });
   it('pins origin only from the server-created assistant message in this conversation', async () => {
     const h = harness();
     const findById = jest.fn().mockResolvedValue({ conversationId: 'conversation-1',
@@ -267,13 +277,18 @@ describe('StreamService root enrollment', () => {
       conversationId: 'conversation-1', conversationType: 'ai', questionMessageId: 'question-1',
     }) } });
     const history = [{ role: 'CONVERSATION_HISTORY_ROLE_USER' as const, text: 'previous' }];
+    const ongoing = { ongoing_requests_observed_at: '2026-10-10T12:00:00Z', ongoing_requests: [
+      { question_message_id: 'sibling', assistant_message_ids: ['sibling-answer'], request_excerpt: 'Compare databases', submitted_at: '2026-10-10T11:59:00Z' },
+    ] };
     const built = await h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
-      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', history);
+      undefined, undefined, {}, 'turn_answer-1', 'answer-1', 'answer-1', history, ongoing);
     expect(built.payload.conversation_id).toBe('conversation-1');
     expect(built.payload.execution_scope).toEqual(expect.objectContaining({ native_session_id: 'turn_answer-1' }));
     expect(seedConversationSession).toHaveBeenCalledWith('user-1', 'turn_answer-1', 'turn_answer-1', history);
     const state = h.recordNativeState.mock.calls[0][1];
     expect(state.sessionSeed.history).toEqual(history);
+    expect(built.payload.root_context).toEqual(expect.objectContaining(ongoing));
+    expect(state.rootContext).toEqual(expect.objectContaining(ongoing));
     state.invocationId = 'native-invocation';
     state.pendingInputs = [{ inputId: 'pending-input', functionName: 'adk_request_input' }];
     h.validateContinuation.mockResolvedValue(state);
@@ -281,6 +296,7 @@ describe('StreamService root enrollment', () => {
       inputResponses: [{ inputId: 'pending-input', response: {} }] } });
     const resumed = await h.run();
     expect(resumed.payload.conversation_id).toBe('conversation-1');
+    expect(resumed.payload.root_context).toEqual(expect.objectContaining(ongoing));
     expect(resumed.payload.execution_scope).toEqual(expect.objectContaining({ native_session_id: 'turn_answer-1' }));
     expect(seedConversationSession).toHaveBeenCalledTimes(1);
   });

@@ -13,6 +13,8 @@ from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 from src.corrective_replay import build_corrective_replay_user_message
+from src.root_runtime.ongoing_requests import with_ongoing_requests
+from src.root_runtime.conversation_reply_controls import build_conversation_reply_control
 
 logger = get_logger("api.routers.agentic_rag.single_agent")
 
@@ -111,10 +113,10 @@ async def handle_single_agent_workflow(
             background_task_tool = build_background_dispatcher(root_context, scope)
 
         result = await team.run_single_agent(
-            user_prompt=build_corrective_replay_user_message(
+            user_prompt=with_ongoing_requests(build_corrective_replay_user_message(
                 user_request.message,
                 user_request.correction_replay_context,
-            ),
+            ), root_context if scope is not None and scope.role is ExecutionRole.ROOT else None),
             session_id=session_id,
             q=q,
             image_input=image_input,
@@ -128,6 +130,7 @@ async def handle_single_agent_workflow(
             native_input_responses=getattr(user_request, "native_input_responses", None),
             **({'session_service': session_service} if session_service is not None else {}),
             **({'background_task_tool': background_task_tool} if background_task_tool is not None else {}),
+            conversation_reply_tool=build_conversation_reply_control(root_context, scope),
         )
         logger.info(f"[MONO WORKFLOW] Completed single-agent workflow - session_id: {session_id}")
         return result

@@ -1,14 +1,18 @@
 ---
 name: mono-agent-work-orchestration
-description: Choose and coordinate background tasks, temporary workers, specialists, and fan-out in a YellowStorm mono-agent conversation. Use for substantial independent work, parallel research or analysis, finite batches, requests to keep chatting while work runs, and follow-ups about existing background tasks.
+description: For the ROOT conversation agent only, choose how to execute substantial research, sourced comparisons, multi-step analysis, deliverables and repeated work across a list. Apply before starting that work, even when the user says nothing about delegation or background execution. Also handle progress, cancellation and results of earlier work. Not applicable to delegated leaf workers.
 compatibility: YellowStorm ROOT agent with the relevant delegation and background tools enabled and a ready runtime.
 metadata:
-  version: "1.0.0"
+  version: "1.2.0"
 ---
 
 # Keep conversation responsive
 
+This skill governs the ROOT conversation agent. If you are a delegated leaf worker, do not apply the orchestration choices below: complete your supplied assignment directly with your available tools and report results or blockers. Never reload this skill to look for delegation capabilities. Once loaded successfully, use its instructions from history without activating it again in the same task.
+
 Choose the smallest execution pattern that completes the user's request. Background execution frees the conversation; it does not automatically make one task faster. Parallelism helps only when useful work is independent.
+
+The user describes the outcome; choosing execution is your responsibility. They do not need to request a background task, fan-out or a temporary worker. Before the first research or analysis tool call, decide whether this is a direct answer, a substantial independent assignment, or repeated work over a finite list. For a sourced comparison requiring several searches or document checks, normally dispatch the work and acknowledge it promptly. Do not perform the whole research sequence in the foreground merely because the user did not ask to keep chatting. Keep it in the foreground when an essential dependency, missing worker capability or the user's explicit preference requires that, and explain the concrete limitation briefly.
 
 ## Choose the execution pattern
 
@@ -16,11 +20,13 @@ Choose the smallest execution pattern that completes the user's request. Backgro
 | --- | --- |
 | A quick answer, small edit, or ordinary conversation | Respond directly. |
 | A bounded specialist contribution needed before answering | Use an available authorized specialist, or `spawn_temporary_worker(task, expected_output, context_refs)` for a one-off leaf task. This is foreground work. |
-| Substantial independent work while the user continues chatting | `start_background_task(task, worker_kind="temporary", expected_output, context_refs)`. Use `worker_kind="specialist"` with an authorized `agent_id` when its configured expertise/tools are needed. |
+| Substantial independent work: multi-source research, a checked comparison, or a multi-step deliverable | `start_background_task(task, worker_kind="temporary", expected_output, context_refs)`. Use `worker_kind="specialist"` with an authorized `agent_id` when its configured expertise/tools are needed. A separate user request for background execution is unnecessary. |
 | The same operation over a finite list of independent items | `run_fanout(items, worker_type="temporary", mode="background")`; use `worker_type="library"` and an authorized `agent_id` for a configured specialist. |
 | Dependent steps, shared mutable output, or unresolved essential choices | Clarify or sequence the work; do not fan out dependent steps. |
 
 Use only tools and targets exposed in this invocation. An enabled agent setting is not proof of runtime readiness. A temporary worker inherits a restricted profile, not arbitrary tools, attachments, writable files, or the entire conversation. An empty specialist catalog gives no specialist access. Never invent agent IDs or context references.
+
+For example, checking official documentation for the same facts about four products is one independent item per product, followed by a synthesis. A short hypothetical checklist, arithmetic question or conceptual explanation can be answered directly. Do not turn every long answer into a job or create workers just to demonstrate that you can.
 
 ## Clarify before dispatch
 
@@ -44,9 +50,11 @@ If submission is rejected, explain the concrete limitation. If its outcome is un
 
 ## Continue the conversation and handle follow-ups
 
-Answer unrelated messages normally while work runs. A new message does not silently change a running task's instructions. For status questions, use `list_background_tasks` to find earlier work and `get_background_task_status` for the relevant execution; do not relaunch it. Clarify which task the user means if several match.
+Answer unrelated messages normally while work runs. A new message does not silently change a running task's instructions. For status questions, use `list_background_tasks` to find earlier work and `get_background_task_status` for the relevant execution; do not relaunch it. An empty background list does not prove there are no ordinary replies running. Use supplied ongoing-request context, when present, to identify those replies; it is a snapshot, not access to their intermediate findings. If you cannot inspect progress, say that instead of claiming nothing is underway. Clarify which task the user means if several match.
 
 For an explicit cancellation or revision, target only the requested task with `cancel_background_task`. Instructions are immutable: submit revised work separately when appropriate, reconciling uncertain external effects first. Cancellation requested is not proof that an already-started external effect was undone. Do not offer unsupported pause, resume, per-item cancellation, or retry controls.
+
+If the user instead asks to stop an ordinary reply, use `cancel_conversation_reply` when exposed, with the matching assistant message ID from the ongoing-request snapshot. If the same question has several active answer IDs and the user asked to stop that question's work, target those IDs individually. Never substitute Stop All. If this control is unavailable, explain that limitation and point to that reply's Stop control; do not claim no work exists or that you stopped it. A historical excerpt is not a fresh cancellation instruction.
 
 ## Report results honestly
 

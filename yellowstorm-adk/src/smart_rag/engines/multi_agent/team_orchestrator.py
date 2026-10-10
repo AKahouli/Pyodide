@@ -716,7 +716,7 @@ Do not render charts for single values or non-numeric content.
                                 abort_signal: Optional[asyncio.Event] = None,
                                 native_input_responses=None,
                                 temporary_worker_tool=None, fanout_tool=None, session_service=None,
-                                background_task_tool=None) -> Optional[str]:
+                                background_task_tool=None, conversation_reply_tool=None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -820,6 +820,8 @@ Do not render charts for single values or non-numeric content.
             # same way the temporary-child callable attaches here.
             from src.root_runtime.compiler import attach_root_input_control
             attach_root_input_control(agent, execution_scope, agent_config.get("_root_input_control_version", 0))
+            if conversation_reply_tool is not None and execution_scope is not None and execution_scope.role is ExecutionRole.ROOT:
+                agent.tools = [*(agent.tools or []), conversation_reply_tool]
             if temporary_worker_tool is not None:
                 agent.tools = [*(agent.tools or []), temporary_worker_tool]
                 agent_config['_delegation_root'] = True

@@ -595,6 +595,14 @@ interface ConversationState {
 
 let lastConversationListParams: Parameters<ConversationState['fetchConversations']>[0] = {};
 
+// Reset only the visible transcript; live executions and pending sends keep their own ownership.
+const emptyConversationTranscript = (): Partial<ConversationState> => ({
+  messages: [], optimisticMessages: [], messagesTotal: 0, messagesCursor: null,
+  messagesHasMore: false, messagesLoadingOlder: false, conversationUsage: null,
+  branchCache: new Map(), activeBranches: new Map(), criticalError: null, inputDisabled: false,
+  replyingToMessage: null, editingMessageId: null,
+});
+
 export const useConversationStore = create<ConversationState>()(
   devtools(
     (set, get) => ({
@@ -915,6 +923,7 @@ export const useConversationStore = create<ConversationState>()(
       claimCurrentConversation: (id, conversation, selections) => {
         const cached = conversation ?? get().conversations.find((candidate) => candidate.id === id) ?? null;
         set({
+          ...(get().currentConversationId !== id ? emptyConversationTranscript() : {}),
           currentConversationId: id,
           currentConversation: cached,
           conversationLoading: false,
@@ -930,6 +939,7 @@ export const useConversationStore = create<ConversationState>()(
         const requestSequence = ++currentConversationRequestSequence;
         const isSwitchingConversation = get().currentConversationId !== id;
         set({
+          ...(isSwitchingConversation ? emptyConversationTranscript() : {}),
           conversationLoading: true,
           currentConversationId: id,
           ...(isSwitchingConversation ? { selectedModelId: null, selectedSemanticModelId: null } : {}),
@@ -982,7 +992,8 @@ export const useConversationStore = create<ConversationState>()(
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
-        const refreshing = existingStream.currentConversationId === conversationId && existingStream.messages.length > 0;
+        const refreshing = existingStream.currentConversationId === conversationId
+          && existingStream.messages.some((message) => message.conversationId === conversationId);
         set(refreshing ? {} : {
           messagesLoading: true,
           messagesLoadingOlder: false,
@@ -1001,7 +1012,7 @@ export const useConversationStore = create<ConversationState>()(
           });
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
-          const messages = result.items || [];
+          const messages = (result.items || []).filter((message) => message.conversationId === conversationId);
 
           // Find the last user message's modelId
           let lastUserModelId: string | null = null;
@@ -1033,12 +1044,13 @@ export const useConversationStore = create<ConversationState>()(
 
           let hydratedMessages = messages;
           set((s) => {
-            const completedDuringHydration = s.messages.filter((message) => message.isComplete === true);
+            const ownedMessages = s.messages.filter((message) => message.conversationId === conversationId);
+            const completedDuringHydration = ownedMessages.filter((message) => message.isComplete === true);
             const completedById = new Map(completedDuringHydration.map((message) => [message.id, message]));
             hydratedMessages = messages.map((message) => completedById.get(message.id) ?? message);
             if (refreshing) {
               const refreshedIds = new Set(hydratedMessages.map((message) => message.id));
-              hydratedMessages = s.messages.filter((message) => !refreshedIds.has(message.id)).reduce(insertMessageChronologically, hydratedMessages);
+              hydratedMessages = ownedMessages.filter((message) => !refreshedIds.has(message.id)).reduce(insertMessageChronologically, hydratedMessages);
             }
             for (const message of completedDuringHydration) {
               if (!hydratedMessages.some((candidate) => candidate.id === message.id)) hydratedMessages.push(message);
@@ -2672,25 +2684,27 @@ export const useMessagesLoadingOlder = () => useConversationStore((s) => s.messa
 export const useAllMessages = () =>
   useConversationStore(
     useShallow((s) => {
+      const messages = s.messages.filter((message) => message.conversationId === s.currentConversationId);
       // Combine messages with optimistic messages, dedupe by ID / temp content match
       if (s.optimisticMessages.length === 0) {
-        return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
+        return messages.length === 0 ? EMPTY_MESSAGES : messages;
       }
 
-      const seenIds = new Set(s.messages.map((m) => m.id));
+      const seenIds = new Set(messages.map((m) => m.id));
       const newOptimistic = s.optimisticMessages.filter((m) => {
+        if (m.conversationId !== s.currentConversationId) return false;
         if (seenIds.has(m.id)) return false;
         if (m.id.startsWith('temp-') && m.conversationType === 'user') {
-          return !s.messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
+          return !messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
         }
         return true;
       });
 
       if (newOptimistic.length === 0) {
-        return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
+        return messages.length === 0 ? EMPTY_MESSAGES : messages;
       }
 
-      return newOptimistic.reduce(insertMessageChronologically, s.messages);
+      return newOptimistic.reduce(insertMessageChronologically, messages);
     }),
   );
 
@@ -2778,6 +2792,7 @@ export const useDisplayMessages = () =>
       // Filter: for AI messages with a questionMessageId, only show the active branch
       // Also hide all AI siblings when streaming a new regeneration for that question
       return combined.filter((msg) => {
+        if (msg.conversationId !== s.currentConversationId) return false;
         if (msg.id === s.streamingMessageId || s.liveAnswers[streamKey(msg.conversationId, msg.id)]) return false;
         if (msg.conversationType !== 'ai' || !msg.questionMessageId) return true;
         // Hide old AI answers while regenerating/streaming a new one for the same question

@@ -1,6 +1,7 @@
 import type { MessageRecord } from '../persistence/message-store';
 import type { ConversationHistoryEntry } from '../services/stream.service';
 import { BadRequestException, ErrorCode } from '../../exceptions';
+import { completedSourceContext } from './completed-source-context';
 
 /** Seed only the visible transcript completed before this request was submitted. */
 export function completedTurnHistory(messages: MessageRecord[], assistantMessageId: string): ConversationHistoryEntry[] {
@@ -32,7 +33,8 @@ export function completedTurnHistory(messages: MessageRecord[], assistantMessage
       const text = (components ?? []).filter((component) => component.type === 'text')
         .map((component) => typeof component.data.content === 'string' ? component.data.content
           : typeof component.data.text === 'string' ? component.data.text : '').filter(Boolean).join('\n\n').trim();
-      if (text) history.push({ role: 'CONVERSATION_HISTORY_ROLE_ASSISTANT', text: text.slice(0, 30_000) });
+      const sources = completedSourceContext(components ?? []);
+      if (text) history.push({ role: 'CONVERSATION_HISTORY_ROLE_ASSISTANT', text: text.slice(0, 30_000 - sources.length) + sources });
     }
   }
   return history.slice(-40);

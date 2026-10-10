@@ -86,13 +86,29 @@ async def compile_worker(
     """
     if scope.role not in {ExecutionRole.LIBRARY_WORKER, ExecutionRole.TEMPORARY_WORKER} or scope.depth != 1 or not scope.parent_execution_id:
         raise ValueError("Worker compilation requires a depth-one leaf execution scope")
+    worker_config = dict(agent_config)
+    if 'skills' in worker_config:
+        worker_config['skills'] = [skill for skill in worker_config['skills'] or []
+            if str(skill.get('name', '') if isinstance(skill, dict) else getattr(skill, 'name', ''))
+            != 'mono-agent-work-orchestration']
     agent, toolkit = await factory(
-        agent_config, agent_name, normalized_name, "", False, citation_manager
+        worker_config, agent_name, normalized_name, "", False, citation_manager
     )
     if agent is None:
         raise RuntimeError(f"Failed to compile worker agent: {agent_name}")
+    agent.instruction += (
+        "\n\nYou are a depth-one leaf worker executing the supplied delegated_task. "
+        "Complete this bounded assignment yourself using your exposed research or analysis tools. "
+        "Root conversation orchestration skills do not apply to this role: do not load them or "
+        "plan delegation/background work. Load any relevant retrieval skill at most once, then "
+        "perform the work using its instructions already in your history. Return the requested "
+        "result and sources, or a concrete blocker if the required capability is unavailable."
+    )
     from src.root_runtime.leaf_tools import install_leaf_tool_gate
     install_leaf_tool_gate(agent)
+    from src.skills.runtime import limit_loaded_skill_activation
+    from src.guardrails.adapters.google_adk import append_callback
+    agent.before_model_callback = append_callback(agent.before_model_callback, limit_loaded_skill_activation)
     from src.root_runtime.evidence_capture import install_evidence_capture
     install_evidence_capture(agent, scope)
     return CompiledWorker(agent=agent, toolkit=toolkit, scope=scope)

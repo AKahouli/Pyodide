@@ -30,6 +30,38 @@ it('refreshes background results without dropping loaded history, pagination, or
   expect(useConversationStore.getState()).toMatchObject({ messagesCursor: 'older-cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
 });
 
+it('changes transcript ownership before navigation hydration without losing pending sends', async () => {
+  const old = { id: 'rainbow', conversationId: 'old', conversationType: 'ai' as const,
+    createdAt: '2026-01-01T00:00:00Z', components: [], isComplete: true };
+  const current = { ...old, id: 'databases', conversationId: 'new' };
+  let resolve!: (value: unknown) => void;
+  fetchConversationMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  fetchMessagesMock.mockResolvedValue({ items: [current], total: 1, hasMore: false });
+  useConversationStore.setState({ currentConversationId: 'old', messages: [old], optimisticMessages: [old],
+    replyingToMessage: old, editingMessageId: old.id,
+    inFlightSendConversations: new Set(['old']) });
+  const navigation = useConversationStore.getState().setCurrentConversation('new');
+  expect(useConversationStore.getState().messages).toEqual([]);
+  expect(useConversationStore.getState().optimisticMessages).toEqual([]);
+  expect(useConversationStore.getState().replyingToMessage).toBeNull();
+  expect(useConversationStore.getState().editingMessageId).toBeNull();
+  expect(useConversationStore.getState().inFlightSendConversations.has('old')).toBe(true);
+  resolve({ id: 'new' }); await navigation;
+  await useConversationStore.getState().fetchMessages('new');
+  expect(useConversationStore.getState().messages).toEqual([current]);
+  useConversationStore.getState().claimCurrentConversation('third');
+  expect(useConversationStore.getState().messages).toEqual([]);
+});
+
+it('never renders foreign persisted or optimistic messages under the current conversation', () => {
+  const foreign = { id: 'foreign', conversationId: 'old', conversationType: 'user' as const,
+    createdAt: '2026-01-01T00:00:00Z', components: [] };
+  const owned = { ...foreign, id: 'owned', conversationId: 'new' };
+  useConversationStore.setState({ currentConversationId: 'new', messages: [foreign, owned], optimisticMessages: [foreign] });
+  expect(renderHook(() => useAllMessages()).result.current.map((message) => message.id)).toEqual(['owned']);
+  expect(renderHook(() => useDisplayMessages()).result.current.map((message) => message.id)).toEqual(['owned']);
+});
+
 vi.mock('./stream', () => ({
   conversationStreamService: { ensureConnected: ensureConnectedMock },
 }));
@@ -101,6 +133,7 @@ beforeEach(() => {
 describe('conversation optimistic messages', () => {
   it('keeps a pending user prompt before an assistant answer that arrived first', () => {
     useConversationStore.setState({
+      currentConversationId: 'conv-1',
       messages: [{
         id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
         createdAt: '2026-09-07T13:13:31.000Z', components: [{ type: 'text', data: { content: 'Answer' } }],
@@ -457,8 +490,8 @@ describe('new conversation selections', () => {
   it('hydrates the last persisted user model from message history', async () => {
     fetchMessagesMock.mockResolvedValue({
       items: [
-        { id: 'message-1', conversationType: 'user', modelId: 'model-2' },
-        { id: 'message-2', conversationType: 'ai' },
+        { id: 'message-1', conversationId: 'conv-1', conversationType: 'user', modelId: 'model-2' },
+        { id: 'message-2', conversationId: 'conv-1', conversationType: 'ai' },
       ],
       total: 2,
       totalPages: 1,

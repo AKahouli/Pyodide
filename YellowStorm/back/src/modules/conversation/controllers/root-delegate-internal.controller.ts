@@ -16,6 +16,7 @@ import { RootBackgroundSubmissionService } from '../root-work/root-background-su
 import { RootBackgroundSubmissionDto } from '../dto/root-background-submission.dto';
 import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 import { RootJobResultDto } from '../dto/root-work-public.dto';
+import { RootConversationReplyService } from '../root-work/root-conversation-reply.service';
 
 @ApiTags('Root work internal')
 @Public()
@@ -24,7 +25,13 @@ import { RootJobResultDto } from '../dto/root-work-public.dto';
 export class RootDelegateInternalController {
   constructor(private readonly definitions: RootDelegateDefinitionService,
     private readonly temporary: RootTemporaryDefinitionService, private readonly fanout: RootFanoutService,
-    private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService) {}
+    private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService,
+    private readonly conversationReplies: RootConversationReplyService) {}
+
+  @Post(':executionId/conversation-replies/:messageId/cancel')
+  cancelConversationReply(@Param('executionId') executionId: string, @Param('messageId') messageId: string) {
+    return this.conversationReplies.cancel(executionId, messageId);
+  }
 
   @Post(':executionId/background-task')
   submitBackground(@Param('executionId') executionId: string, @Body() request: RootBackgroundSubmissionDto) {

@@ -73,6 +73,8 @@ async def test_compile_worker_delegates_to_existing_factory():
     assert compiled.agent is sentinel_agent
     assert compiled.toolkit is sentinel_toolkit
     assert compiled.scope.execution_id == "exec_worker"
+    assert 'depth-one leaf worker' in compiled.agent.instruction
+    assert 'Root conversation orchestration skills do not apply' in compiled.agent.instruction
     assert calls == [({"id": "agent_1"}, "Advisory", "advisory")]
 
     disposed = []
@@ -90,6 +92,16 @@ async def test_compile_worker_raises_when_factory_fails():
 
     with pytest.raises(RuntimeError):
         await compile_worker({}, "Broken", "broken", _worker_scope(), factory)
+
+
+@pytest.mark.asyncio
+async def test_worker_catalog_excludes_root_orchestration_without_mutating_profile():
+    profile = {'skills': [{'name': 'mono-agent-work-orchestration'}, {'name': 'research'}]}
+    async def factory(config, *_args):
+        assert config['skills'] == [{'name': 'research'}]
+        return _fake_agent(), None
+    await compile_worker(profile, 'Worker', 'worker', _worker_scope(), factory)
+    assert len(profile['skills']) == 2
 
 
 @pytest.mark.asyncio

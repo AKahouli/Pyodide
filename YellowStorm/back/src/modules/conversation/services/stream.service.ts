@@ -55,6 +55,7 @@ import { freezeRootCapabilityCeiling } from '../root-work/root-capability-ceilin
 import { ExecutionScopeV1, RootNativeState, newStopRequestId } from '../root-work/root-work.types';
 import { isCanonicalObjectId, newObjectId } from '@common/postgres/object-id';
 import { completedTurnHistory } from '../utils/completed-turn-history';
+import { ongoingRequestContext, type OngoingRequestContext } from '../utils/ongoing-request-context';
 
 export interface StreamRequest {
   rootContinuation?: MessageReplayContext['rootContinuation'];
@@ -358,22 +359,29 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   async rootBackgroundReady(fanout = false, followup = false): Promise<boolean> {
+    const readiness = await this.rootBackgroundReadiness(followup);
+    return fanout ? readiness.fanout : readiness.background;
+  }
+
+  async rootBackgroundReadiness(followup = false): Promise<{ background: boolean; fanout: boolean }> {
+    const unavailable = { background: false, fanout: false };
     if (!this.configService?.get<boolean>('conversation.rootBackgroundEnabled', false)
-      || !this.rootBackgroundJobs || !await this.waitForGrpcReady(3000)) return false;
+      || !this.rootBackgroundJobs || !await this.waitForGrpcReady(3000)) return unavailable;
     const client = this.getChatbotClient();
-    if (!client?.GetRootWorkCapabilities || !client?.RunBackgroundInvocation) return false;
+    if (!client?.GetRootWorkCapabilities || !client?.RunBackgroundInvocation) return unavailable;
     try {
       const metadata = createGrpcMetadata(this.configService);
-      if (!metadata.get('x-api-key').length) return false;
+      if (!metadata.get('x-api-key').length) return unavailable;
       const capability = await new Promise<any>((resolve, reject) => {
         client.GetRootWorkCapabilities({}, metadata, { deadline: new Date(Date.now() + 3000) },
           (error: unknown, response: unknown) => error ? reject(error) : resolve(response));
       });
-      return capability?.background_protocol_version === 1 && capability.background_ready === true
-        && (!fanout || capability.background_fanout_protocol_version === 1 && capability.background_fanout_ready === true)
+      const background = capability?.background_protocol_version === 1 && capability.background_ready === true
         && (!followup || capability.background_followup_protocol_version === 2 && capability.background_followup_ready === true)
         && capability.control_database_fingerprint === await this.rootBackgroundJobs.controlInstance();
-    } catch { return false; }
+      return { background, fanout: background && capability.background_fanout_protocol_version === 1
+        && capability.background_fanout_ready === true };
+    } catch { return unavailable; }
   }
 
   /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
@@ -730,9 +738,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const isolatedRoot = rootRoute && (conversation.runtimeMode === 'governed'
         || Boolean((await this.agentService.findUserAgentById(userId, conversation.rootAgentId!)).rootExecutionPolicy));
       const nativeSessionId = resumedState?.sessionId ?? (isolatedRoot ? `turn_${messageId}` : conversationId);
-      const seedHistory = isolatedRoot && !request.rootContinuation
-        ? completedTurnHistory(await this.messageService.findAllByConversation(conversationId), messageId)
-        : undefined;
+      const historyMessages = isolatedRoot && !request.rootContinuation
+        ? await this.messageService.findAllByConversation(conversationId) : undefined;
+      const seedHistory = historyMessages ? completedTurnHistory(historyMessages, messageId) : undefined;
+      const ongoingRequests = historyMessages ? ongoingRequestContext(historyMessages, messageId, conversationId) : undefined;
       if (this.bootstrapCancelRequested.has(streamKey)) {
         if (resumedState) await this.rootWorkService!.completeExecution(resumedState.scope.executionId, 'cancelled', null);
         throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during bootstrap');
@@ -950,6 +959,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         messageId,
         messageId,
         seedHistory,
+        ongoingRequests,
       );
       assertLeaseOwned();
       if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
@@ -1094,7 +1104,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return snapshots;
   }
 
-  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[]): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const continuation = request.rootContinuation && this.rootWorkService
@@ -1207,6 +1217,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         ? await this.buildRootDelegationContext(conversation, agents, userId, conversationId, request, compaction, runtimeCorrelationId, logOpts)
         : undefined;
     let admittedNativeState: RootNativeState | undefined;
+    if (rootDelegation && !continuation && ongoingRequests) Object.assign(rootDelegation.rootContext, ongoingRequests);
     if (continuation && !rootDelegation) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Root enrollment is no longer available');
     }
@@ -1434,6 +1445,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const entries = pool.delegationEnabled ? pool.entries : [];
 
     const limits = pool.policy.limits;
+    const backgroundReadiness = pool.policy.background.enabled
+      ? await this.rootBackgroundReadiness(true) : { background: false, fanout: false };
     const scope: ExecutionScopeV1 = {
       role: 'root',
       executionId: newObjectId(),
@@ -1472,9 +1485,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         fanout_enabled: pool.policy.fanout.enabled,
         max_fanout_items: pool.policy.fanout.maxItems,
         worker_permit_version: 1,
-        background_enabled: pool.policy.background.enabled && await this.rootBackgroundReady(false, true),
+        background_enabled: backgroundReadiness.background,
         background_fanout_enabled: pool.policy.background.enabled && pool.policy.fanout.enabled
-          && pool.policy.fanout.allowBackground && await this.rootBackgroundReady(true, true),
+          && pool.policy.fanout.allowBackground && backgroundReadiness.fanout,
         max_outstanding_background_jobs: pool.policy.background.maxOutstandingPerConversation,
         background_task_timeout_seconds: pool.policy.background.taskTimeoutSeconds,
         background_max_attempts: pool.policy.background.maxAttempts,

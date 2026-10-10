@@ -17,7 +17,13 @@ BACKGROUND_INSTRUCTION = """
 start_background_task submits one authorized specialist or restricted temporary
 worker to durable background execution. Prefer it for substantial independent
 research, analysis or batch work so the user can keep chatting. Answer short
-questions directly. After a confirmed queued/running acknowledgement, explain
+questions directly. Choose the execution pattern before starting a sequence of
+research or analysis tools: the user need not request background execution or
+delegation. For the same checks across independent finite items, prefer run_fanout
+in background mode when that tool and mode are available. Otherwise submit one
+complete bounded background assignment, unless an essential dependency or missing
+worker capability requires foreground work. Do not start workers for a simple
+answer merely to use the tools. After a confirmed queued/running acknowledgement, explain
 what started and finish this turn promptly; do not wait or repeatedly poll.
 An acknowledgement is not completed work. Retrieve committed results before
 describing findings. Use list_background_tasks to discover work from earlier
