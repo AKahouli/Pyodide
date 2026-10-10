@@ -5,7 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share2, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share2, ShieldCheck, Trash2, Users, ListTree, ListTodo } from 'lucide-react';
+import { useConversationUiStore } from '../uiStore';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { fetchMessages } from '../api';
@@ -22,6 +23,8 @@ import { useModuleTranslation } from '@/modules/localization';
 
 export function ConversationHeader() {
   const navigate = useNavigate();
+  const contextPanel = useConversationUiStore((s) => s.contextPanel);
+  const setContextPanel = useConversationUiStore((s) => s.setContextPanel);
   const conversation = useCurrentConversation();
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
@@ -127,7 +130,7 @@ export function ConversationHeader() {
 
   return (
     <>
-      <div className='sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-background/85 px-3 py-3 backdrop-blur-sm md:px-4'>
+      <div className='sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-1 border-b border-border/50 bg-background px-2 py-2 md:flex-nowrap md:gap-2 md:px-4'>
         <Button variant='ghost' size='icon' onClick={() => navigate('/')} className='size-11 shrink-0 md:size-9' aria-label={t('header.actions.back')}>
           <ArrowLeft className='h-4 w-4' />
         </Button>
@@ -182,6 +185,10 @@ export function ConversationHeader() {
         </div>
 
         <div className='flex items-center gap-1'>
+          {!conversation.groupMeta?.isGroup && <>
+            <Button variant={contextPanel === 'outline' ? 'secondary' : 'ghost'} size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('outline.title')} title={t('outline.title')} aria-expanded={contextPanel === 'outline'} aria-controls={contextPanel ? 'conversation-context-panel' : undefined} onClick={() => setContextPanel(contextPanel === 'outline' ? null : 'outline')}><ListTree className='size-4' /></Button>
+            <Button variant={contextPanel === 'work' ? 'secondary' : 'ghost'} size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('contextPanel.work')} title={t('contextPanel.work')} aria-expanded={contextPanel === 'work'} aria-controls={contextPanel ? 'conversation-context-panel' : undefined} onClick={() => setContextPanel(contextPanel === 'work' ? null : 'work')}><ListTodo className='size-4' /></Button>
+          </>}
           {conversation.groupMeta?.isGroup || conversation.isShared ? (
             <TooltipProvider>
               <Tooltip>

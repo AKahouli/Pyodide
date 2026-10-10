@@ -14,6 +14,10 @@ export interface OutlineScrollRequest {
 }
 
 export interface ConversationUiState {
+  contextPanel: 'outline' | 'work' | null;
+  setContextPanel: (panel: 'outline' | 'work' | null) => void;
+  contextPanelWidth: number;
+  setContextPanelWidth: (width: number) => void;
   /** Anchor ids live in the DOM (rendered headings / message wrappers), keyed by AI message id. */
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   setOutlineHeadings: (messageId: string, headings: MarkdownHeadingInfo[]) => void;
@@ -34,17 +38,42 @@ export const initialConversationUiState = {
   outlineHeadingsByMessageId: {},
   outlineScrollRequest: null,
   activeOutlineAnchorId: null,
-  outlineCollapsed: false,
+  outlineCollapsed: true,
+  contextPanel: null,
+  contextPanelWidth: 320,
   autoReliabilityEnabled: false,
 } as {
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   outlineScrollRequest: OutlineScrollRequest | null;
   activeOutlineAnchorId: string | null;
   outlineCollapsed: boolean;
+  contextPanel: 'outline' | 'work' | null;
+  contextPanelWidth: number;
   autoReliabilityEnabled: boolean;
 };
 
 let outlineScrollNonce = 0;
+
+export const CONTEXT_PANEL_PREFS_KEY = 'conversation.contextPanel';
+export function readContextPanelPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONTEXT_PANEL_PREFS_KEY) || '{}');
+    const contextPanel = saved?.panel === 'outline' || saved?.panel === 'work' ? saved.panel as 'outline' | 'work' : null;
+    const contextPanelWidth = typeof saved?.width === 'number' && Number.isFinite(saved.width) ? Math.min(480, Math.max(260, saved.width)) : 320;
+    return { contextPanel, contextPanelWidth, outlineCollapsed: contextPanel !== 'outline' };
+  } catch {
+    return { contextPanel: null, contextPanelWidth: 320, outlineCollapsed: true };
+  }
+}
+
+function persistContextPanel(panel: ConversationUiState['contextPanel'], width: number) {
+  try {
+    localStorage.setItem(CONTEXT_PANEL_PREFS_KEY, JSON.stringify({ panel, width }));
+  } catch {
+    // Storage may be unavailable; the in-memory preference still works.
+    return;
+  }
+}
 
 function headingsEqual(a: MarkdownHeadingInfo[], b: MarkdownHeadingInfo[]): boolean {
   if (a.length !== b.length) return false;
@@ -55,6 +84,17 @@ export const useConversationUiStore = create<ConversationUiState>()(
   devtools(
     (set, get) => ({
       ...initialConversationUiState,
+      ...readContextPanelPreferences(),
+      setContextPanel: (contextPanel) => {
+        set({ contextPanel, outlineCollapsed: contextPanel !== 'outline' }, false, 'setContextPanel');
+        persistContextPanel(contextPanel, get().contextPanelWidth);
+      },
+      setContextPanelWidth: (width) => {
+        if (!Number.isFinite(width)) return;
+        const contextPanelWidth = Math.min(480, Math.max(260, width));
+        set({ contextPanelWidth }, false, 'setContextPanelWidth');
+        persistContextPanel(get().contextPanel, contextPanelWidth);
+      },
       setOutlineHeadings: (messageId, headings) => {
         const existing = get().outlineHeadingsByMessageId[messageId];
         if (existing && headingsEqual(existing, headings)) return;
@@ -81,8 +121,7 @@ export const useConversationUiStore = create<ConversationUiState>()(
         set({ activeOutlineAnchorId: anchorId }, false, 'setActiveOutlineAnchor');
       },
       setOutlineCollapsed: (collapsed) => {
-        if (get().outlineCollapsed === collapsed) return;
-        set({ outlineCollapsed: collapsed }, false, 'setOutlineCollapsed');
+        get().setContextPanel(collapsed ? null : 'outline');
       },
       setAutoReliabilityEnabled: (enabled) => {
         if (get().autoReliabilityEnabled === enabled) return;

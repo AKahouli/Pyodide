@@ -45,6 +45,13 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
       max_child_executions_per_work_group: 2, max_work_group_duration_seconds: 60,
       temporary_workers_enabled: true, max_temporary_workers: 2 };
   };
+  it('preserves server-owned origin messages across native trace writes', async () => {
+    nativeState.origin = { assistantMessageId: newId(), questionMessageId: newId() };
+    await store.registerExecution(input());
+    const recorded = await store.recordNativeState(executionId, { ...nativeState,
+      origin: { assistantMessageId: newId(), questionMessageId: newId() } }, 'running');
+    expect(recorded!.resultPayload!.nativeState!.origin).toEqual(nativeState.origin);
+  });
 
   it('shares worker slots across concurrent callers and never lets another owner release them', async () => {
     nativeState.rootContext = { max_parallel_workers: 1, max_child_executions_per_work_group: 3,

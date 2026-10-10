@@ -12,6 +12,21 @@ const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const ensureConnectedMock = vi.hoisted(() => vi.fn());
 
+it('refreshes background results without dropping loaded history, pagination, or the selected draft model', async () => {
+  const old = { id: 'old', conversationId: 'conv-1', conversationType: 'user' as const, createdAt: '2026-01-01T00:00:00Z', components: [] };
+  const latest = { ...old, id: 'latest', createdAt: '2026-01-02T00:00:00Z', modelId: 'old-model' };
+  let resolve!: (value: unknown) => void;
+  fetchMessagesMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  useConversationStore.setState({ currentConversationId: 'conv-1', messages: [old], messagesCursor: 'older-cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
+  const refresh = useConversationStore.getState().fetchMessages('conv-1');
+  expect(useConversationStore.getState().messages).toEqual([old]);
+  expect(useConversationStore.getState().messagesLoading).toBe(false);
+  resolve({ items: [latest], total: 2, hasMore: false, nextCursor: null });
+  await refresh;
+  expect(useConversationStore.getState().messages.map((message) => message.id)).toEqual(['old', 'latest']);
+  expect(useConversationStore.getState()).toMatchObject({ messagesCursor: 'older-cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
+});
+
 vi.mock('./stream', () => ({
   conversationStreamService: { ensureConnected: ensureConnectedMock },
 }));

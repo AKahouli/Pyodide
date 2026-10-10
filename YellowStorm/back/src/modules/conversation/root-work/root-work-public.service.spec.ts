@@ -5,7 +5,8 @@ describe('Creator-owned Root work controls', () => {
   function fixture(enabled = true) {
     const conversation = { createdBy: 'owner', rootAgentId: 'root', rootWorkEpoch: 4 };
     const conversations = { getConversationDocument: jest.fn().mockResolvedValue(conversation) };
-    const work = { stopRootWork: jest.fn().mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 1 }) };
+    const work = { getExecution: jest.fn().mockResolvedValue(null),
+      stopRootWork: jest.fn().mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 1 }) };
     const jobs = { cancel: jest.fn().mockResolvedValue({ executionId: 'job', status: 'cancelled' }),
       publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
       { executionId: 'job', parentExecutionId: 'parent', status: 'running', role: 'library_worker',
@@ -43,6 +44,31 @@ describe('Creator-owned Root work controls', () => {
     await expect(h.service.stop('conversation', actor, { expectedEpoch: 4, stopRequestId: newStopRequestId() })).rejects.toThrow('unavailable');
     expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
     expect(h.work.stopRootWork).not.toHaveBeenCalled();
+  });
+  it('links trusted origin messages and exposes authorized fan-out item states', async () => {
+    const h = fixture();
+    h.jobs.publicSnapshot.mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
+      { executionId: 'job', parentExecutionId: 'parent', role: 'fanout_driver', status: 'running',
+        createdAt: 'created', deadline: 'deadline', nativeState: { backgroundFanout: { manifestId: 'manifest', digest: 'digest' } } },
+    ] } as never);
+    h.work.getExecution.mockImplementation(async (id: string) => id === 'parent' ? {
+      resultPayload: { nativeState: { origin: { assistantMessageId: 'answer', questionMessageId: 'question' },
+        fanoutManifests: [{ manifestId: 'manifest', digest: 'digest', items: [
+          { executionId: 'item', task: 'Item one' }, { executionId: 'queued-item', task: 'Not admitted yet' },
+        ] }] } },
+    } as never : id === 'item' ? { status: 'completed', resultPayload: { nativeState: {
+      backgroundFanoutItem: { coordinatorExecutionId: 'job' } } } } as never : null);
+    expect((await h.service.snapshot('conversation', 'owner')).jobs[0]).toMatchObject({
+      originQuestionMessageId: 'question', originAssistantMessageId: 'answer', fanoutItems: [
+        { executionId: 'item', status: 'completed', label: 'Item one' },
+        { executionId: 'queued-item', status: 'queued', label: 'Not admitted yet' },
+      ],
+    });
+    expect(h.results.authorizeBackgroundExecution).toHaveBeenCalledWith('conversation', 'item', 'owner');
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'item') throw new Error('Source access revoked');
+    });
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('revoked');
   });
 
   it('cancels one authorized job without applying a conversation barrier or stopping the foreground', async () => {

@@ -2,6 +2,14 @@
 
 Date: 2026-10-06
 
+## Conversation background-work UX (2026-10-10)
+
+Implemented the plan in `docs/conversation-background-ux-plan.md` through three parallel coding workstreams. Outline starts collapsed; Outline/Tasks share a persisted, keyboard-resizable context pane and mobile modal. Compact activity stays above the composer. Tasks group workers, fan-out and final answer by originating execution; real authorized fan-out item statuses and full output are available. Input forms live in Tasks with persistent drafts/submissions. New background messages carry server-pinned origin context, and unread state is user/conversation scoped independently of execution epochs. History, scroll and composer drafts survive publication. No foreground queue, pause/retry, or mutable running instructions added.
+
+Verification: frontend/backend builds and TypeScript PASS; backend four suites 56 PASS / 1 optional qualification SKIPPED; targeted frontend suites PASS, final work/result regression 17 PASS; observability policy PASS (147 baseline sites); independent reviewer/source QA PASS after one repair cycle. Browser: fan-out a53863a6aac1fd43f2161c6b completed two items while foreground answered 42; followup d6f1efc58798c30b8fccb9f0 preserved draft and exact scrollTop 1260.888916015625. Original request navigation and full item output verified; persisted desktop width and 390px mobile modal/no overflow verified. Services restarted and viewport override reset. Screenshots: `%TEMP%/conversation-ux-desktop.jpg` and `%TEMP%/conversation-ux-mobile.jpg`.
+
+Remaining acceptance limit: clarification test c1da703f00fe0943c28a1549 completed without requesting input; live input-form acceptance BLOCKED, with 13 input component tests passing. Do not claim a live pass. Existing readiness failure is Playbook MCP only; conversation/native capabilities work. Legacy origins are not guessed/backfilled. CRG unavailable, focused source scanning used. User's `.codex/agents/coding-agent.toml` remains untouched. No commit/PR created.
+
 ## Followup attribution and result paging fixed (2026-10-10)
 
 Publication now writes the existing message attribution fields: Root agentIds, text.actorId, and completed agentActivity with the Root's stored name. modelId comes from the exact followup execution's durable native usage event, never a sibling or original request. Synthesis now emits persisted ADK usage events (native event/invocation correlation, token counts and actual model_version or compiled candidate fallback) through the existing owned sink.

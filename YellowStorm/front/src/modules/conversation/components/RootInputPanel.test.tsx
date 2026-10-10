@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RootInputPanel } from './RootInputPanel';
+import { RootInputPanel as Panel } from './RootInputPanel';
+import { useRootInputUiStore, initialRootInputUiState } from '../rootInputUiStore';
+function RootInputPanel(props: { conversationId: string; creatorId: string }) { return <><Panel {...props} /><Panel {...props} variant='details' /></>; }
 import { encodeNativeInput } from './NativeInputFields';
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), send: vi.fn(), background: vi.fn(), user: { id: 'owner' } }));
@@ -11,7 +13,7 @@ vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: mocks.user })
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 
 describe('Native pending input', () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.user.id = 'owner'; mocks.send.mockResolvedValue(undefined); });
+  beforeEach(() => { vi.clearAllMocks(); useRootInputUiStore.setState(initialRootInputUiState); mocks.user.id = 'owner'; mocks.send.mockResolvedValue(undefined); });
   it('queues a background approval without creating a foreground conversation turn', async () => {
     mocks.background.mockResolvedValue(undefined);
     mocks.fetch.mockResolvedValue([{ executionId: 'background-job', epoch: 2, mode: 'background',
@@ -118,5 +120,27 @@ describe('Native pending input', () => {
     expect(encodeNativeInput(['one'])).toEqual({ result: ['one'] });
     expect(encodeNativeInput({ value: 'answer' })).toEqual({ value: 'answer' });
     expect(encodeNativeInput({ result: 'answer' })).toEqual({ result: { result: 'answer' } });
+  });
+  it('keeps dock compact, polls once and preserves the input draft when details close', async () => {
+    mocks.fetch.mockResolvedValue([{ executionId: 'execution', epoch: 2, inputs: [{ inputId: 'input', kind: 'input' }] }]);
+    const view = render(<><Panel conversationId='conversation' creatorId='owner' /><Panel conversationId='conversation' creatorId='owner' variant='details' /></>);
+    const response = await screen.findByRole('textbox', { name: 'rootInput.response' });
+    await userEvent.type(response, 'Keep this answer');
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    view.rerender(<Panel conversationId='conversation' creatorId='owner' />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'rootInput.pendingCount' })).toBeInTheDocument();
+    view.rerender(<><Panel conversationId='conversation' creatorId='owner' /><Panel conversationId='conversation' creatorId='owner' variant='details' /></>);
+    expect(screen.getByRole('textbox', { name: 'rootInput.response' })).toHaveValue('Keep this answer');
+  });
+  it('keeps an in-flight response disabled when details reopen', async () => {
+    mocks.fetch.mockResolvedValue([{ executionId: 'execution', epoch: 2, inputs: [{ inputId: 'approval', kind: 'confirmation' }] }]);
+    mocks.send.mockImplementation(() => new Promise(() => undefined));
+    const view = render(<><Panel conversationId='conversation' creatorId='owner' /><Panel conversationId='conversation' creatorId='owner' variant='details' /></>);
+    await userEvent.click(await screen.findByRole('button', { name: 'rootInput.approve' }));
+    view.rerender(<Panel conversationId='conversation' creatorId='owner' />);
+    view.rerender(<><Panel conversationId='conversation' creatorId='owner' /><Panel conversationId='conversation' creatorId='owner' variant='details' /></>);
+    expect(screen.getByRole('button', { name: 'rootInput.approve' })).toBeDisabled();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
   });
 });

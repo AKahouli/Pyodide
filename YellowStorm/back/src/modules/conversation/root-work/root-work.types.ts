@@ -89,6 +89,8 @@ export interface DelegateResultV1 {
 }
 
 export interface RootNativeState {
+  /** Server-created message binding; native traces cannot replace it. */
+  origin?: { assistantMessageId: string; questionMessageId?: string };
   /** Server-owned immutable reservations; native trace writes cannot replace them. */
   fanoutManifests?: import('./root-fanout-manifest').FanoutManifestV1[];
   /** Foreground owners release on waiting/termination; no timed slot reuse. */

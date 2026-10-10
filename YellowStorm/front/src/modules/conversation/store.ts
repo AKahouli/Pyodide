@@ -974,7 +974,8 @@ export const useConversationStore = create<ConversationState>()(
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
-        set({
+        const refreshing = existingStream.currentConversationId === conversationId && existingStream.messages.length > 0;
+        set(refreshing ? {} : {
           messagesLoading: true,
           messagesLoadingOlder: false,
           messages: [],
@@ -1027,18 +1028,22 @@ export const useConversationStore = create<ConversationState>()(
             const completedDuringHydration = s.messages.filter((message) => message.isComplete === true);
             const completedById = new Map(completedDuringHydration.map((message) => [message.id, message]));
             hydratedMessages = messages.map((message) => completedById.get(message.id) ?? message);
+            if (refreshing) {
+              const refreshedIds = new Set(hydratedMessages.map((message) => message.id));
+              hydratedMessages = s.messages.filter((message) => !refreshedIds.has(message.id)).reduce(insertMessageChronologically, hydratedMessages);
+            }
             for (const message of completedDuringHydration) {
               if (!hydratedMessages.some((candidate) => candidate.id === message.id)) hydratedMessages.push(message);
             }
             return {
               messages: hydratedMessages,
               messagesTotal: Math.max(result.total || 0, hydratedMessages.length),
-              messagesHasMore: result.hasMore ?? (result.totalPages || 1) > 1,
-              messagesCursor: result.nextCursor ?? null,
+              messagesHasMore: refreshing ? s.messagesHasMore : result.hasMore ?? (result.totalPages || 1) > 1,
+              messagesCursor: refreshing ? s.messagesCursor : result.nextCursor ?? null,
               messagesLoading: false,
               conversationUsage: result.conversationUsage ?? null,
-              ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
-              ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
+              ...(!refreshing && lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
+              ...(!refreshing && lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
               branchCache: newBranchCache,
               activeBranches: newActiveBranches,
             };

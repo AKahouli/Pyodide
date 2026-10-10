@@ -906,6 +906,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         logOpts,
         conversationId,
         messageId,
+        messageId,
       );
       assertLeaseOwned();
       if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
@@ -1037,7 +1038,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
-  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const continuation = request.rootContinuation && this.rootWorkService
@@ -1153,6 +1154,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Root enrollment is no longer available');
     }
     if (rootDelegation?.scope) {
+      const originMessage = !continuation && originAssistantMessageId
+        ? await this.messageService.findById(originAssistantMessageId) : undefined;
+      if (originMessage && (originMessage.conversationId !== conversationId || originMessage.conversationType !== 'ai')) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Root origin message binding changed');
+      }
       const definitionDigest = resolvedDefinitionsDigest(agents[0], rootDelegation.candidates);
       rootDelegation.scope.nativeSessionId = sessionId;
       if (!this.rootWorkService) {
@@ -1187,6 +1193,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             invocationId: null,
             sessionId,
             pendingInputs: [],
+            ...(originMessage ? { origin: { assistantMessageId: originAssistantMessageId!,
+              ...(originMessage.questionMessageId ? { questionMessageId: String(originMessage.questionMessageId) } : {}) } } : {}),
             requestProfile: { ...request, rootContinuation: undefined },
             resolvedDefinitionsDigest: definitionDigest,
             capabilityCeiling: freezeRootCapabilityCeiling(agents[0]),

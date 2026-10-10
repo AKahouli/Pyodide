@@ -6,7 +6,7 @@ import { ConversationContent } from './components/ConversationContent';
 import { ConversationInput } from './components/ConversationInput';
 import { RootInputPanel } from './components/RootInputPanel';
 import { RootWorkPanel } from './components/RootWorkPanel';
-import { ConversationOutlineRail } from './components/outline/ConversationOutlineRail';
+import { ConversationContextPanel } from './components/ConversationContextPanel';
 import { StreamErrorDialog } from './components/StreamErrorDialog';
 import { NotFound } from './components/NotFound';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -158,19 +158,16 @@ export function ConversationPage() {
  
   return (
     <div className='relative flex flex-1 min-h-0 w-full'>
-      {/* Outline rail and thread share one centered wrapper so the rail sits
-          directly against the conversation column instead of the window edge
-          (thread keeps its 72rem cap: 87rem = 72rem + 15rem rail). */}
-      <div className='mx-auto flex min-h-0 w-full max-w-[87rem] items-stretch'>
-        <ConversationOutlineRail />
-        <div className='flex min-w-0 flex-1 flex-col'>
+      <div className='mx-auto flex min-h-0 min-w-0 w-full max-w-[100rem] items-stretch overflow-hidden'>
+        <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
           <ConversationHeader />
           <ConversationContent />
-          <RootInputPanel key={id} conversationId={id!} creatorId={currentConversation.createdBy} />
-          <RootWorkPanel key={id} conversationId={id!} creatorId={currentConversation.createdBy} />
+          <RootInputPanel key={`input-${id}`} conversationId={id!} creatorId={currentConversation.createdBy} />
+          <RootWorkPanel key={`work-${id}`} conversationId={id!} creatorId={currentConversation.createdBy} variant='dock' />
           <ConversationInput conversationId={id!} />
           <StreamErrorDialog />
         </div>
+        <ConversationContextPanel conversationId={id!} creatorId={currentConversation.createdBy} />
       </div>
       <FileViewerSidebar />
     </div>

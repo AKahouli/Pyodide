@@ -6,6 +6,8 @@ import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useA
 import { useConversationUiStore } from '../uiStore';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
+import { BackgroundResultContext } from './BackgroundResultContext';
+import { BackgroundResultNotice } from './BackgroundResultNotice';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
@@ -27,6 +29,7 @@ import type { ChoiceComponentAction } from '@/components/ai-elements/choice/Choi
 
 const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled, justCompleted }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean; justCompleted?: boolean }) {
   const { t } = useModuleTranslation('conversation');
+  const allMessages = useDisplayMessages();
   const policyDefaultVersion = getDefaultAnswerVersion(message);
   const [displayedVersion, setDisplayedVersion] = useState<DisplayedAnswerVersion>(() => policyDefaultVersion);
   useEffect(() => {
@@ -150,6 +153,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
 
   return (
     <div className='group/msg' id={`message-${message.id}`}>
+      {!isUser && <BackgroundResultContext message={message} messages={allMessages} />}
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false}>
         {isUser && isEditing
@@ -316,6 +320,7 @@ export function ConversationContent() {
           </div>
         </ChatConversationContent>
         <OutlineAnchorScroller />
+        {currentConversationId && <BackgroundResultNotice conversationId={currentConversationId} />}
         <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>
     </>

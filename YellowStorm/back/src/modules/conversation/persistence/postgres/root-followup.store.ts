@@ -214,7 +214,13 @@ export class RootFollowupStore {
         ...(agent ? [{ id: `${executionId}_agent`, type: 'agentActivity' as const,
           data: { actorId: followup.rootAgentId, actorName: agent.name, status: 'completed', summary: '' } }] : []),
         { id: `${executionId}_text`, type: 'text' as const,
-          data: { content: result.fullText, actorId: followup.rootAgentId } },
+          data: { content: result.fullText, actorId: followup.rootAgentId,
+            backgroundWork: { executionId, parentExecutionId: root.id,
+              ...(stateOf(root)?.requestProfile?.content
+                ? { task: stateOf(root)!.requestProfile!.content.slice(0, 160) } : {}),
+              ...(stateOf(root)?.origin ? { originAssistantMessageId: stateOf(root)!.origin!.assistantMessageId,
+                ...(stateOf(root)!.origin!.questionMessageId
+                  ? { originQuestionMessageId: stateOf(root)!.origin!.questionMessageId } : {}) } : {}) } } },
         ...evidence.map((item) => item.component)];
       const [message] = await tx.insert(schema.messages).values({ id: state.followup.publicationMessageId,
         conversationId: followup.conversationId, senderId: actorId, conversationType: 'ai', components,

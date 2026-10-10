@@ -34,16 +34,45 @@ export class RootWorkPublicService {
     }
     const snapshot = await this.jobs.publicSnapshot(conversationId, actorId);
     for (const job of snapshot.jobs) await this.results.authorizeBackgroundExecution(conversationId, job.executionId, actorId);
+    const parents = new Map<string, Awaited<ReturnType<RootWorkService['getExecution']>>>();
+    const publicJobs = [];
+    for (const job of snapshot.jobs) {
+      if (!parents.has(job.parentExecutionId)) parents.set(job.parentExecutionId, await this.work.getExecution(job.parentExecutionId));
+      const parent = parents.get(job.parentExecutionId);
+      const origin = parent?.resultPayload?.nativeState?.origin;
+      const task = ['library_worker', 'temporary_worker'].includes(job.role)
+        ? job.nativeState?.admittedRequest?.task : parent?.resultPayload?.nativeState?.requestProfile?.content;
+      const fanoutItems = [];
+      if (job.role === 'fanout_driver') {
+        const binding = job.nativeState?.backgroundFanout;
+        const manifest = parent?.resultPayload?.nativeState?.fanoutManifests?.find((item) =>
+          item.manifestId === binding?.manifestId && item.digest === binding?.digest);
+        for (const item of manifest?.items.slice(0, 50) ?? []) {
+          const execution = await this.work.getExecution(item.executionId);
+          if (execution) {
+            await this.results.authorizeBackgroundExecution(conversationId, item.executionId, actorId);
+            if (execution.resultPayload?.nativeState?.backgroundFanoutItem?.coordinatorExecutionId !== job.executionId) {
+              throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Fan-out item binding changed');
+            }
+          }
+          fanoutItems.push({ executionId: item.executionId, label: item.task.slice(0, 160),
+            status: execution?.status ?? (['queued', 'running', 'waiting'].includes(job.status) ? 'queued' : 'not_started') });
+        }
+      }
+      publicJobs.push({ executionId: job.executionId, parentExecutionId: job.parentExecutionId, status: job.status,
+        role: job.role, createdAt: job.createdAt, deadline: job.deadline,
+        ...(task ? { task: task.slice(0, 240) } : {}),
+        ...(origin ? { originAssistantMessageId: origin.assistantMessageId,
+          ...(origin.questionMessageId ? { originQuestionMessageId: origin.questionMessageId } : {}) } : {}),
+        ...(job.role === 'fanout_driver' ? { fanoutItems } : {}),
+        ...(job.nativeState?.followup?.publishedAt ? { publicationMessageId: job.nativeState.followup.publicationMessageId } : {}) });
+    }
     const current = await this.creator(conversationId, actorId);
     if ((current.rootWorkEpoch ?? 0) !== snapshot.epoch || current.rootAgentId !== snapshot.rootAgentId) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Root work epoch changed');
     }
     return { epoch: snapshot.epoch, watermark: snapshot.watermark, stopRequestId: newStopRequestId(),
-      jobs: snapshot.jobs.map(({ executionId, parentExecutionId, status, role, createdAt, deadline, nativeState }) =>
-        ({ executionId, parentExecutionId, status, role, createdAt, deadline,
-          ...(['library_worker', 'temporary_worker'].includes(role) && nativeState?.admittedRequest?.task
-            ? { task: nativeState.admittedRequest.task.slice(0, 240) } : {}),
-          ...(nativeState?.followup?.publishedAt ? { publicationMessageId: nativeState.followup.publicationMessageId } : {}) })) };
+      jobs: publicJobs };
   }
 
   async replay(conversationId: string, actorId: string, epoch: number, after: string) {

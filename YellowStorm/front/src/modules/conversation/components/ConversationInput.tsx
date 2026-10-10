@@ -229,7 +229,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   }, [replyingToMessage, user?.id, currentConversation]);
 
   return (
-    <div className='shrink-0 z-10 p-4 bg-background/80 backdrop-blur-xs border-t border-border/50'>
+    <div className='shrink-0 z-10 px-3 py-2 md:px-4 bg-background/80 [&_textarea]:min-h-10 [&_textarea]:max-h-40 backdrop-blur-xs border-t border-border/50'>
       {isLimitExceeded && <UsageLimitBanner />}
 
       {replyingToMessage && (
@@ -296,10 +296,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           />
         }
       />
-      <div className='mt-2 flex min-h-5 items-center justify-between gap-3 px-1'>
+      {(!runtimeManaged || latestContextTelemetry) && <div className='mt-1 flex min-h-0 items-center justify-between gap-3 px-1'>
         {!runtimeManaged && <SelectedConnectorRepo />}
         {latestContextTelemetry && <ContextMeter {...latestContextTelemetry} />}
-      </div>
+      </div>}
     </div>
   );
 }

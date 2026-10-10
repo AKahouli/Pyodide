@@ -198,7 +198,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
           backgroundJobId: previous.backgroundJobId, backgroundFanout: previous.backgroundFanout,
           backgroundFanoutItem: previous.backgroundFanoutItem,
           hasBackgroundJobs: previous.hasBackgroundJobs, schedulingSeal: previous.schedulingSeal,
-          followup: previous.followup } }, updatedAt: new Date(),
+          followup: previous.followup, origin: previous.origin } }, updatedAt: new Date(),
       }).where(and(eq(schema.rootExecutions.id, executionId),
         inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
       if (row && job) {

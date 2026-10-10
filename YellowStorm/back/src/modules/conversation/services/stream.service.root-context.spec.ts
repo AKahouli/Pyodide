@@ -63,6 +63,20 @@ describe('StreamService root enrollment', () => {
     expect(result.payload.execution_scope).toBeUndefined();
     expect(h.resolveForActor).not.toHaveBeenCalled();
   });
+  it('pins origin only from the server-created assistant message in this conversation', async () => {
+    const h = harness();
+    const findById = jest.fn().mockResolvedValue({ conversationId: 'conversation-1',
+      conversationType: 'ai', questionMessageId: 'question-1' });
+    Object.assign(h.service, { messageService: { findById } });
+    await h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'conversation-1', 'correlation', 'answer-1');
+    expect(h.registerExecution).toHaveBeenCalledWith(expect.objectContaining({ nativeState: expect.objectContaining({
+      origin: { assistantMessageId: 'answer-1', questionMessageId: 'question-1' },
+    }) }));
+    findById.mockResolvedValueOnce({ conversationId: 'other', conversationType: 'ai' });
+    await expect(h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'conversation-1', 'correlation', 'answer-2')).rejects.toThrow('origin message');
+  });
 
   it('routes a governed default Root with published authority while explicit targets stay direct', async () => {
     const h = harness();
