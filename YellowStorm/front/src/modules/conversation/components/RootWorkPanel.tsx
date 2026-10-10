@@ -9,7 +9,8 @@ import { useRootWorkStore } from '../rootWorkStore';
 import { rootWorkActivityText } from './root-work-replay';
 import { WorkMessageLink } from './WorkMessageLink';
 import { RootBackgroundJobRow } from './RootBackgroundJobRow';
-import { groupRootWork } from './root-work-groups';
+import { groupRootWork, snapshotWork } from './root-work-groups';
+import { WorkerSummary, WorkerAssignments } from './WorkerAssignments';
 import { useRootWorkObserver } from './useRootWorkObserver';
 import { WorkDisclosure } from './WorkDisclosure';
 
@@ -30,7 +31,7 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
   const { execute: stop, isLoading, error } = useApiAction(stopRootWork, { showErrorToast: false });
   useRootWorkObserver(conversationId, user?.id === creatorId ? user.id : undefined, variant === 'dock');
   if (user?.id !== creatorId || storeUserId !== user?.id) return null;
-  const groups = groupRootWork(snapshot?.jobs ?? []);
+  const groups = groupRootWork(snapshotWork(snapshot));
   const active = groups.filter((group) => group.active);
   const attention = groups.filter((group) => group.attention);
   const fresh = groups.filter((group) => group.publicationMessageId && unread?.includes(group.publicationMessageId));
@@ -55,15 +56,17 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
       {t(group.state === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${group.state}`)}
       {group.publicationMessageId && unread?.includes(group.publicationMessageId) && <span className='ml-2 text-primary'>{t('rootWork.newResult')}</span>}
     </p>
+    <div className='mt-2 text-xs'><WorkerSummary jobs={group.jobs} /></div>
+    <WorkerAssignments jobs={group.jobs} />
     <div className='space-y-1 py-1'>
       {group.publicationMessageId && <WorkMessageLink conversationId={conversationId} messageId={group.publicationMessageId}
         executionId={group.jobs.find((job) => job.publicationMessageId === group.publicationMessageId)?.executionId} />}
       {group.jobs[0].originQuestionMessageId && <WorkMessageLink conversationId={conversationId}
         messageId={group.jobs[0].originQuestionMessageId} kind='request' />}
-    </div>    <WorkDisclosure label={<>{t('rootWork.details')} ({group.jobs.length})</>}>
-      <ul className='space-y-3 pb-2 text-xs'><>{group.jobs.map((job) => <RootBackgroundJobRow key={job.executionId}
+    </div>    {group.jobs.some((job) => job.mode !== 'foreground') && <WorkDisclosure label={<>{t('rootWork.details')} ({group.jobs.filter((job) => job.mode !== 'foreground').length})</>}>
+      <ul className='space-y-3 pb-2 text-xs'><>{group.jobs.filter((job) => job.mode !== 'foreground').map((job) => <RootBackgroundJobRow key={job.executionId}
         job={job} conversationId={conversationId} epoch={snapshot!.epoch} onCancelled={refresh} />)}</></ul>
-    </WorkDisclosure>
+    </WorkDisclosure>}
   </li>;
   return <section aria-label={t('rootWork.title')} className='min-w-0 space-y-4 p-4'>
     {(unread ?? []).filter((id) => !groups.some((group) => group.publicationMessageId === id)).map((id) => <WorkMessageLink key={id} conversationId={conversationId} messageId={id} />)}
@@ -81,7 +84,7 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
       if (!result) return;
       setPendingStop(result.foregroundCancellationPending ? request : undefined);
       if (result.barrierEpoch > snapshot.epoch) useRootWorkStore.getState().update(conversationId,
-        { ...snapshot, epoch: result.barrierEpoch, jobs: [], watermark: '0' });
+        { ...snapshot, epoch: result.barrierEpoch, jobs: [], foregroundWorkers: [], watermark: '0' });
       refresh();
     }}>{t(pendingStop ? 'rootWork.retryCancellation' : 'rootWork.stopAll')}</Button>}
     {!!activity?.events.length && <WorkDisclosure label={t('rootWork.activity')} className='text-xs text-muted-foreground'>

@@ -58,3 +58,20 @@ it('shows running and queued batch counts while chatting remains available', () 
   expect(screen.getByText('rootWork.canContinue')).toBeVisible();
   expect(view.container.querySelector('.animate-spin')).not.toBeNull();
 });
+
+it('shows three foreground temporary workers, accurate counts and expandable assignments without cancellation', async () => {
+  useRootWorkStore.setState({ userId: 'owner', snapshots: { conversation: { epoch: 1, watermark: '0', stopRequestId: 'stop', jobs: [],
+    foregroundWorkers: ['one', 'two', 'three'].map((id, index) => ({ executionId: id, parentExecutionId: 'root',
+      role: 'temporary_worker', mode: 'foreground', originAssistantMessageId: 'answer', task: `Assignment ${id}`,
+      status: index === 2 ? 'queued' : 'running', createdAt: '', deadline: '' })),
+  } } });
+  const view = render(<RequestWorkStatus conversationId='conversation' messageId='answer' />);
+  expect(view.container.querySelector('[data-worker-summary]')).toHaveTextContent('rootWork.temporaryWorkers{"count":3}');
+  expect(screen.getByText(/rootWork.batchActivity/)).toHaveTextContent('"running":2,"queued":1');
+  expect(screen.queryByText('Assignment one')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByText('rootWork.assignments{"count":3}'));
+  expect(await screen.findByText('Assignment one')).toBeVisible();
+  expect(view.container.querySelectorAll('[data-worker-id]')).toHaveLength(3);
+  expect(view.container.querySelectorAll('[data-worker-id] .animate-spin')).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: /stopTask/ })).not.toBeInTheDocument();
+});

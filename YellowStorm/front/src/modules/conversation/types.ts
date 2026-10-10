@@ -713,10 +713,12 @@ export interface RootWorkSnapshot {
   watermark: string;
   stopRequestId: string;
   jobs: Array<{ executionId: string; parentExecutionId: string; role: 'library_worker' | 'temporary_worker' | 'fanout_driver' | 'followup';
-    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled';
+    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled' | 'cancellation_requested' | 'not_started';
+    mode?: 'foreground' | 'background';
     createdAt: string; deadline: string; task?: string; publicationMessageId?: string;
     originQuestionMessageId?: string; originAssistantMessageId?: string;
-    fanoutItems?: Array<{ executionId: string; status: string; label?: string }> }>;
+    fanoutItems?: Array<{ executionId: string; status: string; label?: string; workerRole?: 'temporary_worker' | 'library_worker' }> }>;
+  foregroundWorkers?: RootWorkSnapshot['jobs'];
 }
 
 export interface ConversationClientContextV1 {

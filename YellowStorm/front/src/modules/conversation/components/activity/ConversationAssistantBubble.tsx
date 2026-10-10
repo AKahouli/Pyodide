@@ -30,7 +30,7 @@ interface NarrativeProps {
   justCompleted?: boolean;
   requestInputState?: 'waiting' | 'sending' | 'continuing';
   workActivity?: ReactNode;
-  workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown';
+  workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown' | 'cancellation_requested';
   children?: ReactNode;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
@@ -588,7 +588,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               {runningStatus}
               <span className='h-0.5 min-w-8 flex-1 bg-border' aria-hidden='true' />
               {props.requestInputState === 'waiting' || props.workState === 'waiting' ? <MessageCircle className='size-4 shrink-0 text-primary' aria-hidden='true' />
-                : props.workState === 'queued' ? <Clock className='size-4 shrink-0' aria-hidden='true' />
+                : props.workState === 'queued' || props.workState === 'cancellation_requested' ? <Clock className='size-4 shrink-0' aria-hidden='true' />
                 : props.workState === 'failed' || props.workState === 'outcome_unknown' ? <AlertCircle className='size-4 shrink-0 text-destructive' aria-hidden='true' />
                 : props.workState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />
                 : props.requestInputState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />

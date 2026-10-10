@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { groupRootWork, type WorkJob } from './root-work-groups';
+import { groupRootWork, groupHeaderState, workGroupWorkers, snapshotWork, type WorkJob } from './root-work-groups';
 const job: WorkJob = { executionId: 'worker', parentExecutionId: 'request', role: 'temporary_worker', status: 'completed', task: 'Compare documents', createdAt: '', deadline: '' };
 it('groups synthesis with workers and shows preparing until publication completes', () => {
   const groups = groupRootWork([job, { ...job, executionId: 'followup', role: 'followup', status: 'running', task: undefined }]);
@@ -32,5 +32,26 @@ it('counts a stopped batch with completed leaves as partial even after final ans
     { executionId: 'one', status: 'completed' }, { executionId: 'two', status: 'cancelled' }],
   }, { ...job, executionId: 'followup', role: 'followup' }]);
   expect(groups[0].state).toBe('partial');
+});
+it('classifies trusted worker kinds without counting coordinators or final answer synthesis', () => {
+  const workers = workGroupWorkers([{ ...job, role: 'fanout_driver', fanoutItems: [
+    { executionId: 'temporary', status: 'running', workerRole: 'temporary_worker' },
+    { executionId: 'specialist', status: 'completed', workerRole: 'library_worker' },
+  ] }, { ...job, executionId: 'followup', role: 'followup' }]);
+  expect(workers.map((worker) => worker.role)).toEqual(['temporary_worker', 'library_worker']);
+});
+it('keeps stopping foreground workers active and clears them with a new empty snapshot', () => {
+  const snapshot = { epoch: 1, watermark: '0', stopRequestId: 'stop', jobs: [], foregroundWorkers: [
+    { ...job, mode: 'foreground' as const, status: 'cancellation_requested' as const },
+  ] };
+  expect(groupRootWork(snapshotWork(snapshot))[0]).toMatchObject({ state: 'cancellation_requested', active: true });
+  expect(snapshotWork({ ...snapshot, epoch: 2, foregroundWorkers: [] })).toEqual([]);
+});
+it('does not replace a successful foreground reply header with a failed leaf state', () => {
+  const jobs = [{ ...job, mode: 'foreground' as const }, { ...job, executionId: 'failed', mode: 'foreground' as const, status: 'failed' as const }];
+  const group = groupRootWork(jobs)[0];
+  expect(group.attention).toBe(true);
+  expect(groupHeaderState(group)).toBeUndefined();
+  expect(groupHeaderState(groupRootWork([...jobs, { ...job, mode: 'foreground', executionId: 'active', status: 'running' }])[0])).toBe('running');
 });
 

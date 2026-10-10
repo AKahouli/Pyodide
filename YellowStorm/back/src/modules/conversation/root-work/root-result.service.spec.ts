@@ -20,6 +20,16 @@ describe('Root child full output retrieval', () => {
     expect(await setup().getResult('conversation', 'child', 'owner')).toEqual({
       executionId: 'child', text: execution.resultPayload.fullText, complete: true });
   });
+  it('authorizes active foreground status without granting active result or background access', async () => {
+    const service = setup({}, { status: 'running' });
+    expect(await service.authorizeForegroundWorkerStatus('conversation', 'child', 'owner')).toMatchObject({ status: 'running' });
+    await expect(service.getResult('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
+    await expect(service.authorizeBackgroundExecution('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
+    await expect(service.authorizeForegroundWorkerStatus('conversation', 'child', 'other')).rejects.toThrow('unavailable');
+    await expect(setup({}, { status: 'running', resultPayload: { ...execution.resultPayload,
+      nativeState: { ...execution.resultPayload.nativeState, backgroundJobId: 'child' } } })
+      .authorizeForegroundWorkerStatus('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
+  });
   it.each(['member', 'guest', 'other-owner'])('denies %s', async (actor) => {
     await expect(setup().getResult('conversation', 'child', actor)).rejects.toThrow('unavailable');
   });

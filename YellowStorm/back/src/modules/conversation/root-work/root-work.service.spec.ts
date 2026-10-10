@@ -8,6 +8,9 @@ class FakeRootWorkStore implements RootWorkStore {
   executions = new Map<string, RootExecutionRecord>();
   evidence = new Map<string, RootEvidenceRecord>();
   conversations = new Map<string, { epoch: number; lastStopRequestId: string | null }>();
+  async listWorkerExecutions(conversationId: string, epoch: number) {
+    return [...this.executions.values()].filter((row) => row.conversationId === conversationId && row.conversationEpoch === epoch);
+  }
 
   async listWaitingRoots(conversationId: string, epoch: number) {
     return [...this.executions.values()].filter((row) => row.conversationId === conversationId

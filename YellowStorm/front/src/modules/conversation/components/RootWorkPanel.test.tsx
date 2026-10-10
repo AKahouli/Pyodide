@@ -33,6 +33,17 @@ describe('Background work dock and details', () => {
     expect(screen.queryByText('Compare documents')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'rootWork.stopAll' })).not.toBeInTheDocument();
   });
+  it('shows foreground worker assignments without exposing background cancellation', async () => {
+    mocks.fetch.mockResolvedValue({ ...snapshot, jobs: [], foregroundWorkers: [{ ...snapshot.jobs[0],
+      executionId: 'worker', role: 'temporary_worker', mode: 'foreground', task: 'Check PostgreSQL documentation',
+    }] });
+    render(<Work />);
+    expect(await screen.findByText('Check PostgreSQL documentation')).toBeVisible();
+    await userEvent.click(screen.getByText('rootWork.assignments'));
+    expect(await screen.findByText('rootWork.temporaryWorkerLabel')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'rootWork.stopTaskLabel' })).not.toBeInTheDocument();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+  });
   it('shares one observer between dock and details and groups worker plus synthesis', async () => {
     mocks.fetch.mockResolvedValue({ ...snapshot, jobs: [...snapshot.jobs, { ...snapshot.jobs[0], executionId: 'followup', role: 'followup' }] });
     render(<Work />);

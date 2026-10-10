@@ -27,7 +27,11 @@ export class RootResultService {
     return this.authorizeProducer(conversationId, executionId, actorId, false, true);
   }
 
-  private async authorizeProducer(conversationId: string, executionId: string, actorId: string, background: boolean, terminalMember = false) {
+  async authorizeForegroundWorkerStatus(conversationId: string, executionId: string, actorId: string) {
+    return this.authorizeProducer(conversationId, executionId, actorId, false, false, true);
+  }
+
+  private async authorizeProducer(conversationId: string, executionId: string, actorId: string, background: boolean, terminalMember = false, foregroundStatus = false) {
     const conversation = await this.conversations.getConversationDocument(conversationId);
     const execution = await this.work.getExecution(executionId);
     if (conversation.createdBy !== actorId || conversation.isArchived || conversation.isGroup
@@ -35,7 +39,9 @@ export class RootResultService {
       || !execution.rootAgentId || execution.rootAgentId !== conversation.rootAgentId
       || execution.conversationEpoch !== (conversation.rootWorkEpoch ?? 0)
       || !['library_worker', 'temporary_worker', 'fanout_driver', 'followup'].includes(execution.role)
-      || (terminalMember ? !['completed', 'failed', 'cancelled'].includes(execution.status)
+      || (foregroundStatus ? !['library_worker', 'temporary_worker'].includes(execution.role)
+        || Boolean(execution.resultPayload?.nativeState?.backgroundJobId || execution.resultPayload?.nativeState?.backgroundFanoutItem)
+        : terminalMember ? !['completed', 'failed', 'cancelled'].includes(execution.status)
         : background ? execution.resultPayload?.nativeState?.backgroundJobId !== execution.id
         && !execution.resultPayload?.nativeState?.backgroundFanoutItem : execution.status !== 'completed')
       || execution.resultPayload?.nativeState?.actorId !== actorId) {

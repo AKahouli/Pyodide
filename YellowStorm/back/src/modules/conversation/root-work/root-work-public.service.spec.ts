@@ -17,9 +17,10 @@ describe('Creator-owned Root work controls', () => {
     const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
     const stream = { getActiveStreamSnapshots: jest.fn().mockReturnValue([]), stopStream: jest.fn().mockResolvedValue(undefined) };
     const messages = { findById: jest.fn().mockResolvedValue({ conversationId: 'conversation' }) };
+    const foreground = { snapshot: jest.fn().mockResolvedValue([]) };
     const service = new RootWorkPublicService(conversations as never, work as never, jobs as never, events as never,
-      results as never, stream as never, messages as never, { get: jest.fn().mockReturnValue(enabled) } as never);
-    return { service, conversation, conversations, work, jobs, events, results, stream, messages };
+      results as never, stream as never, messages as never, { get: jest.fn().mockReturnValue(enabled) } as never, foreground as never);
+    return { service, conversation, conversations, work, jobs, events, results, stream, messages, foreground };
   }
 
   it('never touches unmigrated background tables while the feature is disabled', async () => {
@@ -28,6 +29,26 @@ describe('Creator-owned Root work controls', () => {
     expect(await h.service.replay('conversation', 'owner', 4, '0')).toEqual([]);
     expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
     expect(h.events.replay).not.toHaveBeenCalled();
+  });
+
+  it('retains foreground worker visibility while background support is disabled', async () => {
+    const h = fixture(false);
+    h.foreground.snapshot.mockResolvedValue([{ executionId: 'worker', mode: 'foreground', role: 'temporary_worker' }] as never);
+    expect(await h.service.snapshot('conversation', 'owner')).toMatchObject({ jobs: [], foregroundWorkers: [
+      { executionId: 'worker', mode: 'foreground', role: 'temporary_worker' },
+    ] });
+    expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
+  });
+  it('does not publish an old foreground projection under a new background snapshot epoch', async () => {
+    const h = fixture();
+    const initial = { ...h.conversation };
+    h.conversations.getConversationDocument.mockResolvedValueOnce(initial);
+    h.foreground.snapshot.mockImplementationOnce(async () => {
+      h.conversation.rootWorkEpoch = 5;
+      h.jobs.publicSnapshot.mockResolvedValue({ epoch: 5, watermark: '0', rootAgentId: 'root', jobs: [] });
+      return [{ executionId: 'old-worker' }] as never;
+    });
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('epoch changed');
   });
 
   it('publishes only authorized public job metadata and rejects an epoch change during hydration', async () => {

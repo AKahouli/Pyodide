@@ -10,6 +10,7 @@ import { StreamService } from '../services/stream.service';
 import { MessageService } from '../services/message.service';
 import { newStopRequestId } from './root-work.types';
 import { ConfigService } from '@nestjs/config';
+import { RootForegroundWorkersService } from './root-foreground-workers.service';
 
 @Injectable()
 export class RootWorkPublicService {
@@ -17,7 +18,7 @@ export class RootWorkPublicService {
   constructor(private readonly conversations: ConversationService, private readonly work: RootWorkService,
     private readonly jobs: RootBackgroundJobStore, private readonly events: RootBackgroundEventStore,
     private readonly results: RootResultService, private readonly stream: StreamService, private readonly messages: MessageService,
-    private readonly config: ConfigService) {}
+    private readonly config: ConfigService, private readonly foreground: RootForegroundWorkersService) {}
 
   private async creator(conversationId: string, actorId: string) {
     const conversation = await this.conversations.getConversationDocument(conversationId);
@@ -29,8 +30,13 @@ export class RootWorkPublicService {
 
   async snapshot(conversationId: string, actorId: string) {
     const conversation = await this.creator(conversationId, actorId);
+    const foregroundWorkers = await this.foreground.snapshot(conversationId, actorId);
     if (!this.config.get<boolean>('conversation.rootBackgroundEnabled', false)) {
-      return { epoch: conversation.rootWorkEpoch ?? 0, watermark: '0', stopRequestId: newStopRequestId(), jobs: [] };
+      const current = await this.creator(conversationId, actorId);
+      if ((current.rootWorkEpoch ?? 0) !== (conversation.rootWorkEpoch ?? 0) || current.rootAgentId !== conversation.rootAgentId) {
+        throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Root work epoch changed');
+      }
+      return { epoch: conversation.rootWorkEpoch ?? 0, watermark: '0', stopRequestId: newStopRequestId(), jobs: [], foregroundWorkers };
     }
     const snapshot = await this.jobs.publicSnapshot(conversationId, actorId);
     const isAccessible = async (executionId: string) => {
@@ -67,6 +73,7 @@ export class RootWorkPublicService {
             }
           }
           fanoutItems.push({ executionId: item.executionId, label: item.task.slice(0, 160),
+            ...(manifest?.target?.kind ? { workerRole: manifest.target.kind === 'temporary' ? 'temporary_worker' : 'library_worker' } : {}),
             status: execution?.status ?? (['queued', 'running', 'waiting'].includes(job.status) ? 'queued' : 'not_started') });
         }
       }
@@ -79,11 +86,12 @@ export class RootWorkPublicService {
         ...(job.nativeState?.followup?.publishedAt ? { publicationMessageId: job.nativeState.followup.publicationMessageId } : {}) });
     }
     const current = await this.creator(conversationId, actorId);
-    if ((current.rootWorkEpoch ?? 0) !== snapshot.epoch || current.rootAgentId !== snapshot.rootAgentId) {
+    if (snapshot.epoch !== (conversation.rootWorkEpoch ?? 0) || snapshot.rootAgentId !== conversation.rootAgentId
+      || (current.rootWorkEpoch ?? 0) !== (conversation.rootWorkEpoch ?? 0) || current.rootAgentId !== conversation.rootAgentId) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Root work epoch changed');
     }
     return { epoch: snapshot.epoch, watermark: snapshot.watermark, stopRequestId: newStopRequestId(),
-      jobs: publicJobs };
+      jobs: publicJobs, foregroundWorkers };
   }
 
   async replay(conversationId: string, actorId: string, epoch: number, after: string) {

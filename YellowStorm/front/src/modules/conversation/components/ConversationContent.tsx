@@ -11,6 +11,7 @@ import { LiveAnswerBubble } from './LiveAnswerBubble';
 import { liveAnswerTimestamp } from '../live-streams';
 import { BackgroundResultNotice } from './BackgroundResultNotice';
 import { RequestWorkStatus, useRequestWorkGroups } from './RequestWorkStatus';
+import { groupHeaderState } from './root-work-groups';
 import { RootInputPanel } from './RootInputPanel';
 import { useRequestInputState } from './useRequestInputState';
 import { MessageActions } from './MessageActions';
@@ -57,8 +58,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const creatorId = useConversationStore((state) => state.currentConversation?.createdBy);
   const requestInputState = useRequestInputState(conversationId, message.id);
   const workGroup = useRequestWorkGroups(conversationId, message.id).find((group) => group.attention || group.active);
-  const workState = workGroup && workGroup.state !== 'completed' && workGroup.state !== 'cancelled' && workGroup.state !== 'partial'
-    ? workGroup.state : undefined;
+  const workState = groupHeaderState(workGroup);
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);

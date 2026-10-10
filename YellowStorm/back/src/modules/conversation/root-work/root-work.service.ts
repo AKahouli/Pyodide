@@ -152,6 +152,9 @@ export class RootWorkService {
   getExecution(executionId: string): Promise<RootExecutionRecord | null> {
     return this.store.getExecution(executionId);
   }
+  listWorkerExecutions(conversationId: string, epoch: number) {
+    return this.store.listWorkerExecutions(conversationId, epoch);
+  }
 
   listWaitingRoots(conversationId: string, epoch: number) {
     return this.store.listWaitingRoots(conversationId, epoch);

@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { ROOT_POLICY_CEILINGS } from '../../../agent/interfaces/root-execution-policy.interface';
 import { isDeepStrictEqual } from 'node:util';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, lte, sql } from 'drizzle-orm';
 import { admitRootExecution, toRecord } from './root-execution-admission';
 import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -76,6 +77,24 @@ export class PostgresRootWorkStore implements RootWorkStore {
       eq(schema.rootExecutions.role, 'root'), eq(schema.rootExecutions.status, 'waiting'),
     )).limit(10);
     return rows.map(toRecord);
+  }
+
+  async listWorkerExecutions(conversationId: string, epoch: number): Promise<RootExecutionRecord[]> {
+    const columns = { ...getTableColumns(schema.rootExecutions), resultPayload: sql<DelegateResultV1>`
+      jsonb_build_object('nativeState', (${schema.rootExecutions.resultPayload}->'nativeState')
+        - ARRAY['preparedContext','sessionSeed','requestProfile','clarifications'])` };
+    const roots = await this.db.select(columns).from(schema.rootExecutions).where(and(
+      eq(schema.rootExecutions.conversationId, conversationId), eq(schema.rootExecutions.conversationEpoch, epoch),
+      eq(schema.rootExecutions.role, 'root'),
+    )).orderBy(sql`CASE WHEN ${schema.rootExecutions.status} IN ('running','waiting','cancellation_requested') THEN 0 ELSE 1 END`,
+      sql`${schema.rootExecutions.createdAt} DESC`).limit(20);
+    if (!roots.length) return [];
+    const children = await this.db.select(columns).from(schema.rootExecutions).where(and(
+      eq(schema.rootExecutions.conversationId, conversationId), eq(schema.rootExecutions.conversationEpoch, epoch),
+      inArray(schema.rootExecutions.parentExecutionId, roots.map((root) => root.id)),
+      inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker']),
+    )).limit(20 * ROOT_POLICY_CEILINGS.maxChildExecutionsPerWorkGroup);
+    return [...roots, ...children].map(toRecord);
   }
 
   async completeExecution(

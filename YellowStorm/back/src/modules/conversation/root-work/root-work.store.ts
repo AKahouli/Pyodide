@@ -56,6 +56,7 @@ export interface RootWorkStore {
   registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord>;
 
   getExecution(executionId: string): Promise<RootExecutionRecord | null>;
+  listWorkerExecutions(conversationId: string, epoch: number): Promise<RootExecutionRecord[]>;
   listWaitingRoots(conversationId: string, epoch: number): Promise<RootExecutionRecord[]>;
 
   /** Record the typed result + terminal state; no-op when already terminal. */
