@@ -12,10 +12,12 @@ from __future__ import annotations
 import os
 
 from celery import Celery
-from celery.signals import task_postrun, task_prerun
+from celery.signals import task_postrun, task_prerun, worker_ready, worker_shutdown
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from yellowmind_observability import setup_observability
+
+from app.jobs.worker_liveness import start_worker_heartbeat, stop_worker_heartbeat
 
 # Worker processes (and any importer) boot the unified-logging SDK here; setup is
 # idempotent per process, so the API process importing this module is unaffected.
@@ -103,3 +105,15 @@ def _bind_task_context(task=None, **_):
 @task_postrun.connect
 def _unbind_task_context(task=None, **_):
     unbind_contextvars("run_id")
+
+
+# Worker liveness: lets a queued job's read tell "behind other jobs" from "nobody consuming".
+@worker_ready.connect
+def _start_heartbeat(sender=None, **_):
+    if sender is not None:
+        start_worker_heartbeat(sender)
+
+
+@worker_shutdown.connect
+def _stop_heartbeat(**_):
+    stop_worker_heartbeat()

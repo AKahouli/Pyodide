@@ -147,6 +147,15 @@ describe('SemanticPopulationRefreshService', () => {
     await expect(service.getJob('u-1', 'model-1', 'j-2')).rejects.toThrow('Population job not found');
   });
 
+  it('hands the queue position of a queued job to the caller as the runtime sent it, and none once it runs', async () => {
+    const { runtime, service } = setup();
+    const queue = { queueName: 'semantic-model-population.batch', position: 3, ahead: { running: 1, queued: 1 }, workersOnline: 0 };
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'queued', queue } as any);
+    await expect(service.getJob('u-1', 'model-1', 'j-1')).resolves.toMatchObject({ queue });
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'running' } as any);
+    expect(await service.getJob('u-1', 'model-1', 'j-1')).not.toHaveProperty('queue');
+  });
+
   it('names the files a run no longer read', async () => {
     const { runtime, documents, service } = setup();
     Object.assign(documents, { findByIds: jest.fn(async () => [{ id: 'doc-1', originalName: 'amendment-01.pdf' }]) });

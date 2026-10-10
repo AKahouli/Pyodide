@@ -811,6 +811,16 @@ export interface PopulationRebuildResponse extends PopulationRefreshResponse {
   cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
 }
 
+/** Where a queued job stands on its task queue (counts only). Sent only while the job is `queued`. */
+export interface PopulationJobQueue {
+  queueName: string;
+  /** 1-based: the jobs ahead of this one, across all models, plus one. */
+  position: number;
+  ahead: { running: number; queued: number };
+  /** Workers consuming the queue; null when the runtime cannot tell. */
+  workersOnline: number | null;
+}
+
 export interface PopulationJob {
   jobId: string;
   jobType: string;
@@ -823,6 +833,7 @@ export interface PopulationJob {
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
+  queue?: PopulationJobQueue;
 }
 
 export interface PopulationProgress {

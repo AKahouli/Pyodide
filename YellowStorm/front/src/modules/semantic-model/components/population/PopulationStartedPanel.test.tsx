@@ -16,6 +16,18 @@ describe('PopulationStartedPanel', () => {
     expect(screen.getByText('population.allSourcesIncluded')).toBeInTheDocument();
   });
 
+  it('shows where a queued run waits, and drops it once the run has started', () => {
+    const queue = { queueName: 'semantic-model-population.batch', position: 2, ahead: { running: 1, queued: 0 }, workersOnline: 1 };
+    const { rerender } = render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'queued', skipped: [], reused: false }} sourceMappings={mappings}
+      queue={queue} queuedSince='2026-10-10T12:00:00Z' onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('population.queued.position');
+
+    rerender(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: false }} sourceMappings={mappings}
+      progress={{ phase: 'reading', total: 3, done: 1 }} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.queryByText('population.queued.position')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('population.progress.title')).toBeInTheDocument();
+  });
+
   it('shows the progress of a refresh that reads no file: its AI calls and records', () => {
     render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: false }} sourceMappings={mappings}
       progress={{ phase: 'making', total: 0, done: 0, records: 121, ai: { planned: 400, answered: 37, reused: 0, failed: 0, skipped: 0 } }}

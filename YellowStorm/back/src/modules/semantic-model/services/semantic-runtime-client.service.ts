@@ -37,6 +37,16 @@ export interface RuntimeDiscoveryCommand {
   payload: Record<string, unknown>;
 }
 
+/** Where a queued job stands on its task queue; counts only, never other jobs' models or workspaces. */
+export interface RuntimeJobQueue {
+  queueName: string;
+  /** 1-based: jobs ahead of this one on the queue (queued or running, all models and workspaces) plus one. */
+  position: number;
+  ahead: { running: number; queued: number };
+  /** Workers consuming the queue; null when the runtime cannot tell. */
+  workersOnline: number | null;
+}
+
 export interface RuntimeJob {
   jobId: string;
   jobType: string;
@@ -49,6 +59,8 @@ export interface RuntimeJob {
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
+  /** Present only while the job is `queued`. */
+  queue?: RuntimeJobQueue;
 }
 
 export interface RuntimeValueOrigin {

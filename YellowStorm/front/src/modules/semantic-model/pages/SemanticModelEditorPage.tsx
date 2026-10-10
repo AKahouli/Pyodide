@@ -1096,6 +1096,8 @@ export function SemanticModelEditorPage() {
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
           modelId={modelId}
           dataRevisionId={populationJob.data?.jobId === population.jobId && typeof populationJob.data?.result?.dataRevisionId === 'string' ? populationJob.data.result.dataRevisionId : undefined}
+          queue={populationJob.data?.jobId === population.jobId && populationJob.data.state === 'queued' ? populationJob.data.queue : undefined}
+          queuedSince={populationJob.data?.jobId === population.jobId ? populationJob.data.createdAt : undefined}
         />}
         {indexPanelOpen && !population && modelId && <SearchIndexPanel modelId={modelId} building={indexBuilding} onClose={() => setIndexPanelOpen(false)}
           onStop={canEdit ? () => setConfirmStop('index') : undefined} stopping={stoppingIndex} stoppingSlow={stopSlow} />}

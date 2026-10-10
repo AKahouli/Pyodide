@@ -1269,3 +1269,37 @@ async def test_a_build_reads_stalled_when_its_lease_ran_out_or_it_made_no_progre
 
     await search_store.fail_generation(pool, index_id, "index_interrupted")
     assert (await search_store.get_generation_by_id(pool, index_id))["stalled"] is False
+
+
+@pytest.mark.asyncio
+async def test_queued_job_reports_queue_position_and_worker_liveness(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    first = await admit(repository, "pos-1", "one")
+    second = await admit(repository, "pos-2", "two")
+    third = await admit(repository, "pos-3", "three")
+    # Another queue, and a job already finished, never count toward the position.
+    await JobService(repository).admit(
+        job_type="datasource.discovery", command=command("other"), idempotency_key="pos-other",
+        task_name="semantic-model-datasource.discover", queue_name="semantic-model-datasource.batch")
+    await pool.execute(
+        "UPDATE semantic_jobs.tasks SET state = 'running', lease_owner = 'w', "
+        "lease_expires_at = now() - interval '1 minute' "
+        "WHERE job_id = $1::uuid", first.job_id)
+
+    queue = (await repository.get_job(third.job_id, "user-1"))["queue"]
+    assert queue["queueName"] == "semantic-model-population.batch"
+    assert queue["ahead"] == {"running": 1, "queued": 1} and queue["position"] == 3
+    assert queue["workersOnline"] == 0  # expired lease, no heartbeat
+
+    await pool.execute(
+        "INSERT INTO semantic_jobs.worker_heartbeats (worker_id, queues) VALUES ('w1', ARRAY['semantic-model-population.batch'])")
+    assert (await repository.get_job(second.job_id, "user-1"))["queue"]["workersOnline"] == 1
+    assert await repository.count_online_workers("semantic-model-population.batch") == 1
+    assert await repository.count_online_workers("semantic-model-search.index") == 0
+
+    await pool.execute("UPDATE semantic_jobs.worker_heartbeats SET last_seen = now() - interval '46 seconds'")
+    assert (await repository.get_job(second.job_id, "user-1"))["queue"]["workersOnline"] == 0
+    assert await repository.count_online_workers("semantic-model-population.batch") == 0
+
+    await pool.execute("UPDATE semantic_jobs.jobs SET state = 'running' WHERE id = $1::uuid", third.job_id)
+    assert "queue" not in await repository.get_job(third.job_id, "user-1")

@@ -2,7 +2,8 @@ import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Loader2, X, XCircle
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ConceptSourceMapping, PopulationProgress } from '../../types';
+import type { ConceptSourceMapping, PopulationJobQueue, PopulationProgress } from '../../types';
+import { QueuedRunNotice } from './QueuedRunNotice';
 import { RunProgress } from './RunProgress';
 import { SearchIndexProgress } from './SearchIndexProgress';
 import { errorText } from './RunHistoryPanel';
@@ -82,7 +83,7 @@ export function runSourceCount(outcome: Pick<PopulationOutcome, 'sourceCount' | 
 
 const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
 
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId, queue, queuedSince }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -100,6 +101,10 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   modelId?: string;
   /** The data the run saved (from its job result). */
   dataRevisionId?: string | null;
+  /** Where the run waits on its queue; sent by the runtime only while the job is still queued. */
+  queue?: PopulationJobQueue;
+  /** When the queued job was created (ISO). */
+  queuedSince?: string;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
@@ -151,6 +156,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
           </span></TooltipTrigger>
           <TooltipContent>{t('runStop.notNow')}</TooltipContent>
         </Tooltip></TooltipProvider>)}
+      {tone === 'running' && queue && <QueuedRunNotice queue={queue} queuedSince={queuedSince} />}
       {/* A refresh of a concept made from another one reads no file, yet reports its steps, AI calls and records. */}
       {shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
       {/* The new data becomes searchable once its index is built, after the run. */}

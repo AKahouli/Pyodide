@@ -7,6 +7,8 @@ import uuid
 from contextlib import suppress
 from typing import Protocol
 
+import structlog
+
 from app.workers.celery_app import celery_app
 
 from .models import OutboxItem
@@ -17,6 +19,7 @@ from .recovery import (
 )
 
 logger = logging.getLogger(__name__)
+events = structlog.get_logger(__name__)
 
 
 class OutboxRepository(Protocol):
@@ -113,7 +116,26 @@ class OutboxDispatcher:
             # Delivery may have succeeded; leave the row for idempotent redelivery.
             logger.warning("Semantic outbox publish acknowledgement was fenced", extra={"outbox_id": item.outbox_id})
             return False
+        await self._report_unattended_queue(item)
         return True
+
+    async def _report_unattended_queue(self, item: OutboxItem) -> None:
+        """Say once, when a job is handed to its queue, that nobody is consuming that queue. Dispatch
+        happens once per task, so this does not repeat per poll of the job."""
+        count_online = getattr(self.repository, "count_online_workers", None)
+        if count_online is None:
+            return
+        try:
+            online = await count_online(item.queue_name)
+        except Exception as exc:
+            logger.warning("Worker liveness check failed",
+                           extra={"error_code": type(exc).__name__[:100]})
+            return
+        if online == 0:
+            job_id = item.payload.get("jobId")
+            events.warning("semantic.job.no_worker_online", queue=item.queue_name,
+                           job_kind=item.task_name, count=0,
+                           **({"job_id": str(job_id)} if job_id else {}))
 
     async def _run(self) -> None:
         while True:

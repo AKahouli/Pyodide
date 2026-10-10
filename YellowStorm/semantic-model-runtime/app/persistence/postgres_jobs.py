@@ -19,6 +19,7 @@ from app.jobs.models import (
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
+from app.jobs.worker_liveness import ONLINE_WINDOW_SECONDS
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
 TERMINAL_JOB_STATES = {
@@ -39,6 +40,39 @@ def _object(value: Any) -> dict[str, Any]:
 def _fingerprint(value: Any) -> str:
     body = json.dumps(value, separators=(",", ":"), sort_keys=True)
     return f"sha256:{hashlib.sha256(body.encode()).hexdigest()}"
+
+
+# {window} is the ONLINE_WINDOW_SECONDS constant, never request input.
+_HEARTBEAT_COUNT_SQL = """(SELECT count(*) FROM semantic_jobs.worker_heartbeats w
+          WHERE own.queue_name = ANY(w.queues) AND w.last_seen > now() - make_interval(secs => {window}))"""
+
+# One statement: the job's own queued task fixes the queue and the creation order; the join counts
+# the other jobs' queued or running tasks on that queue created before it (index: tasks_claim_idx
+# on queue_name, state). ``heartbeats`` is a scalar subquery, or NULL before migration 035.
+_QUEUE_POSITION_SQL = """
+    WITH own AS (
+      SELECT queue_name, created_at, id, job_id FROM semantic_jobs.tasks
+      WHERE job_id = $1::uuid AND state = 'queued'
+      ORDER BY id LIMIT 1
+    )
+    SELECT own.queue_name,
+           count(DISTINCT o.job_id) FILTER (WHERE o.state = 'running') AS running,
+           count(DISTINCT o.job_id) FILTER (WHERE o.state = 'queued') AS queued,
+           (SELECT count(DISTINCT l.lease_owner) FROM semantic_jobs.tasks l
+             WHERE l.queue_name = own.queue_name AND l.state = 'running'
+               AND l.lease_expires_at > now()) AS live_leases,
+           {heartbeats} AS heartbeats
+    FROM own
+    LEFT JOIN semantic_jobs.tasks o
+      ON o.queue_name = own.queue_name AND o.state IN ('queued', 'running')
+     AND o.job_id <> own.job_id AND (o.created_at, o.id) < (own.created_at, own.id)
+    GROUP BY own.queue_name, own.created_at, own.id
+"""
+
+
+def _queue_position_sql(*, with_heartbeats: bool) -> str:
+    heartbeats = _HEARTBEAT_COUNT_SQL.format(window=ONLINE_WINDOW_SECONDS) if with_heartbeats else "NULL::bigint"
+    return _QUEUE_POSITION_SQL.format(heartbeats=heartbeats)
 
 
 class PostgresJobRepository:
@@ -359,7 +393,7 @@ class PostgresJobRepository:
         )
         if row is None:
             return None
-        return {
+        job = {
             "jobId": row["id"],
             "jobType": row["job_type"],
             "modelId": row["model_id"],
@@ -373,6 +407,51 @@ class PostgresJobRepository:
             "completedAt": row["completed_at"],
             "updatedAt": row["updated_at"],
         }
+        if row["state"] == "queued":
+            queue = await self.queue_position(job_id)
+            if queue is not None:
+                job["queue"] = queue
+        return job
+
+    async def queue_position(self, job_id: str) -> dict[str, Any] | None:
+        """Where a queued job stands on its task queue, as counts only.
+
+        ``ahead`` is the jobs created before this one that are still queued or running on the same
+        queue, whatever their model or workspace. ``workersOnline`` is the heartbeating workers on
+        the queue, or null when it cannot be told (heartbeat table not migrated yet and no running
+        task to prove a worker). A live task lease also proves a worker, so a worker that predates
+        heartbeats but is busy is not reported as absent."""
+        try:
+            row = await self.pool.fetchrow(_queue_position_sql(with_heartbeats=True), job_id)
+        except asyncpg.UndefinedTableError:
+            row = await self.pool.fetchrow(_queue_position_sql(with_heartbeats=False), job_id)
+        if row is None:
+            return None
+        running, queued = int(row["running"]), int(row["queued"])
+        online = row["heartbeats"]
+        if online is None:
+            workers_online = int(row["live_leases"]) or None
+        else:
+            workers_online = max(int(online), int(row["live_leases"]))
+        return {
+            "queueName": row["queue_name"],
+            "position": running + queued + 1,
+            "ahead": {"running": running, "queued": queued},
+            "workersOnline": workers_online,
+        }
+
+    async def count_online_workers(self, queue_name: str) -> int | None:
+        """Workers heartbeating on the queue now; null when the heartbeat table is not there yet."""
+        try:
+            return int(await self.pool.fetchval(
+                """
+                SELECT count(*) FROM semantic_jobs.worker_heartbeats
+                WHERE $1 = ANY(queues) AND last_seen > now() - make_interval(secs => %d)
+                """ % ONLINE_WINDOW_SECONDS,
+                queue_name,
+            ))
+        except asyncpg.UndefinedTableError:
+            return None
 
     async def list_jobs(
         self, *, actor_user_id: str, model_id: str, job_type: str, limit: int

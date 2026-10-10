@@ -58,6 +58,7 @@
     "legacy.log":                 { "message": "Legacy log call", "attributes": ["logger_name", "level", "source", "detail"] },
     "framework.log":              { "message": "Framework log", "attributes": ["logger_name", "source"] },
     "infrastructure.log":         { "message": "Infrastructure log", "attributes": ["source_name", "source_fingerprint", "records"] },
+    "semantic.job.no_worker_online": { "message": "Job queued with no worker online", "attributes": ["queue", "job_kind", "count"] },
     "logger.event.invalid":       { "message": "Invalid log event rejected", "attributes": ["reason_code", "scope"] },
     "logger.transport.recovered": { "message": "Log transport recovered", "attributes": ["suppressed_count"] }
   }
