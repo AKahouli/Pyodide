@@ -11,6 +11,9 @@ A generation is built incrementally when it can be (``incremental.py``): the rec
 model's previous ready generation are copied from it, and only the others are built and embedded. Else it
 is built in full, and the generation records why.
 
+The vector indexes (HNSW) of a generation are not maintained row by row while it is filled: they are built
+once, in bulk, after the last vector is stored and before the generation is ready (``vector_indexes.py``).
+
 A generation is built with index settings (card and passage sizes, per-field
 overrides) recorded on it and named by its fingerprint: other settings make
 another generation. A request without settings (after a population run) reuses
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from functools import partial
 from typing import Any, Awaitable, Callable
 
@@ -53,6 +57,8 @@ SYSTEM_ACTOR = "system:graph-search"
 GENERATION_LEASE_SECONDS = 300
 # Records read and written per step of a build.
 ENTITY_PAGE_SIZE = 5000
+# While a vector index is built (one long statement), how often the build renews its lease and reports.
+VECTOR_INDEX_HEARTBEAT_SECONDS = 20
 # A generation stopped on request: failed, but a search or a data hook does not restart it.
 CANCELLED_CODE = "cancelled"
 TERMINAL_JOB_STATES = ("completed", "completed_with_gaps", "failed", "cancelled", "superseded")
@@ -232,6 +238,37 @@ async def _embed_pending(pool: Any, *, index_id: str, owner: str, model_id: str,
         if client is not None:
             await client.aclose()
     return None
+
+
+async def _index_vectors(pool: Any, *, index_id: str, owner: str, lease_seconds: int, progress: dict[str, Any],
+                         report: Callable[[dict[str, Any]], Awaitable[None]],
+                         should_stop: Callable[[], Awaitable[bool]] | None) -> str | None:
+    """Build the generation's HNSW indexes (``vector_indexes``). One statement per index cannot be
+    chunked, so while it runs the build keeps its lease and its progress clock alive every
+    ``VECTOR_INDEX_HEARTBEAT_SECONDS`` and can still be stopped: the statement is then cancelled (it leaves
+    no index) and a later attempt starts it again. Returns None when the indexes exist, else
+    ``cancelled`` or ``lease_lost``."""
+    building = asyncio.ensure_future(search_store.build_vector_indexes(pool, index_id))
+    try:
+        while True:
+            done, _ = await asyncio.wait({building}, timeout=VECTOR_INDEX_HEARTBEAT_SECONDS)
+            if done:
+                building.result()
+                return None
+            if should_stop is not None and await should_stop():
+                halt = "cancelled"
+            elif not await search_store.renew_generation(pool, index_id, owner, lease_seconds, 0):
+                halt = "lease_lost"
+            else:
+                await report(dict(progress))
+                continue
+            building.cancel()
+            await asyncio.gather(building, return_exceptions=True)
+            return halt
+    finally:
+        if not building.done():
+            building.cancel()
+            await asyncio.gather(building, return_exceptions=True)
 
 
 async def _reuse_cached(pool: Any, *, index_id: str, owner: str, model_id: str, profile: EmbeddingProfile,
@@ -424,6 +461,15 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         return await _stopped(pool, index_id, owner)
     if stopped:
         return {"state": stopped}
+    # Every vector is stored: the generation's vector indexes are built once, in bulk, and only then is it ready.
+    indexing_started = time.monotonic()
+    halted = await _index_vectors(pool, index_id=index_id, owner=owner, lease_seconds=lease_seconds,
+                                  progress=progress, report=report, should_stop=should_stop)
+    progress["vectorIndexSeconds"] = round(time.monotonic() - indexing_started, 1)
+    if halted == "cancelled":
+        return await _stopped(pool, index_id, owner)
+    if halted:
+        return {"state": halted}
     state = await search_store.finish_generation(pool, index_id, owner, expected)
     if state == "ready":
         await search_store.prune_generations(pool, model_id)

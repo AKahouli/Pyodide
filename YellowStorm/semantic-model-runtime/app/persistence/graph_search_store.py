@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030, 031, 034 and 036).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030, 031, 034, 036 and 037).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -14,6 +14,7 @@ from typing import Any
 
 from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
                                         with_partition_locks)
+from app.persistence.vector_indexes import build_vector_indexes
 
 # A build with no progress for this long reads as stalled even before its lease runs out. Longer
 # than the longest embedding call a build waits for.
@@ -239,8 +240,8 @@ async def insert_passages(pool: Any, index_id: str, documents: list[dict[str, An
 
 # Incremental builds ----------------------------------------------------------------------------
 
-# Records carried over per statement: each one is written into the vector index (HNSW), so the chunk is
-# as small as the cache-fill one.
+# Records carried over per statement. Carried rows meet no vector index (it is built once the generation is
+# filled, see ``vector_indexes``): the chunk bounds the statement's size and the time between two lease renewals.
 CARRY_CHUNK_ROWS = 500
 
 
@@ -362,8 +363,8 @@ _VECTOR_TABLES = {"documents": "semantic_graph_search.entity_documents",
                   "passages": "semantic_graph_search.entity_passages"}
 
 
-# Rows reused per statement: each one is written into the vector index (HNSW), so a bounded chunk keeps
-# a statement well inside the worker's statement timeout, however large the revision.
+# Rows reused per statement: a bounded chunk keeps a statement well inside the worker's statement timeout,
+# however large the revision (and writes into the vector index of a generation that already has one).
 CACHE_FILL_CHUNK_ROWS = 500
 
 

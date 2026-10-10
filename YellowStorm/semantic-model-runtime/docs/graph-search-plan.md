@@ -133,6 +133,7 @@ app/graph_search/
     retrieval.py    # exact / lexical / vector seeds + rank fusion
     traversal.py    # allowlisted one-step Cypher templates, frontier filtering
 app/persistence/graph_search_store.py
+app/persistence/vector_indexes.py       # bulk HNSW build per generation partition (migration 037)
 app/api/graph_search_routes.py          # prefix /v1/semantic-model-search
 app/workers/graph_search_tasks.py       # task "semantic-model-search.index"
 migrations/022_graph_search.sql
@@ -349,6 +350,13 @@ Notes:
    `embedded` and `passagesEmbedded` beside `reused` / `passagesReused`).
    - Commit each batch, then write it into the cache. No transaction is held during HTTP calls.
    - Progress is just a count over `entity_documents`, so a crash or duplicate delivery resumes on the remaining `pending` rows.
+4b. **Vector indexes** (`vector_indexes.py`, migration 037). A generation's partitions are created with no HNSW index,
+   so copying, cache reuse and embedding write rows without maintaining one (a live HNSW insert costs a graph search per
+   row). Once every vector is stored, the build creates `<partition>_hnsw` on the documents and passages partitions in
+   bulk (`maintenance_work_mem` sized to the rows, up to `SEMANTIC_SEARCH_VECTOR_INDEX_MAX_MEMORY_MB`, default 2048;
+   `SEMANTIC_SEARCH_VECTOR_INDEX_WORKERS` parallel workers, default 8, 0 on a host with little `/dev/shm`) while it keeps
+   its lease and can be stopped. `IF NOT EXISTS` on a fixed name makes a resumed build skip what exists. Only a ready
+   generation is searched, and it is ready only after this step.
 5. **Readiness check:**
    - the number of documents equals the number of entities in the revision;
    - no row is `pending` or `failed`;
