@@ -28,6 +28,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { getClientIp } from '@common/utils';
 import { AuthThrottleService } from './throttle/auth-throttle.service';
 import { LoginLockedException } from './throttle/login-lockout.service';
+import { getAuthCookiePath } from './auth-cookie-path';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -35,6 +36,7 @@ export class AuthController {
   private readonly cookieName: string;
   private readonly cookieSecure: boolean;
   private readonly cookieSameSite: 'strict' | 'lax' | 'none';
+  private readonly cookiePath: string;
 
   constructor(
     private readonly authService: AuthService,
@@ -45,6 +47,7 @@ export class AuthController {
     this.cookieName = this.configService.get<string>('auth.refreshTokenCookieName', 'refresh_token');
     this.cookieSecure = this.configService.get<boolean>('auth.cookieSecure', false);
     this.cookieSameSite = this.configService.get<'strict' | 'lax' | 'none'>('auth.cookieSameSite', 'strict');
+    this.cookiePath = getAuthCookiePath(this.configService);
   }
 
   @Public()
@@ -267,7 +270,7 @@ export class AuthController {
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
       maxAge: this.authService.getRefreshTokenExpiryMs(),
-      path: '/api/v1/auth',
+      path: this.cookiePath,
     });
   }
 
@@ -283,7 +286,7 @@ export class AuthController {
       httpOnly: true,
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
-      path: '/api/v1/auth',
+      path: this.cookiePath,
     });
   }
 

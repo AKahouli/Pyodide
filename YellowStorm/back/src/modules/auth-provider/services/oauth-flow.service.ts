@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
 import { ProviderLinkService } from './provider-link.service';
 import { AuthService } from '@modules/auth/auth.service';
+import { getAuthCookiePath, getOAuthCallbackPath } from '@modules/auth/auth-cookie-path';
 import { UserService } from '@modules/user/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
@@ -19,7 +20,8 @@ import { OAuthCallbackResult, OAuthUserInfo } from '../interfaces/auth-provider.
 import { PgProviderLinkTokenStore } from '../persistence/pg-auth-provider.stores';
 import { PgOAuthStateStore } from '../persistence/pg-auth-provider.stores';
 
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+/** Lifetime of the OAuth state (and of the browser-binding cookie that must come back with it). */
+export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 /** Lifetime of the single-use login exchange code (and of the cookie carrying it). */
 export const OAUTH_EXCHANGE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 /**
@@ -73,13 +75,16 @@ export class OAuthFlowService {
   }
 
   /**
-   * Build the OAuth authorization URL and redirect the user.
+   * Build the OAuth authorization URL. `bindingNonce` must be handed to the
+   * initiating browser (HttpOnly cookie) and presented again on the callback;
+   * only its hash is embedded in the state, so a leaked state does not reveal it.
    */
-  async buildAuthorizationUrl(providerKey: string): Promise<string> {
+  async buildAuthorizationUrl(providerKey: string): Promise<{ url: string; bindingNonce: string; providerKey: string }> {
     const provider = await this.authProviderService.findByKey(providerKey);
 
-    // Generate state (CSRF protection)
-    const state = crypto.randomBytes(32).toString('hex');
+    // Generate state (CSRF protection), bound to the initiating browser via the nonce hash.
+    const bindingNonce = crypto.randomBytes(32).toString('hex');
+    const state = `${crypto.randomBytes(32).toString('hex')}.${this.hashBindingNonce(bindingNonce)}`;
 
     // PKCE setup
     let codeVerifier: string | undefined;
@@ -99,8 +104,7 @@ export class OAuthFlowService {
     });
 
     // Build authorization URL
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/${provider.providerKey}/callback`;
+    const redirectUri = `${this.backendUrl}${getOAuthCallbackPath(this.configService, provider.providerKey)}`;
 
     const params = new URLSearchParams({
       client_id: provider.clientId,
@@ -121,20 +125,22 @@ export class OAuthFlowService {
       authUrl = authUrl.replace('{tenant}', provider.tenantId);
     }
 
-    return `${authUrl}?${params.toString()}`;
+    return { url: `${authUrl}?${params.toString()}`, bindingNonce, providerKey: provider.providerKey };
   }
 
   /**
    * Handle the OAuth callback — exchange code, fetch user info, run decision tree.
+   * `bindingNonce` is the cookie value issued when the flow started in this browser.
    */
   async handleCallback(
     providerKey: string,
     code: string,
     state: string,
+    bindingNonce: string | undefined,
     ipAddress: string,
     userAgent: string,
   ): Promise<OAuthCallbackResult> {
-    // 1. Validate state (find, check, delete)
+    // 1. Validate state (find, check, delete). Consumed first so a rejected attempt burns it.
     const oauthState = await this.oauthStateStore.consumeByState(state);
     if (!oauthState) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'Invalid or expired OAuth state');
@@ -145,11 +151,17 @@ export class OAuthFlowService {
     if (oauthState.expiresAt < new Date()) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'OAuth state has expired');
     }
+    if (!this.isStateBoundToBrowser(state, bindingNonce)) {
+      this.logger.warn('OAuth callback rejected: state not bound to this browser', {
+        providerKey,
+        hasBindingCookie: Boolean(bindingNonce),
+      });
+      throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'OAuth state does not match this browser');
+    }
 
     // 2. Load + decrypt provider config
     const provider = await this.authProviderService.findByKey(providerKey);
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/${providerKey}/callback`;
+    const redirectUri = `${this.backendUrl}${getOAuthCallbackPath(this.configService, provider.providerKey)}`;
 
     // 3. Exchange code for tokens
     const tokenResponse = await this.exchangeCodeForTokens(
@@ -501,6 +513,18 @@ export class OAuthFlowService {
     };
   }
 
+  private hashBindingNonce(nonce: string): string {
+    return crypto.createHash('sha256').update(nonce).digest('hex');
+  }
+
+  /** Constant-time check that the nonce cookie matches the hash embedded in the state. */
+  private isStateBoundToBrowser(state: string, bindingNonce: string | undefined): boolean {
+    if (!bindingNonce) return false;
+    const expected = Buffer.from(state.slice(state.lastIndexOf('.') + 1));
+    const actual = Buffer.from(this.hashBindingNonce(bindingNonce));
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  }
+
   /**
    * Generate PKCE code_verifier (43-128 chars, URL-safe).
    */
@@ -573,8 +597,7 @@ export class OAuthFlowService {
       return;
     }
 
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const linkUrl = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/link/verify?token=${token}`;
+    const linkUrl = `${this.backendUrl}${getAuthCookiePath(this.configService)}/providers/link/verify?token=${token}`;
 
     const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.LINK_OAUTH_ACCOUNT,

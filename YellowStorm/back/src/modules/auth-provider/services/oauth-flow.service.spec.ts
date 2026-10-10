@@ -1,6 +1,6 @@
+import { createHash } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import { newObjectId } from '@common/postgres/object-id';
 import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
@@ -34,7 +34,8 @@ describe('OAuthFlowService', () => {
   let emailService: Record<string, jest.Mock>;
 
   const MOCK_USER_ID = newObjectId();
-  const MOCK_STATE = 'a'.repeat(64);
+  const MOCK_NONCE = 'b'.repeat(64);
+  const MOCK_STATE = `${'a'.repeat(64)}.${createHash('sha256').update(MOCK_NONCE).digest('hex')}`;
   const MOCK_CODE = 'auth-code-123';
   const MOCK_PROVIDER_KEY = 'microsoft';
 
@@ -124,13 +125,13 @@ describe('OAuthFlowService', () => {
     };
 
     usageService = {
-      getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'unlimited' }),
+      getDefaultPlan: jest.fn().mockResolvedValue({ _id: newObjectId(), slug: 'unlimited' }),
     };
 
     authorizationService = {
       getUserPermissions: jest.fn().mockResolvedValue([]),
       getUserRoleNames: jest.fn().mockResolvedValue([]),
-      findRoleByName: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toHexString() }),
+      findRoleByName: jest.fn().mockResolvedValue({ id: newObjectId() }),
       assignRoleToUser: jest.fn(),
     };
 
@@ -182,7 +183,7 @@ describe('OAuthFlowService', () => {
     it('should build authorization URL with state and PKCE', async () => {
       oauthStateModel.create.mockResolvedValue({});
 
-      const url = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+      const { url } = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
 
       expect(url).toContain('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
       expect(url).toContain('client_id=client-id');
@@ -193,8 +194,8 @@ describe('OAuthFlowService', () => {
       expect(oauthStateModel.create).toHaveBeenCalledWith(
         expect.objectContaining({
           providerKey: MOCK_PROVIDER_KEY,
-          codeVerifier: expect.any(String),
-          expiresAt: expect.any(Date),
+          codeVerifier: expect.any(String) as string,
+          expiresAt: expect.any(Date) as Date,
         }),
       );
     });
@@ -206,7 +207,7 @@ describe('OAuthFlowService', () => {
       });
       oauthStateModel.create.mockResolvedValue({});
 
-      const url = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+      const { url } = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
 
       expect(url).not.toContain('code_challenge=');
       expect(oauthStateModel.create).toHaveBeenCalledWith(
@@ -217,10 +218,44 @@ describe('OAuthFlowService', () => {
     it('should replace {tenant} in authorization URL', async () => {
       oauthStateModel.create.mockResolvedValue({});
 
-      const url = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+      const { url } = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
 
       expect(url).toContain('login.microsoftonline.com/common/');
       expect(url).not.toContain('{tenant}');
+    });
+
+    it('binds the state to a returned nonce without storing or exposing the nonce itself', async () => {
+      oauthStateModel.create.mockResolvedValue({});
+
+      const { url, bindingNonce } = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+
+      const state = new URL(url).searchParams.get('state') as string;
+      const [created] = oauthStateModel.create.mock.calls[0] as [{ state: string }];
+      expect(created.state).toBe(state);
+      expect(state.endsWith(`.${createHash('sha256').update(bindingNonce).digest('hex')}`)).toBe(true);
+      expect(state).not.toContain(bindingNonce);
+      expect(bindingNonce).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('uses the stored provider key for the redirect URI and returns it for the cookie scope, whatever the route case', async () => {
+      oauthStateModel.create.mockResolvedValue({});
+
+      const { url, providerKey } = await service.buildAuthorizationUrl('Microsoft');
+
+      expect(providerKey).toBe(MOCK_PROVIDER_KEY);
+      expect(new URL(url).searchParams.get('redirect_uri')).toBe(
+        'http://localhost:3000/api/v1/auth/providers/microsoft/callback',
+      );
+    });
+
+    it('issues a fresh nonce and state per flow', async () => {
+      oauthStateModel.create.mockResolvedValue({});
+
+      const first = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+      const second = await service.buildAuthorizationUrl(MOCK_PROVIDER_KEY);
+
+      expect(first.bindingNonce).not.toBe(second.bindingNonce);
+      expect(first.url).not.toBe(second.url);
     });
   });
 
@@ -250,7 +285,7 @@ describe('OAuthFlowService', () => {
       oauthStateModel.findOneAndDelete.mockResolvedValue(null);
 
       await expect(
-        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, 'bad-state', '127.0.0.1', 'ua'),
+        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, 'bad-state', MOCK_NONCE, '127.0.0.1', 'ua'),
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_STATE_INVALID,
       });
@@ -264,7 +299,7 @@ describe('OAuthFlowService', () => {
       });
 
       await expect(
-        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
+        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua'),
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_STATE_INVALID,
       });
@@ -278,9 +313,72 @@ describe('OAuthFlowService', () => {
       });
 
       await expect(
-        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
+        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua'),
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_STATE_INVALID,
+      });
+    });
+
+    describe('browser binding', () => {
+      const stateRecord = () => ({
+        state: MOCK_STATE,
+        providerKey: MOCK_PROVIDER_KEY,
+        codeVerifier: 'code-verifier',
+        expiresAt: new Date(Date.now() + 600000),
+      });
+
+      it('rejects a callback without the binding cookie before any provider call', async () => {
+        oauthStateModel.findOneAndDelete.mockResolvedValue(stateRecord());
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, undefined, '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({ code: ErrorCode.AUTH_OAUTH_STATE_INVALID });
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('rejects a callback whose binding cookie does not match the state', async () => {
+        oauthStateModel.findOneAndDelete.mockResolvedValue(stateRecord());
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, 'c'.repeat(64), '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({ code: ErrorCode.AUTH_OAUTH_STATE_INVALID });
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('rejects a state without an embedded binding hash', async () => {
+        oauthStateModel.findOneAndDelete.mockResolvedValue({ ...stateRecord(), state: 'a'.repeat(64) });
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, 'a'.repeat(64), MOCK_NONCE, '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({ code: ErrorCode.AUTH_OAUTH_STATE_INVALID });
+      });
+
+      it('consumes the state on rejection so it cannot be reused with the right cookie', async () => {
+        oauthStateModel.findOneAndDelete
+          .mockResolvedValueOnce(stateRecord())
+          .mockResolvedValueOnce(null);
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, 'c'.repeat(64), '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({ code: ErrorCode.AUTH_OAUTH_STATE_INVALID });
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({ code: ErrorCode.AUTH_OAUTH_STATE_INVALID });
+        expect(oauthStateModel.findOneAndDelete).toHaveBeenCalledTimes(2);
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('does not log the nonce or state on rejection', async () => {
+        oauthStateModel.findOneAndDelete.mockResolvedValue(stateRecord());
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, 'c'.repeat(64), '127.0.0.1', 'ua'),
+        ).rejects.toBeDefined();
+
+        const logged = JSON.stringify(mockLoggerService.warn.mock.calls);
+        expect(logged).not.toContain(MOCK_STATE);
+        expect(logged).not.toContain(MOCK_NONCE);
+        expect(logged).not.toContain('c'.repeat(64));
       });
     });
 
@@ -288,7 +386,7 @@ describe('OAuthFlowService', () => {
       setupCallbackMocks({ sub: 'user-123', name: 'John' }); // No email
 
       await expect(
-        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
+        service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua'),
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_EMAIL_MISSING,
       });
@@ -306,7 +404,7 @@ describe('OAuthFlowService', () => {
         providerLinkTokenModel.create.mockResolvedValue({});
 
         const result = await service.handleCallback(
-          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua',
         );
 
         expect(result.type).toBe('login');
@@ -326,7 +424,7 @@ describe('OAuthFlowService', () => {
         });
 
         await expect(
-          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua'),
         ).rejects.toMatchObject({
           code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
         });
@@ -346,7 +444,7 @@ describe('OAuthFlowService', () => {
         providerLinkTokenModel.create.mockResolvedValue({});
 
         const result = await service.handleCallback(
-          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua',
         );
 
         expect(result.type).toBe('login');
@@ -365,7 +463,7 @@ describe('OAuthFlowService', () => {
         providerLinkTokenModel.create.mockResolvedValue({});
 
         const result = await service.handleCallback(
-          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua',
         );
 
         expect(result.type).toBe('link_required');
@@ -392,14 +490,14 @@ describe('OAuthFlowService', () => {
         userService.findByEmail.mockResolvedValue(null);
         userService.createOAuthUser.mockResolvedValue({
           ...mockUser,
-          _id: new Types.ObjectId(),
+          _id: newObjectId(),
           email: 'new@example.com',
         });
         providerLinkService.createLink.mockResolvedValue({});
         providerLinkTokenModel.create.mockResolvedValue({});
 
         const result = await service.handleCallback(
-          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, MOCK_NONCE, '127.0.0.1', 'ua',
         );
 
         expect(result.type).toBe('login');
@@ -511,7 +609,7 @@ describe('OAuthFlowService', () => {
 
       const result = await service.verifyAndLink('link-token');
 
-      expect(result.userId).toBe(MOCK_USER_ID.toString());
+      expect(result.userId).toBe(MOCK_USER_ID);
       expect(result.providerKey).toBe(MOCK_PROVIDER_KEY);
       expect(providerLinkService.createLink).toHaveBeenCalledWith(
         MOCK_USER_ID,

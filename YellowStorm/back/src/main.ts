@@ -13,6 +13,7 @@ import { json, urlencoded } from 'express';
 import { inspect } from 'node:util';
 import { URL } from 'node:url';
 import { AppModule } from './app.module';
+import { API_DEFAULT_VERSION, resolveApiPrefix } from './modules/auth/auth-cookie-path';
 import { LoggerService } from './modules/logger';
 import { SystemService } from './modules/system/system.service';
 import { parseTrustProxySetting } from './common/utils/client-ip';
@@ -130,11 +131,11 @@ async function bootstrap() {
   // API Versioning
   app.enableVersioning({
     type: VersioningType.URI,
-    defaultVersion: '1',
+    defaultVersion: API_DEFAULT_VERSION,
   });
 
-  // Global prefix
-  const apiPrefix = configService.get<string>('API_PREFIX', 'api');
+  // Global prefix (same source as the auth cookie path)
+  const apiPrefix = resolveApiPrefix(configService);
   app.setGlobalPrefix(apiPrefix);
 
   // Validation

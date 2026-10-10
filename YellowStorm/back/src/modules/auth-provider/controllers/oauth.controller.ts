@@ -20,10 +20,17 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { AuthProviderService } from '../services/auth-provider.service';
-import { OAuthFlowService, OAUTH_EXCHANGE_TTL_MS } from '../services/oauth-flow.service';
+import { getAuthCookiePath, getOAuthCallbackPath } from '@modules/auth/auth-cookie-path';
+import {
+  OAuthFlowService,
+  OAUTH_EXCHANGE_TTL_MS,
+  OAUTH_STATE_TTL_MS,
+} from '../services/oauth-flow.service';
 
 /** HttpOnly cookie carrying the single-use login exchange code from the callback to the exchange call. */
 export const OAUTH_EXCHANGE_COOKIE_NAME = 'oauth_exchange';
+/** HttpOnly cookie binding the OAuth state to the browser that started the flow (login CSRF defence). */
+export const OAUTH_STATE_BINDING_COOKIE_NAME = 'oauth_state_binding';
 
 @ApiTags('OAuth Providers')
 @Controller('auth/providers')
@@ -32,6 +39,7 @@ export class OAuthController {
   private readonly cookieName: string;
   private readonly cookieSecure: boolean;
   private readonly cookieSameSite: 'strict' | 'lax' | 'none';
+  private readonly authCookiePath: string;
   private readonly exchangeCookiePath: string;
 
   constructor(
@@ -46,8 +54,8 @@ export class OAuthController {
     this.cookieName = this.configService.get<string>('auth.refreshTokenCookieName', 'refresh_token');
     this.cookieSecure = this.configService.get<boolean>('auth.cookieSecure', false);
     this.cookieSameSite = this.configService.get<'strict' | 'lax' | 'none'>('auth.cookieSameSite', 'strict');
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    this.exchangeCookiePath = `/${apiPrefix}/v1/auth/providers/exchange`;
+    this.authCookiePath = getAuthCookiePath(this.configService);
+    this.exchangeCookiePath = `${this.authCookiePath}/providers/exchange`;
   }
 
   @Public()
@@ -70,8 +78,14 @@ export class OAuthController {
   ) {
     if (await this.redirectIfThrottled('oauthStart', req, res)) return;
     try {
-      const authUrl = await this.oauthFlowService.buildAuthorizationUrl(providerKey);
-      res.redirect(authUrl); return;
+      const { url, bindingNonce, providerKey: resolvedKey } = await this.oauthFlowService.buildAuthorizationUrl(providerKey);
+      // Lax: sent back on the top-level GET navigation from the provider; scoped to this callback.
+      res.cookie(
+        OAUTH_STATE_BINDING_COOKIE_NAME,
+        bindingNonce,
+        this.stateBindingCookieOptions(resolvedKey, { maxAge: OAUTH_STATE_TTL_MS }),
+      );
+      res.redirect(url); return;
     } catch (error) {
       this.logger.error('OAuth authorize failed', {
         providerKey,
@@ -100,6 +114,12 @@ export class OAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    // The binding cookie is single-use: drop it on every outcome of the callback.
+    const bindingNonce = (req.cookies as Record<string, string> | undefined)?.[
+      OAUTH_STATE_BINDING_COOKIE_NAME
+    ];
+    res.clearCookie(OAUTH_STATE_BINDING_COOKIE_NAME, this.stateBindingCookieOptions(providerKey));
+
     if (await this.redirectIfThrottled('oauthCallback', req, res)) return;
 
     // Provider returned an error (e.g., user denied consent)
@@ -123,6 +143,7 @@ export class OAuthController {
         providerKey,
         code,
         state,
+        bindingNonce,
         ipAddress,
         userAgent,
       );
@@ -181,7 +202,7 @@ export class OAuthController {
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
       maxAge,
-      path: '/api/v1/auth',
+      path: this.authCookiePath,
     });
 
     return {
@@ -217,12 +238,31 @@ export class OAuthController {
   }
 
   private exchangeCookieOptions(opts: { withMaxAge?: boolean } = {}): CookieOptions {
+    return this.crossSiteCookieOptions(
+      this.exchangeCookiePath,
+      opts.withMaxAge === false ? undefined : OAUTH_EXCHANGE_TTL_MS,
+    );
+  }
+
+  /** Scoped to the provider's callback route (pass the stored provider key); `maxAge` only when setting (not clearing). */
+  private stateBindingCookieOptions(providerKey: string, opts: { maxAge?: number } = {}): CookieOptions {
+    return this.crossSiteCookieOptions(
+      getOAuthCallbackPath(this.configService, providerKey),
+      opts.maxAge,
+    );
+  }
+
+  /**
+   * Cookies that must survive the cross-site navigation back from the provider cannot be
+   * Strict, so a Strict configuration is relaxed to Lax for them.
+   */
+  private crossSiteCookieOptions(path: string, maxAge?: number): CookieOptions {
     return {
       httpOnly: true,
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite === 'strict' ? 'lax' : this.cookieSameSite,
-      path: this.exchangeCookiePath,
-      ...(opts.withMaxAge === false ? {} : { maxAge: OAUTH_EXCHANGE_TTL_MS }),
+      path,
+      ...(maxAge === undefined ? {} : { maxAge }),
     };
   }
 

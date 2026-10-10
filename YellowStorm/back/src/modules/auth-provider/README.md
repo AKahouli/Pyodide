@@ -168,7 +168,7 @@ Frontend OAuthCallbackPage
 
 ## Security Considerations
 
-- **OAuth State** — Server-side, single-use, 10-minute TTL. Prevents CSRF attacks.
+- **OAuth State** — Server-side, single-use, 10-minute TTL. Prevents CSRF attacks. Bound to the initiating browser: `/authorize` sets an HttpOnly `oauth_state_binding` cookie (SameSite=Lax, scoped to the provider callback path, state TTL) holding a random nonce whose SHA-256 is embedded in the state (`<random>.<sha256(nonce)>`); the callback compares it in constant time and rejects with `ERR_1122` when the cookie is missing or different. The cookie is cleared on every callback outcome.
 - **PKCE (S256)** — Code verifier stored server-side only; only the SHA-256 challenge is sent to the provider. Prevents authorization code interception.
 - **Secrets Encrypted at Rest** — AES-256-GCM with a unique IV per value. Client secrets are never stored in plaintext.
 - **No Secrets in Public Endpoints** — Public provider listing omits all sensitive fields.
