@@ -129,6 +129,7 @@ app/graph_search/
     documents.py    # deterministic serializer + field policy + content hash
     embeddings.py   # LiteLLM /v1/embeddings client (batch, timeout, dimension check)
     indexer.py      # generation lifecycle, batching, cache reuse, readiness
+    incremental.py  # incremental builds: changed set, carry-over of unchanged records (migration 036)
     retrieval.py    # exact / lexical / vector seeds + rank fusion
     traversal.py    # allowlisted one-step Cypher templates, frontier filtering
 app/persistence/graph_search_store.py
@@ -331,6 +332,17 @@ Notes:
 ### Steps
 1. Resolve the revision and spec. Check that `projection_ref` is set and that `projection_exists`.
 2. Create or reuse the generation, keyed by `UNIQUE(data_revision_id, fingerprint)`. Return early if it is `ready`.
+2b. **Incremental build** (`incremental.py`, migration 036). The model's previous ready generation with the same
+   fingerprint is the base. Each card is stored with `source_digest`, an md5 computed in SQL of everything the card is
+   built from (concept, label, key and attribute values, workspaces, names of linked records); the generation also
+   stores `card_digest` (the concept parts cards are written with). The build compares the new revision's digests with
+   the base generation's stored ones (the snapshot, never the base revision's rows: a revision may be stored again in
+   place under the same id), copies the unchanged cards, passages and vectors in the database (`INSERT … SELECT`, 500
+   records per statement), and builds, caches and embeds only the changed ones. A renamed neighbour changes the
+   digest of the cards showing its name, so they rebuild. It is a **full** build when there is no base, the base has no
+   digest (built before 036), `card_digest` differs, or more than 30% of the records changed; the generation records
+   `build_mode`, `build_reason`, `carried_count`, `rebuilt_count`, `embedded_count`, and progress shows the steps
+   `comparing` and `carrying` first.
 3. Insert `entity_documents` (text, hash, keys, `source_refs`) in one pass, with status `pending`. Fill vectors from `embedding_cache` and mark those rows `ready`.
    Insert the passages of every document the same way, and fill theirs from the same cache.
 4. Embed the remaining `pending` rows in batches (records first, then passages; progress reports

@@ -102,6 +102,15 @@ class _Store:
     async def prune_generations(self, *args: Any) -> int:
         return 0
 
+    async def previous_ready_generation(self, *args: Any) -> None:
+        return None
+
+    async def entity_digests(self, *args: Any) -> dict[str, str]:
+        return {}
+
+    async def record_build_plan(self, pool: Any, index_id: str, owner: str, **fields: Any) -> None:
+        self.plan = fields
+
 
 @pytest.mark.asyncio
 async def test_a_build_records_its_progress_batch_by_batch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +132,7 @@ async def test_a_build_records_its_progress_batch_by_batch(monkeypatch: pytest.M
     for name in ("get_generation_by_id", "claim_generation", "renew_generation", "linked_names", "insert_documents",
                  "insert_passages", "fill_from_cache", "generation_counts", "pending_documents", "pending_passages",
                  "store_vectors", "store_passage_vectors", "record_progress", "finish_generation",
-                 "prune_generations"):
+                 "prune_generations", "previous_ready_generation", "entity_digests", "record_build_plan"):
         monkeypatch.setattr(indexer.search_store, name, getattr(store, name))
     monkeypatch.setattr(indexer.population_store, "iter_revision_entities", entities_pages)
     monkeypatch.setattr(indexer.population_store, "count_revision_rows", count_rows)

@@ -59,6 +59,40 @@ describe('SearchIndexProgress', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1200');
   });
 
+  it('shows the unchanged records being carried over from the previous index, with the three counts', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'carrying', expectedCount: 8400, loadedCount: 3000, indexedCount: 0, buildMode: 'incremental', carriedCount: 3000, rebuiltCount: 0, embeddedCount: 0 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.carrying')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '3000');
+    expect(screen.getByText('population.progress.index.incremental')).toBeInTheDocument();
+  });
+
+  it('shows the comparison with the previous index as a counted step', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'indexing', stage: 'comparing', expectedCount: 8400, loadedCount: 5000, indexedCount: 0 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.comparing')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '5000');
+    expect(screen.queryByText('population.progress.index.incremental')).not.toBeInTheDocument();
+  });
+
+  it('keeps the carried, rebuilt and embedded counts once an incremental index is ready', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'ready', expectedCount: 8400, indexedCount: 8400, buildMode: 'incremental', carriedCount: 8250, rebuiltCount: 150, embeddedCount: 150 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.incremental')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.full')).not.toBeInTheDocument();
+  });
+
+  it('says why a build was full', async () => {
+    api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-2',
+      index: { state: 'ready', expectedCount: 100, indexedCount: 100, buildMode: 'full', buildReason: 'too_many_changes', rebuiltCount: 100, embeddedCount: 100 } });
+    renderIndex('dr-2');
+    expect(await screen.findByText('population.progress.index.full')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.index.incremental')).not.toBeInTheDocument();
+  });
+
   it('waits while the index still belongs to the previous data', async () => {
     api.searchIndexStatus.mockResolvedValue({ modelId: 'model-1', environment: 'draft', dataRevisionId: 'dr-1',
       index: { state: 'ready', expectedCount: 10, indexedCount: 10 } });

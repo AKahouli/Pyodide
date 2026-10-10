@@ -93,6 +93,15 @@ class _Store:
     async def prune_generations(self, *args: Any) -> int:
         return 0
 
+    async def previous_ready_generation(self, *args: Any) -> None:
+        return None
+
+    async def entity_digests(self, *args: Any) -> dict[str, str]:
+        return {}
+
+    async def record_build_plan(self, pool: Any, index_id: str, owner: str, **fields: Any) -> None:
+        self.plan = fields
+
 
 def _patch(monkeypatch: pytest.MonkeyPatch, store: _Store, entities: int) -> None:
     async def pages(pool: Any, revision_id: str, size: int):  # type: ignore[no-untyped-def]
@@ -111,7 +120,8 @@ def _patch(monkeypatch: pytest.MonkeyPatch, store: _Store, entities: int) -> Non
     for name in ("get_generation_by_id", "claim_generation", "renew_generation", "linked_names", "insert_documents",
                  "insert_passages", "fill_from_cache", "generation_counts", "pending_documents", "pending_passages",
                  "store_vectors", "store_passage_vectors", "record_progress", "finish_generation",
-                 "fail_generation", "prune_generations"):
+                 "fail_generation", "prune_generations", "previous_ready_generation", "entity_digests",
+                 "record_build_plan"):
         monkeypatch.setattr(indexer.search_store, name, getattr(store, name))
     monkeypatch.setattr(indexer.population_store, "iter_revision_entities", pages)
     monkeypatch.setattr(indexer.population_store, "count_revision_rows", count_rows)
@@ -156,6 +166,31 @@ async def test_parallel_waves_embed_every_row_once_with_the_calls_in_flight_toge
     assert [p["indexed"] for p in embedding] == [0, 6, 11, 11]
     assert [p["passages_indexed"] for p in embedding] == [0, 0, 0, 5]
     assert sum(store.renewals) == 6 + 3  # one embedding call per batch (11 rows -> 6 batches, 5 passages -> 3)
+
+
+@pytest.mark.asyncio
+async def test_a_build_without_a_previous_generation_is_full_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _Store(documents=5)
+    _patch(monkeypatch, store, 5)
+    reports: list[dict[str, Any]] = []
+
+    async def report(progress: dict[str, Any]) -> None:
+        reports.append(progress)
+
+    async def embedder(profile: Any, batch: list[str]) -> list[list[float]]:
+        return [[0.0] * 4 for _ in batch]
+
+    outcome = await indexer.build_index(object(), index_id="ix", owner="w", report=report, profile=PROFILE,
+                                        embedder=embedder)
+    assert outcome["state"] == "ready"
+    assert (outcome["mode"], outcome["reason"], outcome["carried"], outcome["rebuilt"], outcome["embedded"]) == (
+        "full", "no_previous_generation", 0, 5, 5)
+    assert store.plan["mode"] == "full" and store.plan["reason"] == "no_previous_generation"
+    assert store.plan["card_digest"].startswith("sha256:") and store.plan["carried_from"] is None
+    # The progress of every step names the path once it is chosen, and the embedded count is recorded.
+    assert all(report_["mode"] == "full" for report_ in reports if report_["stage"] == "documents")
+    assert store.progress[-1]["embedded"] == 5
+    assert [p["rebuilt"] for p in store.progress if p["stage"] == "documents"] == [0, 5]
 
 
 @pytest.mark.asyncio

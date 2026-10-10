@@ -9,6 +9,10 @@ import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 
 const BUILDING = new Set(['queued', 'indexing']);
+/** The steps of a build whose progress is the records handled so far (loadedCount) out of all of them. */
+const COUNTED_STAGES = new Set(['comparing', 'carrying', 'documents']);
+/** Why a build was full rather than incremental (the runtime's codes). */
+const FULL_REASONS = ['no_previous_generation', 'previous_not_comparable', 'specification_changed', 'too_many_changes', 'empty_revision'] as const;
 /** The runtime's error code of a build that was stopped on request. */
 export const INDEX_STOPPED_CODE = 'cancelled';
 /** The runtime's error code of a build whose worker vanished before it finished (it can be built again). */
@@ -38,8 +42,10 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
   const state = stale ? 'queued' : index.state;
   const records = { done: (index.indexedCount ?? 0) + (index.exactOnlyCount ?? 0), total: index.expectedCount ?? 0 };
   const passages = { done: index.passageIndexedCount ?? 0, total: index.passageCount ?? 0 };
-  // First step: the records are read into search cards; the vectors (and the passages) come after.
-  const reading = state === 'indexing' && index.stage === 'documents';
+  // First steps: the records are compared with the previous index and carried over, or read into search
+  // cards; the vectors (and the passages) come after.
+  const reading = state === 'indexing' && COUNTED_STAGES.has(index.stage ?? '');
+  const readingKey = index.stage === 'carrying' ? 'carrying' : index.stage === 'comparing' ? 'comparing' : 'reading';
   const done = reading ? index.loadedCount ?? 0 : records.done + passages.done;
   const total = reading ? records.total : records.total + passages.total;
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -56,6 +62,9 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
   // Its worker stopped answering: what was embedded is kept, and the build can be restarted.
   const stalled = !stale && state === 'indexing' && Boolean(index.stalled);
   const stalledAt = index.lastProgressAt ? new Date(index.lastProgressAt) : null;
+  // How the build runs: what an incremental one carried over, rebuilt and embedded; why a full one was full.
+  const buildPath = stale || !(state === 'indexing' || state === 'ready') ? null : index.buildMode ?? null;
+  const fullReason = FULL_REASONS.find((reason) => reason === index.buildReason);
   const buildAgain = async (restart = false) => {
     try {
       await (restart ? semanticModelApi.restartSearchIndex(modelId) : semanticModelApi.ensureSearchIndex(modelId));
@@ -88,11 +97,19 @@ export function SearchIndexProgress({ modelId, dataRevisionId }: Readonly<{ mode
     </div>}
     {!stale && total > 0 && !readDone && <p className='text-[11px] text-muted-foreground'>
       {reading
-        ? t('population.progress.index.reading', { done: done.toLocaleString(), total: total.toLocaleString() })
+        ? t(`population.progress.index.${readingKey}`, { done: done.toLocaleString(), total: total.toLocaleString() })
         : passages.total > 0
           ? t('population.progress.index.counts', { records: records.done.toLocaleString(), recordsTotal: records.total.toLocaleString(),
             passages: passages.done.toLocaleString(), passagesTotal: passages.total.toLocaleString() })
           : t('population.progress.index.countsRecords', { records: records.done.toLocaleString(), recordsTotal: records.total.toLocaleString() })}
+    </p>}
+    {buildPath === 'incremental' && <p className='text-[11px] text-muted-foreground'>
+      {t('population.progress.index.incremental', {
+        carried: (index.carriedCount ?? 0).toLocaleString(), rebuilt: (index.rebuiltCount ?? 0).toLocaleString(), embedded: (index.embeddedCount ?? 0).toLocaleString(),
+      })}
+    </p>}
+    {buildPath === 'full' && index.buildReason && <p className='text-[11px] text-muted-foreground'>
+      {t('population.progress.index.full', { reason: fullReason ? t(`population.progress.index.fullReason.${fullReason}`) : index.buildReason })}
     </p>}
     {stalled && <>
       <p className='flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400' role='alert'>

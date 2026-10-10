@@ -873,9 +873,17 @@ export interface SearchIndexStatus {
     reusedCount?: number;
     passageCount?: number;
     passageIndexedCount?: number;
-    /** While indexing: 'documents' (records read into search cards, counted by loadedCount), 'reusing' (earlier vectors taken from the cache) or 'embedding'. */
-    stage?: 'documents' | 'reusing' | 'embedding' | null;
+    /** While indexing: 'comparing' (finding the records changed since the previous index) and 'carrying' (copying the unchanged ones) of an incremental build, then 'documents' (records read into search cards), 'reusing' (earlier vectors taken from the cache) or 'embedding'. loadedCount counts the records done in the first three. */
+    stage?: 'comparing' | 'carrying' | 'documents' | 'reusing' | 'embedding' | null;
     loadedCount?: number;
+    /** How the build runs: 'incremental' (unchanged records carried over from the previous index) or 'full' (see buildReason); absent before it starts. */
+    buildMode?: 'full' | 'incremental' | null;
+    /** Why a build is full: no_previous_generation, previous_not_comparable, specification_changed, too_many_changes or empty_revision. */
+    buildReason?: string | null;
+    carriedCount?: number;
+    rebuiltCount?: number;
+    /** Records whose vector the embedding model computed (not carried over, not taken from the cache). */
+    embeddedCount?: number;
     /** The build's worker stopped answering (its lease ran out, or no progress for a long while); what was embedded is kept. */
     stalled?: boolean;
     /** ISO time of the build's last real progress. */

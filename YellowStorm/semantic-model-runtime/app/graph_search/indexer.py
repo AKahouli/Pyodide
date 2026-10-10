@@ -7,6 +7,10 @@ declares the generation ready only when every record is covered. It never
 touches the AGE graph, the binding or the population rows, so an embedding
 outage cannot break population or the graph.
 
+A generation is built incrementally when it can be (``incremental.py``): the records unchanged since the
+model's previous ready generation are copied from it, and only the others are built and embedded. Else it
+is built in full, and the generation records why.
+
 A generation is built with index settings (card and passage sizes, per-field
 overrides) recorded on it and named by its fingerprint: other settings make
 another generation. A request without settings (after a population run) reuses
@@ -35,6 +39,7 @@ from app.population.age_projection import is_live_projection_ref
 from app.population.compiler import compile_specification
 from app.workers.celery_app import SEARCH_QUEUES
 
+from . import incremental
 from .documents import MAX_LINKED_NAMES, build_document
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, profile_from_env, vector_literal
 from .settings import IndexBuildSettings, IndexSettings, ValidationError, index_fingerprint
@@ -266,6 +271,79 @@ async def _reuse_cached(pool: Any, *, index_id: str, owner: str, model_id: str, 
     return done
 
 
+async def _write_cards(pool: Any, *, generation: dict[str, Any], owner: str, concepts: dict[str, Any],
+                       settings: IndexSettings, expected: int, page_size: int, lease_seconds: int,
+                       report: Callable[[dict[str, Any]], Awaitable[None]],
+                       should_stop: Callable[[], Awaitable[bool]] | None,
+                       mode: dict[str, Any]) -> tuple[dict[str, Any] | None, int, int]:
+    """Write the generation's cards and passages: carried over from the previous generation where they did
+    not change, built from the records otherwise (see ``incremental``). ``mode`` receives the path taken and
+    the counts. Returns ``(outcome, records, passages)``: an outcome when the build ends here (stopped, or the
+    lease lost), else the records and passages the generation now holds."""
+    index_id, revision_id = generation["index_id"], generation["data_revision_id"]
+
+    async def checkpoint(stage: str, *, loaded: int, **counts: int) -> None:
+        """Between steps of an incremental build: stop if asked to, keep the lease, show where it is."""
+        if should_stop is not None and await should_stop():
+            raise incremental.BuildHalt("cancelled")
+        if not await search_store.renew_generation(pool, index_id, owner, lease_seconds, 0):
+            raise incremental.BuildHalt("lease_lost")
+        await search_store.record_progress(pool, index_id, owner, stage=stage, loaded=loaded, expected=expected,
+                                           **{key: value for key, value in counts.items() if key in ("carried", "rebuilt")})
+        await report({"stage": stage, "expected": expected, "loaded": loaded,
+                      **({"mode": mode["mode"]} if mode["mode"] else {}), **counts})
+
+    async def write_page(entities: list[dict[str, Any]]) -> int:
+        """Build, digest and store the cards (and passages) of these records; returns the passages."""
+        ids = [entity["entityId"] for entity in entities]
+        # The names of their linked records go on their cards (only those read from no other workspace).
+        linked = await search_store.linked_names(pool, revision_id, ids, MAX_LINKED_NAMES)
+        digests = await search_store.entity_digests(pool, revision_id, ids)
+        documents = [{**build_document(entity, concepts.get(entity["conceptId"]), settings,
+                                       links=[{**link, "concept": (concepts.get(link["conceptId"]) or {}).get("label")}
+                                              for link in linked.get(entity["entityId"], [])]),
+                      "sourceDigest": digests.get(entity["entityId"])}
+                     for entity in entities]
+        await search_store.insert_documents(pool, index_id, documents)
+        return await search_store.insert_passages(pool, index_id, documents)
+
+    loaded = passages = 0
+    digest = incremental.card_digest(concepts)
+    await search_store.record_progress(pool, index_id, owner, stage="comparing", loaded=0, expected=expected)
+    try:
+        plan = await incremental.plan_build(pool, generation=generation, digest=digest, expected=expected,
+                                            page_size=page_size, checkpoint=checkpoint)
+        mode.update(mode=plan.mode, reason=plan.reason)
+        await search_store.record_build_plan(pool, index_id, owner, card_digest=digest, mode=plan.mode,
+                                             reason=plan.reason, carried_from=plan.previous_index_id)
+        if plan.incremental:
+            carried = await incremental.carry(pool, generation=generation, plan=plan, checkpoint=checkpoint)
+            rebuilt = await incremental.rebuild(pool, generation=generation, plan=plan, carried=carried,
+                                                page_size=page_size, write_page=write_page, checkpoint=checkpoint)
+            mode.update(carried=carried, rebuilt=rebuilt)
+            counts = await search_store.generation_counts(pool, index_id)
+            return None, counts["total"], counts["passages"]
+        await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=0, expected=expected,
+                                           carried=0, rebuilt=0)
+        # A page of records at a time: a large mailbox gives hundreds of thousands of them.
+        async for entities in population_store.iter_revision_entities(pool, revision_id, page_size):
+            if should_stop is not None and await should_stop():
+                return await _stopped(pool, index_id, owner), loaded, passages
+            passages += await write_page(entities)
+            loaded += len(entities)
+            if not await search_store.renew_generation(pool, index_id, owner, lease_seconds, 0):
+                return {"state": "lease_lost"}, loaded, passages
+            await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=loaded,
+                                               expected=expected, passages=passages, rebuilt=loaded)
+            await report({"stage": "documents", "expected": expected, "loaded": loaded, "passages": passages,
+                          "mode": plan.mode, "reason": plan.reason})
+        mode.update(rebuilt=loaded)
+    except incremental.BuildHalt as halt:
+        ended = await _stopped(pool, index_id, owner) if halt.reason == "cancelled" else {"state": halt.reason}
+        return ended, loaded, passages
+    return None, loaded, passages
+
+
 async def build_index(pool: Any, *, index_id: str, owner: str,
                       report: Callable[[dict[str, Any]], Awaitable[None]],
                       profile: EmbeddingProfile | None = None,
@@ -299,27 +377,13 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         return {"state": "failed", "errorCode": "revision_specification_not_found"}
     concepts = compile_specification(specification)["concepts"]
     expected = (await population_store.count_revision_rows(pool, revision_id))["entities"]
-    # A page of records at a time: a large mailbox gives hundreds of thousands of them.
-    loaded = passages = 0
-    await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=0, expected=expected)
-    async for entities in population_store.iter_revision_entities(pool, revision_id, page_size):
-        if should_stop is not None and await should_stop():
-            return await _stopped(pool, index_id, owner)
-        # The names of their linked records go on their cards (only those read from no other workspace).
-        linked = await search_store.linked_names(pool, revision_id, [entity["entityId"] for entity in entities],
-                                                 MAX_LINKED_NAMES)
-        documents = [build_document(entity, concepts.get(entity["conceptId"]), settings,
-                                    links=[{**link, "concept": (concepts.get(link["conceptId"]) or {}).get("label")}
-                                           for link in linked.get(entity["entityId"], [])])
-                     for entity in entities]
-        await search_store.insert_documents(pool, index_id, documents)
-        passages += await search_store.insert_passages(pool, index_id, documents)
-        loaded += len(entities)
-        if not await search_store.renew_generation(pool, index_id, owner, lease_seconds, 0):
-            return {"state": "lease_lost"}
-        await search_store.record_progress(pool, index_id, owner, stage="documents", loaded=loaded,
-                                           expected=expected, passages=passages)
-        await report({"stage": "documents", "expected": expected, "loaded": loaded, "passages": passages})
+    # How this attempt builds (None until chosen) and the records it carried over and built again.
+    mode: dict[str, Any] = {"mode": None, "reason": None, "carried": 0, "rebuilt": 0}
+    ended, loaded, passages = await _write_cards(
+        pool, generation=generation, owner=owner, concepts=concepts, settings=settings, expected=expected,
+        page_size=page_size, lease_seconds=lease_seconds, report=report, should_stop=should_stop, mode=mode)
+    if ended is not None:
+        return ended
     if expected != loaded:
         # The revision changed under the build: a later request builds it again.
         await search_store.fail_generation(pool, index_id, "revision_changed", owner)
@@ -334,17 +398,22 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         return {"state": reuse["halt"]}
     reused, passages_reused = reuse["reused"], reuse["passagesReused"]
     progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
-                "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
+                "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0,
+                "mode": mode["mode"], "reason": mode["reason"], "carried": mode["carried"],
+                "rebuilt": mode["rebuilt"]}
     await report(dict(progress))
     # What is already embedded (this attempt's cache hits, an earlier attempt's batches), counted once;
     # each batch then adds its own size.
     done = await search_store.generation_counts(pool, index_id)
+    # Records embedded by every attempt at this generation: this one's batches add to the earlier ones'.
+    embedded_before = int(generation.get("embedded_count") or 0)
 
     async def record_embedding() -> None:
         await search_store.record_progress(
             pool, index_id, owner, stage="embedding", loaded=loaded, expected=expected,
             indexed=done["ready"] + progress["embedded"], exact_only=done["exact_only"],
-            passages=done["passages"], passages_indexed=done["passages_ready"] + progress["passagesEmbedded"])
+            passages=done["passages"], passages_indexed=done["passages_ready"] + progress["passagesEmbedded"],
+            embedded=embedded_before + progress["embedded"])
 
     await record_embedding()
     stopped = await _embed_pending(

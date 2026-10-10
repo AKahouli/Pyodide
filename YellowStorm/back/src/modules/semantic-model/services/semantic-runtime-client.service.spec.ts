@@ -175,7 +175,8 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       expect(init.body).toBeUndefined();
 
       // The progress of a build (camelCase, optional) reaches the caller as the runtime sent it.
-      const building = { state: 'indexing', stage: 'embedding', expectedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 300, passageIndexedCount: 20, loadedCount: 8400 };
+      const building = { state: 'indexing', stage: 'embedding', expectedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 300, passageIndexedCount: 20, loadedCount: 8400,
+        buildMode: 'incremental', buildReason: null, carriedCount: 8250, rebuiltCount: 150, embeddedCount: 40 };
       fetchMock.mockResolvedValueOnce(jsonResponse({ index: building }));
       await expect(client.getGraphSearchIndex('m1', 'draft', 'u1')).resolves.toEqual({ index: building });
     });

@@ -1024,6 +1024,18 @@ def _entity_row(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def list_revision_entities_by_id(pool: Any, revision_id: str,
+                                       entity_ids: list[str]) -> list[dict[str, Any]]:
+    """The named records of a revision (those that exist), in id order, shaped like :func:`iter_revision_entities`."""
+    if not entity_ids:
+        return []
+    rows = await pool.fetch(
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        "FROM semantic_population.entities WHERE data_revision_id = $1 AND id = ANY($2::text[]) ORDER BY id",
+        revision_id, list(entity_ids))
+    return [_entity_row(dict(row)) for row in rows]
+
+
 async def list_revision_entities(pool: Any, revision_id: str,
                                  limit: int = 50000,
                                  concept_id: str | None = None) -> list[dict[str, Any]]:

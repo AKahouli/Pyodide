@@ -335,8 +335,9 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         if fallback is not None:
             searched = fallback
             index["fallback"] = {"indexId": fallback["index_id"], "sameData": fallback["data_revision_id"] == revision_id}
+            # The records searched are the fallback's; how the new build is going stays the new build's.
             index.update({key: value for key, value in search_store.public_generation(fallback).items()
-                          if key.endswith("Count")})
+                          if key.endswith("Count") and key not in search_store.BUILD_COUNT_KEYS})
     base = {**_pinned(binding, command.environment), "index": index, "concepts": concepts,
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),

@@ -606,10 +606,18 @@ export interface RuntimeGraphSearchIndex {
   passageCount?: number;
   passageIndexedCount?: number;
   passageTruncatedCount?: number;
-  /** While the state is 'indexing': 'documents' (records being read into cards), 'reusing' (vectors taken from the cache) or 'embedding'; null otherwise. */
-  stage?: 'documents' | 'reusing' | 'embedding' | null;
-  /** Records whose search card is written so far (builds: counts of the other fields are live too). */
+  /** While the state is 'indexing': 'comparing' (finding the records changed since the previous index) and 'carrying' (copying the unchanged ones) of an incremental build, then 'documents' (records being read into cards), 'reusing' (vectors taken from the cache) or 'embedding'; null otherwise. */
+  stage?: 'comparing' | 'carrying' | 'documents' | 'reusing' | 'embedding' | null;
+  /** Records handled so far by the first three steps (compared, carried over, or with their card written; counts of the other fields are live too). */
   loadedCount?: number;
+  /** 'incremental': the records unchanged since the previous index were carried over from it; 'full': every card was built (see buildReason). Absent before the build starts. */
+  buildMode?: 'full' | 'incremental' | null;
+  /** Why a build is full: no_previous_generation, previous_not_comparable, specification_changed, too_many_changes or empty_revision. */
+  buildReason?: string | null;
+  carriedCount?: number;
+  rebuiltCount?: number;
+  /** Records whose vector the embedding model computed (not carried over, not taken from the cache). */
+  embeddedCount?: number;
   /** The build's worker stopped answering (its lease ran out, or no progress for a long while): what was embedded is kept and the build can be restarted. */
   stalled?: boolean;
   /** When the build last made progress (ISO); null before its first step. */
