@@ -2,7 +2,17 @@
 
 Date: 2026-10-06
 
+## Clarification retest and mono-agent skill (2026-10-10)
+
+UI work committed as `4c28faeba`. Created `skills/mono-agent-work-orchestration/SKILL.md`, imported through Admin Skills, and attached to Smart Agent without removing docx/code-interpreter. Live trace showed Activate Skill. Skill distinguishes foreground/background/fan-out, requires complete bounded tasks and clarification before dispatch, and preserves authorization, cancellation and paged-result semantics. YellowStorm's supported compatibility frontmatter is accepted by its importer (Codex-only quick validator does not support this field).
+
+Found the earlier worker-input test was invalid: native input control is attached to depth-zero ROOT, not automatically to temporary leaf workers. Actual ROOT test exposed partial streamed calls claiming input event IDs before complete arguments. Fixed observe/restore to skip partial pending-input processing. Fixed enum renderer showing an implicit first choice while state was empty: unmatched values now select the required placeholder. Live tests verified question + enum, forest selection surviving pane close/reopen, bound submission/resume, completed forest poem, and untouched color selection blocked before explicit green resumed correctly. Evidence: `%TEMP%/clarification-live-fixed.jpg`, `%TEMP%/mono-agent-skill-attached.jpg`.
+
+Also reproduced historical profile-digest authorization failures suppressing the whole work snapshot after editing agent skills. Snapshot now omits individually inaccessible jobs (only expected custom NotFound), suppresses a coordinator with an inaccessible/mismatched item, propagates operational errors, and preserves final conversation epoch/root/creator revalidation. No authorization relaxation. Native 28 tests, frontend input 14 tests, backend snapshot 9 tests PASS; frontend/backend builds and observability policy PASS; independent reviewer and source QA PASS. Native restarted on 8002/50052 and backend on 3001. Browser Tasks recovered the authorized forest task/result after backend restart.
+
 ## Conversation background-work UX (2026-10-10)
+
+Final post-repair delivery check also PASS: the three-tip temporary background task acknowledged at 11:37:13 and its linked result appeared automatically at 11:37:47, without reload.
 
 Implemented the plan in `docs/conversation-background-ux-plan.md` through three parallel coding workstreams. Outline starts collapsed; Outline/Tasks share a persisted, keyboard-resizable context pane and mobile modal. Compact activity stays above the composer. Tasks group workers, fan-out and final answer by originating execution; real authorized fan-out item statuses and full output are available. Input forms live in Tasks with persistent drafts/submissions. New background messages carry server-pinned origin context, and unread state is user/conversation scoped independently of execution epochs. History, scroll and composer drafts survive publication. No foreground queue, pause/retry, or mutable running instructions added.
 

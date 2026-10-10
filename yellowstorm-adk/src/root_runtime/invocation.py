@@ -125,7 +125,7 @@ class NativeInvocationProjection:
         if session is None:
             raise ValueError("The native session to resume does not exist")
         for event in session.events:
-            if event.invocation_id != self.invocation_id:
+            if event.invocation_id != self.invocation_id or getattr(event, "partial", False):
                 continue
             for part in getattr(event.content, "parts", None) or []:
                 if part.function_call and part.function_call.name in INPUT_FUNCTIONS:
@@ -194,6 +194,10 @@ class NativeInvocationProjection:
         if not self.started:
             self.started = True
             await self.emit(queue, InvocationLifecycleState.STARTED, getattr(event, "id", None))
+        # Streaming deltas may share the final event ID but lack its input args.
+        # Only complete events may establish pending inputs and their versions.
+        if getattr(event, "partial", False):
+            return
         changed = False
         for part in getattr(getattr(event, "content", None), "parts", None) or []:
             call = part.function_call

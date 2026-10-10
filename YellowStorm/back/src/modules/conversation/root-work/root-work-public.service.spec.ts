@@ -1,5 +1,6 @@
 import { RootWorkPublicService } from './root-work-public.service';
 import { newStopRequestId } from './root-work.types';
+import { ErrorCode, NotFoundException } from '../../exceptions';
 
 describe('Creator-owned Root work controls', () => {
   function fixture(enabled = true) {
@@ -38,6 +39,21 @@ describe('Creator-owned Root work controls', () => {
     await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('epoch changed');
   });
 
+  it('omits inaccessible historical jobs without hiding currently authorized work', async () => {
+    const h = fixture();
+    const snapshot = await h.jobs.publicSnapshot();
+    h.jobs.publicSnapshot.mockResolvedValue({ ...snapshot, jobs: [
+      { ...snapshot.jobs[0], executionId: 'old-profile' }, snapshot.jobs[0],
+    ] });
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'old-profile') throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Execution result is unavailable');
+      return {};
+    });
+    expect((await h.service.snapshot('conversation', 'owner')).jobs.map((job) => job.executionId)).toEqual(['job']);
+    h.results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('dependency failed'));
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('dependency failed');
+  });
+
   it.each(['member', 'guest'])('denies private controls to %s before reading durable work', async (actor) => {
     const h = fixture();
     await expect(h.service.snapshot('conversation', actor)).rejects.toThrow('unavailable');
@@ -69,6 +85,17 @@ describe('Creator-owned Root work controls', () => {
       if (id === 'item') throw new Error('Source access revoked');
     });
     await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('revoked');
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'item') throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access revoked');
+    });
+    expect((await h.service.snapshot('conversation', 'owner')).jobs).toEqual([]);
+    h.results.authorizeBackgroundExecution.mockResolvedValue({});
+    h.work.getExecution.mockImplementation(async (id: string) => id === 'parent' ? {
+      resultPayload: { nativeState: { fanoutManifests: [{ manifestId: 'manifest', digest: 'digest',
+        items: [{ executionId: 'item', task: 'Private label' }] }] } },
+    } as never : { status: 'completed', resultPayload: { nativeState: {
+      backgroundFanoutItem: { coordinatorExecutionId: 'other-job' } } } } as never);
+    expect((await h.service.snapshot('conversation', 'owner')).jobs).toEqual([]);
   });
 
   it('cancels one authorized job without applying a conversation barrier or stopping the foreground', async () => {

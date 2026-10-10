@@ -33,10 +33,21 @@ export class RootWorkPublicService {
       return { epoch: conversation.rootWorkEpoch ?? 0, watermark: '0', stopRequestId: newStopRequestId(), jobs: [] };
     }
     const snapshot = await this.jobs.publicSnapshot(conversationId, actorId);
-    for (const job of snapshot.jobs) await this.results.authorizeBackgroundExecution(conversationId, job.executionId, actorId);
+    const isAccessible = async (executionId: string) => {
+      try {
+        await this.results.authorizeBackgroundExecution(conversationId, executionId, actorId);
+        return true;
+      } catch (error) {
+        // Historical jobs can lose access after a profile or permission change.
+        // Filter that entry without masking operational failures or newer work.
+        if (error instanceof NotFoundException) return false;
+        throw error;
+      }
+    };
     const parents = new Map<string, Awaited<ReturnType<RootWorkService['getExecution']>>>();
     const publicJobs = [];
-    for (const job of snapshot.jobs) {
+    jobLoop: for (const job of snapshot.jobs) {
+      if (!await isAccessible(job.executionId)) continue;
       if (!parents.has(job.parentExecutionId)) parents.set(job.parentExecutionId, await this.work.getExecution(job.parentExecutionId));
       const parent = parents.get(job.parentExecutionId);
       const origin = parent?.resultPayload?.nativeState?.origin;
@@ -50,9 +61,9 @@ export class RootWorkPublicService {
         for (const item of manifest?.items.slice(0, 50) ?? []) {
           const execution = await this.work.getExecution(item.executionId);
           if (execution) {
-            await this.results.authorizeBackgroundExecution(conversationId, item.executionId, actorId);
+            if (!await isAccessible(item.executionId)) continue jobLoop;
             if (execution.resultPayload?.nativeState?.backgroundFanoutItem?.coordinatorExecutionId !== job.executionId) {
-              throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Fan-out item binding changed');
+              continue jobLoop;
             }
           }
           fanoutItems.push({ executionId: item.executionId, label: item.task.slice(0, 160),

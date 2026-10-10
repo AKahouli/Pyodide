@@ -48,7 +48,8 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
   if (schema.enum) return <label className='block space-y-1 text-sm'>
     <span>{label}</span>
     <select className='w-full rounded-md border bg-background p-2' required={required} disabled={disabled}
-      value={value === undefined ? '' : JSON.stringify(value)} onChange={(event) => onChange(JSON.parse(event.target.value) as unknown)}>
+      value={schema.enum.some((option) => option === value) ? JSON.stringify(value) : ''}
+      onChange={(event) => onChange(JSON.parse(event.target.value) as unknown)}>
       <option value='' disabled>{t('rootInput.select')}</option>
       {schema.enum.map((option, index) => <option key={index} value={JSON.stringify(option)}>{String(option)}</option>)}
     </select>

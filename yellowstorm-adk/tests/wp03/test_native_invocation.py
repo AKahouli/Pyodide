@@ -64,6 +64,39 @@ async def test_partial_resume_preserves_other_pending_inputs():
 
 
 @pytest.mark.asyncio
+async def test_streamed_input_waits_for_complete_arguments_before_projection():
+    from src.grpc_generated import chatbot_pb2
+    schema = {"type": "string", "enum": ["ocean", "forest"]}
+    def event(partial, args):
+        return SimpleNamespace(id="same-event", invocation_id="invocation", partial=partial,
+            content=types.Content(parts=[types.Part(function_call=types.FunctionCall(
+                id="choice", name="adk_request_input", args=args))]))
+
+    partial = event(True, {})
+    complete = event(False, {"message": "Ocean or forest?", "response_schema": schema})
+    projection = NativeInvocationProjection(resume_scope(), "session", "root")
+    queue = asyncio.Queue()
+    await projection.observe(partial, queue)
+    assert (await queue.get())["execution_trace"]["lifecycle"] == chatbot_pb2.INVOCATION_LIFECYCLE_STATE_STARTED
+    assert queue.empty() and projection.pending == {} and projection.input_events == set()
+    await projection.observe(complete, queue)
+    trace = (await queue.get())["execution_trace"]
+    assert trace["lifecycle"] == chatbot_pb2.INVOCATION_LIFECYCLE_STATE_WAITING
+    details = trace["pending_inputs"][0]
+    assert details["message"] == "Ocean or forest?" and details["input_version"] == 1
+    assert json.loads(details["response_schema_json"]) == schema
+    await projection.observe(complete, queue)
+    assert projection.input_versions == {"choice": 1}
+
+    restored = NativeInvocationProjection(resume_scope(), "session", "root")
+    sessions = SimpleNamespace(get_session=AsyncMock(return_value=SimpleNamespace(events=[partial, complete])))
+    await restored.restore_pending(sessions, "user", [])
+    assert restored.input_details == projection.input_details
+    await restored.restore_pending(sessions, "user", [{"input_id": "choice"}])
+    assert restored.pending == {} and restored.input_details == {}
+
+
+@pytest.mark.asyncio
 async def test_repeated_input_id_uses_distinct_versions_and_restores_them():
     def event(event_id, part):
         return SimpleNamespace(id=event_id, invocation_id="invocation", content=types.Content(parts=[part]))
