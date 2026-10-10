@@ -25,7 +25,6 @@ from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_tool_scope import (
     build_prompt_input_context,
-    build_sandbox_prompt_note,
     build_step_tool_scope,
 )
 from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
@@ -395,7 +394,7 @@ def _build_available_file_context(file_names: list[str]) -> str:
     return (
         "<available_mcp_file_names>\n"
         f"{json.dumps(payload, ensure_ascii=False)}\n"
-        "These are the exact workspace filenames available for MCP tool calls. Decide whether to use them from the selected tool's schema, preprompt, skill instructions, and MCP docstring. Only send file_name or file_names when that tool declares the parameter. Preserve filenames exactly and choose the relevant file or files for the call. If the list is empty, do not send a filename parameter. Sandbox-local filenames, when applicable, are listed separately under Sandbox Files.\n"
+        "These are the exact workspace filenames available for MCP tool calls. Decide whether to use them from the selected tool's schema, preprompt, skill instructions, and MCP docstring. Only send file_name or file_names when that tool declares the parameter. Preserve filenames exactly and choose the relevant file or files for the call. If the list is empty, do not send a filename parameter.\n"
         "</available_mcp_file_names>"
     )
 
@@ -953,9 +952,6 @@ async def _execute_step(
         human_context=human_context,
         hitl_memory=_as_record_list(state.get("hitl_memory")),
     )
-    sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)
-    if sandbox_prompt_note:
-        user_msg = f"{user_msg}\n\nSandbox Files:\n{sandbox_prompt_note}"
     replay_instructions = str(metadata.get("replay_instructions") or "")
     execution_mode = str(metadata.get("execution_mode") or "live")
     if replay_instructions and execution_mode in ("replay_strict", "replay_flex", "replay_adaptive"):

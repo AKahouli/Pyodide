@@ -18,16 +18,15 @@ class TestAgentRepository:
         repo.set_agents([{"name": "Writer", "tools": []}])
         assert len(repo.get_all_agents()) == 1
 
-    def test_has_search_agents_and_code_interpreter(self):
+    def test_has_search_agents(self):
         helper = MagicMock()
         helper.normalize_agent_name.side_effect = lambda n: n
         repo = AgentRepository(helper)
         repo.set_agents([
             {"name": "search", "tools": ["search"]},
-            {"name": "ops", "tools": ["code interpreter"]},
+            {"name": "ops", "tools": ["calculator"]},
         ])
         assert repo.has_search_agents() is True
-        assert repo.has_code_interpreter() is True
 
     def test_get_agent_id_by_name(self):
         helper = MagicMock()

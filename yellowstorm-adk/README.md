@@ -25,7 +25,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
 - **Multi-Agent Orchestration** -- A manager agent dynamically creates and coordinates specialized sub-agents using Google ADK's `Runner` and `Agent` primitives. Supports sequential and parallel workflows.
 - **Dual API** -- FastAPI (REST/SSE) for web clients alongside a gRPC server for high-performance protobuf-based streaming.
 - **RAG Pipeline** -- Similarity search via Azure AI Search with hybrid (vector + keyword) and multilingual search support.
-- **Agent Tools** -- Search (document/web via Linkup), calculator, Python code interpreter (sandboxed), Snowflake SQL, DataViz charts, FormViz forms, Excel (MCP), HTML diagram generation.
+- **Agent Tools** -- Search (document/web via Linkup), calculator, Snowflake SQL, DataViz charts, FormViz forms, Excel (MCP), HTML diagram generation.
 - **Agent Memory** -- Persistent agent memory via [mem0](https://github.com/mem0ai/mem0) backed by Azure AI Search.
 - **Playbook Execution** -- Multi-step playbook workflows with per-step streaming.
 - **Attribute Extraction** -- Extract structured data from documents asynchronously with webhook delivery. Supports batch processing via Celery.
@@ -96,7 +96,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
         ├── playbook_dir/           # Playbook step & full playbook execution
         └── tools/
             ├── search/             # Search toolkit, web search
-            ├── utilities/          # Calculator, code interpreter, plan generator, ESG, Neo4j
+            ├── utilities/          # Calculator, plan generator, ESG, Neo4j
             └── infrastructure/     # Tool descriptions & common helpers
 ```
 
@@ -308,7 +308,7 @@ message Agent {
     string name = 2;
     string description = 3;
     string prompt = 4;
-    repeated Tool tools = 5;                 // Tools: search, calculator, web_search, code_interpreter, etc.
+    repeated Tool tools = 5;                 // Tools: search, calculator, web_search, run_code, etc.
     repeated WorkspaceContext brain_context = 6;  // Agent-specific document workspaces
     Chatbot chatbot = 7;                     // LLM model config
     AgentParams agent_params = 8;            // Extra params (max_tokens, temperature, etc.)

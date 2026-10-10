@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
-import { conversations, conversationExecutions, messages, rootBackgroundJobs, rootBackgroundEvents, rootExecutions } from '../../../postgres/schema';
+import { agents, catalogAgentTypes, conversations, conversationExecutions, messages, rootBackgroundJobs, rootBackgroundEvents, rootExecutions } from '../../../postgres/schema';
 import { PostgresRootWorkStore } from './postgres-root-work.store';
 import { RootFollowupStore } from './root-followup.store';
 import { newStopRequestId, type RootNativeState } from '../../root-work/root-work.types';
@@ -21,6 +21,8 @@ import { RootBackgroundEventStore } from './root-background-event.store';
 import { RootBackgroundJobStore } from './root-background-job.store';
 import { RootBackgroundDriverService } from '../../root-work/root-background-driver.service';
 import { startNativeQualificationHost } from '../../../postgres/testing/native-qualification-host';
+
+jest.mock('../../../logger/logger.service', () => ({ ...jest.requireActual('../../../logger/logger.service'), logDomainEvent: jest.fn() }));
 
 describeIntegration('sealed synthesis writer and atomic publication', () => {
   const database = makeTestDb();
@@ -45,7 +47,11 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
         rootContext: { ...state.rootContext, selected_agent_id: actorId },
         scope: { ...state.scope, executionId: childId, parentExecutionId: rootId, role: 'library_worker', depth: 1 } } });
   });
-  afterEach(async () => { await database.db.delete(conversations).where(eq(conversations.id, conversationId)); });
+  afterEach(async () => {
+    await database.db.delete(conversations).where(eq(conversations.id, conversationId));
+    await database.db.delete(agents).where(eq(agents.id, actorId));
+    await database.db.delete(catalogAgentTypes).where(eq(catalogAgentTypes.id, actorId));
+  });
   afterAll(async () => { await database.close(); });
 
   async function seal(childStatus: 'completed' | 'failed' | 'outcome_unknown' = 'completed', evidence: RegisterEvidenceInput[] = []) {
@@ -71,29 +77,83 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       citationRefs: [], artifactRefs: [], safeError: null }, [], grant);
   }
 
+  async function legacyWriter(execution: typeof rootExecutions.$inferSelect) {
+    const nativeState = (execution.resultPayload as any).nativeState;
+    await database.db.insert(conversationExecutions).values({ id: execution.id, conversationId, userId: actorId,
+      messageId: nativeState.followup.publicationMessageId, ownerReplicaId: 'root-followup',
+      expiresAt: new Date(Date.now() + 60000) });
+  }
+
+  it('releases an old synthesis reservation and reuses it for one publication after a user turn', async () => {
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    await legacyWriter(reserved);
+    await followups.releaseLegacyWriters();
+    const foregroundId = id();
+    await database.db.insert(conversationExecutions).values({ id: foregroundId, conversationId, userId: actorId,
+      messageId: id(), expiresAt: new Date(Date.now() + 60000) });
+    await nativeComplete(reserved.id);
+    expect(await followups.publish(reserved.id, actorId, sealed.digest)).toBeNull();
+    const [foreground] = await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.id, foregroundId));
+    expect(foreground.status).toBe('running');
+    await database.db.update(conversationExecutions).set({ status: 'completed' }).where(eq(conversationExecutions.id, foregroundId));
+    const publication = (await followups.publish(reserved.id, actorId, sealed.digest))!;
+    expect(publication.isComplete).toBe(true);
+    expect((await followups.publish(reserved.id, actorId, sealed.digest))!.id).toBe(publication.id);
+  });
+
+  it('cancels a legacy followup reservation without leaving the Conversation writer occupied', async () => {
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    await legacyWriter(reserved);
+    const jobs = new RootBackgroundJobStore(database.db);
+    expect(await jobs.cancel(conversationId, actorId, reserved.id, 0)).toMatchObject({ status: 'cancelled' });
+    const [writer] = await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.id, reserved.id));
+    expect(writer.status).toBe('cancelled');
+    await database.db.insert(conversationExecutions).values({ id: id(), conversationId, userId: actorId,
+      messageId: id(), expiresAt: new Date(Date.now() + 60000) });
+    expect(await followups.publish(reserved.id, actorId, sealed.digest)).toBeNull();
+  });
+
   it('does not synthesize fast child completion before the scheduling seal or an unknown child outcome', async () => {
     expect(await followups.reserve(rootId, actorId, 'missing')).toBeNull();
     const sealed = await seal('outcome_unknown');
     expect(await followups.reserve(rootId, actorId, sealed.digest)).toBeNull();
   });
-  it('reserves exactly one shared writer/job/message identity across replicas for a partial failure', async () => {
+  it('reserves one synthesis job across replicas without occupying the Conversation writer', async () => {
     const sealed = await seal('failed');
     const rows = await Promise.all([followups.reserve(rootId, actorId, sealed.digest),
       new RootFollowupStore(database.db).reserve(rootId, actorId, sealed.digest)]);
     expect(rows[0]!.id).toBe(rows[1]!.id);
     const writer = await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.conversationId, conversationId));
-    expect(writer).toHaveLength(1);
+    expect(writer).toHaveLength(0);
     expect(await database.db.select().from(rootBackgroundJobs).where(eq(rootBackgroundJobs.conversationId, conversationId))).toHaveLength(1);
     expect(await database.db.select().from(messages).where(eq(messages.conversationId, conversationId))).toHaveLength(0);
   });
-  it('retains pending ordinary-turn priority before claiming the writer slot', async () => {
+  it('synthesizes alongside a user turn and defers publication until that turn finishes', async () => {
     const sealed = await seal(); const messageId = id();
     await database.db.insert(messages).values({ id: messageId, conversationId, senderId: actorId,
       conversationType: 'ai', isStreaming: true, isComplete: false });
-    expect(await followups.reserve(rootId, actorId, sealed.digest)).toBeNull();
+    const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    expect(reserved).not.toBeNull();
+    await nativeComplete(reserved.id);
+    expect(await followups.publish(reserved.id, actorId, sealed.digest)).toBeNull();
     await database.db.update(messages).set({ isComplete: true, isStreaming: false }).where(eq(messages.id, messageId));
-    expect(await followups.reserve(rootId, actorId, sealed.digest)).not.toBeNull();
+    expect(await followups.publish(reserved.id, actorId, sealed.digest)).not.toBeNull();
   });
+  it('lets a foreground writer run while synthesis prepares and publishes once after it releases', async () => {
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const foregroundId = id();
+    await database.db.insert(conversationExecutions).values({ id: foregroundId, conversationId, userId: actorId,
+      messageId: id(), expiresAt: new Date(Date.now() + 60000) });
+    const grant = await nativeClaim(reserved.id);
+    expect(await followups.readResult(grant, childId, 0)).toMatchObject({ text: 'Child result' });
+    await nativeComplete(reserved.id);
+    expect(await followups.publish(reserved.id, actorId, sealed.digest)).toBeNull();
+    await database.db.update(conversationExecutions).set({ status: 'completed' }).where(eq(conversationExecutions.id, foregroundId));
+    const publication = (await followups.publish(reserved.id, actorId, sealed.digest))!;
+    expect(publication.isComplete).toBe(true);
+    expect((await followups.publish(reserved.id, actorId, sealed.digest))!.id).toBe(publication.id);
+  });
+
   it('recovers native completion before publication and atomically publishes one message and one outbox event', async () => {
     const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
     expect(await nativeComplete(reserved.id)).not.toBeNull();
@@ -104,6 +164,44 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     expect(await database.db.select().from(rootBackgroundEvents).where(eq(rootBackgroundEvents.executionId, reserved.id))).toHaveLength(1);
     const [conversation] = await database.db.select().from(conversations).where(eq(conversations.id, conversationId));
     expect(conversation.messageCount).toBe(1);
+  });
+  it('publishes the Root identity and actual synthesis model, ignoring sibling usage', async () => {
+    await database.db.insert(catalogAgentTypes).values({ id: actorId, name: actorId, slug: actorId });
+    await database.db.insert(agents).values({ id: actorId, name: 'Pinned Root', role: 'Assistant',
+      agentTypeId: actorId, createdBy: actorId });
+    await database.db.update(conversations).set({ rootAgentId: actorId }).where(eq(conversations.id, conversationId));
+    await database.db.update(rootExecutions).set({ rootAgentId: actorId }).where(eq(rootExecutions.id, rootId));
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    await nativeComplete(reserved.id);
+    await database.db.insert(rootBackgroundJobs).values({ executionId: childId, parentExecutionId: rootId,
+      conversationId, actorId, conversationEpoch: 0, requestDigest: 'b'.repeat(64), status: 'completed',
+      maxAttempts: 1, deadline: new Date(Date.now() + 60000), nativeSessionId: `fixture_${childId}` });
+    for (const [executionId, model] of [[reserved.id, 'actual-synthesis-model'], [childId, 'worker-model']]) {
+      await database.db.insert(rootBackgroundEvents).values({ executionId, conversationId, actorId,
+        conversationEpoch: 0, eventId: id(), payloadDigest: 'a'.repeat(64),
+        payload: { kind: 'usage', usage: { model, inputTokens: 1, outputTokens: 2 } } });
+    }
+    const published = (await followups.publish(reserved.id, actorId, sealed.digest))!;
+    expect(published.agentIds).toEqual([actorId]);
+    expect(published.modelId).toBe('actual-synthesis-model');
+    expect(published.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'agentActivity', data: expect.objectContaining({ actorId, actorName: 'Pinned Root' }) }),
+      expect.objectContaining({ type: 'text', data: expect.objectContaining({ actorId }) }),
+    ]));
+  });
+  it('marks canonical long results as previews and exposes every remaining page', async () => {
+    const fullText = 'a'.repeat(8000) + 'b'.repeat(8000) + 'FINAL CONCLUSION';
+    await work.completeExecution(childId, 'completed', { executionId: childId, producerAgentId: actorId,
+      producerRole: 'library_worker', status: 'completed', text: fullText.slice(0, 8000), fullText,
+      citationRefs: [], artifactRefs: [], safeError: null });
+    const root = await work.completeExecution(rootId, 'completed', null);
+    const sealed = root!.resultPayload!.nativeState!.schedulingSeal!;
+    const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const packet = JSON.parse((reserved.resultPayload as any).nativeState.admittedRequest.task);
+    expect(packet.results[0]).toMatchObject({ text: 'a'.repeat(8000), textTruncated: true, nextOffset: 8000 });
+    const grant = await nativeClaim(reserved.id);
+    expect(await followups.readResult(grant, childId, 8000)).toMatchObject({ text: 'b'.repeat(8000), nextOffset: 16000 });
+    expect(await followups.readResult(grant, childId, 16000)).toMatchObject({ text: 'FINAL CONCLUSION', nextOffset: null });
   });
   it('retains original sibling evidence IDs while assigning deterministic display aliases and no private locations', async () => {
     const secondId = id();
@@ -148,15 +246,16 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     expect(await database.db.select().from(rootBackgroundEvents).where(eq(rootBackgroundEvents.executionId, reserved.id))).toHaveLength(0);
   });
 
-  it('reads only sealed producer pages while retaining live writer and native ownership', async () => {
+  it('reads sealed producer pages without reserving a writer and rejects revoked native ownership', async () => {
     const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
     const grant = await nativeClaim(reserved.id);
     expect(await followups.readResult(grant, childId, 0)).toMatchObject({ executionId: childId,
       text: 'Child result', nextOffset: null, evidence: [] });
     await expect(followups.readResult(grant, id(), 0)).rejects.toThrow('sealed manifest');
-    await database.db.update(conversationExecutions).set({ status: 'cancelled' })
-      .where(eq(conversationExecutions.id, reserved.id));
-    await expect(followups.readResult(grant, childId, 0)).rejects.toThrow('writer authority');
+    expect(await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.id, reserved.id))).toHaveLength(0);
+    await database.db.update(rootBackgroundJobs).set({ status: 'cancelled', fence: 2 })
+      .where(eq(rootBackgroundJobs.executionId, reserved.id));
+    await expect(followups.readResult(grant, childId, 0)).rejects.toThrow('owner, fence');
   });
 
   it('never starts synthesis beyond the original work-group deadline', async () => {
@@ -221,8 +320,8 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       expect(await (await postEvent()).json()).toEqual(acknowledgement);
       expect(await database.db.select().from(rootBackgroundEvents)
         .where(eq(rootBackgroundEvents.executionId, reserved.id))).toHaveLength(1);
-      await database.db.update(conversationExecutions).set({ status: 'cancelled' })
-        .where(eq(conversationExecutions.id, reserved.id));
+      await database.db.update(rootBackgroundJobs).set({ status: 'cancelled', fence: 2 })
+        .where(eq(rootBackgroundJobs.executionId, reserved.id));
       const revoked = await post(body);
       expect(revoked.status).toBe(500);
       expect(await revoked.text()).not.toContain('Child result');
@@ -230,13 +329,13 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     } finally { await app.close(); }
   });
 
-  it('lets Stop suppress unpublished synthesis and release its writer for the next request', async () => {
+  it('lets Stop suppress unpublished synthesis while leaving the writer available for the next request', async () => {
     const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
     await nativeComplete(reserved.id);
     await work.stopRootWork({ conversationId, actorId, expectedEpoch: 0, stopRequestId: newStopRequestId() });
     expect(await followups.publish(reserved.id, actorId, sealed.digest)).toBeNull();
-    const [writer] = await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.id, reserved.id));
-    expect(writer.status).toBe('cancelled');
+    const writers = await database.db.select().from(conversationExecutions).where(eq(conversationExecutions.id, reserved.id));
+    expect(writers).toHaveLength(0);
     await database.db.insert(conversationExecutions).values({ id: id(), conversationId, userId: actorId,
       messageId: id(), expiresAt: new Date(Date.now() + 60000) });
   });

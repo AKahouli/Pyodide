@@ -16,7 +16,7 @@ from src.logger.logging import get_logger
 from src.config.settings import get_settings
 
 from src.smart_rag.tools import build_tree
-from src.smart_rag.tools.utilities import calculator, python_interpreter
+from src.smart_rag.tools.utilities import calculator
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names, normalize_tools
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
@@ -797,35 +797,6 @@ def create_search_agent_with_tools(
     if "calculator" in tools:
         agent.tools.append(calculator)
 
-    # Add custom python_interpreter if Code Interpreter tool is present
-    if "code interpreter" in tools:
-        try:
-            # 1. Get full brain docs from agent_config
-            raw_docs = agent_config.get("brain_documents", [])
-
-            # 2. Reduce them to only what the backend expects
-            minimal_docs = MCPHelper.extract_minimal_fields(raw_docs)
-
-            # 3. Store params on agent for session state injection (not on the global function)
-            _code_interpreter_state = {
-                "_code_interpreter_brain_docs": minimal_docs,
-                "_code_interpreter_session_id": config.session_id,
-                "_code_interpreter_brain_id": config.brain_ids[0]
-                if config.brain_ids
-                else None,
-                "_code_interpreter_user_id": config.user_id,
-            }
-            agent._code_interpreter_state = _code_interpreter_state
-
-            # 4. Register tool
-            agent.tools.append(python_interpreter)
-            _helper_logger.info(
-                "Added python_interpreter with brain_docs, session_id, brain_id, and user_id (params will be passed via session state)"
-            )
-
-        except Exception as e:
-            _helper_logger.exception("Error adding python_interpreter to search agent: %s", e)
-
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)
 
@@ -929,7 +900,6 @@ def create_standard_agent_with_tools(
         html_design=True if "html_design" in tools else False,
         generate_web_preview=preview_tool_config is not None,
         search_tool=True if "search" in tools else False,
-        code_interpreter_tool=True if "code interpreter" in tools else False,
         formviz_tool=True if "formviz" in tools else False,
         skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
         doc_tree=doc_tree,

@@ -8,13 +8,24 @@ from src.root_runtime.contracts import ExecutionRole
 from src.root_runtime.delegate_resolver import _post
 from src.root_runtime.leaf_tools import register_tool_execution_kind
 from src.root_runtime.dispatcher import child_execution_id
+from yellowmind_observability import get_logger
+
+logger = get_logger(__name__)
 
 BACKGROUND_INSTRUCTION = """
 <root_background>
 start_background_task submits one authorized specialist or restricted temporary
-worker to durable background execution. Use only when background work is useful
-to the user's request. Its queued/running acknowledgement is not completed work;
-report the job reference honestly and retrieve committed results before synthesis.
+worker to durable background execution. Prefer it for substantial independent
+research, analysis or batch work so the user can keep chatting. Answer short
+questions directly. After a confirmed queued/running acknowledgement, explain
+what started and finish this turn promptly; do not wait or repeatedly poll.
+An acknowledgement is not completed work. Retrieve committed results before
+describing findings. Use list_background_tasks to discover work from earlier
+turns, get_background_task_status for progress and get_background_task_result
+for completed output. Never assume later chat messages changed an existing task.
+For explicit changes, cancel the named task and submit the revised task separately.
+Cancellation prevents further owned work; already started external effects may
+need reconciliation. Never automatically repeat uncertain external effects.
 Background workers cannot delegate, spawn, fan out or create nested background work.
 </root_background>
 """
@@ -37,6 +48,7 @@ def build_background_dispatcher(root_context, root_scope):
         call_id = tool_context.function_call_id
         if not call_id or worker_kind not in ('specialist', 'temporary') or worker_kind == 'specialist' and agent_id not in catalog or worker_kind == 'temporary' and (
             agent_id or root_context.get('temporary_workers_enabled') is not True):
+            logger.warning('tool.call.failed', tool_name='start_background_task', operation='authorize', run_id=root_scope.execution_id)
             return {'status': 'failed', 'safe_error': 'Background worker is not authorized.'}
         operation = 'spawn_temporary_worker' if worker_kind == 'temporary' else 'delegate_to_agent'
         prefix = f'{tool_context.branch}.' if tool_context.branch else ''
@@ -50,8 +62,11 @@ def build_background_dispatcher(root_context, root_scope):
             if result.get('executionId') != execution_id or result.get('resultRef') != execution_id or result.get('status') not in (
                 'queued', 'running', 'waiting', 'completed', 'failed', 'cancelled', 'outcome_unknown'):
                 raise ValueError('Invalid durable background acknowledgement')
+            logger.info('tool.call.completed', tool_name='start_background_task', operation='submit', run_id=root_scope.execution_id)
             return {'status': result['status'], 'execution_id': result['executionId'], 'result_ref': result['resultRef']}
-        except Exception:
+        except Exception as error:
+            logger.error('tool.call.failed', tool_name='start_background_task', operation='submit',
+                run_id=root_scope.execution_id, error=error)
             return {'status': 'outcome_unknown', 'execution_id': execution_id, 'result_ref': execution_id,
                 'safe_error': 'Submission could not be confirmed. Inspect this job before submitting another task.'}
 
@@ -68,14 +83,18 @@ def build_background_status_tool(root_context, root_scope):
     async def get_background_task_status(execution_id: str):
         """Inspect the current owned job before retrying an uncertain submission."""
         if not re.fullmatch(r'[0-9a-f]{24}', execution_id):
+            logger.warning('tool.call.failed', tool_name='get_background_task_status', operation='validate_reference', run_id=root_scope.execution_id)
             return {'status': 'outcome_unknown', 'safe_error': 'Invalid background job reference.'}
         try:
             result = await _post(root_scope, f'background-tasks/{execution_id}/status', {})
             if result.get('executionId') != execution_id or result.get('resultRef') != execution_id or result.get('status') not in (
                 'queued', 'running', 'waiting', 'completed', 'failed', 'cancelled', 'outcome_unknown'):
                 raise ValueError('Invalid background job status')
+            logger.info('tool.call.completed', tool_name='get_background_task_status', operation='status', run_id=root_scope.execution_id)
             return {'status': result['status'], 'execution_id': execution_id, 'result_ref': execution_id}
-        except Exception:
+        except Exception as error:
+            logger.error('tool.call.failed', tool_name='get_background_task_status', operation='status',
+                run_id=root_scope.execution_id, error=error)
             return {'status': 'outcome_unknown', 'execution_id': execution_id,
                 'safe_error': 'Current job status could not be verified; do not assume submission failed.'}
 

@@ -3,10 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootWorkPanel } from './RootWorkPanel';
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), events: vi.fn(), stop: vi.fn(), user: { id: 'owner' },
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), events: vi.fn(), stop: vi.fn(), cancel: vi.fn(), user: { id: 'owner' },
   stream: { streamingConversationId: null as string | null, streamingMessageId: null as string | null,
     messages: [] as Array<{ id: string }>, fetchMessages: vi.fn() } }));
-vi.mock('../api', () => ({ fetchRootWork: mocks.fetch, fetchRootWorkEvents: mocks.events, stopRootWork: mocks.stop }));
+vi.mock('../api', () => ({ fetchRootWork: mocks.fetch, fetchRootWorkEvents: mocks.events, stopRootWork: mocks.stop,
+  cancelRootBackgroundJob: mocks.cancel }));
 vi.mock('../store', () => ({ useConversationStore: Object.assign(
   (selector: (state: typeof mocks.stream) => unknown) => selector(mocks.stream), { getState: () => mocks.stream }) }));
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: mocks.user }) }));
@@ -78,6 +79,32 @@ describe('Durable background work controls', () => {
     render(<RootWorkPanel conversationId='conversation' creatorId='owner' />);
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('stops only the selected task and retains the foreground reply and sibling task', async () => {
+    mocks.stream.streamingConversationId = 'conversation'; mocks.stream.streamingMessageId = 'foreground';
+    const jobs = [{ ...snapshot.jobs[0], task: 'Research companies', role: 'library_worker', status: 'running' },
+      { ...snapshot.jobs[0], executionId: 'sibling', task: 'Summarize notes', status: 'running' }];
+    mocks.fetch.mockResolvedValueOnce({ ...snapshot, jobs }).mockResolvedValue({ ...snapshot,
+      jobs: [{ ...jobs[0], status: 'cancelled' }, jobs[1]] });
+    mocks.cancel.mockResolvedValue({ executionId: 'job', status: 'cancelled', cancellationRequested: true });
+    render(<RootWorkPanel conversationId='conversation' creatorId='owner' />);
+    await userEvent.click((await screen.findAllByRole('button', { name: 'rootWork.stopTaskLabel' }))[0]);
+    expect(mocks.cancel).toHaveBeenCalledWith('conversation', 'job', { expectedEpoch: 4 });
+    expect(mocks.stop).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Research companies: rootWork.status.cancelled/)).toBeVisible();
+    expect(screen.getByText(/Summarize notes: rootWork.status.running/)).toBeVisible();
+    expect(mocks.stream.streamingMessageId).toBe('foreground');
+    expect(screen.queryByText('rootWork.canContinue')).not.toBeInTheDocument();
+  });
+
+  it('shows a task cancellation error without removing or retrying the task', async () => {
+    mocks.cancel.mockRejectedValueOnce(new Error('offline'));
+    render(<RootWorkPanel conversationId='conversation' creatorId='owner' />);
+    await userEvent.click(await screen.findByRole('button', { name: 'rootWork.stopTaskLabel' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('offline');
+    expect(mocks.cancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/rootWork.status.outcome_unknown/)).toBeVisible();
   });
 
   it('recovers failed work from a reload snapshot without replay events or a Stop action', async () => {

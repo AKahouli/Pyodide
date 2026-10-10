@@ -23,8 +23,7 @@ process trusts nothing but the script content itself:
 # ponytail: the spawned child inherits os.environ, so an unknown
 # interpreter-level escape (not a name-graph one — those are closed by the
 # facade) could read env secrets. Upgrade path: env-scrubbed worker, or
-# delegate execution to the external sandbox runtimes
-# (RUN_CODE_RUNTIME_URL / CODE_INTERPRETER_BACKEND_URL).
+# delegate execution to the external sandbox runtime (RUN_CODE_RUNTIME_URL).
 """
 
 from __future__ import annotations

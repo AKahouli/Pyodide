@@ -302,6 +302,7 @@ export const API_ENDPOINTS = {
     rootBackgroundInput: (id: string, executionId: string) => `/conversations/${id}/root-inputs/background/${executionId}`,
     rootWork: (id: string) => `/conversations/${id}/root-work`,
     rootWorkStop: (id: string) => `/conversations/${id}/root-work/stop`,
+    rootWorkCancelJob: (id: string, executionId: string) => `/conversations/${id}/root-work/jobs/${executionId}/cancel`,
     rootWorkEvents: (id: string) => `/conversations/${id}/root-work/events`,
     rootResult: (id: string, executionId: string) => `/conversations/${id}/root-results/${executionId}`,
     rootEvidence: (id: string, executionId: string, evidenceId: string) => `/conversations/${id}/root-results/${executionId}/evidence/${evidenceId}`,

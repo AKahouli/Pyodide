@@ -38,12 +38,10 @@ class TestTeamOrchestratorExtended:
         team.agent_repository.get_agent_id_by_name.return_value = "agent-1"
         assert team.get_agent_id_by_name("SearchAgent") == "agent-1"
 
-    def test_has_search_and_code_interpreter_flags(self):
+    def test_has_search_agents_flag(self):
         team = _orchestrator()
         team.agent_repository.has_search_agents.return_value = True
-        team.agent_repository.has_code_interpreter.return_value = False
         assert team.has_search_agents() is True
-        assert team.has_code_interpreter() is False
 
     def test_get_document_tree_info(self):
         team = _orchestrator()

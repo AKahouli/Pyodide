@@ -707,7 +707,7 @@ export interface RootWorkSnapshot {
   stopRequestId: string;
   jobs: Array<{ executionId: string; parentExecutionId: string; role: 'library_worker' | 'temporary_worker' | 'fanout_driver' | 'followup';
     status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled';
-    createdAt: string; deadline: string; publicationMessageId?: string }>;
+    createdAt: string; deadline: string; task?: string; publicationMessageId?: string }>;
 }
 
 export interface ConversationClientContextV1 {

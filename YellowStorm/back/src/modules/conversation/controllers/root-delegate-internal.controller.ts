@@ -15,6 +15,7 @@ import { RootBackgroundLifecycleService } from '../root-work/root-background-lif
 import { RootBackgroundSubmissionService } from '../root-work/root-background-submission.service';
 import { RootBackgroundSubmissionDto } from '../dto/root-background-submission.dto';
 import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
+import { RootJobResultDto } from '../dto/root-work-public.dto';
 
 @ApiTags('Root work internal')
 @Public()
@@ -38,6 +39,22 @@ export class RootDelegateInternalController {
   @Post(':executionId/background-tasks/:childId/status')
   statusBackground(@Param('executionId') executionId: string, @Param('childId') childId: string) {
     return this.backgroundSubmission.status(executionId, childId);
+  }
+
+  @Post(':executionId/background-tasks')
+  backgroundTasks(@Param('executionId') executionId: string) {
+    return this.backgroundSubmission.list(executionId);
+  }
+
+  @Post(':executionId/background-tasks/:childId/result')
+  backgroundResult(@Param('executionId') executionId: string, @Param('childId') childId: string,
+    @Body() request: RootJobResultDto) {
+    return this.backgroundSubmission.result(executionId, childId, request.offset);
+  }
+
+  @Post(':executionId/background-tasks/:childId/cancel')
+  cancelBackgroundTask(@Param('executionId') executionId: string, @Param('childId') childId: string) {
+    return this.backgroundSubmission.cancel(executionId, childId);
   }
 
   @Post(':executionId/background-definition')

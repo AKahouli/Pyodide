@@ -6,7 +6,8 @@ describe('Creator-owned Root work controls', () => {
     const conversation = { createdBy: 'owner', rootAgentId: 'root', rootWorkEpoch: 4 };
     const conversations = { getConversationDocument: jest.fn().mockResolvedValue(conversation) };
     const work = { stopRootWork: jest.fn().mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 1 }) };
-    const jobs = { publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
+    const jobs = { cancel: jest.fn().mockResolvedValue({ executionId: 'job', status: 'cancelled' }),
+      publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
       { executionId: 'job', parentExecutionId: 'parent', status: 'running', role: 'library_worker',
         createdAt: 'created', deadline: 'deadline', nativeState: { requestProfile: { private: true }, pendingInputs: [] } },
     ] }) };
@@ -42,6 +43,21 @@ describe('Creator-owned Root work controls', () => {
     await expect(h.service.stop('conversation', actor, { expectedEpoch: 4, stopRequestId: newStopRequestId() })).rejects.toThrow('unavailable');
     expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
     expect(h.work.stopRootWork).not.toHaveBeenCalled();
+  });
+
+  it('cancels one authorized job without applying a conversation barrier or stopping the foreground', async () => {
+    const h = fixture();
+    await h.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 });
+    expect(h.jobs.cancel).toHaveBeenCalledWith('conversation', 'owner', 'job', 4);
+    expect(h.work.stopRootWork).not.toHaveBeenCalled();
+    expect(h.stream.stopStream).not.toHaveBeenCalled();
+    await expect(h.service.cancel('conversation', 'member', 'job', { expectedEpoch: 4 })).rejects.toThrow('unavailable');
+    h.results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('revoked'));
+    await expect(h.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 })).rejects.toThrow('revoked');
+    expect(h.jobs.cancel).toHaveBeenCalledTimes(1);
+    const disabled = fixture(false);
+    await expect(disabled.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 })).rejects.toThrow('unavailable');
+    expect(disabled.jobs.cancel).not.toHaveBeenCalled();
   });
 
   it('commits Stop after foreground completion and does not require a live stream', async () => {

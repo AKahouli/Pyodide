@@ -364,7 +364,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
       return capability?.background_protocol_version === 1 && capability.background_ready === true
         && (!fanout || capability.background_fanout_protocol_version === 1 && capability.background_fanout_ready === true)
-        && (!followup || capability.background_followup_protocol_version === 1 && capability.background_followup_ready === true)
+        && (!followup || capability.background_followup_protocol_version === 2 && capability.background_followup_ready === true)
         && capability.control_database_fingerprint === await this.rootBackgroundJobs.controlInstance();
     } catch { return false; }
   }

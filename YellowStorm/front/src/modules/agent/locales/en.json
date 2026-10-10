@@ -529,7 +529,7 @@
       },
       "background": {
         "enabled": "Background tasks",
-        "enabledHint": "Durable background work that outlives the browser session (currently disabled platform-wide until qualified).",
+        "enabledHint": "Runs substantial work in the background so you can keep chatting after the agent acknowledges it. Requires a ready background runtime.",
         "maxOutstanding": "Max outstanding per conversation",
         "timeout": "Task timeout (seconds)",
         "maxAttempts": "Max safe attempts"

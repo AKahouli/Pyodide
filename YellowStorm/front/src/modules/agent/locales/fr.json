@@ -529,7 +529,7 @@
       },
       "background": {
         "enabled": "Tâches en arrière-plan",
-        "enabledHint": "Travail durable qui survit à la fermeture du navigateur (désactivé à l'échelle de la plateforme jusqu'à qualification).",
+        "enabledHint": "Exécute le travail long en arrière-plan pour continuer à discuter après la confirmation de l’agent. Nécessite un runtime prêt pour les tâches en arrière-plan.",
         "maxOutstanding": "Max en cours par conversation",
         "timeout": "Délai d'expiration (secondes)",
         "maxAttempts": "Max de tentatives sûres"

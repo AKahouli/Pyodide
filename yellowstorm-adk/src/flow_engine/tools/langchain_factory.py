@@ -39,11 +39,6 @@ from src.smart_rag.tools.utilities.run_code import (
     RUN_CODE_TOOL_DESCRIPTION,
     run_code_globally_enabled,
 )
-from src.smart_rag.tools.utilities.code_interpreter_payload import (
-    _extract_workspace_name_from_filepath,
-    _extract_workspace_name_hint,
-    build_code_interpreter_payload_context,
-)
 from src.smart_rag.tools.utilities.connector_tools import (
     apply_dynamic_workspace_headers,
     without_dynamic_workspace_headers,
@@ -516,13 +511,6 @@ class WebSearchInput(BaseModel):
     query: str = Field(description="The web search query.")
 
 
-class CodeInterpreterInput(BaseModel):
-    code: str = Field(description="Python 3 code to execute in an isolated sandbox.")
-    timeout_seconds: int = Field(
-        default=60, description="Maximum execution time in seconds (max 300)."
-    )
-
-
 class PlanGeneratorInput(BaseModel):
     title: str = Field(description="Title of the execution plan.")
     steps: str = Field(
@@ -700,22 +688,8 @@ def create_langchain_tools(
             tools.append(web_tool)
 
     # --- Code interpreter ---
-    if "code interpreter" in tool_names:
-        if not output_workspace_id:
-            raise ValueError("Code interpreter requires a default playbook workspace")
-        code_tool = _create_code_interpreter_tool(
-            agent_config,
-            workspace_names,
-            code_interpreter_files or brain_documents,
-            collector,
-            output_ports=output_ports,
-            documents_by_port=documents_by_port,
-            output_workspace_id=output_workspace_id,
-            workspace_context_mode=workspace_context_mode,
-            execution_id=execution_id,
-        )
-        if code_tool:
-            tools.append(code_tool)
+    # (removed: the CODE_INTERPRETER_BACKEND_URL tool was retired; the
+    # connector-based code-interpreter sandbox is unaffected)
 
     if "run_code" in tool_names and run_code_globally_enabled():
         run_id = runtime_id
@@ -880,6 +854,50 @@ def _schema_accepts_workspace_parameter(parameter_schema: Dict[str, Any]) -> boo
     return isinstance(properties, dict) and bool(_WORKSPACE_PARAMETER_NAMES.intersection(properties))
 
 
+def _normalize_path(filepath: str) -> str:
+    return str(filepath or "").strip().replace("\\", "/")
+
+
+def _split_segments(path: str) -> List[str]:
+    normalized = _normalize_path(path).strip("/")
+    if not normalized or "://" in normalized:
+        return []
+    return [segment for segment in normalized.split("/") if segment]
+
+
+def _extract_workspace_name_hint(path: str) -> str:
+    segments = _split_segments(path)
+    if not segments:
+        return ""
+    return segments[-1]
+
+
+def _extract_workspace_name_from_filepath(
+    filepath: str,
+    workspace_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+) -> str:
+    normalized = _normalize_path(filepath)
+    if "://" in normalized or "/" not in normalized:
+        return ""
+    directory, _ = normalized.rsplit("/", 1)
+    segments = [segment for segment in directory.strip("/").split("/") if segment]
+    if not segments:
+        return ""
+
+    normalized_owner_user_id = str(owner_user_id or "").strip().strip("/")
+    normalized_workspace_id = str(workspace_id or "").strip()
+    if (
+        normalized_owner_user_id
+        and len(segments) >= 2
+        and segments[0] == normalized_owner_user_id
+    ):
+        return segments[1]
+    if normalized_workspace_id and segments[0] == normalized_workspace_id:
+        return segments[0]
+    return segments[0]
+
+
 def _collect_workspace_paths(
     workspace_context: Optional[list],
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
@@ -1006,136 +1024,6 @@ def _create_activate_skill_tool(
         description="Load the full instructions for a configured skill by name before completing a matching task.",
         args_schema=ActivateSkillInput,
     )
-
-
-def _format_available_filenames(brain_documents: list, max_files: int = 12) -> str:
-    """Return a short human-readable list of available filenames."""
-    filenames = []
-    seen = set()
-    for doc in brain_documents or []:
-        filename = str(doc.get("filename", "")).strip()
-        if filename and filename not in seen:
-            filenames.append(filename)
-            seen.add(filename)
-
-    if not filenames:
-        return ""
-
-    visible = filenames[:max_files]
-    suffix = ""
-    if len(filenames) > max_files:
-        suffix = f" (+{len(filenames) - max_files} more)"
-    return ", ".join(visible) + suffix
-
-
-def _is_sandbox_local_path(path: str) -> bool:
-    normalized = str(path or "").strip().lower()
-    return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
-
-
-def _select_generated_artifact_output_port(
-    output_ports: Optional[List[Dict[str, Any]]],
-    filename: str,
-    inferred_kind: str = "",
-) -> Optional[Dict[str, Any]]:
-    """Select the declared file-capable output port for a generated file.
-
-    When only one non-text/code port exists, that port wins even if the file
-    extension suggests a different kind. This keeps tool-generated files routed
-    to the task's only file output instead of failing on filename inference.
-    """
-    ports = [
-        port
-        for port in (output_ports or [])
-        if str(port.get("artifact_kind") or "").strip() not in {"text", "code"}
-    ]
-    if len(ports) == 1:
-        return ports[0]
-    selected_port = semantic_match_output_port(
-        ports,
-        preferred_kind=inferred_kind,
-        filename=filename,
-        label=f"generated artifact '{filename}'",
-        allow_single_compatible=True,
-    )
-    if selected_port is not None:
-        return selected_port
-
-    # Keep a deterministic fallback for tool-generated files when multiple
-    # file-capable ports exist but semantic cues are weak.
-    return next(
-        (port for port in ports if str(port.get("id") or "").strip() == "default"),
-        None,
-    )
-
-
-def _build_code_interpreter_file_list(
-    code_interpreter_files: Optional[List[Dict[str, str]]],
-) -> List[Dict[str, str]]:
-    deduped_by_filename: Dict[str, Dict[str, str]] = {}
-
-    for doc in code_interpreter_files or []:
-        filepath = str(doc.get("filepath", "")).strip()
-        filename = str(doc.get("filename", "")).strip()
-        workspace_id = str(doc.get("workspace_id", "")).strip()
-        workspace_name = str(doc.get("workspace_name", "")).strip()
-        if not filepath or not filename:
-            continue
-
-        existing = deduped_by_filename.get(filename)
-        current_is_local = _is_sandbox_local_path(filepath)
-        existing_is_local = (
-            _is_sandbox_local_path(existing.get("filepath", "")) if existing else False
-        )
-
-        if existing is None or (existing_is_local and not current_is_local):
-            deduped_by_filename[filename] = {
-                "filepath": filepath,
-                "filename": filename,
-                "workspace_id": workspace_id,
-                "workspace_name": workspace_name,
-            }
-
-    return [
-        entry
-        for entry in deduped_by_filename.values()
-        if not _is_sandbox_local_path(entry.get("filepath", ""))
-    ]
-
-
-def _resolve_code_interpreter_workspace_name(
-    files: List[Dict[str, str]],
-    user_id: Optional[str],
-) -> str:
-    workspace_names = {
-        _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
-        or _extract_workspace_name_from_filepath(
-            str(doc.get("filepath", "")),
-            workspace_id=str(doc.get("workspace_id", "")).strip(),
-            owner_user_id=user_id,
-        )
-        for doc in files
-        if (
-            str(doc.get("workspace_name", "")).strip()
-            or str(doc.get("filepath", "")).strip()
-        )
-    }
-    workspace_names.discard("")
-    if len(workspace_names) == 1:
-        return next(iter(workspace_names))
-    return ""
-
-
-def _normalize_code_interpreter_file_names(file_names: List[str]) -> List[str]:
-    normalized_file_names: List[str] = []
-    seen_file_names = set()
-    for file_name in file_names:
-        normalized_file_name = str(file_name or "").replace(" ", "_")
-        if not normalized_file_name or normalized_file_name in seen_file_names:
-            continue
-        normalized_file_names.append(normalized_file_name)
-        seen_file_names.add(normalized_file_name)
-    return normalized_file_names
 
 
 def _format_documents_by_port(
@@ -1430,241 +1318,6 @@ def _create_web_search_tool(
         func=None,
         coroutine=_web_search,
         args_schema=WebSearchInput,
-    )
-
-
-def _create_code_interpreter_tool(
-    agent_config: dict,
-    workspace_names: list,
-    code_interpreter_files: list,
-    collector: ToolResultCollector,
-    output_ports: Optional[List[Dict[str, Any]]] = None,
-    documents_by_port: Optional[Dict[str, List[str]]] = None,
-    output_workspace_id: str = "",
-    workspace_context_mode: str = "resolved_inputs_only",
-    execution_id: str = "",
-) -> Optional[StructuredTool]:
-    """Create a code interpreter LangChain tool.
-
-    Wraps the backend sandbox call directly, bypassing Google ADK ToolContext
-    by injecting session params from the agent config.
-    """
-    import asyncio
-    import base64
-    import json
-    import requests
-    from src.config.settings import get_settings
-
-    settings = get_settings()
-    backend_url = getattr(settings, "CODE_INTERPRETER_BACKEND_URL", None)
-    normalized_code_interpreter_files = _build_code_interpreter_file_list(
-        code_interpreter_files
-    )
-    port_scope_note = _format_documents_by_port(documents_by_port)
-
-    if not backend_url:
-        logger.warning("Code interpreter backend URL not configured, skipping tool")
-        return None
-
-    if not output_workspace_id:
-        logger.warning(
-            "Code interpreter output workspace not configured, skipping tool"
-        )
-        return None
-
-    # Extract session params from agent_params if available
-    agent_params = agent_config.get("agent_params") or {}
-    session_id = execution_id or agent_params.get("session_id")
-    user_id = agent_params.get("user_id")
-    file_workspace_ids = {
-        str(doc.get("workspace_id", "")).strip()
-        for doc in normalized_code_interpreter_files
-        if str(doc.get("workspace_id", "")).strip()
-    }
-    selected_input_workspace_id = None
-    if len(file_workspace_ids) == 1:
-        selected_input_workspace_id = next(iter(file_workspace_ids))
-    resolved_workspace_name = _resolve_code_interpreter_workspace_name(
-        normalized_code_interpreter_files,
-        user_id,
-    )
-    workspace_name, file_names, skipped_file_names, mixed_workspace_file_names = (
-        build_code_interpreter_payload_context(
-            normalized_code_interpreter_files,
-            fallback_workspace_name=(
-                resolved_workspace_name
-                if normalized_code_interpreter_files
-                else output_workspace_id
-            ),
-            selected_workspace_id=selected_input_workspace_id,
-            owner_user_id=user_id,
-        )
-    )
-    file_names = _normalize_code_interpreter_file_names(file_names)
-    available_filenames = _format_available_filenames(
-        [{"filename": filename} for filename in file_names]
-    )
-    if mixed_workspace_file_names:
-        logger.warning(
-            "Rejecting code interpreter call with mixed-workspace files",
-            mixed_workspace_file_names=mixed_workspace_file_names,
-            selected_input_workspace_id=selected_input_workspace_id,
-        )
-    if skipped_file_names:
-        logger.warning(
-            "Dropping code interpreter files without enough workspace context",
-            skipped_file_names=skipped_file_names,
-            selected_workspace_name=workspace_name,
-        )
-
-    async def _run_code(code: str, timeout_seconds: int = 60) -> str:
-        timeout_seconds = min(timeout_seconds, 300)
-
-        if mixed_workspace_file_names and not file_names:
-            joined = ", ".join(mixed_workspace_file_names)
-            return (
-                "Error: Code interpreter cannot run with files from multiple workspaces. "
-                f"Conflicting files: {joined}"
-            )
-
-        if not workspace_name:
-            return (
-                "Error: Code interpreter requires at least one workspace/brain context"
-            )
-        if not user_id:
-            return "Error: Code interpreter requires a user_id in agent_params"
-        if not session_id:
-            return "Error: Code interpreter requires a session_id in agent_params"
-
-        try:
-
-            logger.info(
-                "playbook_code_interpreter_v2_request",
-                workspace_name=workspace_name,
-                filetype=type(file_names),
-                file_names=file_names,
-                input_file_count=len(normalized_code_interpreter_files),
-            )
-            response = await asyncio.to_thread(
-                requests.post,
-                f"{backend_url}/tool/python_interpreter_v2",
-                json={
-                    "user_id": user_id,
-                    "workspace_name": workspace_name,
-                    "session_id": session_id,
-                    "code": code,
-                    "timeout_seconds": timeout_seconds,
-                    "file_names": file_names,
-                },
-                timeout=timeout_seconds + 15,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "")
-
-            # Collect sandbox component
-            collector.add_component(
-                "sandbox",
-                {
-                    "code": code,
-                    "output": stdout,
-                    "error": stderr,
-                    "output_available": True,
-                },
-            )
-
-            # Collect artifact components for generated files
-            for gf in result.get("generated_files", []):
-                generated_filename = gf.get("filename", gf.get("name", ""))
-                generated_object_key = str(gf.get("object_key") or "").strip()
-                inferred_kind = (
-                    infer_artifact_kind(generated_filename) or "document"
-                )
-                selected_port = _select_generated_artifact_output_port(
-                    output_ports,
-                    generated_filename,
-                    inferred_kind,
-                )
-                artifact_data = {
-                    "file_path": generated_object_key
-                    or gf.get("azure_path")
-                    or gf.get("file_path")
-                    or "",
-                    "filename": generated_filename,
-                    "artifact_kind": str(
-                        (selected_port or {}).get("artifact_kind") or inferred_kind
-                    ).strip()
-                    or inferred_kind,
-                    "output_port_id": str(
-                        (selected_port or {}).get("id") or ""
-                    ).strip(),
-                }
-                if generated_object_key:
-                    artifact_data["object_key"] = generated_object_key
-                collector.add_component(
-                    "artifact",
-                    artifact_data,
-                )
-
-            # Build text response for the LLM
-            output = []
-            status = result.get("status", {})
-            if status.get("id") == 3:
-                output.append("Execution successful\n")
-            else:
-                output.append(f"Error: {status.get('description', 'Unknown')}\n")
-
-            if stdout:
-                output.append(f"```\n{stdout}\n```\n")
-            if stderr:
-                output.append(f"Errors:\n```\n{stderr}\n```\n")
-            if result.get("time"):
-                output.append(f"\nExecution time: {result['time']}s")
-
-            return "\n".join(output)
-
-        except requests.exceptions.Timeout:
-            return f"Error: Code execution timed out after {timeout_seconds} seconds"
-        except requests.exceptions.RequestException as e:
-            response = getattr(e, "response", None)
-            details = (
-                f" | backend body: {response.text[:500]}"
-                if response is not None and response.text
-                else ""
-            )
-            return f"Error: Failed to connect to sandbox backend: {e}{details}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    return StructuredTool(
-        name="python_interpreter",
-        description=(
-            "Execute Python 3 code in an isolated sandbox. "
-            "Use for data analysis, calculations, file processing, and visualization. "
-            "Workspace documents are mounted into the execution workspace, and generated files "
-            "(CSV, images, reports, PDFs) are automatically saved. "
-            "Do not ask the user to upload workspace documents again; use the files already available in the sandbox."
-            + (
-                f" Bound input-port document groups: {port_scope_note}."
-                if port_scope_note
-                else ""
-            )
-            + (
-                " Fallback workspace context is available."
-                if workspace_context_mode == "fallback_playbook"
-                else ""
-            )
-            + (
-                f" Available workspace files: {available_filenames}."
-                if available_filenames
-                else ""
-            )
-        ),
-        func=None,
-        coroutine=_run_code,
-        args_schema=CodeInterpreterInput,
     )
 
 

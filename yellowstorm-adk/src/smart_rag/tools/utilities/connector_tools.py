@@ -16,7 +16,6 @@ from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
 from src.smart_rag.tools.utilities.connector_citations import normalize_connector_citations, normalize_vectorstore_source
-from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
     DISPLAY_PURPOSE_DESCRIPTION,
     DISPLAY_PURPOSE_KEY,
@@ -1414,29 +1413,6 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                         'mime_type': doc.get('mimeType') or mime_type or '',
                         'size_bytes': doc.get('size', 0), 'availability': 'ready',
                     })
-
-                # Make the saved file available to code interpreter in this session.
-                if tool_context and doc:
-                    file_path = doc.get("filePath") or doc.get("azurePath") or ""
-                    saved_filename = doc.get("originalName") or filename
-                    if file_path and workspace_id:
-                        try:
-                            brain_docs = tool_context.state.get(_STATE_KEY_BRAIN_DOCS, [])
-                            existing_paths = {d.get("filepath") for d in brain_docs}
-                            if file_path not in existing_paths:
-                                brain_docs.append({
-                                    "filename": saved_filename,
-                                    "filepath": file_path,
-                                    "workspace_id": workspace_id,
-                                })
-                                tool_context.state[_STATE_KEY_BRAIN_DOCS] = brain_docs
-                                logger.info(
-                                    "save_file_to_workspace propagated file to brain_docs: "
-                                    "filename=%s, workspace_id=%s",
-                                    saved_filename, workspace_id,
-                                )
-                        except Exception as state_err:
-                            logger.warning("Failed to update brain_docs state: %s", state_err)
 
                 return (
                     f"File saved to workspace successfully. "

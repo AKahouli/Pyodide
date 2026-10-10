@@ -12,6 +12,9 @@ import { updateWorkerPermit } from './root-worker-permits';
 import { producerEvidence } from '../../root-work/root-producer-evidence';
 import { newStopRequestId, RootNativeState } from '../../root-work/root-work.types';
 import type { RegisterExecutionInput } from '../../root-work/root-work.store';
+import { logDomainEvent } from '../../../logger/logger.service';
+
+jest.mock('../../../logger/logger.service', () => ({ ...jest.requireActual('../../../logger/logger.service'), logDomainEvent: jest.fn() }));
 
 describeIntegration('background job owner/fence admission', () => {
   const database = makeTestDb();
@@ -85,6 +88,28 @@ describeIntegration('background job owner/fence admission', () => {
   const fanoutProposal = (actorId: string, call = 'fanout') => ({ version: 1, mode: 'background',
     nativeCallId: call, nativeCallBranch: `run_fanout@${call}`, target: { kind: 'library', agentId: actorId },
     items: [{ key: 'first', task: 'First' }, { key: 'second', task: 'Second' }] });
+
+  it('fences one running task without stopping its sibling or changing the conversation epoch', async () => {
+    const root = await fixture();
+    const target = await root.child(), sibling = await root.child();
+    await jobs.enqueue(target, digest); await jobs.enqueue(sibling, digest);
+    const claimed = (await claimedNative('cancel-owner', 30, { global: 4, perUser: 2 }))!;
+    expect(claimed.executionId).toBe(target);
+    await expect(jobs.cancel(root.conversationId, id(), target, 0)).rejects.toThrow('unavailable');
+    await expect(jobs.cancel(root.conversationId, root.actorId, target, 1)).rejects.toThrow('unavailable');
+    const result = await jobs.cancel(root.conversationId, root.actorId, target, 0);
+    expect(result).toMatchObject({ executionId: target, status: 'cancelled', cancellationRequested: true, affectedCount: 1 });
+    expect(logDomainEvent).toHaveBeenCalledWith('info', 'job.execution.cancelled', expect.objectContaining({
+      job_id: target, conversation_id: root.conversationId, user_id: root.actorId, job_kind: 'root_background' }));
+    expect((await jobs.getJob(target))!.fence).toBe(claimed.fence + 1);
+    expect((await jobs.getJob(sibling))!.status).toBe('queued');
+    expect((await work.getExecution(root.parentId))!.status).toBe('running');
+    const [conversation] = await database.db.select().from(conversations).where(eq(conversations.id, root.conversationId));
+    expect(conversation.rootWorkEpoch).toBe(0);
+    expect(await jobs.cancel(root.conversationId, root.actorId, target, 0)).toMatchObject({ affectedCount: 0 });
+    await expect(jobs.getOwnedHydration({ executionId: target, owner: claimed.owner, nativeOwner: claimed.nativeOwner,
+      fence: claimed.fence })).rejects.toThrow();
+  });
 
   it('atomically admits one coordinator and reserves original ROOT item identities on concurrent replay', async () => {
     const root = await fixture(id(), true); const proposal = fanoutProposal(root.actorId);

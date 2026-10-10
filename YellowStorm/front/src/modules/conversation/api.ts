@@ -164,6 +164,12 @@ export async function fetchRootWork(conversationId: string, signal?: AbortSignal
   return response.data.data;
 }
 
+export async function cancelRootBackgroundJob(conversationId: string, executionId: string, request: { expectedEpoch: number }) {
+  const response = await apiClient.post<ApiResponse<{ executionId: string; status: string; cancellationRequested: boolean }>>(
+    API_ENDPOINTS.conversations.rootWorkCancelJob(conversationId, executionId), request);
+  return response.data.data;
+}
+
 export async function fetchRootWorkEvents(conversationId: string, epoch: number, after: string, signal?: AbortSignal) {
   const response = await apiClient.get<ApiResponse<Array<{ sequence: string; eventId: string; payload: Record<string, unknown> }>>>(
     API_ENDPOINTS.conversations.rootWorkEvents(conversationId), { params: { epoch, after }, signal });

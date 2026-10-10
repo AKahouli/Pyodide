@@ -7,6 +7,7 @@ import { fetchRootWork, fetchRootWorkEvents, stopRootWork } from '../api';
 import { useConversationStore } from '../store';
 import type { RootWorkSnapshot } from '../types';
 import { appendRootWorkEvents, rootWorkActivityText, type RootWorkReplay } from './root-work-replay';
+import { RootBackgroundJobRow } from './RootBackgroundJobRow';
 
 function RootWorkPanelContent({ conversationId, creatorId }: { conversationId: string; creatorId: string }) {
   const { user } = useAuth();
@@ -19,6 +20,7 @@ function RootWorkPanelContent({ conversationId, creatorId }: { conversationId: s
   const observer = useRef<AbortController>();
   const streamingConversationId = useConversationStore((state) => state.streamingConversationId);
   const streamingMessageId = useConversationStore((state) => state.streamingMessageId);
+  const awaitingConversationId = useConversationStore((state) => state.isAwaitingFirstChunk ? state.awaitingConversationId : null);
   const fetchMessages = useConversationStore((state) => state.fetchMessages);
   const { execute: fetch } = useApiAction(fetchRootWork, { showErrorToast: false });
   const { execute: fetchEvents } = useApiAction(fetchRootWorkEvents, { showErrorToast: false });
@@ -69,17 +71,18 @@ function RootWorkPanelContent({ conversationId, creatorId }: { conversationId: s
     & { status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' } =>
     ['queued', 'running', 'waiting', 'outcome_unknown'].includes(job.status)) ?? [];
   const failed = snapshot?.jobs.filter((job) => job.status === 'failed') ?? [];
-  if (user?.id !== creatorId || !snapshot || active.length === 0 && failed.length === 0 && !pendingStop && !activity?.events.length) return null;
-  return <section aria-label={t('rootWork.title')} className='mx-auto flex w-full max-w-6xl items-start justify-between gap-4 px-4 py-3'>
-    <div className='min-w-0 space-y-1'>
+  const settled = snapshot?.jobs.filter((job) => ['completed', 'cancelled'].includes(job.status)).slice(0, 5) ?? [];
+  if (user?.id !== creatorId || !snapshot || active.length === 0 && failed.length === 0 && settled.length === 0 && !pendingStop && !activity?.events.length) return null;
+  return <section aria-label={t('rootWork.title')} className='mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-4 px-4 py-3 sm:flex-row'>
+    <div className='min-w-0 w-full space-y-1'>
       <p className='text-sm font-medium'>{t('rootWork.title')}</p>
+      {active.length > 0 && streamingConversationId !== conversationId && awaitingConversationId !== conversationId
+        && <p className='text-xs text-muted-foreground'>{t('rootWork.canContinue')}</p>}
       <ul className='space-y-1 text-sm text-muted-foreground' aria-live='polite'>
-        {active.map((job) => <li key={job.executionId}>
-          {t(job.role === 'followup' ? 'rootWork.synthesis' : job.role === 'fanout_driver' ? 'rootWork.fanout' : 'rootWork.worker')}: {t(`rootWork.status.${job.status}`)}
-        </li>)}
-        {failed.map((job) => <li key={job.executionId} className='text-destructive'>
-          {t(job.role === 'followup' ? 'rootWork.synthesis' : job.role === 'fanout_driver' ? 'rootWork.fanout' : 'rootWork.worker')}: {t('rootWork.status.failed')}
-        </li>)}
+        {[...active, ...failed, ...settled].map((job) => <RootBackgroundJobRow key={job.executionId} job={job}
+          conversationId={conversationId} epoch={snapshot.epoch} onCancelled={() => {
+            if (observer.current) void refresh(observer.current.signal);
+          }} />)}
       </ul>
       {error && <p role='alert' className='text-sm text-destructive'>{error.message}</p>}
       {pendingStop && <p role='status' className='text-sm text-muted-foreground'>{t('rootWork.cancellationPending')}</p>}

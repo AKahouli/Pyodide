@@ -252,21 +252,16 @@ class TestAgentFactory:
         assert agent.tools == mock_tools
 
     def test_create_operator_agent(self, agent_factory, mock_prompt_processor, mock_llm_factory):
-        """Test creating an operator agent with calculator and python_interpreter tools."""
-        with patch('src.smart_rag.agents.factories.base_factory.MCPHelper.extract_minimal_fields') as mock_extract, \
-             patch('src.smart_rag.agents.factories.base_factory.python_interpreter') as mock_python_interpreter:
-
-            mock_extract.return_value = [{"filepath": "/path", "filename": "doc1.txt", "_id": "doc1"}]
-
-            # Act
-            agent = agent_factory.create_operator_agent(
-                prompt="Operator prompt",
-                chatbot_name="operator-chatbot",
-                user_id="test_user",
-                brain_ids=["brain1"],
-                session_id="test_session",
-                brain_documents=[{"id": "doc1"}]
-            )
+        """Test creating an operator agent with the calculator tool."""
+        # Act
+        agent = agent_factory.create_operator_agent(
+            prompt="Operator prompt",
+            chatbot_name="operator-chatbot",
+            user_id="test_user",
+            brain_ids=["brain1"],
+            session_id="test_session",
+            brain_documents=[{"id": "doc1"}]
+        )
 
         # Assert prompt processing
         mock_prompt_processor.extract_chatbot_name_and_clean_prompt.assert_called_once_with(
@@ -274,24 +269,11 @@ class TestAgentFactory:
         )
         mock_llm_factory.create_parallel_tool_calls_llm.assert_called_once_with("operator-chatbot")
 
-        # extract_minimal_fields should be called with brain_documents
-        mock_extract.assert_called_once_with([{"id": "doc1"}])
-
         assert isinstance(agent, Agent)
         assert agent.name == "OperatorAgent"
         assert agent.model == "parallel_llm"
-        # Tools should contain calculator and python_interpreter
-        assert calculator in agent.tools
-        assert mock_python_interpreter in agent.tools
-        assert len(agent.tools) == 2
-
-        # Code interpreter state should be attached to the agent
-        assert hasattr(agent, '_code_interpreter_state')
-        assert agent._code_interpreter_state["_code_interpreter_session_id"] == "test_session"
-        assert agent._code_interpreter_state["_code_interpreter_brain_id"] == "brain1"
-        assert agent._code_interpreter_state["_code_interpreter_brain_docs"] == [
-            {"filepath": "/path", "filename": "doc1.txt", "_id": "doc1"}
-        ]
+        assert agent.tools == [calculator]
+        assert not hasattr(agent, "_code_interpreter_state")
 
     def test_create_search_agent(self, agent_factory, mock_prompt_processor, mock_llm_factory):
         """Test creating a search agent."""

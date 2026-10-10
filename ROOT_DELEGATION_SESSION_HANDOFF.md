@@ -2,6 +2,30 @@
 
 Date: 2026-10-06
 
+## Followup attribution and result paging fixed (2026-10-10)
+
+Publication now writes the existing message attribution fields: Root agentIds, text.actorId, and completed agentActivity with the Root's stored name. modelId comes from the exact followup execution's durable native usage event, never a sibling or original request. Synthesis now emits persisted ADK usage events (native event/invocation correlation, token counts and actual model_version or compiled candidate fallback) through the existing owned sink.
+
+Sealed manifest previews now derive from fullText ?? text and expose accurate textTruncated/nextOffset. Synthesis instructions require reading every remaining guarded page until nextOffset is null, preserving the 64k-character seed budget. This is model-directed paging, not a deterministic publication coverage gate.
+
+Verification: backend followup suites 22 PASS / 1 optional provider qualification SKIPPED; native synthesis 3 PASS including real ADK pages/recovery/usage; frontend identity/actions 17 PASS; backend build PASS; observability policy PASS (no new violations, 147 existing baseline sites); scoped diff check PASS; reviewer and source QA PASS. Primary browser QA PASS after local backend/native restart. Long producer 7aa640e6433d8bcf491f8d7d committed 19,556 characters; persisted native tool calls show followup 1e077c4d9fba4e6e2f58ccb0 fetched offsets 8000 and 16000. Final fresh published message 09fb58cda9adba11dd394ba3 shows Smart Agent / GPT 6 Luna before and after reload. Existing earlier publications are not backfilled. No unknown provider slots were recycled.
+## Smart Agent live activation verified (2026-10-10)
+
+User enabled the local nexus backend/native saved configuration and restarted services. Current ports: frontend 5174, backend 3001, native HTTP 8002 / gRPC 50052. Authenticated capabilities: background, fanout and followup ready; followup protocol 2, google-adk 2.11.0, Python 3.12.14. Conversation `2455e4233a6ca5c6ba0ec093` is bound to Smart Agent `6a325b8d0e92383c1a7dd7a7`.
+
+Primary live browser PASS: temporary worker `9f041975f4fe7f7a1ed8354d` ran 07:35:08–07:35:31 UTC. A second foreground answer (`4`) finished at 07:35:26 while that worker was still running. The user's subsequent poem request also completed. Followup `bb662665f90d19ce4be9fce8` finished synthesis at 07:35:51 and published message `fb946d1f8ba4a7ddff847ce1` at 07:35:57 after the poem finished. Both background jobs completed. This supersedes the earlier activation-pending note; existing source verification remains valid.
+
+Remaining presentation limitations observed: published followup shows Agent name unavailable / Model unavailable; the summary states the final result section was truncated. Fanout capability readiness verified, but this live test exercised one temporary worker, not a fanout batch. No existing unknown provider slots were manually recycled.
+## Continue chatting during background work — implementation verified (2026-10-09)
+
+Long independent work now uses durable submission followed by a short foreground acknowledgement. New Root tools list, inspect, page completed results, and cancel authorized jobs from earlier turns in the same conversation. Task instructions remain immutable: changes require cancellation and a separate revised submission; uncertain external effects must be reconciled before repeating them.
+
+Synthesis no longer reserves the Conversation writer during inference. Publication claims it transactionally and defers to foreground turns/approvals. Verified legacy `root-followup` reservations are released/reused safely, including cancellation. Native followup capability is now version **2**; backend readiness and the background driver reject the old writer-reserving receiver. Per-job cancellation fences only the target and fanout items, preserving sibling jobs, foreground chat, epochs, receipts and permits. New-agent creation persists `rootExecutionPolicy`.
+
+Verification: backend regression 86 PASS; subsequent legacy-writer/readiness/driver/followup suite 24 PASS; real production scheduler/authenticated native/provider/HTTP lifecycle 1 PASS against `agentstore_test`, no occupied provider slots afterward. Native controls/session/synthesis 31 PASS; final controls/dispatcher 8 PASS. RootWorkPanel 9 PASS; both TypeScript checks and both production builds PASS. Observability policy PASS; mirrored proto hashes match. Reviewer PASS after the legacy compatibility fix; frontend source QA passed after hiding the chat-availability hint during an active foreground reply. CRG unavailable: focused source scanning used.
+
+**Live activation remains pending.** Browser on `http://localhost:5175` redirects to sign-in; user sign-in and target mono-agent selection were requested. Read-only saved-config preflight found existing background/capacity tables, one active enrolled profile (`Smart Agent`, background policy enabled), platform flags disabled, and no native gRPC authentication key in the saved ADK environment. No profile, environment, production database, service restart or live enablement was applied. Current listeners: frontend 5175, backend 3002, native 50052/8002. Existing unbound conversations do not auto-rebind when a default agent changes; qualify a session bound to the chosen personal/admin default mono-agent.
+
 ## Agent retyping after disabled delegation — completed
 
 User could not save Advisory Strategy Specialist (6aa851deab04c2c842b26879) as `simple` after disabling library delegation. Confirmed three real PATCH failures (400 / ERR_1006): the editor retained Root policy fields, while the backend rejected even explicit null unenrollment on a non-mono target. Disabling library delegation does not disable independently configured temporary workers, fan-out, or background work.

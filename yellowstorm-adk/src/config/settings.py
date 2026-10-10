@@ -137,8 +137,6 @@ class Settings(BaseSettings):
 
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
-    # Code Interpreter Backend
-    CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
 
     # Lightweight isolated JavaScript runtime
     RUN_CODE_ENABLED: bool = False
@@ -358,27 +356,6 @@ class Settings(BaseSettings):
     def validate_microsandbox_docker_image(cls, v):
         if not v or v.strip() == "":
             return None
-
-        return v
-
-    @field_validator("CODE_INTERPRETER_BACKEND_URL", mode="before")
-    @classmethod
-    def validate_code_interpreter_backend_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "CODE_INTERPRETER_BACKEND_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError(
-                    "CODE_INTERPRETER_BACKEND_URL must use http or https scheme"
-                )
-        except Exception:
-            raise ValueError("CODE_INTERPRETER_BACKEND_URL must be a valid URL")
 
         return v
 

@@ -1,5 +1,11 @@
 {
   "rootWork.title": "Travail en arrière-plan",
+  "rootWork.canContinue": "Vous pouvez continuer à discuter pendant ces tâches.",
+  "rootWork.stopTask": "Arrêter la tâche",
+  "rootWork.stopTaskLabel": "Arrêter la tâche : {{task}}",
+  "rootWork.taskCancelled": "Arrêtée. Les actions déjà lancées peuvent encore nécessiter une vérification.",
+  "rootWork.status.completed": "Terminée",
+  "rootWork.status.cancelled": "Arrêtée",
   "rootWork.worker": "Tâche déléguée",
   "rootWork.fanout": "Tâches parallèles",
   "rootWork.synthesis": "Réponse de synthèse",

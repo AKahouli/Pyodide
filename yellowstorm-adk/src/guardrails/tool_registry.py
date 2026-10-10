@@ -13,8 +13,6 @@ NATIVE_TOOL_POLICIES: dict[str, dict[str, str]] = {
     "perform_document_search": {"safety": "read", "kind": "retrieval"},
     "perform_filtered_search": {"safety": "read", "kind": "retrieval"},
     "perform_web_search": {"safety": "read", "kind": "external_read"},
-    "python_interpreter": {"safety": "write", "kind": "execution"},
-    "code_interpreter": {"safety": "write", "kind": "execution"},
     "save_file_to_workspace": {"safety": "write", "kind": "workspace_write"},
     "run_code": {"safety": "write", "kind": "execution"},
     "create_temporary_child_agent": {"safety": "internal", "kind": "orchestration"},

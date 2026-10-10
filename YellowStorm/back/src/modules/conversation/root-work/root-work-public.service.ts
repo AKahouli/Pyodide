@@ -5,7 +5,7 @@ import { RootBackgroundJobStore } from '../persistence/postgres/root-background-
 import { RootBackgroundEventStore } from '../persistence/postgres/root-background-event.store';
 import { RootWorkService } from './root-work.service';
 import { RootResultService } from './root-result.service';
-import type { RootStopDto } from '../dto/root-work-public.dto';
+import type { RootStopDto, RootJobCancelDto } from '../dto/root-work-public.dto';
 import { StreamService } from '../services/stream.service';
 import { MessageService } from '../services/message.service';
 import { newStopRequestId } from './root-work.types';
@@ -41,6 +41,8 @@ export class RootWorkPublicService {
     return { epoch: snapshot.epoch, watermark: snapshot.watermark, stopRequestId: newStopRequestId(),
       jobs: snapshot.jobs.map(({ executionId, parentExecutionId, status, role, createdAt, deadline, nativeState }) =>
         ({ executionId, parentExecutionId, status, role, createdAt, deadline,
+          ...(['library_worker', 'temporary_worker'].includes(role) && nativeState?.admittedRequest?.task
+            ? { task: nativeState.admittedRequest.task.slice(0, 240) } : {}),
           ...(nativeState?.followup?.publishedAt ? { publicationMessageId: nativeState.followup.publicationMessageId } : {}) })) };
   }
 
@@ -48,6 +50,15 @@ export class RootWorkPublicService {
     await this.creator(conversationId, actorId);
     if (!this.config.get<boolean>('conversation.rootBackgroundEnabled', false)) return [];
     return this.events.replay(conversationId, actorId, epoch, after);
+  }
+
+  async cancel(conversationId: string, actorId: string, executionId: string, request: RootJobCancelDto) {
+    await this.creator(conversationId, actorId);
+    if (!this.config.get<boolean>('conversation.rootBackgroundEnabled', false)) {
+      throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Background task is unavailable');
+    }
+    await this.results.authorizeBackgroundExecution(conversationId, executionId, actorId);
+    return this.jobs.cancel(conversationId, actorId, executionId, request.expectedEpoch);
   }
 
   async stop(conversationId: string, actorId: string, request: RootStopDto) {

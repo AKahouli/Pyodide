@@ -92,6 +92,7 @@ export class AgentRepository {
         agentTypeSlug: input.agentTypeSlug,
         enableTemporaryChildAgents: input.enable_temporary_child_agents,
         maxTemporaryChildAgents: input.max_temporary_child_agents,
+        rootExecutionPolicy: input.rootExecutionPolicy ?? null,
         isDefault: input.isDefault,
         isActive: input.isActive,
         isDefaultForType: input.isDefaultForType,

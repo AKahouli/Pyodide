@@ -1,5 +1,11 @@
 {
   "rootWork.title": "Background work",
+  "rootWork.canContinue": "You can keep chatting while these tasks run.",
+  "rootWork.stopTask": "Stop task",
+  "rootWork.stopTaskLabel": "Stop task: {{task}}",
+  "rootWork.taskCancelled": "Stopped. Previously started actions may still need checking.",
+  "rootWork.status.completed": "Completed",
+  "rootWork.status.cancelled": "Stopped",
   "rootWork.worker": "Worker task",
   "rootWork.fanout": "Parallel tasks",
   "rootWork.synthesis": "Combined follow-up",

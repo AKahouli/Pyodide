@@ -255,11 +255,7 @@ class AgentRunner:
             )
             return (None, [], {}, [])
         try:
-            # Build initial session state from agent's code interpreter params (if any)
             initial_state = {}
-            if hasattr(agent, "_code_interpreter_state"):
-                initial_state.update(agent._code_interpreter_state)
-
             if hasattr(agent, "_mcp_search_state"):
                 initial_state.update(agent._mcp_search_state)
 
@@ -717,7 +713,6 @@ class AgentRunner:
                                 "perform_document_search",
                                 "perform_web_search",
                                 "perform_standard_search",
-                                "python_interpreter",
                             ]
                             else "standard"
                         )
@@ -799,54 +794,6 @@ class AgentRunner:
                                     component_id=tool_component_id,
                                     action="add",
                                 )
-                            )
-
-                        # Track python_interpreter usage
-                        if (
-                            func_name == "python_interpreter"
-                            and "python_interpreter" not in mcp_tools_used
-                        ):
-                            mcp_tools_used.append("python_interpreter")
-                            logger.info(
-                                f"[RUNNER] python_interpreter tool used by {agent_name}"
-                            )
-
-                        # Send sandbox component with code for python_interpreter
-                        if func_name == "python_interpreter" and q:
-                            # Extract code from function arguments
-                            code = ""
-                            if (
-                                hasattr(part.function_call, "args")
-                                and part.function_call.args
-                            ):
-                                args_dict = dict(part.function_call.args)
-                                code = sanitize_tool_result_value(args_dict.get("code", ""))
-
-                            # Use function_call.id as component_id for tracking
-                            call_id = (
-                                part.function_call.id
-                                if hasattr(part.function_call, "id")
-                                else None
-                            )
-
-                            # Send sandbox component with code only (output_available = false)
-                            sandbox_chunk = (
-                                self.streaming_formatter.format_component_event(
-                                    agent_id=agent_id,
-                                    component_type="sandbox",
-                                    component_data={
-                                        "code": code,
-                                        "output": "",
-                                        "error": "",
-                                        "output_available": False,
-                                    },
-                                    message_id=session_id,
-                                    component_id=call_id,
-                                )
-                            )
-                            await q.put(sandbox_chunk)
-                            logger.info(
-                                f"[RUNNER] Sending SANDBOX component to client - agent: {agent_name}, component_id: {call_id}"
                             )
 
                         if func_name == "generate_form_viz" and q:
@@ -1022,17 +969,6 @@ class AgentRunner:
                                 toolkit,
                             )
 
-                        # Check if this is a python_interpreter tool response
-                        if func_name == "python_interpreter" and q:
-                            await self._handle_python_interpreter_response(
-                                part.function_response,
-                                agent_id,
-                                agent_name,
-                                session_id,
-                                q,
-                            )
-
-
                 if (
                     event.is_final_response()
                     and event.content
@@ -1132,9 +1068,7 @@ class AgentRunner:
 
                     recorder.record_final_result(final_result)
                     execution_summary = recorder.get_execution_summary()
-                    generated_files = await self._extract_generated_files(
-                        session_helper, user_id, session_id
-                    )
+                    generated_files = []
 
                     result = (
                         final_result,
@@ -1174,9 +1108,7 @@ class AgentRunner:
                 recorder.record_chunk(fallback_text)
                 recorder.record_final_result(fallback_text)
                 execution_summary = recorder.get_execution_summary()
-                generated_files = await self._extract_generated_files(
-                    session_helper, user_id, session_id
-                )
+                generated_files = []
                 return (
                     fallback_text,
                     mcp_tools_used,
@@ -1319,30 +1251,6 @@ class AgentRunner:
             if should_close_stream and aclose is not None:
                 with contextlib.suppress(Exception):
                     await aclose()
-
-    async def _extract_generated_files(self, session_helper, user_id, session_id):
-        """Read generated files from session state after agent execution."""
-        try:
-            from src.root_runtime.background_sessions import native_app_name
-            session = await session_helper.get_session(
-                app_name=native_app_name(session_helper), user_id=user_id, session_id=session_id
-            )
-            if session and session.state:
-                from src.smart_rag.tools.utilities.code_interpreter import (
-                    _STATE_KEY_GENERATED_FILES,
-                )
-
-                generated_files = session.state.get(_STATE_KEY_GENERATED_FILES, [])
-                if generated_files:
-                    logger.info(
-                        f"[AGENT RUNNER] Extracted {len(generated_files)} generated files from session state"
-                    )
-                    return generated_files
-        except Exception as e:
-            logger.warning(
-                f"[AGENT RUNNER] Could not extract generated files from session: {e}"
-            )
-        return []
 
     async def _handle_function_call(
         self,
@@ -1743,67 +1651,6 @@ class AgentRunner:
         except Exception as e:
             logger.error(
                 f"[STRUCTURED TOOL RESPONSE] Error handling structured tool response: {str(e)}",
-                exc_info=True,
-            )
-
-    async def _handle_python_interpreter_response(
-        self, function_response, agent_id, agent_name, session_id, q
-    ):
-        """Handle python_interpreter response and update sandbox component with output/error.
-
-        Args:
-            function_response: The function response object from python_interpreter
-            agent_id: The ID of the agent
-            agent_name: The name of the agent
-            session_id: The session ID
-            q: Queue for streaming events
-
-        Returns:
-            None
-        """
-        try:
-            logger.info(
-                f"[RUNNER SANDBOX] Processing python_interpreter response from agent: {agent_name}"
-            )
-
-            response_data = function_response.response
-
-            # Extract function call ID to match the original sandbox component
-            call_id = function_response.id if hasattr(function_response, "id") else None
-
-            # Extract stdout from result (don't send stderr to client)
-            if isinstance(response_data, dict):
-                stdout = response_data.get("stdout", "")
-                stderr = response_data.get("stderr", "")  # Keep for logging only
-
-                # Update sandbox component with output and stderr
-                sandbox_chunk = self.streaming_formatter.format_component_event(
-                    agent_id=agent_id,
-                    component_type="sandbox",
-                    component_data={
-                        "code": "",  # Code already sent in function_call
-                        "output": stdout,
-                        "error": stderr,  # Include stderr in sandbox component
-                        "output_available": True,  # Output is now available
-                    },
-                    message_id=session_id,
-                    action="update",
-                    component_id=call_id,  # Use same function call ID as component ID
-                )
-                await q.put(sandbox_chunk)
-                logger.info(
-                    f"[RUNNER] Sending SANDBOX component to client - component_id: {call_id}"
-                )
-
-                # Note: File artifacts are now handled via old File chunks converted at gRPC level
-            else:
-                logger.debug(
-                    f"[RUNNER SANDBOX] Response is not dict. Type: {type(response_data)}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"[RUNNER SANDBOX] Error handling python interpreter response: {str(e)}",
                 exc_info=True,
             )
 

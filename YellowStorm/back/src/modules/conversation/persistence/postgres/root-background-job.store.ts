@@ -14,6 +14,8 @@ import type { RegisterExecutionInput } from '../../root-work/root-work.store';
 import type { RootContinuationRequest } from '../../interfaces/message.interface';
 import { Inject, Injectable } from '@nestjs/common';
 import { DRIZZLE_DB } from '../../../postgres/postgres.constants';
+import { cancelBackgroundJob } from './root-background-cancellation';
+import { logDomainEvent } from '../../../logger/logger.service';
 
 export type RootBackgroundJob = typeof schema.rootBackgroundJobs.$inferSelect;
 export type RootJobOwner = RootBackgroundJobOwnerV1;
@@ -28,6 +30,19 @@ export class RootBackgroundJobStore {
     const [job] = await this.db.select().from(schema.rootBackgroundJobs)
       .where(eq(schema.rootBackgroundJobs.executionId, executionId)).limit(1);
     return job ?? null;
+  }
+
+  async cancel(conversationId: string, actorId: string, executionId: string, expectedEpoch: number) {
+    try {
+      const result = await this.db.transaction((tx) => cancelBackgroundJob(tx, conversationId, actorId, executionId, expectedEpoch));
+      if (result.affectedCount) logDomainEvent('info', 'job.execution.cancelled', {
+        job_id: executionId, conversation_id: conversationId, user_id: actorId, job_kind: 'root_background' });
+      return result;
+    } catch (error) {
+      logDomainEvent('error', 'job.execution.failed', { job_id: executionId, conversation_id: conversationId,
+        user_id: actorId, job_kind: 'root_background_control', error });
+      throw error;
+    }
   }
 
   async publicSnapshot(conversationId: string, actorId: string) {

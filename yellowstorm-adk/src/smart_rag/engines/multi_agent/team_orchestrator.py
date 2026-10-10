@@ -174,14 +174,6 @@ Do not render charts for single values or non-numeric content.
         """
         return self.agent_repository.has_search_agents()
 
-    def has_code_interpreter(self) -> bool:
-        """Check if any of the current agents have search tools.
-
-        Returns:
-            bool: True if any agent in the team has search capabilities, False otherwise.
-        """
-        return self.agent_repository.has_code_interpreter()
-
     def get_document_tree_info(self, doc_tree, brain_tree) -> str:
         """Get formatted document tree information for inclusion in prompts.
         
@@ -837,9 +829,8 @@ Do not render charts for single values or non-numeric content.
             if background_task_tool is not None:
                 from src.root_runtime.background_dispatcher import BACKGROUND_INSTRUCTION
                 agent.tools = [*(agent.tools or []), background_task_tool]
-                from src.root_runtime.background_dispatcher import build_background_status_tool
-                status_tool = build_background_status_tool({'background_enabled': True}, execution_scope)
-                agent.tools.append(status_tool)
+                from src.root_runtime.background_controls import build_background_control_tools
+                agent.tools.extend(build_background_control_tools({'background_enabled': True}, execution_scope))
                 agent.instruction += '\n' + BACKGROUND_INSTRUCTION
                 agent_config['_delegation_root'] = True
             if delegation_tool is not None:
