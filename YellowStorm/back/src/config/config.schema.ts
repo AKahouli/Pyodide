@@ -180,7 +180,7 @@ export const configValidationSchema = Joi.object({
   // key is absent, receipts are disabled and replayed rotations conflict.
   AUTH_ROTATION_RECEIPT_KEY: Joi.string()
     .optional()
-    .custom((value, helpers) => {
+    .custom((value: string, helpers) => {
       try {
         const decoded = Buffer.from(value, 'base64');
         if (decoded.length !== 32) {
@@ -192,6 +192,7 @@ export const configValidationSchema = Joi.object({
       return value;
     }),
   AUTH_ROTATION_RECEIPT_KEY_ID: Joi.string().default('receipt-v1'),
+  AUTH_REGISTER_MIN_DURATION_MS: Joi.number().integer().min(0).max(10000).default(1000),
   AUTH_ROTATION_RECEIPT_WINDOW_SECONDS: Joi.number().integer().min(30).max(600).default(120),
 
   // Third-party API key (static key for the public /agents endpoint, X-API-Key header)

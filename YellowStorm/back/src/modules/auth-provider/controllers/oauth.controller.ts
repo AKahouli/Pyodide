@@ -2,7 +2,6 @@ import {
   Controller,
   Get,
   Post,
-  Body,
   Param,
   Query,
   Req,
@@ -11,7 +10,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
-import { Request, Response } from 'express';
+import { CookieOptions, Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { getClientIp } from '@common/utils';
 import { Public } from '@modules/auth/decorators/public.decorator';
@@ -21,7 +20,10 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { AuthProviderService } from '../services/auth-provider.service';
-import { OAuthFlowService } from '../services/oauth-flow.service';
+import { OAuthFlowService, OAUTH_EXCHANGE_TTL_MS } from '../services/oauth-flow.service';
+
+/** HttpOnly cookie carrying the single-use login exchange code from the callback to the exchange call. */
+export const OAUTH_EXCHANGE_COOKIE_NAME = 'oauth_exchange';
 
 @ApiTags('OAuth Providers')
 @Controller('auth/providers')
@@ -30,6 +32,7 @@ export class OAuthController {
   private readonly cookieName: string;
   private readonly cookieSecure: boolean;
   private readonly cookieSameSite: 'strict' | 'lax' | 'none';
+  private readonly exchangeCookiePath: string;
 
   constructor(
     private readonly authProviderService: AuthProviderService,
@@ -43,6 +46,8 @@ export class OAuthController {
     this.cookieName = this.configService.get<string>('auth.refreshTokenCookieName', 'refresh_token');
     this.cookieSecure = this.configService.get<boolean>('auth.cookieSecure', false);
     this.cookieSameSite = this.configService.get<'strict' | 'lax' | 'none'>('auth.cookieSameSite', 'strict');
+    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
+    this.exchangeCookiePath = `/${apiPrefix}/v1/auth/providers/exchange`;
   }
 
   @Public()
@@ -73,7 +78,7 @@ export class OAuthController {
         error: (error as Error).message,
         stack: (error as Error).stack,
       });
-      const errorCode = (error as { code?: string }).code || 'oauth_failed';
+      const errorCode = (error as { code?: string }).code ?? 'oauth_failed';
       res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
       ); return;
@@ -112,7 +117,7 @@ export class OAuthController {
 
     try {
       const ipAddress = getClientIp(req);
-      const userAgent = req.headers['user-agent'] || 'unknown';
+      const userAgent = req.headers['user-agent'] ?? 'unknown';
 
       const result = await this.oauthFlowService.handleCallback(
         providerKey,
@@ -124,21 +129,23 @@ export class OAuthController {
 
       if (result.type === 'link_required') {
         res.redirect(
-          `${this.frontendUrl}/#/oauth-callback?link_required=true&email=${encodeURIComponent(result.maskedEmail || '')}`,
+          `${this.frontendUrl}/#/oauth-callback?link_required=true&email=${encodeURIComponent(result.maskedEmail ?? '')}`,
         ); return;
       }
 
-      // Success — redirect with temp token
-      res.redirect(
-        `${this.frontendUrl}/#/oauth-callback?token=${result.accessToken}`,
-      ); return;
+      // Success — hand the one-time exchange code over in an HttpOnly cookie, never in the URL.
+      // The cookie is Lax because this response ends a cross-site navigation coming back from the
+      // provider, where a SameSite=Strict cookie is not reliably stored; it is scoped to the
+      // exchange endpoint, single-use and short-lived.
+      res.cookie(OAUTH_EXCHANGE_COOKIE_NAME, result.exchangeCode, this.exchangeCookieOptions());
+      res.redirect(`${this.frontendUrl}/#/oauth-callback?login=success`); return;
     } catch (err) {
       this.logger.error('OAuth callback failed', {
         providerKey,
         error: (err as Error).message,
         stack: (err as Error).stack,
       });
-      const errorCode = (err as { code?: string }).code || 'oauth_failed';
+      const errorCode = (err as { code?: string }).code ?? 'oauth_failed';
       res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
       ); return;
@@ -149,19 +156,21 @@ export class OAuthController {
   @Post('exchange')
   @HttpCode(HttpStatus.OK)
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'oauth:exchange' })
-  @ApiOperation({ summary: 'Exchange OAuth temp token for JWT + refresh cookie' })
+  @ApiOperation({ summary: 'Exchange the OAuth exchange cookie for JWT + refresh cookie' })
   @ApiResponse({ status: 200, description: 'Login successful' })
   async exchange(
-    @Body('token') token: string,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    const token = (req.cookies as Record<string, string> | undefined)?.[OAUTH_EXCHANGE_COOKIE_NAME];
+    // Single-use either way: drop the cookie before doing anything that can fail.
+    res.clearCookie(OAUTH_EXCHANGE_COOKIE_NAME, this.exchangeCookieOptions({ withMaxAge: false }));
     if (!token) {
-      throw new BadRequestException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID, 'Token is required');
+      throw new BadRequestException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID, 'Exchange code is required');
     }
 
     const ipAddress = getClientIp(req);
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = req.headers['user-agent'] ?? 'unknown';
 
     const result = await this.oauthFlowService.exchangeTempToken(token, ipAddress, userAgent);
 
@@ -200,11 +209,21 @@ export class OAuthController {
       await this.oauthFlowService.verifyAndLink(token);
       res.redirect(`${this.frontendUrl}/#/oauth-callback?linked=true`); return;
     } catch (err) {
-      const errorCode = (err as { errorCode?: string }).errorCode || 'link_failed';
+      const errorCode = (err as { errorCode?: string }).errorCode ?? 'link_failed';
       res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
       ); return;
     }
+  }
+
+  private exchangeCookieOptions(opts: { withMaxAge?: boolean } = {}): CookieOptions {
+    return {
+      httpOnly: true,
+      secure: this.cookieSecure,
+      sameSite: this.cookieSameSite === 'strict' ? 'lax' : this.cookieSameSite,
+      path: this.exchangeCookiePath,
+      ...(opts.withMaxAge === false ? {} : { maxAge: OAUTH_EXCHANGE_TTL_MS }),
+    };
   }
 
   /**

@@ -183,7 +183,7 @@ auth/
    ├── UserService.assignPlan() - assign to new user
    ├── Send verification email (best-effort)
    └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
-3. Return { message, userId }
+3. Return { message } (an already-registered email returns the same body and status, with no side effects)
 4. User clicks email link
 5. GET /auth/verify-email?token=xxx
 6. UserService.verifyEmail() - mark emailVerified: true
@@ -494,8 +494,7 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "message": "Registration successful. Please check your email to verify your account.",
-    "userId": "507f1f77bcf86cd799439011"
+    "message": "If this email can be registered, a verification link has been sent. Please check your inbox."
   }
 }
 ```

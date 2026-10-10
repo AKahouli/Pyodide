@@ -47,6 +47,8 @@ export interface AuthConfig {
   rotationReceiptKey?: string;
   rotationReceiptKeyId: string;
   rotationReceiptWindowSeconds: number;
+  /** Minimum wall time of POST /auth/register (0 disables); hides new-vs-existing email timing. */
+  registerMinDurationMs: number;
   rateLimits: {
     ip: Record<AuthIpRateLimitScope, AuthRateLimitRule>;
     account: Record<AuthAccountRateLimitScope, AuthRateLimitRule>;
@@ -54,9 +56,20 @@ export interface AuthConfig {
   lockout: AuthLockoutConfig;
 }
 
+/** Unset and empty env values both fall back (an empty `NAME=` line in .env is "not configured"). */
+function readString(name: string, fallback: string): string {
+  const value = process.env[name];
+  return value === undefined || value === '' ? fallback : value;
+}
+
 function readInt(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readNonNegativeInt(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 /** Env: AUTH_RATE_LIMIT_<KEY>_LIMIT and AUTH_RATE_LIMIT_<KEY>_WINDOW_SECONDS. */
@@ -70,17 +83,18 @@ function rule(key: string, limit: number, windowSeconds: number): AuthRateLimitR
 export default registerAs(
   'auth',
   (): AuthConfig => ({
-    bcryptRounds: Number.parseInt(process.env.AUTH_BCRYPT_ROUNDS || '12', 10),
-    passwordResetExpiry: Number.parseInt(process.env.AUTH_PASSWORD_RESET_EXPIRY_HOURS || '1', 10),
-    refreshTokenCookieName: process.env.AUTH_REFRESH_TOKEN_COOKIE_NAME || 'refresh_token',
+    bcryptRounds: Number.parseInt(readString('AUTH_BCRYPT_ROUNDS', '12'), 10),
+    passwordResetExpiry: Number.parseInt(readString('AUTH_PASSWORD_RESET_EXPIRY_HOURS', '1'), 10),
+    refreshTokenCookieName: readString('AUTH_REFRESH_TOKEN_COOKIE_NAME', 'refresh_token'),
     cookieSecure: process.env.NODE_ENV === 'production',
-    cookieSameSite: (process.env.AUTH_COOKIE_SAME_SITE as 'strict' | 'lax' | 'none') || 'strict',
+    cookieSameSite: readString('AUTH_COOKIE_SAME_SITE', 'strict') as 'strict' | 'lax' | 'none',
     rotationReceiptKey: process.env.AUTH_ROTATION_RECEIPT_KEY,
-    rotationReceiptKeyId: process.env.AUTH_ROTATION_RECEIPT_KEY_ID || 'receipt-v1',
+    rotationReceiptKeyId: readString('AUTH_ROTATION_RECEIPT_KEY_ID', 'receipt-v1'),
     rotationReceiptWindowSeconds: Number.parseInt(
-      process.env.AUTH_ROTATION_RECEIPT_WINDOW_SECONDS || '120',
+      readString('AUTH_ROTATION_RECEIPT_WINDOW_SECONDS', '120'),
       10,
     ),
+    registerMinDurationMs: readNonNegativeInt('AUTH_REGISTER_MIN_DURATION_MS', 1000),
     rateLimits: {
       ip: {
         register: rule('REGISTER_IP', 5, 60),

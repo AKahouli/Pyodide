@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { newObjectId } from '@common/postgres/object-id';
 import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
@@ -15,12 +14,35 @@ import { WorkspaceInitializerService } from '@modules/workspace/workspace-initia
 import { assertAccountAccessible } from '@modules/user/utils/assert-account-accessible';
 import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import type { UserDocLike } from '@modules/user/persistence/user-record.mapper';
 import { OAuthCallbackResult, OAuthUserInfo } from '../interfaces/auth-provider.interface';
 import { PgProviderLinkTokenStore } from '../persistence/pg-auth-provider.stores';
 import { PgOAuthStateStore } from '../persistence/pg-auth-provider.stores';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const TEMP_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/** Lifetime of the single-use login exchange code (and of the cookie carrying it). */
+export const OAUTH_EXCHANGE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+/**
+ * `oid` and `userPrincipalName` are the last fallbacks of their claim chains;
+ * they are typed as present because OAuthUserInfo requires a string, and
+ * handleCallback rejects a missing email downstream.
+ */
+interface ProviderUserInfoPayload {
+  sub?: string;
+  id?: string;
+  oid: string;
+  email?: string;
+  mail?: string;
+  userPrincipalName: string;
+  name?: string;
+  displayName?: string;
+  given_name?: string;
+  givenName?: string;
+  family_name?: string;
+  surname?: string;
+  email_verified?: boolean;
+}
+
 const LINK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 @Injectable()
@@ -181,7 +203,7 @@ export class OAuthFlowService {
       throw new UnauthorizedException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_EXPIRED, 'Temp token has expired');
     }
 
-    const user = await this.userService.findById(linkToken.userId.toString());
+    const user = await this.userService.findById(linkToken.userId);
     if (!user) {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
@@ -189,7 +211,7 @@ export class OAuthFlowService {
     assertAccountAccessible(user);
 
     // Generate real tokens
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
@@ -197,7 +219,7 @@ export class OAuthFlowService {
 
     const tokens = await this.authService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
-    await this.userService.updateLastLogin(user._id.toString());
+    await this.userService.updateLastLogin(user._id);
 
     return {
       accessToken: tokens.accessToken,
@@ -239,7 +261,7 @@ export class OAuthFlowService {
     });
 
     return {
-      userId: linkToken.userId.toString(),
+      userId: linkToken.userId,
       providerKey: linkToken.providerKey,
     };
   }
@@ -262,7 +284,7 @@ export class OAuthFlowService {
 
     if (existingLink) {
       // Provider already linked — log the user in
-      const user = await this.userService.findById(existingLink.userId.toString());
+      const user = await this.userService.findById(existingLink.userId);
       if (!user) {
         throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'Linked user not found');
       }
@@ -270,11 +292,11 @@ export class OAuthFlowService {
       assertAccountAccessible(user);
 
       // Create temp token for frontend exchange
-      const tempToken = await this.createTempLoginToken(user._id);
+      const exchangeCode = await this.createTempLoginToken(user._id);
 
       return {
         type: 'login',
-        accessToken: tempToken,
+        exchangeCode,
       };
     }
 
@@ -295,8 +317,8 @@ export class OAuthFlowService {
       });
 
       // Send linking verification email
-      this.sendLinkVerificationEmail(existingUser.email, linkToken, providerKey).catch((err) => {
-        this.logger.error('Failed to send link verification email', { error: err.message });
+      this.sendLinkVerificationEmail(existingUser.email, linkToken, providerKey).catch((err: unknown) => {
+        this.logger.error('Failed to send link verification email', { error: (err as Error).message });
       });
 
       const maskedEmail = this.maskEmail(email);
@@ -321,7 +343,7 @@ export class OAuthFlowService {
     try {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
-        newUser._id.toString(),
+        newUser._id,
         defaultPlan.id,
         defaultPlan.slug,
       );
@@ -336,7 +358,7 @@ export class OAuthFlowService {
     try {
       const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
       await this.workspaceInitializer.getOrCreatePersonalWorkspace(
-        newUser._id.toString(),
+        newUser._id,
         workspaceStorage,
       );
       this.logger.log('Personal workspace created for new OAuth user', {
@@ -353,7 +375,7 @@ export class OAuthFlowService {
     try {
       const defaultRole = await this.authorizationService.findRoleByName('user');
       if (defaultRole) {
-        await this.authorizationService.assignRoleToUser(newUser._id.toString(), defaultRole.id);
+        await this.authorizationService.assignRoleToUser(newUser._id, defaultRole.id);
       }
     } catch (error) {
       this.logger.warn('Failed to assign default role to OAuth user', {
@@ -371,7 +393,7 @@ export class OAuthFlowService {
     );
 
     // Create temp token for frontend exchange
-    const tempToken = await this.createTempLoginToken(newUser._id);
+    const exchangeCode = await this.createTempLoginToken(newUser._id);
 
     this.logger.log('New OAuth user created', {
       userId: newUser._id,
@@ -380,7 +402,7 @@ export class OAuthFlowService {
 
     return {
       type: 'login',
-      accessToken: tempToken,
+      exchangeCode,
     };
   }
 
@@ -392,11 +414,11 @@ export class OAuthFlowService {
 
     await this.providerLinkTokenStore.create({
       token,
-      userId: String(userId),
+      userId,
       providerKey: '__temp_login__',
       providerUserId: '__temp__',
       providerEmail: '__temp__',
-      expiresAt: new Date(Date.now() + TEMP_TOKEN_TTL_MS),
+      expiresAt: new Date(Date.now() + OAUTH_EXCHANGE_TTL_MS),
     });
 
     return token;
@@ -413,8 +435,7 @@ export class OAuthFlowService {
     clientId: string,
     clientSecret: string,
     codeVerifier?: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Promise<any> {
+  ): Promise<{ access_token?: string }> {
     let url = tokenUrl;
     if (tenantId) {
       url = url.replace('{tenant}', tenantId);
@@ -447,7 +468,7 @@ export class OAuthFlowService {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_FAILED, 'OAuth token exchange failed');
     }
 
-    return response.json();
+    return (await response.json()) as { access_token?: string };
   }
 
   /**
@@ -467,15 +488,15 @@ export class OAuthFlowService {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_FAILED, 'Failed to fetch user info from OAuth provider');
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data: any = await response.json();
+    // OIDC claims (sub, email, ...) and Microsoft Graph fields (id, mail, ...) in one bag.
+    const data = (await response.json()) as ProviderUserInfoPayload;
 
     return {
-      sub: data.sub || data.id || data.oid,
-      email: data.email || data.mail || data.userPrincipalName,
-      name: data.name || data.displayName,
-      given_name: data.given_name || data.givenName,
-      family_name: data.family_name || data.surname,
+      sub: data.sub ?? data.id ?? data.oid,
+      email: data.email ?? data.mail ?? data.userPrincipalName,
+      name: data.name ?? data.displayName,
+      given_name: data.given_name ?? data.givenName,
+      family_name: data.family_name ?? data.surname,
       email_verified: data.email_verified,
     };
   }
@@ -508,27 +529,26 @@ export class OAuthFlowService {
   /**
    * Build user response object for login.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private buildUserResponse(user: any, permissions: string[], roleNames: string[]): Record<string, unknown> {
+  private buildUserResponse(user: UserDocLike, permissions: string[], roleNames: string[]): Record<string, unknown> {
     return {
-      id: user._id.toString(),
+      id: user._id,
       email: user.email,
       emailVerified: user.emailVerified,
       profileComplete: user.profileComplete,
       profile: {
-        firstName: user.profile?.firstName,
-        lastName: user.profile?.lastName,
-        company: user.profile?.company,
+        firstName: user.profile.firstName,
+        lastName: user.profile.lastName,
+        company: user.profile.company,
       },
       consents: {
-        privacyPolicy: user.consents?.privacyPolicy,
-        privacyPolicyAcceptedAt: user.consents?.privacyPolicyAcceptedAt,
-        dataSharing: user.consents?.dataSharing,
-        dataSharingAcceptedAt: user.consents?.dataSharingAcceptedAt,
+        privacyPolicy: user.consents.privacyPolicy,
+        privacyPolicyAcceptedAt: user.consents.privacyPolicyAcceptedAt,
+        dataSharing: user.consents.dataSharing,
+        dataSharingAcceptedAt: user.consents.dataSharingAcceptedAt,
       },
       plan: user.planId
         ? {
-            id: user.planId.toString(),
+            id: user.planId,
             slug: user.planSlug,
             startedAt: user.planStartedAt,
           }

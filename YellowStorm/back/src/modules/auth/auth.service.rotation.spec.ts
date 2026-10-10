@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { AuthService } from './auth.service';
 import { ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -15,8 +15,7 @@ jest.mock('bcrypt', () => ({
 const bcrypt = require('bcrypt') as { compare: jest.Mock };
 
 describe('AuthService.refreshTokens atomic rotation (F03)', () => {
-  const successorId = 'b0000000000000000000aaa';
-  const userId = new Types.ObjectId().toString();
+  const userId = newObjectId();
   const receiptKey = Buffer.alloc(32, 7).toString('base64');
 
   const build = (predecessorOverrides: Partial<ReturnType<typeof sessionRecord>> = {}) => {

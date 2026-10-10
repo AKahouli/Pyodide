@@ -15,6 +15,14 @@ import { PgSessionStore } from '../persistence/pg-session.store';
 
 import { JWT_ALGORITHM } from '../constants/jwt.constants';
 
+/**
+ * Claims as verified by passport. The permission claims are absent on tokens
+ * minted by older releases, so they are optional here even though new tokens
+ * always carry them.
+ */
+type VerifiedJwtPayload = Omit<JwtPayload, 'permissions' | 'roleNames' | 'permissionsVersion'> &
+  Partial<Pick<JwtPayload, 'permissions' | 'roleNames' | 'permissionsVersion'>>;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -43,7 +51,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(payload: VerifiedJwtPayload) {
     if (payload.type !== 'access') {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid token type');
     }
@@ -76,9 +84,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         throw new UnauthorizedException(accessDenial.code, accessDenial.message);
       }
       return toAuthUser(found.user, {
-        permissions: payload.permissions || [],
-        roleNames: payload.roleNames || [],
-        permissionsVersion: payload.permissionsVersion || 1,
+        permissions: payload.permissions ?? [],
+        roleNames: payload.roleNames ?? [],
+        permissionsVersion: payload.permissionsVersion ?? 1,
       });
     }
 
@@ -95,9 +103,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     return {
       ...user,
-      permissions: payload.permissions || [],
-      roleNames: payload.roleNames || [],
-      permissionsVersion: payload.permissionsVersion || 1,
+      permissions: payload.permissions ?? [],
+      roleNames: payload.roleNames ?? [],
+      permissionsVersion: payload.permissionsVersion ?? 1,
     };
   }
 }

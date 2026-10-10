@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
 import { ProviderLinkService } from './provider-link.service';
@@ -32,7 +33,7 @@ describe('OAuthFlowService', () => {
   let authorizationService: Record<string, jest.Mock>;
   let emailService: Record<string, jest.Mock>;
 
-  const MOCK_USER_ID = new Types.ObjectId();
+  const MOCK_USER_ID = newObjectId();
   const MOCK_STATE = 'a'.repeat(64);
   const MOCK_CODE = 'auth-code-123';
   const MOCK_PROVIDER_KEY = 'microsoft';
@@ -309,7 +310,7 @@ describe('OAuthFlowService', () => {
         );
 
         expect(result.type).toBe('login');
-        expect(result.accessToken).toBeDefined();
+        expect(result.exchangeCode).toBeDefined();
       });
 
       it('should throw when linked user is suspended', async () => {
@@ -349,7 +350,7 @@ describe('OAuthFlowService', () => {
         );
 
         expect(result.type).toBe('login');
-        expect(result.accessToken).toBeDefined();
+        expect(result.exchangeCode).toBeDefined();
       });
     });
 

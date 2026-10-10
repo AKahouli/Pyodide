@@ -26,7 +26,7 @@ import {
 } from '../system/interfaces/login-settings.interface';
 import { WorkspaceInitializerService } from '../workspace/workspace-initializer.service';
 import { TokenPair, LoginResponse, DeviceInfoData, SessionInfo } from './interfaces/auth.interface';
-import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ServiceUnavailableException, ConflictException, InternalServerException } from '../exceptions';
+import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ServiceUnavailableException, ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -39,6 +39,9 @@ import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
 import { PgSessionStore } from './persistence/pg-session.store';
 import { LoginLockoutService } from './throttle/login-lockout.service';
 
+const REGISTER_RESPONSE_MESSAGE =
+  'If this email can be registered, a verification link has been sent. Please check your inbox.';
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   /**
@@ -50,6 +53,7 @@ export class AuthService implements OnModuleInit {
   private static readonly STANDALONE_CLAIM_GRACE_MS = 30_000;
 
   private readonly bcryptRounds: number;
+  private readonly registerMinDurationMs: number;
   private readonly appName: string;
   private readonly frontendUrl: string;
   private readonly passwordResetExpiryHours: number;
@@ -77,6 +81,7 @@ export class AuthService implements OnModuleInit {
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
+    this.registerMinDurationMs = this.configService.get<number>('auth.registerMinDurationMs', 1000);
     this.appName = this.configService.get<string>('app.name', 'YelloStorm');
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -104,7 +109,8 @@ export class AuthService implements OnModuleInit {
   /**
    * Register a new user
    */
-  async register(dto: RegisterDto): Promise<{ message: string; userId: string }> {
+  async register(dto: RegisterDto): Promise<{ message: string }> {
+    const startedAt = Date.now();
     if (!this.systemService.isRegistrationEnabled()) {
       throw new ForbiddenException(
         ErrorCode.REGISTRATION_DISABLED,
@@ -112,16 +118,24 @@ export class AuthService implements OnModuleInit {
       );
     }
 
-    const user = await this.userService.create({
-      email: dto.email,
-      password: dto.password,
-    });
+    let user: Awaited<ReturnType<UserService['create']>>;
+    try {
+      user = await this.userService.create({
+        email: dto.email,
+        password: dto.password,
+      });
+    } catch (error) {
+      if (error instanceof ConflictException && error.code === ErrorCode.USER_ALREADY_EXISTS) {
+        return await this.registerResultForExistingEmail(dto.password, startedAt);
+      }
+      throw error;
+    }
     // Assign default (free) plan to new user
     let defaultPlan;
     try {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
-        user._id.toString(),
+        user._id,
         defaultPlan.id,
         defaultPlan.slug,
       );
@@ -141,7 +155,7 @@ export class AuthService implements OnModuleInit {
     try {
       const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
       await this.workspaceInitializer.getOrCreatePersonalWorkspace(
-        user._id.toString(),
+        user._id,
         workspaceStorage,
       );
       this.logger.log('Personal workspace created for new user', {
@@ -157,19 +171,51 @@ export class AuthService implements OnModuleInit {
 
     // Create the user's human agent (empty role/description until profile completion)
     await this.humainAgentService.ensureForUser({
-      userId: user._id.toString(),
+      userId: user._id,
       email: user.email,
     });
 
     this.logger.log('User registered', { userId: user._id });
 
-    // Send verification email
-    await this.sendVerificationEmail(user._id.toString(), user.email, user.emailVerificationToken!);
+    // Not awaited: SMTP latency must not distinguish a new registration from an existing email.
+    if (user.emailVerificationToken) {
+      this.sendVerificationEmail(user._id, user.email, user.emailVerificationToken).catch((err: unknown) => {
+        this.logger.warn('Failed to send verification email after registration', {
+          userId: user._id,
+          error: (err as Error).message,
+        });
+      });
+    } else {
+      this.logger.warn('Registered user has no verification token, skipping verification email', { userId: user._id });
+    }
 
-    return {
-      message: 'Registration successful. Please check your email to verify your account.',
-      userId: user._id.toString(),
-    };
+    await this.padRegisterDuration(startedAt);
+    return { message: REGISTER_RESPONSE_MESSAGE };
+  }
+
+  /**
+   * An already-registered email must be indistinguishable from a new
+   * registration (same status, same body, similar latency), otherwise the
+   * endpoint is an account-enumeration oracle. The password is hashed anyway
+   * to match the cost of the real path; nothing about the email is logged.
+   */
+  private async registerResultForExistingEmail(password: string, startedAt: number): Promise<{ message: string }> {
+    await bcrypt.hash(password, this.bcryptRounds);
+    this.logger.log('Registration attempted for an existing account');
+    await this.padRegisterDuration(startedAt);
+    return { message: REGISTER_RESPONSE_MESSAGE };
+  }
+
+  /**
+   * Both register outcomes wait until a common floor (measured from the start
+   * of the call) has elapsed, so the cheaper existing-email path is not
+   * measurably faster than user, plan, workspace and agent creation.
+   */
+  private async padRegisterDuration(startedAt: number): Promise<void> {
+    const remainingMs = this.registerMinDurationMs - (Date.now() - startedAt);
+    if (remainingMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
+    }
   }
 
   /**
@@ -227,7 +273,7 @@ export class AuthService implements OnModuleInit {
     const deviceInfo = this.parseUserAgent(userAgent);
 
     // Fetch user permissions for login response and JWT
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
@@ -237,16 +283,16 @@ export class AuthService implements OnModuleInit {
     const tokens = await this.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     // Update last login
-    await this.userService.updateLastLogin(user._id.toString());
+    await this.userService.updateLastLogin(user._id);
 
     // Ensure the user has a human agent (covers already-registered users on next login)
     await this.humainAgentService.ensureForUser({
-      userId: user._id.toString(),
+      userId: user._id,
       email: user.email,
-      firstName: user.profile?.firstName,
-      lastName: user.profile?.lastName,
-      role: user.profile?.role,
-      description: user.profile?.description,
+      firstName: user.profile.firstName,
+      lastName: user.profile.lastName,
+      role: user.profile.role,
+      description: user.profile.description,
     });
 
     this.logger.log('User logged in', {
@@ -256,8 +302,8 @@ export class AuthService implements OnModuleInit {
 
     // Send new location alert email (async, don't block login)
     if (isNewLocation) {
-      this.sendNewLocationAlertEmail(user._id.toString(), user.email, ipAddress, deviceInfo).catch((err) => {
-        this.logger.warn('Failed to send new location alert email', { error: err.message });
+      this.sendNewLocationAlertEmail(user._id, user.email, ipAddress, deviceInfo).catch((err: unknown) => {
+        this.logger.warn('Failed to send new location alert email', { error: (err as Error).message });
       });
     }
 
@@ -266,28 +312,28 @@ export class AuthService implements OnModuleInit {
         accessToken: tokens.accessToken,
         expiresIn: tokens.expiresIn,
         user: {
-          id: user._id.toString(),
+          id: user._id,
           email: user.email,
           emailVerified: user.emailVerified,
           profileComplete: user.profileComplete,
           appearance: {
-            colorTheme: user.appearance?.colorTheme ?? 'default',
-            language: user.appearance?.language ?? 'en',
+            colorTheme: user.appearance.colorTheme,
+            language: user.appearance.language,
           },
           profile: {
-            firstName: user.profile?.firstName,
-            lastName: user.profile?.lastName,
-            company: user.profile?.company,
+            firstName: user.profile.firstName,
+            lastName: user.profile.lastName,
+            company: user.profile.company,
           },
           consents: {
-            privacyPolicy: user.consents?.privacyPolicy,
-            privacyPolicyAcceptedAt: user.consents?.privacyPolicyAcceptedAt,
-            dataSharing: user.consents?.dataSharing,
-            dataSharingAcceptedAt: user.consents?.dataSharingAcceptedAt,
+            privacyPolicy: user.consents.privacyPolicy,
+            privacyPolicyAcceptedAt: user.consents.privacyPolicyAcceptedAt,
+            dataSharing: user.consents.dataSharing,
+            dataSharingAcceptedAt: user.consents.dataSharingAcceptedAt,
           },
           plan: user.planId
             ? {
-                id: user.planId.toString(),
+                id: user.planId,
                 slug: user.planSlug,
                 startedAt: user.planStartedAt,
               }
@@ -328,7 +374,7 @@ export class AuthService implements OnModuleInit {
     const refreshTokenHash = await bcrypt.hash(refreshToken, this.bcryptRounds);
 
     // Enforce max sessions limit
-    await this.enforceSessionLimit(String(user._id));
+    await this.enforceSessionLimit(user._id);
 
     // Create session
     const session = await this.sessionStore.create({
@@ -343,7 +389,7 @@ export class AuthService implements OnModuleInit {
 
     // Use pre-fetched permissions or fetch fresh ones
     if (!permissions || !roleNames) {
-      const userRoles = user.roles || [];
+      const userRoles = user.roles;
       [permissions, roleNames] = await Promise.all([
         this.authorizationService.getUserPermissions(userRoles),
         this.authorizationService.getUserRoleNames(userRoles),
@@ -352,7 +398,7 @@ export class AuthService implements OnModuleInit {
 
     // Generate access token with sessionId for immediate revocation support
     const accessPayload = {
-      sub: user._id.toString(),
+      sub: user._id,
       email: user.email,
       type: 'access' as const,
       sessionId: session.id,
@@ -438,7 +484,8 @@ export class AuthService implements OnModuleInit {
         !session.rotatedToSessionId && !!session.rotatedAt;
       const claimIsFresh =
         claimedButUnattached &&
-        Date.now() - session.rotatedAt!.getTime() <
+        session.rotatedAt !== null &&
+        Date.now() - session.rotatedAt.getTime() <
           AuthService.STANDALONE_CLAIM_GRACE_MS;
 
       if (
@@ -503,7 +550,7 @@ export class AuthService implements OnModuleInit {
 
     const accessDenial = getAccountAccessDenial(user.status);
     if (accessDenial) {
-      await this.invalidateAllUserSessions(user._id.toString());
+      await this.invalidateAllUserSessions(user._id);
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
@@ -662,13 +709,13 @@ export class AuthService implements OnModuleInit {
       return null;
     }
 
-    const user = await this.userService.findById(session.userId.toString());
+    const user = await this.userService.findById(session.userId);
     if (!user) {
       return null;
     }
     const accessDenial = getAccountAccessDenial(user.status);
     if (accessDenial) {
-      await this.invalidateAllUserSessions(user._id.toString());
+      await this.invalidateAllUserSessions(user._id);
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
@@ -686,14 +733,14 @@ export class AuthService implements OnModuleInit {
     user: AuthUser,
     sessionId: string,
   ): Promise<string> {
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
     const accessPayload = {
-      sub: user._id.toString(),
+      sub: user._id,
       email: user.email,
       type: 'access' as const,
       sessionId,
@@ -711,7 +758,7 @@ export class AuthService implements OnModuleInit {
   /**
    * Logout - invalidate current session
    */
-  async logout(refreshToken: string): Promise<void> {
+  async logout(refreshToken: string | undefined): Promise<void> {
     if (!refreshToken) {
       return;
     }
@@ -786,7 +833,7 @@ export class AuthService implements OnModuleInit {
       os: result.os.name,
       osVersion: result.os.version,
       device: result.device.model,
-      deviceType: result.device.type || 'desktop',
+      deviceType: result.device.type ?? 'desktop',
     };
   }
 
@@ -895,7 +942,7 @@ export class AuthService implements OnModuleInit {
     if (user.emailVerified) {
       throw new BadRequestException(ErrorCode.EMAIL_ALREADY_VERIFIED, 'Email is already verified');
     }
-    await this.resendVerificationEmail(user._id.toString(), user.email);
+    await this.resendVerificationEmail(user._id, user.email);
   }
 
   /**
@@ -917,7 +964,7 @@ export class AuthService implements OnModuleInit {
    */
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const user = await this.userService.resetPassword(token, newPassword);
-    await this.invalidateAllUserSessions(user._id.toString());
+    await this.invalidateAllUserSessions(user._id);
     this.logger.log('Password reset completed and sessions invalidated', { userId: user._id });
   }
 

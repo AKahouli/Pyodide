@@ -73,9 +73,9 @@ describe('AuthService.isSessionValid error classification (F01)', () => {
     const { service } = build(() => Promise.reject(error));
     const promise = service.isSessionValid('s1');
     await expect(promise).rejects.toBeInstanceOf(ServiceUnavailableException);
-    await promise.catch((e) => {
-      expect(e.code).toBe(ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE);
-      expect(e.getStatus()).toBe(503);
+    await promise.catch((e: unknown) => {
+      expect((e as ServiceUnavailableException).code).toBe(ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE);
+      expect((e as ServiceUnavailableException).getStatus()).toBe(503);
     });
   });
 

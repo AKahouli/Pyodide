@@ -38,7 +38,6 @@ interface SearchUsersParams {
 }
 
 const REGISTRATION_PENDING = 'pending';
-const APPROVAL_APPROVED = 'approved';
 
 @Injectable()
 export class UserService {
@@ -54,7 +53,7 @@ export class UserService {
     private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(UserService.name);
-    this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12) ?? 12;
+    this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
   }
 
@@ -73,7 +72,7 @@ export class UserService {
     const user = await this.userStore.create({
       email: data.email.toLowerCase(),
       passwordHash,
-      emailVerified: data.emailVerified || false,
+      emailVerified: data.emailVerified ?? false,
       ...(data.emailVerified ? {} : { emailVerificationToken, emailVerificationExpiry }),
       firstName: data.profile?.firstName ?? undefined,
       lastName: data.profile?.lastName ?? undefined,
@@ -221,8 +220,8 @@ export class UserService {
       firstName: data.firstName,
       lastName: data.lastName,
       company: data.company,
-      profileRole: data.role ?? current.profileRole ?? '',
-      description: data.description ?? current.description ?? '',
+      profileRole: data.role ?? current.profileRole,
+      description: data.description ?? current.description,
       consentPrivacyPolicy: data.privacyPolicy,
       consentPrivacyPolicyAcceptedAt: now,
       consentDataSharing: data.dataSharing,

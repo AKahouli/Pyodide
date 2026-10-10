@@ -92,10 +92,12 @@ export async function getAuthProviders(): Promise<AuthProviderPublic[]> {
 export const getOAuthProviders = getAuthProviders;
 
 /**
- * Exchange OAuth temp token for JWT + refresh cookie
+ * Complete an OAuth login: the single-use exchange code travels in an HttpOnly
+ * cookie set by the callback, so there is nothing to send. Returns the JWT and
+ * sets the refresh cookie.
  */
-export async function exchangeOAuthToken(token: string): Promise<LoginResponse> {
-  const response = await apiClient.post<ApiResponse<LoginResponse>>(API_ENDPOINTS.auth.oauthExchange, { token });
+export async function exchangeOAuthLogin(): Promise<LoginResponse> {
+  const response = await apiClient.post<ApiResponse<LoginResponse>>(API_ENDPOINTS.auth.oauthExchange);
   return response.data.data;
 }
 

@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { AuthService } from './auth.service';
 import { makeSessionStoreFake, sessionRecord } from './persistence/session-store.fake';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -11,7 +11,7 @@ jest.mock('bcrypt', () => ({
 
 describe('AuthService account access', () => {
   const buildUser = (overrides: Record<string, unknown> = {}) => ({
-    _id: new Types.ObjectId(),
+    _id: newObjectId(),
     email: 'jane@acme.io',
     emailVerified: true,
     emailVerificationToken: 'verify-token',
@@ -47,7 +47,7 @@ describe('AuthService account access', () => {
     };
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({
-        _id: new Types.ObjectId(),
+        _id: newObjectId(),
         slug: 'unlimited',
         workspaceStorageBytes: 100,
       }),
@@ -94,8 +94,8 @@ describe('AuthService account access', () => {
       ),
     ).resolves.toMatchObject({
       loginResponse: expect.objectContaining({
-        user: expect.objectContaining({ status: UserStatus.INACTIVE }),
-      }),
+        user: expect.objectContaining({ status: UserStatus.INACTIVE }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
     });
     expect(userService.validatePassword).toHaveBeenCalled();
   });
@@ -118,7 +118,7 @@ describe('AuthService account access', () => {
     const { service, sessionStore } = build(user);
     const sessionId = 'c0000000000000000000aaa';
     sessionStore.records.push({
-      ...sessionRecord({ id: sessionId, userId: String(user._id), refreshTokenHash: 'hash', tokenFamily: 'family-1' }),
+      ...sessionRecord({ id: sessionId, userId: user._id, refreshTokenHash: 'hash', tokenFamily: 'family-1' }),
     });
 
     await expect(

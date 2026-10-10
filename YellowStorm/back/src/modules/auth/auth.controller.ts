@@ -51,8 +51,7 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new user' })
-  @ApiResponse({ status: 201, description: 'User registered successfully' })
-  @ApiResponse({ status: 409, description: 'Email already exists' })
+  @ApiResponse({ status: 201, description: 'Generic result, identical whether or not the email already has an account' })
   @ApiResponse({ status: 429, description: 'Too many registration attempts' })
   async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.throttle.enforceIp('register', req, res);
@@ -70,7 +69,7 @@ export class AuthController {
   async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.throttle.enforceIp('login', req, res);
     const ipAddress = getClientIp(req);
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = req.headers['user-agent'] ?? 'unknown';
 
     const { loginResponse, refreshToken } = await this.authService
       .login(dto, ipAddress, userAgent)
@@ -93,7 +92,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Logout and invalidate current session' })
   @ApiResponse({ status: 200, description: 'Logout successful' })
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const refreshToken = req.cookies?.[this.cookieName];
+    const refreshToken = this.readRefreshTokenCookie(req);
     await this.authService.logout(refreshToken);
 
     // Clear refresh token cookie
@@ -110,7 +109,7 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.throttle.enforceIp('refresh', req, res);
-    const refreshToken = req.cookies?.[this.cookieName];
+    const refreshToken = this.readRefreshTokenCookie(req);
     if (!refreshToken) {
       throw new UnauthorizedException(ErrorCode.AUTH_REFRESH_TOKEN_INVALID, 'Refresh token not provided');
     }
@@ -123,7 +122,7 @@ export class AuthController {
       : undefined;
 
     const ipAddress = getClientIp(req);
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = req.headers['user-agent'] ?? 'unknown';
 
     const tokens = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent, attemptId);
 
@@ -143,12 +142,12 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Email verified successfully' })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
   async verifyEmail(
-    @Query('token') token: string,
+    @Query('token') token: string | undefined,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.throttle.enforceIp('verifyEmail', req, res);
-    if (!token || token.length !== 64) {
+    if (token?.length !== 64) {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Invalid verification token');
     }
     await this.userService.verifyEmail(token);
@@ -169,7 +168,7 @@ export class AuthController {
   ) {
     await this.throttle.enforceIp('resendVerification', req, res);
     await this.throttle.enforceAccount('resendVerification', user.email, res);
-    await this.authService.resendVerificationEmail(user._id.toString(), user.email);
+    await this.authService.resendVerificationEmail(user._id, user.email);
     return { message: 'Verification email has been sent' };
   }
 
@@ -181,12 +180,12 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Invalid token or email already verified' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   async resendVerificationPublic(
-    @Body() body: { token: string },
+    @Body() body: { token?: string },
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.throttle.enforceIp('resendVerification', req, res);
-    if (!body.token || body.token.length !== 64) {
+    if (body.token?.length !== 64) {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'Invalid verification token');
     }
     // The token identifies the account without revealing its email.
@@ -234,14 +233,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Get active sessions' })
   @ApiResponse({ status: 200, description: 'Sessions retrieved' })
   async getSessions(@CurrentUser() user: AuthUser, @Req() req: Request) {
-    const refreshToken = req.cookies?.[this.cookieName];
+    const refreshToken = this.readRefreshTokenCookie(req);
     const currentSessionId = refreshToken
       ? this.authService.extractSessionIdFromToken(refreshToken)
       : undefined;
 
     return this.authService.getUserSessions(
-      user._id.toString(),
-      currentSessionId || undefined,
+      user._id,
+      currentSessionId ?? undefined,
     );
   }
 
@@ -255,7 +254,7 @@ export class AuthController {
     @Param('sessionId') sessionId: string,
     @CurrentUser() user: AuthUser,
   ) {
-    await this.authService.invalidateSession(user._id.toString(), sessionId);
+    await this.authService.invalidateSession(user._id, sessionId);
     return { message: 'Session invalidated' };
   }
 
@@ -270,6 +269,10 @@ export class AuthController {
       maxAge: this.authService.getRefreshTokenExpiryMs(),
       path: '/api/v1/auth',
     });
+  }
+
+  private readRefreshTokenCookie(req: Request): string | undefined {
+    return (req.cookies as Record<string, string> | undefined)?.[this.cookieName];
   }
 
   /**

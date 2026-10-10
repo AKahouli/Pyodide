@@ -148,7 +148,7 @@ describe('AuthService login hardening', () => {
 
       userService.validatePassword.mockResolvedValue(true);
       await expect(attempt(service, EMAIL, '203.0.113.5')).resolves.toMatchObject({
-        refreshToken: expect.any(String),
+        refreshToken: expect.any(String) as string,
       });
     });
 
@@ -168,7 +168,7 @@ describe('AuthService login hardening', () => {
       await errorOf(attempt(service));
       await errorOf(attempt(service));
       userService.validatePassword.mockResolvedValue(true);
-      await expect(attempt(service)).resolves.toMatchObject({ refreshToken: expect.any(String) });
+      await expect(attempt(service)).resolves.toMatchObject({ refreshToken: expect.any(String) as string });
       userService.validatePassword.mockResolvedValue(false);
 
       expect(lockout.reserveAttempt(EMAIL, '127.0.0.1')).toBeNull();
@@ -187,7 +187,7 @@ describe('AuthService login hardening', () => {
         logger.error.mock.calls,
         logger.debug.mock.calls,
       ]);
-      expect(logger.log).toHaveBeenCalledWith('User logged in', expect.objectContaining({ userId: expect.anything() }));
+      expect(logger.log).toHaveBeenCalledWith('User logged in', expect.objectContaining({ userId: expect.anything() as unknown }));
       expect(logged).not.toContain(EMAIL);
       expect(logged).not.toContain('127.0.0.1');
     });

@@ -54,4 +54,5 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
   ],
   exports: [AuthService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
 })
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class -- Nest module: configuration lives in the decorator
 export class AuthModule {}
