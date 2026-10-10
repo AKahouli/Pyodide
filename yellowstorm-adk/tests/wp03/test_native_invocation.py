@@ -11,6 +11,16 @@ from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1, Invocati
 from src.root_runtime.invocation import NativeInvocationProjection, native_run_options
 
 
+def test_readable_schema_annotations_are_bounded_and_do_not_project_defaults():
+    from src.root_runtime.invocation import _input_schema
+    schema = _input_schema({"type": "string", "title": "x" * 101, "description": "Choose an interval",
+                            "examples": ["Daily", "4-hour", "x" * 201, {}, False, 1, 2], "default": "private"})
+    assert len(schema["title"]) <= 100
+    assert schema["description"] == "Choose an interval"
+    assert schema["examples"] == ["Daily", "4-hour", False, 1]
+    assert "default" not in schema and "enum" not in schema
+
+
 def resume_scope():
     return ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id="execution",
                             resume_intent="resume", native_session_id="session",
@@ -128,7 +138,7 @@ async def test_pending_projection_drops_tool_arguments_and_schema_private_hints(
         types.Part(function_call=types.FunctionCall(id="ask", name="adk_request_input", args={
             "message": "What value?", "payload": {"password": "private-password"},
             "response_schema": {"type": "object", "properties": {"value": {
-                "type": "string", "default": "private-default", "description": "private-description",
+                "type": "string", "default": "private-default", "description": "Choose a view",
             }}, "required": ["value"]},
         })),
     ]))
@@ -139,7 +149,7 @@ async def test_pending_projection_drops_tool_arguments_and_schema_private_hints(
     assert "private-" not in encoded and "https://remote" not in encoded
     assert traces[-1]["pending_inputs"][0] == {"input_id": "confirm", "function_name": "adk_request_confirmation", "input_version": 1}
     assert json.loads(traces[-1]["pending_inputs"][1]["response_schema_json"]) == {
-        "type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"],
+        "type": "object", "properties": {"value": {"type": "string", "description": "Choose a view"}}, "required": ["value"],
     }
 
 

@@ -10,6 +10,7 @@ import { LiveStreamBuffers, applyLiveChunks, streamKey, type LiveAnswer } from '
 import { getStreamErrorMessage } from './utils';
 import { insertMessageChronologically } from './utils/message-order';
 import { conversationStreamService } from './stream';
+import { useRootInputUiStore } from './rootInputUiStore';
 import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
@@ -514,7 +515,7 @@ interface ConversationState {
   // Actions - Messages
   fetchMessages: (conversationId: string) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
-  sendMessage: (conversationId: string, payload: SendMessagePayload) => Promise<void>;
+  sendMessage: (conversationId: string, payload: SendMessagePayload, onAccepted?: (assistantMessageId?: string) => void) => Promise<void>;
   updateFeedback: (conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null) => Promise<void>;
   regenerateMessage: (conversationId: string, messageId: string) => Promise<void>;
   reportMessage: (conversationId: string, messageId: string, payload: CreateReportPayload) => Promise<void>;
@@ -1259,7 +1260,7 @@ export const useConversationStore = create<ConversationState>()(
         });
       },
 
-      sendMessage: async (conversationId, payload) => {
+      sendMessage: async (conversationId, payload, onAccepted) => {
         const accountGeneration = liveAccountGeneration;
         const requestId = payload.requestId ?? crypto.randomUUID();
         payload = { ...payload, requestId };
@@ -1355,6 +1356,7 @@ export const useConversationStore = create<ConversationState>()(
             };
           });
 
+          onAccepted?.(result.aiMessageId);
           const earlyError = result.aiMessageId ? get().earlyStreamErrors.get(result.aiMessageId) : undefined;
           if (earlyError) {
             const earlyStreamErrors = new Map(get().earlyStreamErrors);
@@ -1916,6 +1918,7 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamError: (event) => {
+        useRootInputUiStore.getState().failContinuation(event.conversationId, event.messageId);
         const hadLiveAnswer = !!get().liveAnswers[streamKey(event.conversationId, event.messageId)];
         finishLiveAnswer(event.conversationId, event.messageId);
         const state = get();

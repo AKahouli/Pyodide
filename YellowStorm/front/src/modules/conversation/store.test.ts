@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useAllMessages, useConversationStore, useDisplayMessages } from './store';
 import { useModelsStore } from '@/modules/models';
 import { toast } from 'sonner';
+import { useRootInputUiStore, initialRootInputUiState } from './rootInputUiStore';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -14,6 +15,27 @@ const fetchActiveStreamsMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const ensureConnectedMock = vi.hoisted(() => vi.fn());
 const stopStreamMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+it('restores only the bound clarification draft when a stream error beats HTTP acceptance', async () => {
+  const key = 'execution:2:ask:1';
+  useRootInputUiStore.setState({ ...initialRootInputUiState, scope: 'owner:conv-1', drafts: { [key]: 'Weekly' } });
+  useConversationStore.setState({ currentConversationId: 'conv-1' });
+  let resolve!: (result: unknown) => void;
+  sendMessageMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'Weekly' }, (id) =>
+    useRootInputUiStore.getState().bindContinuation('owner:conv-1', key, id));
+  await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalled());
+  useConversationStore.getState().onStreamError({ conversationId: 'conv-1', messageId: 'failed-ai',
+    errorCode: 'ERR_1417', message: 'Request failed' });
+  resolve({ aiMessageId: 'failed-ai', userMessage: { id: 'user-answer', conversationId: 'conv-1',
+    conversationType: 'user', content: 'Weekly', createdAt: '2026-10-10T18:00:00Z' } });
+  await pending;
+  useRootInputUiStore.getState().markSubmitted('owner:conv-1', key);
+  expect(useRootInputUiStore.getState().submitted).not.toContain(key);
+  expect(useRootInputUiStore.getState().failures).toContain(key);
+  expect(useRootInputUiStore.getState().drafts[key]).toBe('Weekly');
+  useRootInputUiStore.setState(initialRootInputUiState);
+});
 
 it('refreshes background results without dropping loaded history, pagination, or the selected draft model', async () => {
   const old = { id: 'old', conversationId: 'conv-1', conversationType: 'user' as const, createdAt: '2026-01-01T00:00:00Z', components: [] };

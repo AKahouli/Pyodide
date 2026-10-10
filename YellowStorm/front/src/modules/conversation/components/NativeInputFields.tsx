@@ -1,6 +1,8 @@
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { nativeInputLabel } from './native-input-presentation';
 import { useModuleTranslation } from '@/modules/localization';
 import type { NativeInputSchema } from '../types';
 
@@ -19,12 +21,13 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
   label: string; required?: boolean; disabled?: boolean;
 }) {
   const { t } = useModuleTranslation('conversation');
+  label = schema.title || label;
   if (schema.type === 'object') {
     const object = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     return <fieldset disabled={disabled} className='space-y-3'>
       <legend className='text-sm font-medium'>{label}</legend>
       {Object.entries(schema.properties || {}).map(([key, child]) => <NativeInputFields key={key}
-        schema={child} label={key} value={object[key]} required={schema.required?.includes(key)} disabled={disabled}
+        schema={child} label={nativeInputLabel(child, key)} value={object[key]} required={schema.required?.includes(key)} disabled={disabled}
         onChange={(next) => onChange({ ...object, [key]: next })} />)}
     </fieldset>;
   }
@@ -47,6 +50,7 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
   }
   if (schema.enum) return <label className='block space-y-1 text-sm'>
     <span>{label}</span>
+    {schema.description && <span className='block text-muted-foreground'>{schema.description}</span>}
     <select className='w-full rounded-md border bg-background p-2' required={required} disabled={disabled}
       value={schema.enum.some((option) => option === value) ? JSON.stringify(value) : ''}
       onChange={(event) => onChange(JSON.parse(event.target.value) as unknown)}>
@@ -58,12 +62,24 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
     <Checkbox checked={value === true} disabled={disabled} onCheckedChange={(checked) => onChange(checked === true)} />{label}
   </label>;
   const numeric = schema.type === 'number' || schema.type === 'integer';
-  return <label className='block space-y-1 text-sm'>
-    <span>{label}</span>
-    <Input type={numeric ? 'number' : 'text'} step={schema.type === 'integer' ? 1 : 'any'}
+  return <div className='space-y-2 text-sm'>
+    <label className='block space-y-1'>
+    <span>{label}{!required && <span className='ml-2 text-muted-foreground'>{t('rootInput.optional')}</span>}</span>
+    {schema.description && <span className='block text-muted-foreground'>{schema.description}</span>}
+    {numeric ? <Input type='number' step={schema.type === 'integer' ? 1 : 'any'}
       required={required} disabled={disabled} maxLength={Math.min(2000, schema.maxLength ?? 2000)}
       min={schema.minimum} max={schema.maximum}
       value={typeof value === 'string' || typeof value === 'number' ? value : ''}
-      onChange={(event) => onChange(numeric && event.target.value !== '' ? Number(event.target.value) : event.target.value)} />
-  </label>;
+      onChange={(event) => onChange(event.target.value !== '' ? Number(event.target.value) : '')} />
+      : <Textarea required={required} disabled={disabled} rows={schema.examples?.length ? 2 : 3}
+        minLength={schema.minLength} maxLength={Math.min(2000, schema.maxLength ?? 2000)}
+        value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} />}
+    </label>
+    {!!schema.examples?.length && <div className='flex flex-wrap gap-2' role='group' aria-label={t('rootInput.suggestions')}>
+      {schema.examples.filter((example) => numeric ? typeof example === 'number' : typeof example === 'string').map((example, index) =>
+        <Button key={index} type='button' variant={value === example ? 'secondary' : 'outline'} size='sm'
+          className='h-auto min-h-9 max-w-full whitespace-normal text-left' disabled={disabled}
+          aria-pressed={value === example} onClick={() => onChange(example)}>{String(example)}</Button>)}
+    </div>}
+  </div>;
 }

@@ -54,10 +54,26 @@ def attach_root_input_control(agent, scope, version: int = 0) -> None:
     request_input.metadata = tool_policy(request_input.name)
     agent.tools = [*agent.tools, request_input]
     agent.instruction += (
-        '\nWhen essential task inputs are missing, use adk_request_input with a clear message and '
-        'response_schema before dispatching work. It binds the answer to this request and tracks '
+        '\nThis invocation owns only the current user request. Other requests in conversation history '
+        'may be waiting or running independently. For an unrelated new question, answer that question '
+        'directly; never request the missing inputs of an earlier request, duplicate its clarification, '
+        'or resume/change it implicitly. A bound native continuation supplies the answers for its own '
+        'request. Tailor next-step suggestions to the current answer, not to an unrelated pending task. '
+        'Before asking for input, check the established conversation facts and your exposed tools. '
+        'Retrieve information you can obtain yourself; do not ask the user to supply it unnecessarily. '
+        'State reasonable assumptions for optional preferences. When an essential choice is missing, '
+        'use adk_request_input with a concise question and response_schema before dispatching work. '
+        'Use human-readable title and description on fields. For suggested answers with custom text, '
+        'use a string schema with two or three examples; recommend one in the description without selecting it. '
+        'Use enum only for genuinely restricted choices. Request only essential fields, preserve earlier answers, '
+        'and distinguish chart interval from historical lookback. If required data cannot be retrieved, '
+        'explain the exact capability gap and offer a useful alternative. It binds the answer to this request and tracks '
         'waiting/resolution. Reserve present_choices for optional conversational shortcuts, '
-        'not a replacement for a required clarification. Other chat requests may continue while waiting.'
+        'not a replacement for a required clarification. Other chat requests may continue while waiting. '
+        'End every user-facing answer with one concise, specific next step or up to two ways to go further. '
+        'Use present_choices for actionable follow-up suggestions when exposed, including a custom answer; '
+        'otherwise write the suggestion naturally. Suggestions are optional: never launch extra work without '
+        'the user choosing it, never promise unavailable capabilities, and keep them outside an exact-format deliverable.'
     )
 
 

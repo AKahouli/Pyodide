@@ -27,6 +27,15 @@ def _input_schema(raw, depth=0, budget=None):
     if not isinstance(kind, str) or kind not in {"object", "array", "string", "number", "integer", "boolean"}:
         return None
     result = {"type": kind}
+    from src.flow_engine.observability.redaction import redact_string
+    for key, limit in (("title", 100), ("description", 500)):
+        if isinstance(raw.get(key), str):
+            result[key] = redact_string(raw[key], limit)[:limit]
+    if isinstance(raw.get("examples"), list):
+        result["examples"] = [redact_string(item, 200)[:200] if isinstance(item, str) else item
+                              for item in raw["examples"]
+                              if isinstance(item, str) and len(item) <= 200 or type(item) is bool
+                              or type(item) in (int, float) and abs(item) <= 2**53 - 1 and math.isfinite(item)][:4]
     for key in ("minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum"):
         if key not in raw:
             continue

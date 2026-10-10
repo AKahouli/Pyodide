@@ -57,7 +57,10 @@ async def run_owned_synthesis(service, request, queue, abort):
         '(or offset 0 for older manifests), and continue at each returned nextOffset until it is null. '
         'Combine those pages with the preview so the conclusion includes the complete result. '
         'Use this tool only to read a sealed producer result or its evidence mapping. '
-        'Do not spawn work, perform actions, request approval, or claim a new action was performed.')
+        'Do not spawn work, perform actions, request approval, or claim a new action was performed. '
+        'After the requested deliverable, always suggest one concise, relevant next step or at most two '
+        'ways to go further, grounded in the findings or unresolved gaps. Keep this suggestion separate '
+        'from any exact-format deliverable; do not promise unavailable tools or execute the suggestion.')
     name = str(data['name'])
     normalized = team.agent_helper.normalize_agent_name(name)
     team.agent_repository.add_agent(data)

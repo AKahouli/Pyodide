@@ -682,6 +682,9 @@ export interface SendMessagePayload {
 }
 
 export interface NativeInputSchema {
+  title?: string;
+  description?: string;
+  examples?: Array<string | number | boolean>;
   type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean';
   properties?: Record<string, NativeInputSchema>;
   required?: string[];
@@ -697,6 +700,8 @@ export interface NativeInputSchema {
 
 export interface PendingRootInput {
   executionId: string;
+  originAssistantMessageId?: string;
+  originQuestionMessageId?: string;
   epoch: number;
   mode?: 'foreground' | 'background';
   inputs: Array<{ inputId: string; inputVersion?: number; kind: 'confirmation' | 'input'; message?: string;

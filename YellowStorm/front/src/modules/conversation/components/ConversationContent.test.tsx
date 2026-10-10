@@ -53,6 +53,7 @@ const storeState = {
 };
 
 let isAwaitingFirstChunk = false;
+vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: 'owner' } }) }));
 let displayMessages: Message[] = [];
 
 vi.mock('../store', () => ({

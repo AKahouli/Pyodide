@@ -69,6 +69,18 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  it('shows waiting rather than success, then animates the bound continuation with reduced-motion support', () => {
+    const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
+      components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Preparing', status: 'completed' as const } }] };
+    const view = render(<ConversationAssistantBubble {...props} requestInputState='waiting' />);
+    const header = screen.getByRole('button', { name: 'Expand activity' });
+    expect(header).toHaveTextContent('rootInput.waiting');
+    expect(header).not.toHaveTextContent('Completed');
+    expect(header.querySelector('.animate-spin')).toBeNull();
+    view.rerender(<ConversationAssistantBubble {...props} requestInputState='continuing' />);
+    expect(header).toHaveTextContent('rootInput.continuing');
+    expect(header.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.redactSensitiveText = true;
@@ -1018,7 +1030,8 @@ describe('ConversationAssistantBubble', () => {
     const toggle = screen.getByRole('button', { name: 'Expand activity' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveClass('min-h-11', 'w-full');
-    expect(toggle).toHaveTextContent('Completed in 4m 12s');
+    expect(toggle).toHaveTextContent('rootInput.requestActivity');
+    expect(toggle).not.toHaveTextContent('Completed');
     expect(toggle).toHaveTextContent('2 steps');
     expect(toggle).toHaveTextContent('View process');
     fireEvent.click(toggle);

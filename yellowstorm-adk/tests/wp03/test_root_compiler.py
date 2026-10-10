@@ -47,6 +47,10 @@ def test_native_input_control_is_versioned_root_only_and_keeps_callbacks():
     attach_root_input_control(root, _root_scope(), 1)
     assert root.tools == [request_input]
     assert root.before_tool_callback is callback
+    assert 'two or three examples' in root.instruction
+    assert 'End every user-facing answer' in root.instruction
+    assert 'never request the missing inputs of an earlier request' in root.instruction
+    assert 'do not ask the user to supply it unnecessarily' in root.instruction
     for scope in (None, _worker_scope(), ExecutionScopeV1(role=ExecutionRole.FOLLOWUP)):
         agent = _fake_agent()
         attach_root_input_control(agent, scope, 1)

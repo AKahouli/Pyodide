@@ -1,13 +1,23 @@
 import { decodeNativeInputResponse, matchesNativeInputSchema, sanitizeNativeInputSchema } from './native-input-schema';
 
 describe('Native input boundary', () => {
-  it('keeps only bounded data fields and strips remote/private rendering hints', () => {
+  it('keeps bounded plain-text presentation and strips defaults and remote hints', () => {
     expect(sanitizeNativeInputSchema({ type: 'object', properties: {
-      answer: { type: 'string', default: 'private-token', description: 'private instructions' },
+      answer: { type: 'string', default: 'private-token', title: 'Your answer', description: 'Choose a view', examples: ['Daily', '4-hour'] },
     }, required: ['answer'], examples: ['private'] })).toEqual({
-      type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'],
+      type: 'object', properties: { answer: { type: 'string', title: 'Your answer', description: 'Choose a view', examples: ['Daily', '4-hour'] } }, required: ['answer'], examples: ['private'],
     });
     expect(sanitizeNativeInputSchema({ $ref: 'https://remote' })).toBeNull();
+  });
+  it('bounds annotations without turning examples into validation constraints', () => {
+    const schema = sanitizeNativeInputSchema({ type: 'string', title: 'x'.repeat(101), description: 'x'.repeat(501),
+      examples: ['Daily', '4-hour', 'x'.repeat(201), {}, false, 1, 2, 3], default: 'Daily' })!;
+    expect(schema.title).toHaveLength(100);
+    expect(schema.description).toHaveLength(500);
+    expect(schema.examples).toEqual(['Daily', '4-hour', false, 1]);
+    expect(schema).not.toHaveProperty('default');
+    expect(matchesNativeInputSchema('Custom interval', schema)).toBe(true);
+    expect(matchesNativeInputSchema('Custom interval', { type: 'string', enum: ['Daily'] })).toBe(false);
   });
   it.each(['pattern', 'format', 'anyOf', 'oneOf', '$ref', '$defs', 'multipleOf'])('fails closed for unsupported validation keyword %s', (key) => {
     expect(sanitizeNativeInputSchema({ type: 'string', [key]: 'unsupported' })).toBeNull();
