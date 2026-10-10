@@ -56,23 +56,34 @@ def _text(t: str) -> types.Part:
     return types.Part(text=t)
 
 
-def test_disabled_background_fanout_returns_rejection_to_model_without_aborting_runner(monkeypatch):
+@pytest.mark.parametrize('failure', ['mode', 'reference'])
+def test_disabled_background_fanout_returns_rejection_to_model_without_aborting_runner(monkeypatch, failure):
     from unittest.mock import AsyncMock
     from src.root_runtime.fanout import build_fanout_dispatcher
     scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
     tool = build_fanout_dispatcher(None, None, {'fanout_enabled': True, 'worker_permit_version': 1,
         'max_parallel_workers': 1, 'max_fanout_items': 2, 'background_fanout_enabled': False}, scope)
     post = AsyncMock()
+    if failure == 'reference':
+        import httpx
+        request = httpx.Request('POST', 'http://internal/fanout-manifest')
+        response = httpx.Response(400, request=request, json={'error': {'message': 'Fan-out input reference is not authorized'}})
+        post.side_effect = httpx.HTTPStatusError('rejected', request=request, response=response)
     monkeypatch.setattr('src.root_runtime.fanout._post', post)
 
     def recover(req):
         response = next(part.function_response.response for content in reversed(req.contents)
             for part in content.parts or [] if part.function_response)
-        assert response['status'] == 'failed' and response['allowed_modes'] == ['foreground']
+        assert response['status'] == 'failed'
+        if failure == 'reference':
+            assert response['error_code'] == 'fanout_proposal_rejected'
+            assert 'never conversation or document IDs' in response['safe_error']
+            return _text('Please select the required workspace; nothing was submitted.')
+        assert response['allowed_modes'] == ['foreground']
         return _text('Foreground fan-out is available; nothing was submitted in background.')
 
     model = _Scripted('mode-recovery', [_fc('run_fanout', {'items': [{'key': 'one', 'task': 'Bounded'}],
-        'worker_type': 'temporary', 'mode': 'background'}), recover])
+        'worker_type': 'temporary', 'mode': 'foreground' if failure == 'reference' else 'background'}), recover])
     root = LlmAgent(name='mode_recovery_root', model=model, tools=[tool])
 
     async def go():
@@ -82,7 +93,7 @@ def test_disabled_background_fanout_returns_rejection_to_model_without_aborting_
             user_id='u', session_id='mode-recovery', new_message=types.Content(role='user', parts=[_text('go')]))]
         assert any(event.is_final_response() and any(part.text and 'nothing was submitted' in part.text
             for part in event.content.parts or []) for event in events)
-        post.assert_not_awaited()
+        assert post.await_count == (1 if failure == 'reference' else 0)
 
     asyncio.run(go())
 

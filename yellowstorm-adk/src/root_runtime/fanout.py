@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from typing import Any
+import httpx
 
 from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
@@ -17,6 +18,29 @@ from yellowmind_observability import get_logger as get_observability_logger
 
 logger = get_logger('root_runtime.fanout')
 outcome_logger = get_observability_logger(__name__)
+
+
+def foreground_proposal_rejection(error):
+    """Only known pre-reservation validation proves that no work was admitted."""
+    if error.response.status_code != 400 or len(error.response.content) > 8192:
+        return None
+    try:
+        body = error.response.json()
+    except ValueError:
+        return None
+    envelope = body.get('error') if isinstance(body, dict) else None
+    reason = envelope.get('message') if isinstance(envelope, dict) else None
+    if reason == 'Fan-out input reference is not authorized':
+        return ('No fan-out work was submitted. contextRefs must be actual workspace IDs authorized for the worker profile, '
+            'never conversation or document IDs. Do not invent IDs or silently drop a required source constraint. '
+            'Check your available source tools; if the required workspace is unavailable, ask the user to select or configure it.')
+    if isinstance(reason, str) and reason in {
+        'Invalid foreground fan-out proposal', 'Invalid fan-out target',
+        'Fan-out finite item or payload limit exceeded', 'Invalid or duplicate fan-out item',
+    }:
+        return ('No fan-out work was submitted. Correct the proposal: use an allowed target and mode, a finite item list '
+            'within the current limits, unique alphanumeric/underscore/hyphen keys, and bounded task/output fields.')
+    return None
 
 
 async def run_supervised_items(items, execute, parallel: int, abort_signal=None):
@@ -152,6 +176,10 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
         """Run a finite list of independent tasks in foreground. Each item needs
         a unique key and task; optional expectedOutput and contextRefs narrow
         inputs. worker_type is library (with approved agent_id) or temporary.
+        contextRefs accepts only actual workspace IDs authorized for the worker
+        profile, never conversation or document IDs. Do not invent references.
+        Check source access before dispatching document work; ask for the missing
+        workspace when unavailable. Omitting refs does not create source access.
         mode is foreground by default; background requires explicit runtime
         permission and returns a durable job reference. Simple answers need no fan-out.
         """
@@ -179,8 +207,15 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             except Exception:
                 return {'status': 'outcome_unknown', 'execution_id': execution_id, 'result_ref': execution_id,
                     'safe_error': 'Submission could not be confirmed. Inspect this job before submitting another fan-out.'}
-        manifest = await _post(scope, 'fanout-manifest', {'version': 1, 'mode': 'foreground', 'nativeCallId': call_id,
-            'nativeCallBranch': branch, 'target': target, 'items': items})
+        try:
+            manifest = await _post(scope, 'fanout-manifest', {'version': 1, 'mode': 'foreground', 'nativeCallId': call_id,
+                'nativeCallBranch': branch, 'target': target, 'items': items})
+        except httpx.HTTPStatusError as error:
+            rejection = foreground_proposal_rejection(error)
+            if rejection is None:
+                raise
+            outcome_logger.warning('tool.call.failed', tool_name='run_fanout', operation='validate_manifest', run_id=scope.execution_id)
+            return {'status': 'failed', 'error_code': 'fanout_proposal_rejected', 'safe_error': rejection}
         validate_manifest(scope, branch, call_id, manifest, maximum)
         return await tool_context.run_node(workflow, node_input={'manifest': manifest},
             run_id=f"manifest_{manifest['manifestId']}", override_branch=branch,

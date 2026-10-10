@@ -3,7 +3,7 @@ name: mono-agent-work-orchestration
 description: For the ROOT conversation agent only, choose how to execute substantial research, sourced comparisons, multi-step analysis, deliverables and repeated work across a list. Apply before starting that work, even when the user says nothing about delegation or background execution. Also handle progress, cancellation and results of earlier work. Not applicable to delegated leaf workers.
 compatibility: YellowStorm ROOT agent with the relevant delegation and background tools enabled and a ready runtime.
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
 ---
 
 # Keep conversation responsive
@@ -47,6 +47,8 @@ The default temporary worker does not receive the root's native input-control to
 Include the objective, relevant facts already established, available source/context references, expected output, and completion criteria. Specify constraints such as read-only work when appropriate. Do not copy unrelated conversation history or sensitive context that the task does not need.
 
 Use `context_refs` for actual authorized workspace IDs; references do not grant new access. Verify required documents/tools are available before promising source-based findings. Ask workers to distinguish verified facts from assumptions and report inaccessible sources.
+
+Never use a conversation ID, document ID, document title or guessed value as a workspace reference. A user saying "the provided workspace" does not establish its identity or your worker's access. Check the sources actually exposed to your root and worker profile before dispatching document analysis. If the root can retrieve the selected documents but the worker cannot, perform the source checks with the root's authorized tools. If neither can access the required workspace, explain that gap and ask the user to select/configure the source; do not substitute public web research or fabricate document findings. Omitting `contextRefs` does not grant missing workspace access. A confirmed pre-admission reference rejection is a reason to resolve source access, not to resend guessed IDs or remove the user's source restriction.
 
 For fan-out, freeze the item list before submitting. Each item needs a unique stable `key` and a `task`; optional item fields are `expectedOutput` and `contextRefs`. Keep items independent and similarly scoped. Respect exposed manifest/concurrency limits; do not evade limits by creating duplicate batches. Workers are leaves: they cannot delegate, spawn other workers, or create nested background work.
 
