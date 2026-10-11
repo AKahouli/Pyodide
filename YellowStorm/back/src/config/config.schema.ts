@@ -392,6 +392,14 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
+  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().when('SEMANTIC_MODEL_MCP_AUTH_MODE', {
+    is: 'JWT', then: Joi.required(), otherwise: Joi.allow(''),
+  }),
+  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().when('SEMANTIC_MODEL_MCP_AUTH_MODE', {
+    is: 'JWT', then: Joi.required(), otherwise: Joi.allow(''),
+  }),
+  SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),

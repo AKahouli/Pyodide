@@ -1,16 +1,35 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Optional, Header } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
 import { ConnectorTransferService } from '../connector-transfer.service';
 import { InternalImportConnectorItemDto } from '../dto/connector-transfer.dto';
+import { InternalMcpTokenDto } from '../dto/mcp-token.dto';
+import { ConnectorService } from '../connector.service';
+import { SemanticModelMcpJwtService } from '../services/semantic-model-mcp-jwt.service';
+import { BadRequestException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 @ApiTags('Connectors (Internal)')
 @Controller('connectors/internal')
 @Public()
 @UseGuards(InternalServiceGuard)
 export class ConnectorInternalController {
-  constructor(private readonly transferService: ConnectorTransferService) {}
+  constructor(private readonly transferService: ConnectorTransferService,
+    @Optional() private readonly connectors?: ConnectorService,
+    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService) {}
+
+  @Post('mcp-token')
+  @Header('Cache-Control', 'no-store')
+  @ApiHeader({ name: 'X-Internal-Token', required: true })
+  @ApiOperation({ summary: 'Issue or renew a semantic model MCP JWT for a trusted runtime' })
+  async issueMcpToken(@Body() dto: InternalMcpTokenDto) {
+    const connector = await this.connectors!.findById(dto.connectorId);
+    if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
+    }
+    return this.mcpJwt!.issue(connector.mcpServerUrl, dto.userId);
+  }
 
   @Post('transfer/import')
   @ApiOperation({ summary: 'Import connector items on behalf of a user (internal)' })

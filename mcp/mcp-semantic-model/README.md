@@ -95,6 +95,83 @@ python server.py
 - `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` must equal the backend's `INTERNAL_SERVICE_SECRET`.
 - `SEMANTIC_MODEL_MCP_INGRESS_TOKEN` is the bearer token agents must present; it goes in the connector.
 
+### Authentication mode
+
+Set `SEMANTIC_MODEL_MCP_AUTH_MODE=Bearer` (default) for the existing static ingress
+token, or `SEMANTIC_MODEL_MCP_AUTH_MODE=JWT` for signed user tokens. Both use the
+HTTP `Authorization: Bearer <token>` header; JWT mode never accepts the static secret.
+
+For JWT mode, configure:
+
+```dotenv
+SEMANTIC_MODEL_MCP_AUTH_MODE=JWT
+SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE=/run/secrets/mcp-jwt-public.pem
+SEMANTIC_MODEL_MCP_JWT_ISSUER=yellowstorm
+SEMANTIC_MODEL_MCP_JWT_AUDIENCE=mcp-semantic-model
+```
+
+The PEM file must contain an RSA public key (absolute path recommended). The issuer
+must sign tokens with RS256 and include `sub` (acting user ID), `iss`, `aud`, `iat`
+and `exp`; future `nbf` values are rejected too. User identity always comes from
+the verified `sub`, ignoring `X-YellowStorm-User-Id` in JWT mode. Agent,
+conversation and correlation headers remain optional trace metadata.
+
+YellowStorm now issues dedicated five-minute RS256 MCP tokens. Its existing HS256
+login tokens authenticate to the backend; they cannot be sent directly to this MCP.
+Backend calls still require `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` in either mode.
+Health probes remain public.
+
+### YellowStorm issuance and automatic renewal
+
+Generate a dedicated signing key pair outside the repository:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out mcp-private.pem
+openssl pkey -in mcp-private.pem -pubout -out mcp-public.pem
+```
+
+Configure the backend's `.env`:
+
+```dotenv
+SEMANTIC_MODEL_MCP_AUTH_MODE=JWT
+SEMANTIC_MODEL_MCP_SERVER_URL=http://localhost:8027/mcp
+SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE=/run/secrets/mcp-private.pem
+SEMANTIC_MODEL_MCP_JWT_ISSUER=yellowstorm
+SEMANTIC_MODEL_MCP_JWT_AUDIENCE=mcp-semantic-model
+```
+
+Use the matching public key, issuer and audience in this MCP's `.env`, with JWT mode
+enabled on both services. The backend needs an RSA private key of at least 2048 bits;
+the MCP receives only its public key. Restart both after configuring the keys.
+Keep both modes set to `Bearer` to retain static-token authentication.
+
+For the connector pointing at `SEMANTIC_MODEL_MCP_SERVER_URL`, select no saved
+authentication (`authSourceType=none`). YellowStorm injects JWTs automatically for
+agent and playbook bindings, conversation bindings, inspection and backend tool
+calls. Other connector URLs keep their existing authentication. JWTs override
+any saved static Authorization value for this server.
+
+The ADK must have `API_URL` (backend root URL, or URL ending in `/api` or `/api/v1`) and
+`INTERNAL_SERVICE_SECRET` matching the backend's internal service guard. It obtains
+a fresh token before each MCP tool call and renews before subsequent HTTP requests
+when fewer than 30 seconds remain. Renewals fail closed; JWT calls do not follow
+redirects. JWT runtime renewal supports Streamable HTTP.
+
+Endpoints (relative to the backend API prefix):
+
+- `POST /connectors/mcp-token/:connectorId`: issue or renew for the logged-in user.
+  Uses the existing login JWT/session guard; clients cannot select a different user.
+- `POST /connectors/internal/mcp-token`: trusted ADK renewal, protected by
+  `X-Internal-Token`, with `{ "connectorId": "...", "userId": "..." }`.
+
+Both return `{ token, expiresAt, serverUrl }` inside the normal API response envelope.
+No refresh token is stored in the connector: renewal authenticates the caller again.
+Issuance rejects inactive connectors, unsupported transports, other MCP URLs, and
+missing, inactive or suspended users. Tokens already issued remain valid until
+expiry; internal background-job renewal relies on the trusted runtime's authority
+and account status, rather than a browser session. Backend model/workspace permission
+checks remain authoritative.
+
 ## Connect it to an agent
 
 1. **Admin → Connectors → New connector**: MCP, transport *Streamable HTTP*, URL `http://<host>:8027/mcp`,
