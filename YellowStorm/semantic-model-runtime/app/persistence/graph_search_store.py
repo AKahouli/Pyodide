@@ -8,6 +8,7 @@ delivery never writes alongside a live one; ``ready`` is final.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -573,6 +574,19 @@ async def lexical_candidates(pool: Any, index_id: str, tsquery: str | None, labe
         "ORDER BY score DESC, entity_id LIMIT $6",
         index_id, concept_ids, allowed_workspaces, tsquery, label_query, limit)
     return [{"entityId": row["entity_id"], "score": float(row["score"])} for row in rows]
+
+
+async def reference_candidates(pool: Any, index_id: str, phrases: list[str], concept_ids: list[str] | None,
+                               allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """Records whose name holds every written reference of the request (``documents.reference_phrases``),
+    with the folded name, for the caller to check word boundaries and to order them."""
+    patterns = ["%" + re.sub(r"([\\%_])", r"\\\1", phrase) + "%" for phrase in phrases]
+    rows = await pool.fetch(
+        "SELECT entity_id, label_key FROM semantic_graph_search.entity_documents "
+        f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
+        "AND label_key LIKE ALL ($4::text[]) ORDER BY entity_id LIMIT $5",
+        index_id, concept_ids, allowed_workspaces, patterns, limit)
+    return [{"entityId": row["entity_id"], "labelKey": row["label_key"]} for row in rows]
 
 
 # Neighbours an approximate (HNSW) scan looks at, at least: more finds the true nearest more often.

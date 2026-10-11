@@ -117,6 +117,19 @@ def test_window_is_bounded_scoped_and_reports_visible_totals(monkeypatch):
     assert whole["truncated"] is False and whole["nodeLimit"] == 2000
 
 
+def test_a_window_read_logs_its_scope_size_and_outcome(monkeypatch):
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(routes.events, "info", lambda name, **attributes: events.append((name, attributes)))
+    client = _client(monkeypatch, concepts={"a": 2, "b": 1}, calls=Calls())
+    client.post(URL, json=body(nodeLimit=2), headers=AUTH)
+    client.post(URL, json=body(focusIds=["a:1"], depth=2, nodeLimit=50), headers=AUTH)
+    (first_name, first), (second_name, second) = events
+    assert first_name == second_name == "semantic.graph_window.read"
+    assert (first["scope"], first["count"], first["outcome"]) == ("overview", 2, "truncated")
+    assert (second["scope"], second["outcome"], second["detail"].startswith("depth=2 links=")) == ("focus", "truncated", True)
+    assert isinstance(first["duration_ms"], int)
+
+
 def test_window_by_concept_counts_only_that_concept(monkeypatch):
     calls = Calls()
     client = _client(monkeypatch, concepts={"a": 2, "b": 1}, calls=calls)

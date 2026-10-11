@@ -298,7 +298,6 @@ async def read_bound_records_gone(model_id: str) -> dict[str, object]:
 async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request: Request) -> dict[str, object]:
     """The data in use, narrowed to the workspaces NestJS authorized for this actor: the page's
     records, the links whose two ends are visible, visible counts, and gaps of visible records."""
-    started = time.monotonic()
     pool = _population_read_pool(request)
     binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     revision_id = binding["data_revision_id"]
@@ -329,11 +328,6 @@ async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request
     specification = await store.get_revision_specification(pool, revision_id)
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
-    # Deep focus reads walk up to 8 links; failures surface through http.request.failed.
-    events.info("semantic.graph_window.read", scope="focus" if command.focus_ids else "overview",
-                count=len(nodes), outcome="truncated" if truncated else "complete",
-                duration_ms=round((time.monotonic() - started) * 1000),
-                detail=f"depth={command.depth} links={len(edges)}")
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "entities": entities,
             "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
@@ -392,6 +386,7 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
     the records within ``depth`` links of them (1 by default), at most ``nodeLimit`` in all and
     the closest first. Unless ``neighbours`` is false, every node carries ``degree``: its visible
     links in the whole revision, so a viewer can tell which records have relations not read."""
+    started = time.monotonic()
     pool = _population_read_pool(request)
     binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     revision_id = binding["data_revision_id"]
@@ -429,6 +424,11 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
     specification = await store.get_revision_specification(pool, revision_id)
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    # Deep focus reads walk up to 8 links; failures surface through http.request.failed.
+    events.info("semantic.graph_window.read", scope="focus" if command.focus_ids else "overview",
+                count=len(nodes), outcome="truncated" if truncated else "complete",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                detail=f"depth={command.depth} links={len(edges)}")
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "specification": specification,
             "nodes": nodes, "edges": edges, "truncated": truncated,

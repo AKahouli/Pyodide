@@ -26,13 +26,15 @@ from app.persistence import graph_search_store as search_store
 from app.population.tabular import normalize_identity_value
 
 from . import anchors as anchor_search
-from .documents import fold, lexical_query, query_terms
+from .documents import fold, lexical_query, query_terms, reference_phrases, reference_query, words
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, vector_literal
 from .settings import SearchSettings
 from .typed_values import near_match
 
 # Defaults of SearchSettings (an administrator can change them per deployment).
 CANDIDATES_PER_METHOD = 50
+# Records named with a written reference that are read to order them (a dossier number names its whole thread).
+REFERENCE_CANDIDATES = 500
 RRF_K = 60
 SNIPPET_CHARS = 400
 MAX_ROW_NUMBERS = 5
@@ -276,6 +278,36 @@ def _relation_steps(path: list[tuple[str, str]], compiled: dict[str, Any]) -> li
              "direction": direction} for relation_id, direction in path]
 
 
+async def find_referenced(pool: Any, generation: dict[str, Any] | None, phrases: list[str],
+                          concept_ids: list[str] | None, allowed_workspaces: list[str] | None
+                          ) -> list[dict[str, Any]]:
+    """Records named with every written reference of the request (``AV-2026-0135``), as whole words in
+    that order (``av-2026-01350`` is another reference). Reads names only: cheap, and before any word search."""
+    if not phrases or generation is None:
+        return []
+    candidates = await search_store.reference_candidates(
+        pool, generation["index_id"], phrases, concept_ids, allowed_workspaces, REFERENCE_CANDIDATES)
+    return [candidate for candidate in candidates
+            if all(_contains_run(words(candidate["labelKey"]), words(phrase)) for phrase in phrases)]
+
+
+def order_referenced(candidates: list[dict[str, Any]], phrases: list[str], terms: list[str],
+                     ranked: list[str]) -> dict[str, int]:
+    """The referenced records best first, each with how many of the request's other words its name holds.
+    A reference identifies its record: among the records that carry it, those whose name says the most of
+    the rest come before any record that is only near the request (fusion order breaks ties)."""
+    reference_words = {word for phrase in phrases for word in words(phrase)}
+    rest = [term for term in terms if term not in reference_words]
+    place = {entity_id: index for index, entity_id in enumerate(ranked)}
+    scored = sorted((-sum(1 for term in rest if term in words(candidate["labelKey"])),
+                     place.get(candidate["entityId"], len(place)), candidate["entityId"]) for candidate in candidates)
+    return {entity_id: -negative for negative, _, entity_id in scored}
+
+
+def _contains_run(sequence: list[str], run: list[str]) -> bool:
+    return any(sequence[start:start + len(run)] == run for start in range(len(sequence) - len(run) + 1))
+
+
 async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], query: str,
                      concept_ids: list[str] | None, limit: int,
                      allowed_workspaces: list[str] | None, generation: dict[str, Any] | None,
@@ -294,13 +326,17 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
     timings = {"embedMs": 0, "seedMs": 0}
     exact_ids = await search_store.exact_entity_ids(
         pool, revision_id, query.strip(), normalize_identity_value(query), concept_ids, allowed_workspaces)
+    phrases = reference_phrases(query)
+    ready = generation is not None and generation["state"] == "ready"
+    named = await find_referenced(pool, generation if ready else None, phrases, concept_ids, allowed_workspaces)
     fusion = _Fusion(settings.rrf_k, settings.passages_per_record)
     mode = "exact_only"
     terms = query_terms(query, settings)
-    tsquery = lexical_query(query, settings)
+    # Records named by the reference are the dossier asked for: words are then searched only within it
+    # (a request's common words would otherwise match most of a mailbox); the words order it below.
+    tsquery = reference_query(phrases) if named else lexical_query(query, settings)
     # Passages still rank their records when none are shown.
     per_record = max(1, settings.passages_per_record)
-    ready = generation is not None and generation["state"] == "ready"
     floor = settings.min_similarity
     if ready:
         index_id = generation["index_id"]
@@ -358,7 +394,9 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
                 fusion.offer("linked", entity_id, -(order[reach["anchorId"]] * 100 + reach["links"]), "link")
     fusion.fuse(floor)
     ranked = fusion.ranked()
-    ordered = list(exact_ids) + [entity_id for entity_id in ranked if entity_id not in exact_ids]
+    referenced = order_referenced(named, phrases, terms, ranked)
+    leading = list(exact_ids) + [entity_id for entity_id in referenced if entity_id not in exact_ids]
+    ordered = leading + [entity_id for entity_id in ranked if entity_id not in leading]
     rows = await search_store.entity_rows(pool, revision_id, ordered[: limit * 4])
     texts = await search_store.document_texts(pool, generation["index_id"], list(rows)) if ready and not earlier else {}
     seeds = []
@@ -383,12 +421,16 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
             match_class = "hybrid"
         elif "lexical" in methods or "vector" in methods:
             match_class = "lexical" if "lexical" in methods else "vector"
+        elif entity_id in referenced:
+            match_class = "lexical"
         else:
             match_class = "linked"
         seed = {**describe_entity(entity, compiled),
                 "snippet": "" if earlier else (texts.get(entity_id) or "")[:settings.snippet_chars],
                 "matchClass": match_class, "rank": len(seeds) + 1,
                 "diagnostics": dict(entry["diagnostics"]) if entry else {}}
+        if entity_id in referenced:
+            seed["diagnostics"]["referenceWords"] = referenced[entity_id]
         if entry is not None:
             seed["diagnostics"]["fusedScore"] = round(entry["score"], 6)
             seed["matchedIn"] = "record" if entity_id in exact_ids else fusion.matched_in(entity_id)
