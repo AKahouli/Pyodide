@@ -20,7 +20,7 @@ export function LiveAnswerBubble({ answer, choiceInteractions }: { answer: LiveA
   const workState = groupHeaderState(work);
   return <div className='group/msg' id={`message-${answer.messageId}`}>
     <MessageProvider isStreaming isLastAiMessage>
-      <ConversationAssistantBubble conversationId={answer.conversationId} messageId={answer.messageId} components={answer.components} isStreaming showWorking={answer.components.length === 0} choiceInteractions={choiceInteractions}
+      <ConversationAssistantBubble conversationId={answer.conversationId} messageId={answer.messageId} agentId={answer.agentId ?? null} agentName={answer.agentName} components={answer.components} isStreaming showWorking={answer.components.length === 0} choiceInteractions={choiceInteractions}
         workActivity={<RequestWorkStatus conversationId={answer.conversationId} messageId={answer.messageId} />} workState={workState}
         onComponentAction={(action) => sendMessage(answer.conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: answer.messageId } })}
         onSubmitQuestions={(actions) => sendMessage(answer.conversationId, { content: actions.map((action) => action.submitText).join(' '), interactions: actions.map((action) => ({ ...action.interaction, sourceMessageId: answer.messageId })) })} showUiTargets />

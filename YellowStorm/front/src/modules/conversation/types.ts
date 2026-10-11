@@ -742,6 +742,9 @@ export interface CreateReportPayload {
 export interface StreamStartEvent {
   createdAt?: string;
   questionMessageId?: string;
+  /** The agent expected to answer, when the backend route fixes it up front. */
+  agentId?: string;
+  agentName?: string;
   conversationId: string;
   messageId: string;
 }
@@ -749,6 +752,8 @@ export interface StreamStartEvent {
 export interface ActiveStreamSnapshot {
   createdAt?: string;
   questionMessageId?: string;
+  agentId?: string;
+  agentName?: string;
   conversationId: string;
   messageId: string;
   revision: number;

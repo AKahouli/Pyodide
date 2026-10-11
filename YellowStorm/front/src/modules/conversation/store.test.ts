@@ -383,6 +383,18 @@ describe('conversation live activity', () => {
       typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => resolve()) : setTimeout(resolve, 0),
     );
 
+  it('adds the agent named by stream start to an answer the send already installed', () => {
+    const key = 'conv-1:message-1';
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      liveAnswers: { [key]: { conversationId: 'conv-1', messageId: 'message-1', revision: 0, components: [], createdAt: 'sent' } },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1', agentId: 'agent-1', agentName: 'Smart Agent' });
+
+    expect(useConversationStore.getState().liveAnswers[key]).toMatchObject({ agentId: 'agent-1', agentName: 'Smart Agent', createdAt: 'sent' });
+  });
+
   it('applies activity and answer text in one frame commit', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',

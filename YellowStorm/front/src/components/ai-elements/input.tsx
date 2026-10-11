@@ -29,6 +29,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
 import { ModelReasoningSelector } from '@/components/ai-elements/model-reasoning-selector';
+import { preloadOpenUiForAgent } from '@/modules/conversation/components/openui/preload';
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -157,6 +158,14 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
       setSharedAgents([]);
     }
   }, [currentConversation?.id, currentConversation?.groupMeta?.isGroup]);
+
+  // An OpenUI agent that is tagged, sticky or the conversation's own will answer in OpenUI Lang: warm its lazy chunk now.
+  useEffect(() => {
+    const agentIds = new Set<string>(currentConversation?.taggedAgentIds ?? []);
+    if (currentConversation?.rootAgentId) agentIds.add(currentConversation.rootAgentId);
+    mentionMap.forEach((mention) => { if (mention.type === 'agent') agentIds.add(mention.id); });
+    useAgentStore.getState().agents.filter((agent) => agentIds.has(agent.id)).forEach((agent) => preloadOpenUiForAgent(agent));
+  }, [mentionMap, memoizedAgents, currentConversation?.taggedAgentIds, currentConversation?.rootAgentId]);
 
   // Connectors state
   const [connectors, setConnectors] = useState<ConnectorOption[]>([]);

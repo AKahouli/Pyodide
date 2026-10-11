@@ -111,6 +111,9 @@ export interface ActiveStreamSnapshot {
   messageId: string;
   createdAt?: string;
   questionMessageId?: string;
+  /** The agent expected to answer, when the route fixes it before execution. */
+  agentId?: string;
+  agentName?: string;
   revision: number;
   components: MessageComponent[];
 }
@@ -140,7 +143,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private readonly replicaId: string | null;
   private componentBuffers = new Map<string, Map<string, MessageComponent>>(); // streamKey -> (componentId -> accumulated component)
   private streamRevisions = new Map<string, number>(); // streamKey -> latest component-buffer revision
-  private streamOrigins = new Map<string, { createdAt: string; questionMessageId?: string }>();
+  private streamOrigins = new Map<string, { createdAt: string; questionMessageId?: string; agentId?: string; agentName?: string }>();
   private streamRootExecutions = new Map<string, string>();
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
   private streamExecutionLeases = new Map<string, string>(); // streamKey -> durable lease token
@@ -766,8 +769,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         && (!request.rootContinuation || resumedState?.sessionId.startsWith('turn_'))
         && (!(request.agentIds?.length) || (request.agentIds?.length === 1
           && request.agentIds[0] === conversation.rootAgentId)));
-      const isolatedRoot = rootRoute && (conversation.runtimeMode === 'governed'
-        || Boolean((await this.agentService.findUserAgentById(userId, conversation.rootAgentId!)).rootExecutionPolicy));
+      // Loaded only where the policy check already needed it; it also names
+      // the agent in stream_start.
+      const rootAgent = rootRoute && conversation.runtimeMode !== 'governed'
+        ? await this.agentService.findUserAgentById(userId, conversation.rootAgentId!) : undefined;
+      const isolatedRoot = rootRoute && (conversation.runtimeMode === 'governed' || Boolean(rootAgent?.rootExecutionPolicy));
       const nativeSessionId = resumedState?.sessionId ?? (isolatedRoot ? `turn_${messageId}` : conversationId);
       const historyMessages = isolatedRoot && !request.rootContinuation
         ? await this.messageService.findAllByConversation(conversationId) : undefined;
@@ -946,8 +952,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       if (assistantMessage.conversationId !== conversationId || assistantMessage.conversationType !== 'ai') {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Stream origin message binding changed');
       }
+      // A root route always answers as the conversation's root agent, so the
+      // client can name it before the first activity arrives (~2 s later).
+      const expectedAgentId = rootRoute && (!governanceOverride || governanceOverride.rootBound)
+        && conversation.rootAgentId && isCanonicalObjectId(conversation.rootAgentId) ? conversation.rootAgentId : undefined;
       const origin = { createdAt: assistantMessage.createdAt,
-        ...(assistantMessage.questionMessageId ? { questionMessageId: assistantMessage.questionMessageId } : {}) };
+        ...(assistantMessage.questionMessageId ? { questionMessageId: assistantMessage.questionMessageId } : {}),
+        ...(expectedAgentId ? { agentId: expectedAgentId } : {}),
+        ...(expectedAgentId && rootAgent?.name ? { agentName: rootAgent.name } : {}) };
       (this.streamOrigins ??= new Map()).set(streamKey, origin);
       assertLeaseOwned();
 

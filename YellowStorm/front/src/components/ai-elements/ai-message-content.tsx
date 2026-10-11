@@ -83,6 +83,8 @@ export interface TextPart {
   content: string;
   showCursor?: boolean;
   citations?: CitationData[];
+  /** Id of the stored message component this text was built from, when it has one. */
+  componentId?: string;
 }
 
 export interface CodePart {
@@ -815,7 +817,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
   );
 };
 
-const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
+export const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
@@ -870,7 +872,7 @@ const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
 };
 
 // Citations Inline - renders citation badges after text content
-const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
+export const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 

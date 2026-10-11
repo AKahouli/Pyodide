@@ -1543,7 +1543,15 @@ export const useConversationStore = create<ConversationState>()(
       onStreamStart: (event) => {
         const key = streamKey(event.conversationId, event.messageId);
         if (!liveBuffers.start(key)) return;
-        set((state) => ({ liveAnswers: { ...state.liveAnswers, [key]: state.liveAnswers[key] ?? { ...event, revision: 0, components: [], createdAt: event.createdAt ?? state.messages.find((message) => message.id === event.messageId)?.createdAt ?? '' } } }));
+        // The send response usually installs the answer first; keep it and add
+        // the agent the start event names.
+        set((state) => {
+          const existing = state.liveAnswers[key];
+          const answer = existing
+            ? (event.agentId && !existing.agentId ? { ...existing, agentId: event.agentId, agentName: event.agentName } : existing)
+            : { ...event, revision: 0, components: [], createdAt: event.createdAt ?? state.messages.find((message) => message.id === event.messageId)?.createdAt ?? '' };
+          return answer === existing ? {} : { liveAnswers: { ...state.liveAnswers, [key]: answer } };
+        });
         cancelPendingStreamReconciliation();
         const state = get();
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;

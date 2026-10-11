@@ -54,6 +54,27 @@ describe('concurrent ROOT foreground streams', () => {
     finishes.get('b')!(); await second;
     expect(service.isConversationStreaming('user', 'conversation')).toBe(false);
   });
+  it('names the root agent in stream_start and the recovery snapshot', async () => {
+    const { service, finishes } = harness();
+    const rootAgentId = '6a325b8d0e92383c1a7dd7a7';
+    (service as any).conversationService.getConversationDocument.mockResolvedValue({ rootAgentId, runtimePurpose: 'chat' });
+    (service as any).agentService.findUserAgentById.mockResolvedValue({ name: 'Smart Agent', rootExecutionPolicy: {} });
+    const run = service.startStream('user', 'conversation', 'a', { content: 'first' });
+    await tick();
+    expect((service as any).streamGateway.broadcastToConversation).toHaveBeenCalledWith(['user'], {
+      type: 'stream_start', data: expect.objectContaining({ messageId: 'a', agentId: rootAgentId, agentName: 'Smart Agent' }),
+    });
+    expect(service.getActiveStreamSnapshots('conversation')[0]).toMatchObject({ agentId: rootAgentId, agentName: 'Smart Agent' });
+    finishes.get('a')!(); await run;
+  });
+  it('does not name an agent when the request targets another agent', async () => {
+    const { service, finishes } = harness();
+    (service as any).conversationService.getConversationDocument.mockResolvedValue({ rootAgentId: '6a325b8d0e92383c1a7dd7a7', runtimePurpose: 'chat' });
+    const run = service.startStream('user', 'conversation', 'a', { content: 'first', agentIds: ['6a325b8d0e92383c1a7dd7a8'] });
+    await tick();
+    expect(service.getActiveStreamSnapshots('conversation')[0]).not.toHaveProperty('agentId');
+    finishes.get('a')!(); await run;
+  });
   it('keeps a shared legacy session exclusive and settles the rejected placeholder', async () => {
     const { service, finishes, messageService } = harness();
     (service as any).conversationService.getConversationDocument.mockResolvedValue({ isGroup: true });

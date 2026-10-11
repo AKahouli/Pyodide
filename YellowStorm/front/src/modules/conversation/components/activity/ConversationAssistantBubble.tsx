@@ -19,6 +19,9 @@ import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import { ResizableActivityPane } from './ResizableActivityPane';
 import { statusIcon, ToolRow } from './ToolActivityDetails';
 import { ConversationUiTargets, collectUiTargets } from '@/modules/platform-copilot/UiTargetActions';
+import { OpenUiAnswer } from '../openui/OpenUiAnswer';
+import { preloadOpenUiForAgent } from '../openui/preload';
+import { resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
 
 interface NarrativeProps {
   conversationId: string;
@@ -41,6 +44,8 @@ interface NarrativeProps {
   restrictActivityDetails?: boolean;
   /** Agent that produced this message; when set with `onOpenAgentEditor`, the header bot icon opens the agent editor. */
   agentId?: string | null;
+  /** Name sent with the stream start for agentId, before the agent list has it. */
+  agentName?: string;
   onOpenAgentEditor?: (agentId: string) => void;
   /** Show the buttons the tools asked for ("Open Billing & Contract Management") under the answer. */
   showUiTargets?: boolean;
@@ -444,6 +449,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const textProducerId = source.filter((component) => component.type === 'text'
     && typeof component.data.actorId === 'string').at(-1)?.data.actorId as string | undefined;
   const producerId = textProducerId || (producerActivity?.data.actorId as string | undefined) || props.agentId;
+  const producerAgent = agents.find((agent) => agent.id === producerId);
+  const renderMode = resolveAnswerRenderMode(producerAgent);
+  // The stream start names the agent before any text arrives: warm the lazy OpenUI chunk then.
+  useEffect(() => preloadOpenUiForAgent(producerAgent), [producerAgent]);
   const producerName = (!textProducerId || textProducerId === producerActivity?.data.actorId)
     ? sanitizeActivityActorName(producerActivity?.data.actorName) : undefined;
   useEffect(() => {
@@ -508,11 +517,19 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     });
     partsCacheRef.current = nextCache;
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
-    if (parts.length) {
+    // OpenUI agents answer in OpenUI Lang: their text parts go to the OpenUI
+    // renderer (markdown fallback inside), every other part renders as usual.
+    const segments: AnswerSegment[] = renderMode === 'openui' ? segmentAnswerParts(parts) : [{ kind: 'parts', parts }];
+    segments.forEach((segment) => {
+      if (segment.kind === 'openui') {
+        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} partId={segment.componentId} />);
+        return;
+      }
+      if (!segment.parts.length) return;
       const outlinePartKey = answerNodes.length;
       liveOutlineKeysRef.current.add(outlinePartKey);
-      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' onTaskAgentClick={handleOpenAgentEditor} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
-    }
+      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={segment.parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' onTaskAgentClick={handleOpenAgentEditor} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
+    });
     answerBatch = [];
   };
   source.forEach((component) => {
@@ -543,6 +560,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   // A live reply names its agent once its first activity arrives; until then
   // the name is pending, not missing.
   const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name
+    || (producerId === props.agentId ? props.agentName : undefined)
     || t(props.isStreaming ? 'stream.activity.assistant' : 'stream.activity.agentNameUnavailable');
   const openAgentEditor = props.agentId && props.onOpenAgentEditor
     ? () => props.onOpenAgentEditor!(props.agentId!)
