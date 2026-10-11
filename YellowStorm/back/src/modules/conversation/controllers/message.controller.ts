@@ -614,7 +614,11 @@ export class MessageController {
           workspaceIds: governedRuntime.workspaceIds,
           revisionId: governedRuntime.revisionId,
           scopeId: governedRuntime.scopeId,
-        } : undefined, latencyStart)
+        } : undefined, latencyStart,
+        // The stream re-reads the conversation unless the loaded document is
+        // still authoritative: attachments may create the system workspace
+        // after the load, and continuations validate the root work epoch.
+        dto.attachedFileIds?.length || dto.rootContinuation ? undefined : conversation)
         .catch((err) => {
           if ((err as { code?: ErrorCode }).code === ErrorCode.CHAT_ALREADY_STREAMING) return;
           this.logger.error('Stream start failed', {

@@ -15,6 +15,7 @@ import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { useConversationUiStore } from '../../uiStore';
+import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import { ResizableActivityPane } from './ResizableActivityPane';
 import { statusIcon, ToolRow } from './ToolActivityDetails';
 import { ConversationUiTargets, collectUiTargets } from '@/modules/platform-copilot/UiTargetActions';
@@ -145,11 +146,21 @@ function resolveActivityDuration(components: readonly MessageComponent[]): strin
   return durations.length ? formatActivityDuration(Math.max(...durations)) : undefined;
 }
 
-function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; redactSensitiveText: boolean }>) {
+// The ADK opens a streaming message with an empty placeholder that is already
+// "completed", so the latest empty agent row counts as awaiting output while streaming.
+function isAwaitingAgentOutput(data: AgentActivityData, isStreaming: boolean, isLatest: boolean): boolean {
+  return isStreaming && (data.status === 'running' || (isLatest && data.status === 'completed'));
+}
+
+function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; isLatest: boolean; redactSensitiveText: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const duration = formatActivityDuration(data.durationMs);
-  const summary = resolveAgentActivityPreview(data, redactSensitiveText, t('stream.activity.agentPlanning'));
+  const preview = resolveAgentActivityPreview(data, redactSensitiveText, '');
+  const awaiting = isAwaitingAgentOutput(data, isStreaming, isLatest);
   const active = isStreaming && data.status === 'running';
+  const thinking = awaiting && !preview;
+  const thinkingSeconds = useElapsedSeconds(thinking);
+  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
   const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || summary;
   return (
@@ -195,10 +206,13 @@ function safeRestrictedActivitySummary(value: unknown): string | undefined {
   return sanitizeActivitySummary(summary);
 }
 
-function RestrictedAgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityData; isStreaming: boolean }>) {
+function RestrictedAgentActivityRow({ data, isStreaming, isLatest }: Readonly<{ data: AgentActivityData; isStreaming: boolean; isLatest: boolean }>) {
   const { t } = useModuleTranslation('conversation');
-  const summary = safeRestrictedActivitySummary(data.summary) || t('stream.activity.agentPlanning');
+  const safeSummary = safeRestrictedActivitySummary(data.summary);
   const active = isStreaming && data.status === 'running';
+  const thinking = isAwaitingAgentOutput(data, isStreaming, isLatest) && !safeSummary;
+  const thinkingSeconds = useElapsedSeconds(thinking);
+  const summary = safeSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
   return (
     <div className='flex min-h-7 items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground'>
       <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
@@ -285,6 +299,11 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
   const runningIndex = components.findIndex((component) => component.data.status === 'running' || component.data.availability === 'pending');
   const currentIndex = runningIndex >= 0 ? runningIndex : components.length - 1;
   const current = components[currentIndex];
+  const currentAgentSummary = current?.type === 'agentActivity'
+    ? restrictActivityDetails ? safeRestrictedActivitySummary(current.data.summary) : sanitizeActivitySummary(current.data.summary)
+    : undefined;
+  const thinking = current?.type === 'agentActivity' && isAwaitingAgentOutput(current.data as AgentActivityData, isStreaming, currentIndex === components.length - 1) && !currentAgentSummary;
+  const thinkingSeconds = useElapsedSeconds(thinking);
   if (!current) return null;
 
   const status = current.type === 'artifact'
@@ -296,9 +315,7 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
       : resolveToolSummary(current.data) || resolveToolFallbackName(current.data) || t('stream.activity.toolFallback')
     : current.type === 'artifact'
       ? sanitizeActivityFilename(current.data.filename) || t('stream.activity.generated')
-      : restrictActivityDetails
-        ? safeRestrictedActivitySummary(current.data.summary) || t('stream.activity.agentPlanning')
-        : sanitizeActivitySummary(current.data.summary) || t('stream.activity.agentPlanning');
+      : currentAgentSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
   const statusLabel = t(`stream.activity.toolStatus.${status}`);
 
   return (
@@ -505,8 +522,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   }, [liveOutlineSignature, publishOutline]);
   activityComponents.forEach((component, index) => {
     if (component.type === 'agentActivity') activityNodes.push(props.restrictActivityDetails
-      ? <RestrictedAgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />
-      : <AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
+      ? <RestrictedAgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} isLatest={index === activityComponents.length - 1} />
+      : <AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} isLatest={index === activityComponents.length - 1} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
       activityNodes.push(props.restrictActivityDetails
         ? <RestrictedToolRow key={component.id || index} data={component.data as ToolActivityData} />

@@ -776,6 +776,7 @@ class AgentFactory:
         top_k: int = 1,
         citation_manager=None,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         vectorstore_mcp_tool: bool = False,
         logical_search_only: bool = False,
         deep_search: bool = False,
@@ -906,6 +907,7 @@ class AgentFactory:
                 vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
                     brain_ids=brain_ids,
                     deep_search=deep_search,
+                    cache_scope=MCPHelper.build_cache_scope(user_id, session_id),
                 )
                 if vectorstore_toolset:
                     tools.extend(vectorstore_toolset)
@@ -1164,6 +1166,10 @@ class ManagerAgentFactory:
                 vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
                     brain_ids=brain_ids,
                     deep_search=enable_deep_search,
+                    cache_scope=MCPHelper.build_cache_scope(
+                        getattr(self.config, 'user_id', None),
+                        getattr(self.config, 'session_id', None),
+                    ),
                 )
                 updated_tools.extend(vectorstore_toolset)
                 _manager_logger.info(

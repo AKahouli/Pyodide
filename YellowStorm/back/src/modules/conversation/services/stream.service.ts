@@ -43,6 +43,7 @@ import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constan
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { ConversationNameService } from './conversation-name.service';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
+import { compactAgentActivityUpdate } from '../utils/agent-activity-delta';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
@@ -113,6 +114,10 @@ export interface ActiveStreamSnapshot {
   revision: number;
   components: MessageComponent[];
 }
+
+type RootBackgroundReadinessProbe = Promise<
+  { readiness: { background: boolean; fanout: boolean } } | { error: unknown }
+>;
 
 interface StreamTerminalCoordinator {
   started: boolean;
@@ -382,6 +387,26 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       return { background, fanout: background && capability.background_fanout_protocol_version === 1
         && capability.background_fanout_ready === true };
     } catch { return unavailable; }
+  }
+
+  /**
+   * Starts the follow-up readiness probe and settles it into a value, so an
+   * unused probe (policy turned out disabled, or an earlier step failed) can
+   * never become an unhandled rejection. A real failure is rethrown by the
+   * consumer exactly as the inline await used to.
+   */
+  private probeRootBackgroundReadiness(): RootBackgroundReadinessProbe {
+    beginBackendPreAdkStage('rootBackgroundReadinessMs');
+    return this.rootBackgroundReadiness(true).then(
+      (readiness) => {
+        endBackendPreAdkStage('rootBackgroundReadinessMs');
+        return { readiness };
+      },
+      (error: unknown) => {
+        endBackendPreAdkStage('rootBackgroundReadinessMs');
+        return { error };
+      },
+    );
   }
 
   /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
@@ -673,7 +698,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string, userEmail = '', username?: string, governanceOverride?: StreamGovernanceOverride, latencyStart?: ConversationLatencyStartContext): Promise<void> {
+  async startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string, userEmail = '', username?: string, governanceOverride?: StreamGovernanceOverride, latencyStart?: ConversationLatencyStartContext, preloadedConversation?: ConversationRecord): Promise<void> {
     const logOpts: LogOptions = { requestId };
     // Stream bootstrap: entry (latency setting sample included) until the
     // agent execution request build starts.
@@ -726,7 +751,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     let fleetAdmitted = false;
     let grpcDispatched = false;
     try {
-      const conversation = await this.conversationService.getConversationDocument(conversationId);
+      // Independent read-only lookups run together; the order-sensitive checks
+      // that consume them stay where they were (leases, admission, broadcast).
+      const [conversation, memberIds, assistantMessage] = await Promise.all([
+        preloadedConversation ?? this.conversationService.getConversationDocument(conversationId),
+        this.resolveMemberIds(conversationId),
+        this.messageService.findById(messageId),
+      ]);
       const resumedState = request.rootContinuation && this.rootWorkService
         ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
           conversation.rootWorkEpoch ?? 0) : undefined;
@@ -910,11 +941,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         logOpts,
       );
 
-      // Resolve conversation members for broadcasting
-      const memberIds = await this.resolveMemberIds(conversationId);
       assertLeaseOwned();
 
-      const assistantMessage = await this.messageService.findById(messageId);
       if (assistantMessage.conversationId !== conversationId || assistantMessage.conversationType !== 'ai') {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Stream origin message binding changed');
       }
@@ -960,6 +988,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         messageId,
         seedHistory,
         ongoingRequests,
+        conversation,
       );
       assertLeaseOwned();
       if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
@@ -1104,9 +1133,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return snapshots;
   }
 
-  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext, preloadedConversation?: ConversationRecord): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
-    const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const conversation = preloadedConversation ?? await this.conversationService.getConversationDocument(conversationId);
     const continuation = request.rootContinuation && this.rootWorkService
       ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
           conversation.rootWorkEpoch ?? 0) : undefined;
@@ -1138,8 +1167,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         }
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
-    const teamDefinition = request.teamId ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId) : undefined;
-    const semanticModel = request.semanticModelId ? await this.semanticModelService.resolveChatModel(userId, request.semanticModelId) : undefined;
+    const [teamDefinition, semanticModel] = await Promise.all([
+      request.teamId ? this.teamService!.resolveExecutionDefinition(userId, request.teamId) : undefined,
+      request.semanticModelId ? this.semanticModelService.resolveChatModel(userId, request.semanticModelId) : undefined,
+    ]);
     // Plan §4.3 routing precedence: an explicit agent target wins; otherwise a
     // conversation with a bound root runs THE ROOT (not the hidden system
     // mono-agent). Groups/shared-agent chats keep their own resolution.
@@ -1150,6 +1181,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       conversation.rootAgentId && isCanonicalObjectId(conversation.rootAgentId)
         ? conversation.rootAgentId
         : undefined;
+    // The ADK capability probe is an external round trip whose result is only
+    // consulted once the pool policy is known; start it alongside resolution.
+    const backgroundReadinessProbe = boundRootId ? this.probeRootBackgroundReadiness() : undefined;
     const [workspaceContexts, agents] = await Promise.all([
       continuation?.preparedContext ? Promise.resolve(continuation.preparedContext.workspaceContexts as IGrpcWorkspaceContext[])
         : request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
@@ -1212,10 +1246,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // WP04 root delegation: when the resolved agent IS the conversation's
     // bound root, attach the compact catalog + scoped candidate definitions so
     // ADK can expose the one bounded delegate_to_agent operation.
+    beginBackendPreAdkStage('rootDelegationResolutionMs');
     const rootDelegation =
       boundRootId
-        ? await this.buildRootDelegationContext(conversation, agents, userId, conversationId, request, compaction, runtimeCorrelationId, logOpts)
+        ? await this.buildRootDelegationContext(conversation, agents, userId, conversationId, request, compaction, runtimeCorrelationId, logOpts, backgroundReadinessProbe)
         : undefined;
+    endBackendPreAdkStage('rootDelegationResolutionMs');
+    beginBackendPreAdkStage('rootExecutionAdmissionMs');
     let admittedNativeState: RootNativeState | undefined;
     if (rootDelegation && !continuation && ongoingRequests) Object.assign(rootDelegation.rootContext, ongoingRequests);
     if (continuation && !rootDelegation) {
@@ -1279,6 +1316,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during preparation');
       }
     }
+    endBackendPreAdkStage('rootExecutionAdmissionMs');
     const nativeInputResponses = continuation ? request.rootContinuation!.inputResponses.map((input) => ({
       inputId: input.inputId, response: input.response,
       functionName: continuation.pendingInputs.find((pending) => pending.inputId === input.inputId)!.functionName,
@@ -1368,17 +1406,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       boundRootId && governanceOverride ? conversationId : undefined,
     );
     endBackendPreAdkStage('supplementalContextAssemblyMs');
+    beginBackendPreAdkStage('rootNativeStateRecordMs');
     if (admittedNativeState) {
       const recorded = await this.rootWorkService!.recordNativeState(admittedNativeState.scope.executionId, {
         ...admittedNativeState,
         preparedContext: { workspaceContexts, attachedFiles, previousAttachedFiles, skills, attachmentContext,
           runCodeSources, rootBrainContexts: agents[0].brain_context },
       }, 'running');
+      endBackendPreAdkStage('rootNativeStateRecordMs');
       if (!recorded) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root execution was stopped during preparation');
       if (admittedNativeState.sessionSeed) {
+        beginBackendPreAdkStage('rootSessionSeedMs');
         try {
           await this.seedConversationSession(userId, sessionId, admittedNativeState.sessionSeed.idempotencyKey,
             admittedNativeState.sessionSeed.history);
+          endBackendPreAdkStage('rootSessionSeedMs');
         } catch (error) {
           await this.rootWorkService!.completeExecution(admittedNativeState.scope.executionId, 'failed', null);
           throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Conversation context preparation failed');
@@ -1434,6 +1476,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     compaction: IGrpcCompaction | undefined,
     runtimeCorrelationId: string,
     logOpts: LogOptions,
+    backgroundReadinessProbe?: RootBackgroundReadinessProbe,
   ): Promise<RootDelegationContext | undefined> {
     const rootAgentId = conversation.rootAgentId;
     if (!rootAgentId || !isCanonicalObjectId(rootAgentId)) return undefined;
@@ -1449,8 +1492,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const entries = pool.delegationEnabled ? pool.entries : [];
 
     const limits = pool.policy.limits;
-    const backgroundReadiness = pool.policy.background.enabled
-      ? await this.rootBackgroundReadiness(true) : { background: false, fanout: false };
+    let backgroundReadiness = { background: false, fanout: false };
+    if (pool.policy.background.enabled) {
+      const probed = await (backgroundReadinessProbe ?? this.probeRootBackgroundReadiness());
+      if ('error' in probed) throw probed.error;
+      backgroundReadiness = probed.readiness;
+    }
     const scope: ExecutionScopeV1 = {
       role: 'root',
       executionId: newObjectId(),
@@ -1998,6 +2045,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 });
             } else {
               const buffer = this.componentBuffers.get(streamKey);
+              // Captured before the merge: the wire frame carries only the text
+              // appended since this state (the buffer keeps the full detail).
+              // (`existing.data` is reassigned in place, so copy the reference now.)
+              const previousComponent = buffer?.get(comp.id);
+              const previousData = previousComponent?.data;
+              const previousType = previousComponent?.type;
               if (buffer) {
                 this.applyChunkToBuffer(buffer, action, comp, guardrailDecision, chunk.metadata?.agent_id);
               }
@@ -2035,7 +2088,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               }
 
               // Send chunk immediately to frontend
-              const publicComponent = this.sanitizeComponent({ id: comp.id, type, data });
+              const wireData = action === 'update' && type === 'agentActivity' && previousType === 'agentActivity'
+                ? compactAgentActivityUpdate(previousData, data)
+                : data;
+              const publicComponent = this.sanitizeComponent({ id: comp.id, type, data: wireData });
               const revision = this.nextStreamRevision(streamKey);
               // backend.first_delta_written boundary: stamped immediately
               // before the first model-derived event enters SSE fan-out.

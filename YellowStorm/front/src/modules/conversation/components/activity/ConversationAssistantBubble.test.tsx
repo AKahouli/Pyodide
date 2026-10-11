@@ -21,10 +21,11 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string }) => ({
+  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string; seconds?: number }) => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
+    'stream.activity.thinking': `Thinking… ${options?.seconds}s`,
     'stream.activity.assistant': 'Assistant',
     'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
     'stream.activity.usingTools': 'Using tools',
@@ -238,7 +239,7 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
 
     rerender(<ConversationAssistantBubble
       conversationId='conversation-1'
@@ -255,6 +256,71 @@ describe('ConversationAssistantBubble', () => {
     expect(summaries[0]).toHaveTextContent('Preparing your request');
     expect(summaries[1]).toHaveTextContent('Inspect the financial report');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
+  });
+
+  it('shows a live thinking counter until reasoning text arrives, then the real summary', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'running' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
+
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 3s');
+      expect(container).not.toHaveTextContent('Preparing your request');
+
+      rerender(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: 'Inspect the financial report', status: 'running' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Inspect the financial report');
+      expect(container).not.toHaveTextContent('Thinking');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the thinking counter for the ADK completed placeholder while the message streams', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed', actorName: 'Smart Agent' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 4s');
+      expect(container).not.toHaveTextContent('Preparing your request');
+
+      rerender(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming={false}
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed', actorName: 'Smart Agent' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not show the thinking counter once the stream is no longer running', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } }]}
+    />);
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container).not.toHaveTextContent('Thinking');
   });
 
   it('distinguishes repeated tool rows by their activity descriptions', () => {
@@ -638,7 +704,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
     expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
     expect(container).not.toHaveTextContent(/authorization|bearer|private-token|password|private-secret/i);
     expect(container.querySelector('[data-desktop-activity] button')).not.toBeInTheDocument();
@@ -675,11 +741,11 @@ describe('ConversationAssistantBubble', () => {
       />
     </>);
 
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
     expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
     const mobileLabels = [...container.querySelectorAll('[data-mobile-activity]')].map((node) => node.textContent);
     expect(mobileLabels).toEqual(expect.arrayContaining([
-      expect.stringContaining('Preparing your request'),
+      expect.stringContaining('Thinking… 0s'),
       expect.stringContaining('Search'),
     ]));
   });

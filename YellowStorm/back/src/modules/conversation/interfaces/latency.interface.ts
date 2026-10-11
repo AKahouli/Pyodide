@@ -47,7 +47,17 @@ export interface BackendPreAdkBreakdownV1 {
   streamBootstrapMs?: number;
   conversationContextLoadMs?: number;
   workspaceAgentResolutionMs?: number;
+  /** Root route only: delegation context build (pool resolution, plus any wait on the capability probe). */
+  rootDelegationResolutionMs?: number;
+  /** Root route only: ADK background-capability probe, measured from its start (it overlaps other stages). */
+  rootBackgroundReadinessMs?: number;
+  /** Root route only: durable root execution registration (admission transaction). */
+  rootExecutionAdmissionMs?: number;
   supplementalContextAssemblyMs?: number;
+  /** Root route only: native state record (row-locking transaction) after supplemental assembly. */
+  rootNativeStateRecordMs?: number;
+  /** Root route only: ADK SeedConversationSession RPC (concurrent replies only). */
+  rootSessionSeedMs?: number;
   grpcPayloadPreparationMs?: number;
   grpcTransitToAdkMs?: number;
 }

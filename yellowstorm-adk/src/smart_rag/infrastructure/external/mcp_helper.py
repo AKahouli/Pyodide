@@ -12,6 +12,10 @@ from src.logger.logging import get_logger
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_toolset import StreamableHTTPConnectionParams
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import PurposeAwareMcpToolset
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import (
+    build_toolset_cache_key,
+    get_toolset_cache,
+)
 logger = get_logger("api.smart_rag.mcp_helper")
 app_settings = get_settings()
 
@@ -56,26 +60,65 @@ class MCPHelper:
         return normalized_target in MCPHelper.extract_requested_mcp_types(tools, agent_params)
 
     @staticmethod
-    def create_mcp_toolset(connection_params, mcp_type: str = 'unknown', tool_filter: Optional[List[str]] = None):
+    def create_mcp_toolset(
+        connection_params,
+        mcp_type: str = 'unknown',
+        tool_filter: Optional[List[str]] = None,
+        cache_scope: Optional[str] = None,
+    ):
         """Create MCP toolset from connection parameters.
 
         Args:
             connection_params: MCP connection parameters.
             mcp_type (str): Type/name of the MCP for identification.
             tool_filter (Optional[List[str]]): Optional whitelist of tool names to load.
+            cache_scope (Optional[str]): Opt-in reuse across turns. Callers pass
+                an identity scope (user + conversation); the toolset is shared
+                only with callers whose scope, URL, headers and filter all match.
+                None builds a fresh, uncached toolset.
         Returns:
             MCPToolset: The MCP toolset instance with mcp_type attribute.
         """
         try:
-            kwargs = {"connection_params": connection_params}
-            if tool_filter is not None:
-                kwargs["tool_filter"] = tool_filter
-            toolset = PurposeAwareMcpToolset(**kwargs)
-            toolset.mcp_type = mcp_type
-            return toolset
+            cache = get_toolset_cache() if cache_scope else None
+            cache_key = (
+                build_toolset_cache_key(
+                    connection_params=connection_params,
+                    mcp_type=mcp_type,
+                    tool_filter=tool_filter,
+                    scope=cache_scope,
+                    toolset_class=PurposeAwareMcpToolset,
+                )
+                if cache is not None and cache.enabled
+                else None
+            )
+
+            def build(managed: bool):
+                kwargs = {"connection_params": connection_params}
+                if tool_filter is not None:
+                    kwargs["tool_filter"] = tool_filter
+                if managed:
+                    kwargs["tool_list_cache_ttl_seconds"] = app_settings.MCP_TOOL_LIST_CACHE_TTL_SECONDS
+                toolset = PurposeAwareMcpToolset(**kwargs)
+                toolset.mcp_type = mcp_type
+                if managed:
+                    toolset._toolset_cache_managed = True
+                    toolset._cache_invalidator = cache.invalidate
+                return toolset
+
+            if cache_key is None:
+                return build(managed=False)
+            return cache.get_or_create(cache_key, lambda: build(managed=True))
         except Exception as e:
             logger.error(f"Error creating MCP toolset: {str(e)}")
             raise
+
+    @staticmethod
+    def build_cache_scope(user_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
+        """Identity scope for toolset reuse; None (no reuse) unless both ids are known."""
+        if not user_id or not session_id:
+            return None
+        return json.dumps([str(user_id), str(session_id)])
 
     @staticmethod
     def create_mcp_context_headers(
@@ -196,7 +239,13 @@ class MCPHelper:
 
                 connection_params = MCPHelper.create_mcp_config(mcp_type, **config)
                 tf = config.get('tool_filter')
-                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type, tool_filter=tf)
+                scope = config.get('cache_scope')
+                if scope:
+                    toolset = MCPHelper.create_mcp_toolset(
+                        connection_params, mcp_type, tool_filter=tf, cache_scope=scope
+                    )
+                else:
+                    toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type, tool_filter=tf)
                 toolsets.append(toolset)
 
             except ValueError as e:
@@ -213,6 +262,7 @@ class MCPHelper:
         brain_ids: Optional[List[str]] = None,
         deep_search: bool = False,
         required: bool = True,
+        cache_scope: Optional[str] = None,
     ):
         if not app_settings.VECTORSTORE_MCP_URL:
             raise ValueError("VECTORSTORE_MCP_URL is not configured")
@@ -238,7 +288,10 @@ class MCPHelper:
                 if not mcp_type:
                     continue
                 connection_params = MCPHelper.create_mcp_config(mcp_type, **config)
-                toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type)
+                if cache_scope:
+                    toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type, cache_scope=cache_scope)
+                else:
+                    toolset = MCPHelper.create_mcp_toolset(connection_params, mcp_type)
                 toolsets.append(toolset)
             except Exception as e:
                 logger.error(f"Failed to create {mcp_type} toolset: {str(e)}", exc_info=True)

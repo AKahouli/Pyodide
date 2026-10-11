@@ -73,6 +73,42 @@ describe('StreamService root enrollment', () => {
     expect(result.payload.root_context).toMatchObject({ background_enabled: true, background_fanout_enabled: true });
     expect(readiness).toHaveBeenCalledTimes(1);
   });
+  it('starts the readiness probe while the pool is still resolving', async () => {
+    const h = harness();
+    h.policy.background.enabled = true;
+    let releasePool!: () => void;
+    h.resolveForActor.mockReturnValue(new Promise((resolve) => {
+      releasePool = () => { resolve({ policy: h.policy, rootSnapshotDigest: 'frozen-root', delegationEnabled: true, entries: [] }); };
+    }));
+    const readiness = jest.fn().mockResolvedValue({ background: true, fanout: false });
+    Object.assign(h.service, { rootBackgroundReadiness: readiness });
+    const running = h.run();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.resolveForActor).toHaveBeenCalledTimes(1);
+    expect(readiness).toHaveBeenCalledWith(true);
+    releasePool();
+    const result = await running;
+    expect(result.payload.root_context).toMatchObject({ background_enabled: true });
+    expect(readiness).toHaveBeenCalledTimes(1);
+  });
+  it('ignores a failed readiness probe when background execution is disabled, and surfaces it when enabled', async () => {
+    const h = harness();
+    const probeError = new Error('capability probe failed');
+    Object.assign(h.service, { rootBackgroundReadiness: jest.fn().mockRejectedValue(probeError) });
+    await expect(h.run()).resolves.toMatchObject({ payload: { root_context: { background_enabled: false } } });
+    h.policy.background.enabled = true;
+    await expect(h.run()).rejects.toBe(probeError);
+  });
+  it('reuses a preloaded conversation document instead of reading it again', async () => {
+    const h = harness();
+    const conversation = { rootAgentId: rootId, runtimePurpose: 'chat', isGroup: false, groupTaggedAgentIds: [], systemWorkspaceId: 'system-1' };
+    const getConversationDocument = (h.service as any).conversationService.getConversationDocument as jest.Mock;
+    await h.service.buildAgentExecutionRequest('user-1', 'conversation-1', h.request,
+      undefined, undefined, {}, 'conversation-1', 'correlation', undefined, undefined, undefined, conversation as never);
+    expect(getConversationDocument).not.toHaveBeenCalled();
+    await h.run();
+    expect(getConversationDocument).toHaveBeenCalledTimes(1);
+  });
   it('pins origin only from the server-created assistant message in this conversation', async () => {
     const h = harness();
     const findById = jest.fn().mockResolvedValue({ conversationId: 'conversation-1',

@@ -476,6 +476,7 @@
   "stream.activity.agent": "Activité",
   "stream.activity.agentRowAria": "{{description}}, {{status}}. Afficher le raisonnement complet",
   "stream.activity.agentPlanning": "Préparation de votre demande",
+  "stream.activity.thinking": "Réflexion… {{seconds}}s",
   "stream.activity.assistant": "Assistant",
   "stream.activity.agentNameUnavailable": "Nom de l’agent indisponible",
   "stream.activity.delegateTo": "Déléguer à {{name}}",

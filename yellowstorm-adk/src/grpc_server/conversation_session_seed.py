@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from datetime import datetime, timezone
 from typing import Iterable
 
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
+from sqlalchemy import select
 
 from src.config.settings import get_settings
 
 
 APP_NAME = "manager_app"
+# Private DatabaseSessionService hooks the one-transaction seed relies on
+# (verified against google-adk 2.11.0). If an upgrade removes any of them the
+# seed falls back to the public, slower per-event append_event path.
+# Upgrade checklist: docs/runbooks/adk-upgrade-session-seed-check.md
+_DB_SEED_HOOKS = (
+    "_get_schema_classes",
+    "_rollback_on_exception_session",
+    "_uses_naive_datetime",
+)
 SEED_KEY_STATE = "branch_seed_idempotency_key"
 
 
@@ -54,24 +66,75 @@ class ConversationSessionSeedService:
         )
 
         try:
-            for role, text in entries:
-                is_user = role == "user"
-                await self._session_service.append_event(
-                    session=session,
-                    event=Event(
-                        invocation_id=f"branch-seed-{uuid.uuid4()}",
-                        author="user" if is_user else "assistant",
-                        content=types.Content(
-                            role="user" if is_user else "model",
-                            parts=[types.Part(text=text)],
-                        ),
-                    ),
-                )
+            await self._append_history(session, entries)
         except Exception:
             await self._session_service.delete_session(APP_NAME, user_id, session_id)
             raise
 
         return True
+
+    async def _append_history(
+        self, session, entries: list[tuple[str, str]]
+    ) -> None:
+        # Explicit, strictly increasing timestamps keep the transcript order
+        # when all rows are written in one transaction (the default
+        # per-event clock reads can tie on coarse clocks).
+        base = time.time()
+        events = [
+            Event(
+                invocation_id=f"branch-seed-{uuid.uuid4()}",
+                author="user" if role == "user" else "assistant",
+                content=types.Content(
+                    role="user" if role == "user" else "model",
+                    parts=[types.Part(text=text)],
+                ),
+                timestamp=base + index * 0.001,
+            )
+            for index, (role, text) in enumerate(entries)
+        ]
+        if not events:
+            return
+        service = self._session_service
+        if isinstance(service, DatabaseSessionService) and all(
+            hasattr(service, hook) for hook in _DB_SEED_HOOKS
+        ):
+            await self._insert_events_in_one_transaction(service, session, events)
+            return
+        for event in events:
+            await service.append_event(session=session, event=event)
+
+    @staticmethod
+    async def _insert_events_in_one_transaction(
+        service: DatabaseSessionService, session, events: list[Event]
+    ) -> None:
+        """Write the whole transcript with one commit.
+
+        ``append_event`` costs a lock, three state reads, an update and a
+        commit per event, all sequential database round trips, so seeding a
+        long conversation on every turn grew linearly with its history (about
+        200 ms per message). The session was created an instant ago under a
+        unique id, so there is no concurrent writer to guard against and the
+        per-event revision checks add nothing.
+        """
+        schema = service._get_schema_classes()
+        async with service._rollback_on_exception_session() as sql_session:
+            row = (
+                await sql_session.execute(
+                    select(schema.StorageSession)
+                    .filter(schema.StorageSession.app_name == session.app_name)
+                    .filter(schema.StorageSession.user_id == session.user_id)
+                    .filter(schema.StorageSession.id == session.id)
+                )
+            ).scalars().one()
+            for event in events:
+                sql_session.add(schema.StorageEvent.from_event(session, event))
+            update_time = datetime.fromtimestamp(events[-1].timestamp, timezone.utc)
+            row.update_time = (
+                update_time.replace(tzinfo=None)
+                if service._uses_naive_datetime()
+                else update_time
+            )
+            await sql_session.commit()
 
     async def delete(
         self, *, user_id: str, session_id: str, idempotency_key: str

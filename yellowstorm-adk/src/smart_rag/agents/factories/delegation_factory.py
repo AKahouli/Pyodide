@@ -748,6 +748,7 @@ def create_search_agent_with_tools(
         top_k=top_k,
         citation_manager=citation_manager,
         user_id=config.user_id,
+        session_id=config.session_id,
         vectorstore_mcp_tool=True if "logical_search" in tools or "deep_search" in tools else False,
         logical_search_only=logical_search_only,
         deep_search=deep_search,
@@ -968,6 +969,7 @@ def _attach_mcp_toolset(agent, config, agent_config: Dict[str, Any]) -> None:
             "file_names": explicit_file_names,
             "workspace_ids": workspace_ids,
             "auth_headers": auth_headers,
+            "cache_scope": MCPHelper.build_cache_scope(config.user_id, config.session_id),
         }])
         if toolsets:
             if not hasattr(agent, "tools") or agent.tools is None:

@@ -11,6 +11,7 @@ Classes:
 import asyncio
 from typing import Dict, Any, Optional, List, Union, Tuple
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import prewarm_mcp_toolsets
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
 )
@@ -844,6 +845,10 @@ Do not render charts for single values or non-numeric content.
                 )
             if delegation_instruction:
                 agent.instruction += '\n' + delegation_instruction
+
+            # Start MCP connect + tools/list now so it overlaps session and runner
+            # setup instead of running lazily at the first model request.
+            prewarm_mcp_toolsets(agent.tools or [])
 
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.

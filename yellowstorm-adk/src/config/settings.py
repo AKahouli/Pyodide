@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # Cap the LLM response length. Prevents runaway 10k+ token generations that
     # eat wall-clock time without adding value. Set to 0 to disable the cap.
     SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
+    # MCP toolset reuse across turns (per user + conversation + server identity).
+    # Set MCP_TOOLSET_CACHE_MAX_ENTRIES=0 to disable and rebuild per turn.
+    MCP_TOOLSET_CACHE_MAX_ENTRIES: int = 64
+    MCP_TOOLSET_CACHE_IDLE_SECONDS: float = 600.0
+    # How long a cached tools/list answer is trusted; tool changes on the MCP
+    # server become visible after at most this long.
+    MCP_TOOL_LIST_CACHE_TTL_SECONDS: float = 60.0
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None

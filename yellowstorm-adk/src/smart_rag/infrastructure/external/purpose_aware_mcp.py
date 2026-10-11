@@ -1,5 +1,5 @@
 import copy
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
@@ -96,11 +96,21 @@ class PurposeAwareMcpTool(BaseTool):
 class PurposeAwareMcpToolset(MCPToolset):
     """Decorates every materialized MCP tool at YellowStorm's ADK boundary."""
 
+    # Set by the toolset cache for shared instances: a failed connect/listing
+    # evicts the instance so the next turn reconnects with a fresh one.
+    _toolset_cache_managed: bool = False
+    _cache_invalidator: Optional[Callable[[Any], Any]] = None
+
     async def get_tools(
         self,
         readonly_context: Optional[Any] = None,
     ) -> list[BaseTool]:
-        tools = await super().get_tools(readonly_context)
+        try:
+            tools = await super().get_tools(readonly_context)
+        except Exception:
+            if self._cache_invalidator is not None:
+                self._cache_invalidator(self)
+            raise
         decorated: list[BaseTool] = []
         for tool in tools:
             if _raw_mcp_tool(tool) is None:

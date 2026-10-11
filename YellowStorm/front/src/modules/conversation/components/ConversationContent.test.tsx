@@ -269,4 +269,34 @@ describe('ConversationContent', () => {
     expect(container.querySelectorAll('[data-agent-activity][data-active="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(2);
   });
+
+  it('shows the thinking label in the live bubble while the ADK placeholder awaits output', () => {
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-live';
+    storeState.streamingComponents = [
+      { id: 'activity-live', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-live', actorName: 'Smart Agent' } },
+    ];
+
+    const { container } = render(<ConversationContent />);
+
+    // The test i18n layer renders keys, so assert the key chosen by the real parent path.
+    expect(container).toHaveTextContent('stream.activity.thinking');
+    expect(container).not.toHaveTextContent('stream.activity.agentPlanning');
+  });
+
+  it('does not show the thinking counter for a completed persisted message', () => {
+    displayMessages = [{
+      id: 'ai-done', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [
+        { id: 'activity-done', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-done', actorName: 'Smart Agent' } },
+        { type: 'text', data: { content: 'Hello' } },
+      ],
+    }];
+
+    const { container } = render(<ConversationContent />);
+
+    expect(container).toHaveTextContent('stream.activity.agentPlanning');
+    expect(container).not.toHaveTextContent('stream.activity.thinking');
+  });
 });
