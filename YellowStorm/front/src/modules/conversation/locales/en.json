@@ -665,5 +665,8 @@
   "rootWork.status.partial": "Partially completed",
   "rootInput.pendingCount": "{{count}} need your input",
   "rootInput.pendingCount_one": "{{count}} needs your input",
-  "rootInput.pendingCount_other": "{{count}} need your input"
+  "rootInput.pendingCount_other": "{{count}} need your input",
+  "openui.report.panelTitle": "Report",
+  "openui.report.close": "Close report",
+  "openui.report.sources": "Sources"
 }

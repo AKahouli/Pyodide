@@ -26,8 +26,10 @@
     "@hookform/resolvers": "^3.3.2",
     "@novnc/novnc": "^1.7.0",
     "@openuidev/lang-core": "0.4.1",
+    "@openuidev/react-headless": "0.17.1",
     "@openuidev/react-lang": "0.4.1",
     "@openuidev/react-ui": "0.17.1",
+    "@openuidev/thesys": "0.14.0",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.0.4",
@@ -134,6 +136,13 @@
       "zustand": "$zustand"
     },
     "@openuidev/react-ui": {
+      "zustand": "$zustand"
+    },
+    "@openuidev/thesys": {
+      "@openuidev/react-lang": "$@openuidev/react-lang",
+      "@openuidev/lang-core": "$@openuidev/lang-core",
+      "@openuidev/react-ui": "$@openuidev/react-ui",
+      "@openuidev/react-headless": "$@openuidev/react-headless",
       "zustand": "$zustand"
     }
   }

@@ -47,9 +47,9 @@ export function OpenUiAnswer({ content, isStreaming, conversationId, messageId, 
   }, [conversationId]);
 
   const citationScope = useMemo(() => ({ conversationId, messageId }), [conversationId, messageId]);
-  const markdown = (
+  const renderMarkdown = (text: string) => (
     <AIMessageContent
-      parts={[{ type: 'text', content, showCursor: isStreaming, citations }]}
+      parts={[{ type: 'text', content: text, showCursor: isStreaming, citations }]}
       isStreaming={isStreaming}
       citationScope={citationScope}
     />
@@ -57,9 +57,9 @@ export function OpenUiAnswer({ content, isStreaming, conversationId, messageId, 
   // A crash on half-parsed streaming content is expected and temporary: show the spinner, never the raw
   // program, and try again on the next chunk. Only a COMPLETE program that still crashes shows markdown.
   return (
-    <OpenUiBoundary resetKey={`${isStreaming}|${content}`} fallback={() => (isStreaming ? spinner : <div data-openui-fallback={partId ?? ''}>{markdown}</div>)}>
+    <OpenUiBoundary resetKey={`${isStreaming}|${content}`} fallback={() => (isStreaming ? spinner : <div data-openui-fallback={partId ?? ''}>{renderMarkdown(content)}</div>)}>
       <Suspense fallback={spinner}>
-        <OpenUiRenderer content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={markdown} partId={partId} />
+        <OpenUiRenderer content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={renderMarkdown} partId={partId} />
       </Suspense>
     </OpenUiBoundary>
   );

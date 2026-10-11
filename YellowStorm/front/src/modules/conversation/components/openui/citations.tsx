@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type CSSProperties } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { MarkDownRenderer, useTheme } from '@openuidev/react-ui';
 import remarkGfm from 'remark-gfm';
@@ -64,18 +64,21 @@ function CitationMarker(props: { 'data-citation-ref'?: string }) {
 
 const REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkAssistantCitationLinks];
 const MARKDOWN_COMPONENTS = { cite: CitationMarker };
+const Passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
+/** Same flattening as the stock `InlineMarkdownRenderer`: block elements collapse so the output stays inline. */
+const INLINE_MARKDOWN_COMPONENTS = { cite: CitationMarker, p: Passthrough, h1: Passthrough, h2: Passthrough, h3: Passthrough, h4: Passthrough, h5: Passthrough, h6: Passthrough, ul: Passthrough, ol: Passthrough, li: Passthrough };
 
 /**
  * The stock markdown block (`openui-markdown-renderer`) plus our citation chips.
  * Every prose component of the library that renders markdown goes through this.
  */
-export function CitationMarkdown({ textMarkdown, variant, className }: Readonly<{ textMarkdown: string; variant?: 'clear' | 'card' | 'sunk'; className?: string }>) {
+export function CitationMarkdown({ textMarkdown, variant, className, inline }: Readonly<{ textMarkdown: string; variant?: 'clear' | 'card' | 'sunk'; className?: string; inline?: boolean }>) {
   const { byReference } = useContext(OpenUiCitationContext);
   const options = useMemo(() => ({
     remarkPlugins: REMARK_PLUGINS as never,
     rehypePlugins: (byReference.size > 0 ? [rehypeKatex, rehypeCitationMarkers] : [rehypeKatex]) as never,
-    components: MARKDOWN_COMPONENTS as never,
-  }), [byReference.size]);
+    components: (inline ? INLINE_MARKDOWN_COMPONENTS : MARKDOWN_COMPONENTS) as never,
+  }), [byReference.size, inline]);
   return (
     <MarkDownRenderer
       textMarkdown={textMarkdown}
@@ -129,27 +132,29 @@ export function toStockSources(byReference: ReadonlyMap<string, CitationData>): 
   return Array.from({ length: last }, (_unused, position) => byIndex.get(position + 1) ?? { title: '', sourceName: '' });
 }
 
-/** Stock `TextContent` size variants, mirrored from the OpenUI library. */
-const BODY_SIZE_VARS: Record<string, string> = {
-  small: '--openui-text-body-sm',
-  large: '--openui-text-body-lg',
-  'small-heavy': '--openui-text-body-sm-heavy',
-  'large-heavy': '--openui-text-body-lg-heavy',
-};
-
-/** Renderer for the library's `TextContent`: stock layout and size variants, citation-aware markdown. */
-export function OpenUiTextContent({ props }: Readonly<{ props: { text?: unknown; size?: unknown } }>) {
+/**
+ * The thesys prose block (`div.c1-text-content` around a `c1-markdown-renderer`), with citation chips.
+ * Used for TextContent and for the details of a step. The stock block ignores TextContent's `size`, so this does too.
+ */
+export function CitedProse({ text }: Readonly<{ text: string }>) {
   const { mode } = useTheme();
-  const text = props.text == null ? '' : String(props.text);
-  const sizeVar = BODY_SIZE_VARS[String(props.size ?? 'default')];
-  const style = sizeVar
-    ? ({ '--openui-text-body-default': `var(${sizeVar})`, '--openui-text-body-default-letter-spacing': `var(${sizeVar}-letter-spacing)` } as CSSProperties)
-    : undefined;
   return (
-    <div style={style}>
-      <div className='openui-text-content'>
-        <CitationMarkdown textMarkdown={text} className={cn('openui-text-content-markdown', { 'openui-text-content-markdown-dark-mode': mode === 'dark' })} />
-      </div>
+    <div className='c1-text-content'>
+      <CitationMarkdown textMarkdown={text} className={cn('c1-markdown-renderer', { 'c1-markdown-renderer-dark-mode': mode === 'dark' })} />
     </div>
   );
+}
+
+/** Renderer for the library's `TextContent`. */
+export function OpenUiTextContent({ props }: Readonly<{ props: { text?: unknown } }>) {
+  return <CitedProse text={props.text == null ? '' : String(props.text)} />;
+}
+
+/**
+ * True when the string has a `[n]` marker and the answer has citations at all. The stock components
+ * silently drop a marker they have no source for, so any marker in a cited answer is routed through
+ * ours, which shows an unknown one as literal text.
+ */
+export function hasMarker(value: unknown, byReference: ReadonlyMap<string, CitationData>): value is string {
+  return typeof value === 'string' && byReference.size > 0 && /\[\d+\]/.test(value);
 }

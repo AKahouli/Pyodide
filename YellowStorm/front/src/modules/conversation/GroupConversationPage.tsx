@@ -6,6 +6,7 @@ import { GroupConversationContent } from './components/GroupConversationContent'
 import { ConversationInput } from './components/ConversationInput';
 import { StreamErrorDialog } from './components/StreamErrorDialog';
 import { FileViewerSidebar } from '@/modules/file-viewer';
+import { ReportPanelSidebar } from './components/openui/ReportPanelSidebar';
 import { JoinConversationLanding } from './components/JoinConversationLanding';
 import { joinConversation } from './api';
 import { toast } from 'sonner';
@@ -90,6 +91,7 @@ export function GroupConversationPage({ id, conversation }: GroupConversationPag
         <StreamErrorDialog />
       </div>
       <FileViewerSidebar />
+      <ReportPanelSidebar resetKey={id} />
     </div>
   );
 }

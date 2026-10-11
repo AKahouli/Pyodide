@@ -665,5 +665,8 @@
   "rootWork.status.partial": "Partiellement terminé",
   "rootInput.pendingCount": "{{count}} demandent votre réponse",
   "rootInput.pendingCount_one": "{{count}} demande votre réponse",
-  "rootInput.pendingCount_other": "{{count}} demandent votre réponse"
+  "rootInput.pendingCount_other": "{{count}} demandent votre réponse",
+  "openui.report.panelTitle": "Rapport",
+  "openui.report.close": "Fermer le rapport",
+  "openui.report.sources": "Sources"
 }

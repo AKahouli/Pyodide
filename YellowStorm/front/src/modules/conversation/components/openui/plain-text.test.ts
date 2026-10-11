@@ -36,6 +36,46 @@ describe('programToPlainText', () => {
     expect(programToPlainText(source)).toBe('Summary\nQ3\n\nRevenue grew "12%".\n\nHeads up\nCheck [1].');
   });
 
+  it('projects the chat library blocks: section triggers without their ids, follow-ups, inline text and card text', () => {
+    const source = [
+      'root = Card([h, sec, cb, fu])',
+      'h = InlineHeader("Overview", "At a glance [1]")',
+      'sec = SectionBlock([s1])',
+      's1 = SectionItem("intro", "Introduction", [t])',
+      't = TextContent("Body")',
+      'cb = CompositeCardBlock([c1, c2])',
+      'c1 = CompositeCardItem("a", ic, [tx, bd])',
+      'ic = IconText(icon, "neutral", "m", "ACME", "Up", false, "horizontal")',
+      'tx = Text("text", "Margin 12%", "+3 pts", "metric", "xs")',
+      'bd = BoldText("number", "42")',
+      'tc = TextCallout("info", "Note", "Careful")',
+      'fu = FollowUpBlock([f1])',
+      'f1 = FollowUpItem("Compare with MSFT")',
+    ].join('\n');
+    const projected = programToPlainText(source);
+    expect(projected).toContain('Overview\nAt a glance [1]');
+    expect(projected).toContain('Introduction');
+    expect(projected).not.toContain('intro\n');
+    expect(projected).toContain('ACME\nUp');
+    expect(projected).toContain('Margin 12%\n+3 pts');
+    expect(projected).toContain('Note\nCareful');
+    expect(projected).toContain('Compare with MSFT');
+    expect(projected).not.toMatch(/^(?:text|metric|neutral)$/m);
+  });
+
+  it('projects the strings of a report and drops its ids, enums and image links', () => {
+    const source = [
+      'root = Report({title: "Q3 mail report", subtitle: "Spike"}, [p1])',
+      'p1 = Page("p1", cp)',
+      'cp = ContentPage([ih, km, vc])',
+      'ih = InlineHeader("Highlights", "Quarter to date")',
+      'km = KeyMetrics("row", [{title: "Messages", text: "48,210"}])',
+      'vc = VisualCards([{title: "Escalations", body: "Down 14%", imageSrc: "https://example.test/a.png"}])',
+    ].join('\n');
+    const projected = programToPlainText(source);
+    expect(projected).toBe('Q3 mail report\nSpike\n\nHighlights\nQuarter to date\n\nMessages\n48,210\n\nEscalations\nDown 14%');
+  });
+
   it('is empty when the program has no text-bearing call', () => {
     expect(programToPlainText('root = Stack([])')).toBe('');
   });
@@ -72,6 +112,20 @@ describe('createOpenUiTextProjector', () => {
     expect(componentsToMarkdown(components, createOpenUiTextProjector('m', components))).toBe('Let me check **that**.\n\nHello');
     mountMessage('m', '<div data-openui-scope data-openui-part="someone-else">Other</div>');
     expect(componentsToMarkdown(components, createOpenUiTextProjector('m', components))).toBe('Let me check **that**.\n\nHello');
+  });
+
+  it('uses the program when a folded SectionBlock hides part of the rendered answer', () => {
+    mountMessage('m', '<div data-openui-scope data-openui-part="prog"><div class="openui-foldable-section-item" data-state="open"><p>Open section</p></div><div class="openui-foldable-section-item" data-state="closed"></div></div>');
+    const sections = ['root = Card([sec])', 'sec = SectionBlock([a, b])', 'a = SectionItem("one", "First", [])', 'b = SectionItem("two", "Second", [])'].join('\n');
+    const components = [textComponent(sections, 'prog')];
+    expect(componentsToMarkdown(components, createOpenUiTextProjector('m', components))).toBe('First\n\nSecond');
+  });
+
+  it('adds the report text, which lives in the panel and not in the message, and leaves its chip out', () => {
+    mountMessage('m', '<div data-openui-scope data-openui-part="prog"><p>Short answer</p><div data-openui-report><div class="c1-report-chat-preview">Q3 report Report View</div></div></div>');
+    const content = 'root = Card([t])\nt = TextContent("Short answer")\n\nroot = Report({title: "Q3 report"}, [p])\np = Page("p1", cp)\ncp = ContentPage([h])\nh = InlineHeader("Highlights")';
+    const components = [textComponent(content, 'prog')];
+    expect(componentsToMarkdown(components, createOpenUiTextProjector('m', components))).toBe('Short answer\n\nQ3 report\n\nHighlights');
   });
 
   it('needs no projector when there is no program', () => {

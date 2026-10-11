@@ -12,6 +12,7 @@ import { NotFound } from './components/NotFound';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2 } from 'lucide-react';
 import { useFileViewerStore, FileViewerSidebar } from '@/modules/file-viewer';
+import { ReportPanelSidebar } from './components/openui/ReportPanelSidebar';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
 
@@ -170,6 +171,7 @@ export function ConversationPage() {
         <ConversationContextPanel conversationId={id!} creatorId={currentConversation.createdBy} />
       </div>
       <FileViewerSidebar />
+      <ReportPanelSidebar resetKey={id} />
     </div>
   );
 }

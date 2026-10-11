@@ -3,10 +3,13 @@ import { useContext, useMemo, useState, type ReactNode } from 'react';
 import { Renderer, type ActionEvent, type ParseResult } from '@openuidev/react-lang';
 import { CardSourceProvider, ThemeProvider } from '@openuidev/react-ui';
 import '@openuidev/react-ui/styles/index.css';
+import '@openuidev/thesys/styles.css';
 import { ThemeProviderContext } from '@/contexts/ThemeContext';
 import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { OpenUiCitationContext, splitCitations, toStockSources, type OpenUiCitationScope } from './citations';
 import { openUiLibrary } from './library';
+import { ReportBlock } from './ReportBlock';
+import { splitReportProgram } from './report-program';
 import { OPENUI_COMPACT_THEME } from './theme';
 
 export interface OpenUiRendererProps {
@@ -15,8 +18,11 @@ export interface OpenUiRendererProps {
   onAction: (event: ActionEvent) => void;
   citations?: CitationData[];
   citationScope?: OpenUiCitationScope;
-  /** Shown instead of the program once the answer is complete and still has no renderable root. */
-  fallback?: ReactNode;
+  /**
+   * Shown instead of a program once the answer is complete and still has no renderable root. A function
+   * receives the text of the program it replaces (the chat part when a report follows it).
+   */
+  fallback?: ReactNode | ((text: string) => ReactNode);
   /** Tags the scope with the stored text component it renders (see plain-text.ts). */
   partId?: string;
 }
@@ -38,20 +44,33 @@ export default function OpenUiRenderer({ content, isStreaming, onAction, citatio
   const { theme } = useContext(ThemeProviderContext);
   const mode = resolveOpenUiMode(theme);
   const [parsed, setParsed] = useState<ParseResult | null>(null);
+  const [reportParsed, setReportParsed] = useState<ParseResult | null>(null);
+  const { chat, report } = useMemo(() => splitReportProgram(content), [content]);
   const { byReference, trailing } = useMemo(() => splitCitations(citations, content, citationScope), [citations, content, citationScope]);
   const stockSources = useMemo(() => toStockSources(byReference), [byReference]);
   const citationValue = useMemo(() => ({ byReference, scope: citationScope }), [byReference, citationScope]);
+  const reportCitations = useMemo(() => Array.from(byReference).filter(([reference]) => report?.includes(`[${reference}]`) && !chat.includes(`[${reference}]`)).map(([, citation]) => citation), [byReference, report, chat]);
+  const hasChat = chat.trim() !== '';
   // While streaming, partial or invalid text must never swap the view: only a
   // finished answer that never produced a root falls back to the markdown view.
-  const unrenderable = !isStreaming && content.trim() !== '' && parsed !== null && parsed.root === null;
+  const unrenderable = (outcome: ParseResult | null) => !isStreaming && fallback !== undefined && outcome !== null && outcome.root === null;
+  // A report-only answer falls back as a whole; with a chat program, only the chat falls back and the report chip stays.
+  const wholeFallback = !hasChat && report !== null && unrenderable(reportParsed);
+  const chatFallback = hasChat && unrenderable(parsed);
+  const renderFallback = (text: string) => (typeof fallback === 'function' ? fallback(text) : fallback);
   return (
     <div {...{ [THEME_SCOPE_ATTRIBUTE]: '' }} data-openui-part={partId} data-testid='openui-answer' className='min-w-0'>
       <ThemeProvider mode={mode} lightTheme={OPENUI_COMPACT_THEME} darkTheme={OPENUI_COMPACT_THEME} cssSelector={`[${THEME_SCOPE_ATTRIBUTE}]`}>
         <OpenUiCitationContext.Provider value={citationValue}>
           <CardSourceProvider sources={stockSources}>
-            {unrenderable && fallback ? fallback : (
+            {wholeFallback ? renderFallback(content) : (
               <>
-                <Renderer response={content} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} />
+                {hasChat && (chatFallback
+                  ? renderFallback(chat)
+                  : <Renderer response={chat} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} />)}
+                {report !== null && (
+                  <ReportBlock program={report} isStreaming={isStreaming} panelId={`${citationScope?.messageId ?? 'message'}:${partId ?? 'part'}`} citations={reportCitations} citationScope={citationScope} onParseResult={setReportParsed} />
+                )}
                 {trailing.length > 0 && <CitationsInline citations={trailing} citationScope={citationScope} />}
               </>
             )}
