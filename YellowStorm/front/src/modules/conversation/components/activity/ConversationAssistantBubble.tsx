@@ -540,7 +540,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   const uiTargets = props.showUiTargets ? collectUiTargets(source) : [];
   if (!activityNodes.length && !artifactNodes.length && !answerNodes.length && !uiTargets.length && !props.requestInputState) return null;
-  const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name || t('stream.activity.agentNameUnavailable');
+  // A live reply names its agent once its first activity arrives; until then
+  // the name is pending, not missing.
+  const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name
+    || t(props.isStreaming ? 'stream.activity.assistant' : 'stream.activity.agentNameUnavailable');
   const openAgentEditor = props.agentId && props.onOpenAgentEditor
     ? () => props.onOpenAgentEditor!(props.agentId!)
     : null;
