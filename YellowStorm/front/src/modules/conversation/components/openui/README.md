@@ -26,7 +26,7 @@ agent config (DTO, Mongo/Drizzle mapper, `Agent` type).
 
 2. In the agent library create an agent:
    - **Name**: `openui-experiment` (the slug is derived from the name; keep the `openui-` prefix).
-   - **Instruction**: paste the generated prompt (about 24k characters, under the 50,000 limit; re-generate after upgrading `@openuidev/*`).
+   - **Instruction**: paste the generated prompt (about 31k characters, under the 50,000 limit; re-generate after upgrading `@openuidev/*`).
    - **Ignore pre-prompt**: on, so the platform pre-prompt does not ask for markdown.
    - Pick a capable model; no tools or knowledge bases are required.
 3. Start the front with the flag: `VITE_OPENUI_RENDER_ENABLED=true npm run dev`, open `#/conversation`, tag or select the
@@ -41,6 +41,11 @@ overrides pin thesys's peer ranges (`^0.3`, `^0.14`, `zustand ^4`) to the versio
 `Card` is overridden (library.tsx): the stock one opens its own source context and renders a Sources strip from its
 `sources` argument; ours keeps the answer's citations and ignores `sources`. The prompt (generate-openui-prompt.mjs) drops
 that argument from the spec.
+
+`@openuidev/thesys` (0.14) exports no prompt options for `chatLibrary` or `reportLibrary` (its own examples and rules stay private to the
+package; the ones in `@openuidev/react-ui` target its own library with other signatures). The generator therefore builds the prompt with
+`generateSystemPrompt` from the stock spec and layers our own `additionalRules` (stat cards, charts, icon lists, tags, image cards, citations,
+reports) and `examples`, each example parsed against the library at generation time.
 
 thesys's stylesheet is imported next to the react-ui one in OpenUiRenderer.tsx. Both live in the lazy chunk, and
 `devtools-off.ts` must stay the first import of anything that loads react-lang (thesys does, so a new entry point has to import it first).

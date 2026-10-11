@@ -35,11 +35,23 @@ const citationRules = [
   'Do not write a sources or references list, and never pass sources to Card (the sources argument does not exist): the interface already lists the sources of an answer from the tool results, and the [n] markers point at those.',
 ];
 
-/** How to answer in the chat program. */
+/**
+ * How to answer in the chat program. The thesys library ships no prompt options of its own (its examples and rules are
+ * private to the package, and the ones in @openuidev/react-ui target another library with other signatures), so the
+ * guidance that makes an answer look like the OpenUI chat demos (stat cards, charts, icon lists, tags, image cards,
+ * follow-ups) is written here, against the signatures of the library we render.
+ */
 const usageRules = [
-  'Answer with a Card program by default: `root = Card(...)` is the first line. Lead with the answer itself (Header and TextContent), then the supporting blocks, and end with a FollowUpBlock of two or three useful next questions. Keep every text short.',
-  'Pick the block that fits the content: CompositeCardBlock, OverviewCardBlock or SnippetCardBlock for entities and key facts, Table for comparisons, a chart for a trend or a split, Steps for a procedure, CalloutV2 for a caveat or a decision, SectionBlock or Tabs to keep a long answer short. Markdown (bold, lists, links) belongs in TextContent only.',
-  'Never invent image or link URLs, and do not use forms or buttons unless the user asked for something to fill in.',
+  'Answer with a Card program by default: `root = Card(...)` is the first line. Order: Header(title, subtitle), a one or two sentence TextContent that gives the answer itself, then the supporting blocks, then a FollowUpBlock of two or three useful next questions. Keep every text short and never repeat the same facts in two blocks.',
+  'Make the answer visual: when the content fits a card, a chart, an icon list or a tag, use it instead of a paragraph or a callout. TextContent is for the one-line answer and short explanations; a table or a callout is not a substitute for stat cards and charts when the answer rests on numbers.',
+  'Key figures: when the answer rests on numbers or on a few named entities (companies, contracts, products, people, periods), show them first as stat cards. SnippetCardBlock([...], "grid") of SnippetCardItem(id, IconText(Icon("lucide-name"), variant, "md", name, sublabel), BoldText("number", value, caption, "metric", "md")) puts the name on the left and the value on the right. OverviewCardBlock([...], "grid") of OverviewCardItem(id, IconText(Icon("lucide-name"), variant, "md", name, sublabel, false, "vertical"), MetricIndicatorInline(value, caption, {direction: "up", value: 12})) suits a value with a trend. Two to six cards, all built the same way. IconText variant: success for a good or growing value, danger for a bad or falling one, warning for a caution, info for a fact, neutral for a benchmark. A "metric" caption starting with + or - is colored green or red; use "text" for a plain caption.',
+  'Trends and splits: when sources give you several values over time or per category, add a chart with a heading and a description: LineChart (trend, one or several series), AreaChart (one cumulative series), BarChart or HorizontalBarChart (comparison), PieChart or SegmentedBar (split, five slices at most). Put two or three charts in Tabs when they answer different questions. Only chart numbers that come from the sources: never invent, interpolate or round a series to make a chart; with no series, use stat cards or a table. For large values, scale the data and give the unit ("k", "m", "b") and an axis label instead of raw thousands or millions.',
+  'Drivers, reasons, risks, pros and cons: an InlineHeader (heading, description), then List([ListItem(title, subtitle, Icon("lucide-name"))], "icon") for short points (icon tile, bold title, one-line description; every ListItem of an icon List must carry its own Icon as third argument, without it a blank dot is shown), or CompositeCardBlock([...], "grid") of CompositeCardItem(id, IconText(Icon("lucide-name"), variant, "md", title, subtitle), [TextContent(description)]) for points that need a sentence each. Icon names are lucide icon names in kebab-case (users, cloud, search, activity, dollar-sign, trending-up, trending-down, file-text, shield, calendar, clock, mail, building-2, globe, triangle-alert, circle-check, zap, target, layers, scale, wallet). Pick the icon that matches the point.',
+  'Tables: use Table for a comparison of three or more entities across several attributes, and give it one coloured Tag column (status, verdict, rating, category) when such a label exists. Use Tag(text, variant) for status, category, rating or verdict cells (success, warning, danger, info, neutral): define each Tag on its own line and put its identifier in the cell, with a label of one or two words. Keep numbers and sentences as plain strings (a cell may carry [n] markers, a Tag may not). TagBlock takes at most three Tags.',
+  'Card blocks (SnippetCardBlock, OverviewCardBlock, CompositeCardBlock, ContextCardBlock, VisualCardBlock) need at least two items, all with the same structure. Text, BoldText, IconText, ImageText and MetricIndicator* are building blocks used inside card items: never put them directly in the root Card.',
+  'Other blocks: CalloutV2 for one caveat, decision or warning (never to explain what you did); Steps for an ordered procedure; SectionBlock or Tabs to keep a long answer short; EntityList for a label and value list. Markdown (bold, lists, links) belongs in TextContent only.',
+  'Images: Image, ImageBlock, ImageGallery, ImageText, ImageTextLarge, ListItem images and the bgImageSrc of VisualCardItem and ContextCardItem need a real URL. Use them only when a tool result (for example a web search) returned the image URL: copy it exactly and add a short alt text. With such URLs, VisualCardBlock([...], "carousel") of VisualCardItem(BoldText("text", name, detail), id, imageUrl, Tag(label, variant), alt) gives image cards with an overlay tag. Without a URL, never use them: use IconText cards instead. Never invent image or link URLs.',
+  'Do not use forms or buttons unless the user asked for something to fill in. Do not stack more than six blocks after the Header; pick the ones the answer needs.',
 ];
 
 /** How to deliver a report next to the chat answer (see ReportBlock.tsx and report-program.ts in the front end). */
@@ -54,36 +66,54 @@ const reportRules = [
 const REPORT_ROOT = /^[ \t]*root[ \t]*=[ \t]*Report[ \t]*\(/m;
 
 const examples = [
-  `Example 1 — Informational response with card blocks, steps and follow-ups
-root = Card([header, summary, facts, steps, follow])
+  `Example 1 — Comparison: stat cards, a chart, an icon list of drivers and a table with tags
+root = Card([header, lead, stats, trend, driversHeading, drivers, compare, caveat, follow])
+header = Header("Vendor contracts at a glance", "Annual value and renewal terms, 2023 to 2025")
+lead = TextContent("Orion is the costliest contract and the only one indexed on prices; two of the three renew in 2026 [1].")
+stats = SnippetCardBlock([orion, delta, vega], "grid")
+orion = SnippetCardItem("orion", orionName, orionValue)
+orionName = IconText(Icon("truck"), "warning", "md", "Orion Logistics", "Transport [1]")
+orionValue = BoldText("number", "EUR 1.2M", "+6% vs 2024", "metric", "md")
+delta = SnippetCardItem("delta", deltaName, deltaValue)
+deltaName = IconText(Icon("cloud"), "success", "md", "Delta Cloud", "Hosting [2]")
+deltaValue = BoldText("number", "EUR 0.9M", "-2% vs 2024", "metric", "md")
+vega = SnippetCardItem("vega", vegaName, vegaValue)
+vegaName = IconText(Icon("printer"), "neutral", "md", "Vega Print", "Printing")
+vegaValue = BoldText("number", "EUR 0.3M", "Flat", "text", "md")
+trend = LineChart(["2023", "2024", "2025"], [orionSeries, deltaSeries], "default", "natural", "Annual cost by supplier", "EUR millions per year", "Year", "EUR m", "m")
+orionSeries = {category: "Orion", values: [1.0, 1.13, 1.2]}
+deltaSeries = {category: "Delta Cloud", values: [0.8, 0.92, 0.9]}
+driversHeading = InlineHeader("Key drivers", "What moved the cost")
+drivers = List([indexation, discount, volume], "icon")
+indexation = ListItem("Price indexation", "Orion follows the transport index, capped at 6% a year [1]", Icon("trending-up"))
+discount = ListItem("Volume discount", "Delta Cloud applies a discount tier above 500 TB [2]", Icon("trending-down"))
+volume = ListItem("Stable volumes", "Vega Print has been flat since 2023", Icon("scale"))
+compare = Table([Col("Supplier"), Col("Renewal"), Col("Notice (days)", "number"), Col("Action")], [["Orion Logistics", "31/12/2026 [1]", 90, renegotiate], ["Delta Cloud", "30/06/2026 [2]", 60, renew], ["Vega Print", "Open-ended", 30, review]])
+renegotiate = Tag("Renegotiate", "warning")
+renew = Tag("Renew", "success")
+review = Tag("Review", "neutral")
+caveat = CalloutV2("info", "Check the notice dates", "A missed notice window renews the contract for 12 months [1].")
+follow = FollowUpBlock(["Show the indexation clause", "Compare 2025 with the budget"])`,
+  `Example 2 — Key facts with trend cards, a split and next steps
+root = Card([header, summary, facts, split, steps, follow])
 header = Header("Contract renewal", "ACME Corp, service agreement")
 summary = TextContent("The agreement renews automatically on 31/12/2025 unless notice is given 90 days before [1].")
-facts = CompositeCardBlock([term, notice])
-term = CompositeCardItem("term", termHead, [termBody])
-termHead = IconText(calendarIcon, "info", "m", "Renewal date", "31/12/2025 [1]")
-termBody = Text("text", "Automatic, 12 months", "Same price unless indexed [2]")
-notice = CompositeCardItem("notice", noticeHead, [noticeBody])
-noticeHead = IconText(clockIcon, "warning", "m", "Notice period", "90 days")
-noticeBody = Text("text", "Written notice required", "By registered letter")
-calendarIcon = Icon("calendar")
-clockIcon = Icon("clock")
+facts = OverviewCardBlock([term, notice, price], "grid")
+term = OverviewCardItem("term", termName, termValue)
+termName = IconText(Icon("calendar"), "info", "md", "Renewal date", "Automatic, 12 months [1]", false, "vertical")
+termValue = MetricIndicatorInline("31/12/2025", "Same price unless indexed")
+notice = OverviewCardItem("notice", noticeName, noticeValue)
+noticeName = IconText(Icon("clock"), "warning", "md", "Notice period", "By registered letter", false, "vertical")
+noticeValue = MetricIndicatorInline("90 days", "Before the renewal date")
+price = OverviewCardItem("price", priceName, priceValue)
+priceName = IconText(Icon("wallet"), "success", "md", "Annual fee", "Indexed on the services index [2]", false, "vertical")
+priceValue = MetricIndicatorInline("EUR 84k", "Per year", {direction: "up", value: 3})
+split = PieChart([{category: "Licences", value: 52}, {category: "Support", value: 24}, {category: "Hosting", value: 8}], "donut", "Fee split", "EUR thousands per year", "k")
 steps = Steps([s1, s2], "What to do next")
 s1 = StepsItem("Decide by 2 October 2025", "Check usage and the price index before the notice window closes [2].")
 s2 = StepsItem("Send the notice", "Use registered mail and keep the receipt.")
 follow = FollowUpBlock(["Show the indexation clause", "Draft the notice letter"])`,
-  `Example 2 — Data response with a chart and a table
-root = Card([title, tabs, follow])
-title = Header("Revenue by region", "FY2024, millions EUR")
-tabs = Tabs([overviewTab, tableTab])
-overviewTab = TabItem("overview", "Overview", [chart, note])
-chart = BarChart(["EMEA", "Americas", "APAC"], [s2023, s2024], "default", "grouped", "Revenue", "Year over year", "Region", "EUR m")
-s2023 = {category: "2023", values: [120, 340, 210]}
-s2024 = {category: "2024", values: [135, 360, 250]}
-note = CalloutV2("info", "Growth leader", "APAC grew 19% [1].")
-tableTab = TabItem("table", "Table", [table])
-table = Table([Col("Region"), Col("2024", "number"), Col("Change", "number")], [["EMEA", 135, "+12%"], ["Americas", 360, "+6%"], ["APAC", 250, "+19%"]])
-follow = FollowUpBlock(["Break APAC down by country"])`,
-  `Example 3 — A report: a short Card program, a blank line, then the report program
+  `Example 4 — A report: a short Card program, a blank line, then the report program
 root = Card([ready, follow])
 ready = CalloutV2("success", "Report ready", "The Q3 mail report covers volume and response times. Open it with View. Volume is up 12% [1].")
 follow = FollowUpBlock(["Add a page on escalations"])
