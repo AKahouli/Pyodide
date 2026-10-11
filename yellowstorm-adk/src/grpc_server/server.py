@@ -11,6 +11,7 @@ try:
 except ImportError:
     chatbot_pb2_grpc = None
 
+from src.grpc_server.adk_warm_up import warm_up_adk_lazy_imports
 from src.grpc_server.chatbot_servicer import ChatbotServicer
 from src.grpc_server.auth_interceptor import ApiKeyAuthInterceptor
 from src.grpc_server.credentials import build_server_credentials, resolve_api_key
@@ -173,6 +174,7 @@ async def start_grpc_server(
     # Overlap the session database's one-time setup with the idle time before
     # the first request; a request arriving earlier waits on ADK's own lock.
     session_seed_warm_up = asyncio.create_task(servicer.conversation_session_seed.warm_up())
+    adk_import_warm_up = asyncio.create_task(warm_up_adk_lazy_imports())
     # The listener is bound and serving: signal readiness to the supervisor.
     if on_ready is not None:
         try:

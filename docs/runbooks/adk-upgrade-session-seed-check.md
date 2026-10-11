@@ -24,3 +24,16 @@ Verify the one-transaction session seed in yellowstorm-adk/src/grpc_server/conve
    to it and drop the private hooks), keep the fallback, and update the "verified on" version in the module comment.
 4. Check the seed stays one commit: the test test_seed_writes_a_real_database_transcript_in_one_commit must pass.
 Do not commit. Report what changed in ADK and what you edited.
+
+## Startup warm-up of ADK's lazy provider imports
+
+`yellowstorm-adk/src/grpc_server/adk_warm_up.py` calls the private, memoized
+`google.adk.flows.llm_flows.context._contents._id_pairing_model_types()` at
+startup. Otherwise the first request after a restart imports the anthropic SDK
+on the event loop (about 2 s before the first model call). If the hook moves,
+the warm-up silently does nothing and the cold first message is slow again.
+Guard: `conda run -n meta pytest yellowstorm-adk/tests/test_grpc_server/test_adk_warm_up.py -q`.
+After an upgrade, also check that no other lazy import shows up in the first
+request: compare `before_agent_to_before_model_ms` in the
+`conversation_latency_diag.runner_pre_model` log for the first and second
+message after a restart (they should be within a few hundred ms).
