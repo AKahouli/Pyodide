@@ -10,9 +10,11 @@ import hashlib
 import json
 import logging
 import os
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Response, status
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.indexer import request_index_quietly
@@ -35,6 +37,7 @@ from app.population.compiler import (PopulationError, canonical_spec_hash, valid
 from app.population.model_check import check_model
 from app.workers.celery_app import POPULATION_QUEUES
 
+events = structlog.get_logger(__name__)
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
 logger = logging.getLogger(__name__)
 
@@ -295,6 +298,7 @@ async def read_bound_records_gone(model_id: str) -> dict[str, object]:
 async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request: Request) -> dict[str, object]:
     """The data in use, narrowed to the workspaces NestJS authorized for this actor: the page's
     records, the links whose two ends are visible, visible counts, and gaps of visible records."""
+    started = time.monotonic()
     pool = _population_read_pool(request)
     binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     revision_id = binding["data_revision_id"]
@@ -325,6 +329,11 @@ async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request
     specification = await store.get_revision_specification(pool, revision_id)
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    # Deep focus reads walk up to 8 links; failures surface through http.request.failed.
+    events.info("semantic.graph_window.read", scope="focus" if command.focus_ids else "overview",
+                count=len(nodes), outcome="truncated" if truncated else "complete",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                detail=f"depth={command.depth} links={len(edges)}")
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "entities": entities,
             "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
