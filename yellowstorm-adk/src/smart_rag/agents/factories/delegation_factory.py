@@ -398,8 +398,11 @@ def create_enhanced_prompt(tool_provider, agent_repository, agent_config: Dict[s
     # Use tools_for_config for descriptions if provided, otherwise use tools
     tools_with_configs = tools_for_config if tools_for_config is not None else tools
 
+    # Configured tools reach the model as function declarations, and their
+    # prompts are appended once by prepare_agent_data.
     base_prompt = (agent_config['prompt'] +
-                   tool_provider.get_tools_description(tools_with_configs) )
+                   tool_provider.get_tools_description(
+                       tools_with_configs, configured_tools_are_declared=True))
 
     return base_prompt
 
