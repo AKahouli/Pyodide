@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Download, Loader2, Maximize, Network, RefreshCw, Search, Tags, X } from 'lucide-react';
+import { BarChart3, ChevronDown, Download, FileCode2, Loader2, Maximize, Network, RefreshCw, Search, Tags, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { parseApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
@@ -11,6 +12,7 @@ import { GraphRecordPanel } from '../graph/GraphRecordPanel';
 import { GraphOverviewPanel, type GraphHighlight, type GraphPeriod } from '../graph/GraphOverviewPanel';
 import { GraphCanvas, type CanvasEdge, type CanvasLayout, type CanvasNode, type GraphCanvasHandle } from '../graph/GraphCanvas';
 import { GraphExportDialog } from '../graph/GraphExportDialog';
+import { GraphViewExportDialog } from '../graph/GraphViewExportDialog';
 
 
 const PALETTE = [
@@ -104,6 +106,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const [period, setPeriod] = useState<GraphPeriod | null>(null);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [viewExportOpen, setViewExportOpen] = useState(false);
   const [drawAll, setDrawAll] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -403,13 +406,13 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     const onKey = (event: KeyboardEvent) => {
       const typing = event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
       if (event.key === '/' && !typing) { event.preventDefault(); searchRef.current?.focus(); return; }
-      if (event.key !== 'Escape' || typing || exportOpen) return;
+      if (event.key !== 'Escape' || typing || exportOpen || viewExportOpen) return;
       // Escape steps back one thing at a time: the details, the selection, then the view.
       if (panelOpen) setPanelOpen(false); else if (selectedId) setSelectedId(null); else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, selectedId, exportOpen, panelOpen]);
+  }, [open, onClose, selectedId, exportOpen, viewExportOpen, panelOpen]);
 
   useEffect(() => { if (!selectedId) { setFocusDepth(0); setExpansions([]); setPanelOpen(false); } }, [selectedId]);
 
@@ -486,9 +489,17 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           </ul>}
         </div>
         <div className="flex-1" />
-        {canExport && index.records.length > 0 && <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" disabled={windowed} onClick={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}>
-          <Download className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t('graphViewer.export')}</span>
-        </Button>}
+        {canExport && index.records.length > 0 && <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" aria-label={t('graphViewer.export')} title={t('graphViewer.exportHelpShort')}>
+              <Download className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t('graphViewer.export')}</span><ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-[60]">
+            <DropdownMenuItem onSelect={() => setViewExportOpen(true)} title={t('graphViewer.exportViewHelp')}><FileCode2 className="mr-2 h-4 w-4" />{t('graphViewer.exportView')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={windowed} onSelect={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}><Download className="mr-2 h-4 w-4" />{t('graphViewer.exportWhole')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>}
         <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => void load()} disabled={loading} aria-label={t('graphViewer.refresh')} title={t('graphViewer.refresh')}>
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </Button>
@@ -612,6 +623,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           color={colorOf(selected.concept)} modelId={modelId} canEdit={canEdit}
           onRebuildStarted={onRebuildStarted} onSelect={goTo} onCenter={(id) => canvas.current?.centerOn(id)} onClose={() => setPanelOpen(false)} />}
       </div>
+      {canExport && viewExportOpen && <GraphViewExportDialog open={viewExportOpen} onOpenChange={setViewExportOpen} index={index} ids={drawn ?? visible} labels={labels} modelId={modelId} dataRevisionId={revision} colorOf={colorOf} getPositions={() => canvas.current?.positions()} />}
       {canExport && exportOpen && <GraphExportDialog open={exportOpen} onOpenChange={setExportOpen} index={index} modelId={modelId} dataRevisionId={revision} colorOf={colorOf} drawLimit={drawLimit} maxDraw={MAX_DRAW_LIMIT} />}
     </div>
     </div>

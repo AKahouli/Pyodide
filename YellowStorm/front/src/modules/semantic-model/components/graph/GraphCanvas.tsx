@@ -31,6 +31,8 @@ export interface GraphCanvasHandle {
   /** Fits everything drawn, or only some of it, to the screen. */
   fit: (only?: Set<string>) => void;
   centerOn: (id: string) => void;
+  /** Where each record drawn sits now, for taking the layout elsewhere (the standalone export). */
+  positions: () => Map<string, { x: number; y: number }>;
 }
 
 const MISSING_RING = '#fbbf24';
@@ -158,7 +160,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
     const scale = Math.max(d3Zoom.zoomTransform(svgEl).k, 1);
     animateTo(svgEl, zoomRef.current, d3Zoom.zoomIdentity.translate(box.width / 2 - (node.x ?? 0) * scale, box.height / 2 - (node.y ?? 0) * scale).scale(scale));
   };
-  useImperativeHandle(ref, () => ({ fit: (only) => fit(only), centerOn }));
+  useImperativeHandle(ref, () => ({ fit: (only) => fit(only), centerOn, positions: () => new Map(positions.current) }));
 
   // Emphasis — selection, hover, highlight, link names — restyles what is drawn without moving it.
   const restyle = () => {

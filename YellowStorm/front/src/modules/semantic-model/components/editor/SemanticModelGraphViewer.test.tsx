@@ -9,13 +9,16 @@ const apiMocks = vi.hoisted(() => ({
   getGraphRecord: vi.fn(),
   searchGraph: vi.fn(),
   exportGraph: vi.fn(),
+  get: vi.fn(),
   graph: vi.fn(),
   listCorrections: vi.fn(),
 }));
 const exportMocks = vi.hoisted(() => ({ buildExportHtml: vi.fn() }));
+const viewExportMocks = vi.hoisted(() => ({ createViewExport: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: apiMocks }));
 vi.mock('../graph/graph-export', () => exportMocks);
+vi.mock('../../export/export-view', () => viewExportMocks);
 // jsdom draws no WebGL: the canvas is stood in for by one button per thing drawn.
 vi.mock('../graph/GraphCanvas', async () => {
   const React = await import('react');
@@ -25,7 +28,7 @@ vi.mock('../graph/GraphCanvas', async () => {
       badgeLabels: { less: string; info: string }; busyId?: string | null;
       onSelect: (id: string) => void; onOpen: (id: string) => void; onExpand: (id: string) => void; onCollapse: (id: string) => void; onInfo: (id: string) => void;
     }, ref) {
-      React.useImperativeHandle(ref, () => ({ fit: vi.fn(), centerOn: vi.fn() }));
+      React.useImperativeHandle(ref, () => ({ fit: vi.fn(), centerOn: vi.fn(), positions: () => new Map([['m1', { x: 1, y: 2 }]]) }));
       return <div>
         <div data-testid='canvas'>{props.nodes.map((item) => <button key={item.id} type='button' aria-label={`${item.label} · ${item.concept}`} data-more={item.more} data-open={item.open || undefined} data-busy={props.busyId === item.id || undefined} title={item.moreLabel}
           onClick={() => props.onSelect(item.id)} onDoubleClick={() => props.onOpen(item.id)} />)}</div>
@@ -73,6 +76,12 @@ function renderViewer(props: Partial<React.ComponentProps<typeof SemanticModelGr
 /** Opens the details of a record from its "i" badge: the panel stays closed until then. */
 async function showDetails(user: ReturnType<typeof userEvent.setup>, label: string) {
   await user.click(screen.getByRole('button', { name: `graphViewer.recordInfo · ${label}` }));
+}
+
+/** Opens the Export menu and chooses one of its entries. */
+async function chooseExport(user: ReturnType<typeof userEvent.setup>, entry: string) {
+  await user.click(screen.getByRole('button', { name: /graphViewer.export$/ }));
+  await user.click(await screen.findByRole('menuitem', { name: entry }));
 }
 
 async function pick(user: ReturnType<typeof userEvent.setup>, text: string, name: RegExp) {
@@ -167,7 +176,10 @@ describe('SemanticModelGraphViewer', () => {
       await screen.findByRole('button', { name: 'Hello · mail' });
       await user.type(screen.getByRole('textbox', { name: 'graphViewer.search' }), 'short');
       expect(apiMocks.searchGraph).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: /graphViewer.export$/ })).toBeDisabled();
+      // The whole graph is too large to export from here; the records read still can be.
+      await user.click(screen.getByRole('button', { name: /graphViewer.export$/ }));
+      expect(await screen.findByRole('menuitem', { name: 'graphViewer.exportWhole' })).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByRole('menuitem', { name: 'graphViewer.exportView' })).not.toHaveAttribute('aria-disabled', 'true');
     });
 
     it('adds the neighbours of the selected record to the graph', async () => {
@@ -537,7 +549,7 @@ describe('SemanticModelGraphViewer', () => {
 
       renderViewer({ canExport: true });
       await screen.findByRole('button', { name: 'Hello · mail' });
-      await user.click(screen.getByRole('button', { name: /graphViewer.export$/ }));
+      await chooseExport(user, 'graphViewer.exportWhole');
       const dialog = await screen.findByRole('dialog');
       // Every field starts in and shortened; the first one (Subject) is left out.
       await user.click(within(dialog).getAllByRole('checkbox', { name: 'graphViewer.exportInclude' })[0]);
@@ -548,6 +560,42 @@ describe('SemanticModelGraphViewer', () => {
         dataRevisionId: 'rev-9', shortenTo: 200,
         fields: { 'c-mail': { sujet: 'exclude', corps: 'short', cle_message: 'short' }, 'c-person': { nom: 'short' } },
       });
+    });
+
+    it('exports the records in view as a standalone file, with their values when asked', async () => {
+      const user = userEvent.setup();
+      viewExportMocks.createViewExport.mockResolvedValue('<html></html>');
+      apiMocks.get.mockResolvedValue({ id: 'model-1', name: 'Mails' });
+      apiMocks.exportGraph.mockResolvedValue({
+        modelName: 'Mails', exportedBy: 'Ana', exportedAt: '2026-10-06T10:00:00Z', shortenTo: 200, links: [],
+        records: [{ id: 'm1', c: 'c-mail', l: 'Hello', v: { sujet: 'Hello' } }, { id: 'zz', c: 'c-mail', l: 'Elsewhere', v: {} }],
+      });
+      const createObjectURL = vi.fn(() => 'blob:view');
+      Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+      renderViewer({ canExport: true });
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      // Hide the correspondents: the file takes what is shown, not the whole graph.
+      await user.click(within(screen.getByRole('group', { name: 'graphViewer.legend' })).getByRole('button', { name: /Correspondent/ }));
+      await chooseExport(user, 'graphViewer.exportView');
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByRole('radio', { name: /graphViewer.viewExportSvg/ })).toBeChecked();
+      await user.click(within(dialog).getByRole('checkbox', { name: /graphViewer.viewExportValues/ }));
+      await user.click(within(dialog).getByRole('button', { name: /graphViewer.exportRun/ }));
+
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+      const request = viewExportMocks.createViewExport.mock.calls[0][0];
+      expect(request.mode).toBe('svg');
+      expect([...request.ids].sort()).toEqual(['m1', 'm2']);
+      // Values come from the server's whole-graph read, kept for the records in view only.
+      expect([...request.values.keys()]).toEqual(['m1']);
+      expect(request.canvasPositions.get('m1')).toEqual({ x: 1, y: 2 });
+      expect(request.meta.title).toBe('graphViewer.exportTitle');
+    });
+
+    it('does not offer the export to people who may not take the graph out of the app', async () => {
+      renderViewer();
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      expect(screen.queryByRole('button', { name: /graphViewer.export$/ })).not.toBeInTheDocument();
     });
   });
 });
