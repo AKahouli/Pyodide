@@ -345,3 +345,72 @@ class TestPrewarm:
     def test_no_running_loop_starts_nothing(self, helper_cache):
         toolset = MCPHelper.create_mcp_toolset(http_params(user_id="u"), "mcp", cache_scope=SCOPE)
         assert prewarm_mcp_toolsets([toolset]) == 0
+
+
+def _closable():
+    return SimpleNamespace(close=AsyncMock())
+
+
+async def _run_in_turn(conversation_id, body):
+    """Run ``body`` in its own context, as the servicer's background task does."""
+    async def scoped():
+        turn = mcp_toolset_cache.begin_toolset_turn(conversation_id)
+        return turn, await body()
+
+    return await asyncio.create_task(scoped())
+
+
+@pytest.mark.asyncio
+async def test_cache_scope_prefers_the_turn_conversation_over_the_session_id():
+    async def scopes():
+        return MCPHelper.build_cache_scope("user-1", "turn_msg-1")
+
+    _, scope = await _run_in_turn("conv-1", scopes)
+
+    assert scope == MCPHelper.build_cache_scope("user-1", "conv-1")
+    assert MCPHelper.build_cache_scope("user-1", "turn_msg-1") != scope
+
+
+@pytest.mark.asyncio
+async def test_evicted_toolset_leased_by_a_turn_closes_only_after_release():
+    cache = McpToolsetCache(max_entries=1, idle_seconds=3600, close_grace_seconds=0)
+    first = _closable()
+
+    async def lease_first():
+        return cache.get_or_create("a", lambda: first)
+
+    turn, _ = await _run_in_turn("conv-1", lease_first)
+    cache.get_or_create("b", _closable)  # evicts "a" while the turn still holds it
+    await asyncio.sleep(0)
+    first.close.assert_not_awaited()
+
+    turn.release()
+    await asyncio.sleep(0)
+    first.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_factory_runs_outside_the_lock_and_a_lost_race_keeps_the_first_toolset():
+    cache = McpToolsetCache(max_entries=4, idle_seconds=3600, close_grace_seconds=0)
+    winner, loser = _closable(), _closable()
+
+    def slow_factory():
+        assert not cache._lock.locked()
+        cache.get_or_create("k", lambda: winner)  # another caller stores first
+        return loser
+
+    assert cache.get_or_create("k", slow_factory) is winner
+    await asyncio.sleep(0)
+    loser.close.assert_awaited_once()
+    winner.close.assert_not_awaited()
+
+
+def test_eviction_without_an_event_loop_is_logged():
+    cache = McpToolsetCache(max_entries=1, idle_seconds=3600)
+    cache.get_or_create("a", _closable)
+
+    with patch.object(mcp_toolset_cache, "logger") as logger:
+        cache.get_or_create("b", _closable)
+
+    logger.warning.assert_called_once()
+    assert logger.warning.call_args.kwargs["reason"] == "no_running_event_loop"

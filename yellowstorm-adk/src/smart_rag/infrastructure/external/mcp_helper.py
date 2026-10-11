@@ -14,6 +14,7 @@ from google.adk.tools.mcp_tool.mcp_toolset import StreamableHTTPConnectionParams
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import PurposeAwareMcpToolset
 from src.smart_rag.infrastructure.external.mcp_toolset_cache import (
     build_toolset_cache_key,
+    current_conversation_id,
     get_toolset_cache,
 )
 logger = get_logger("api.smart_rag.mcp_helper")
@@ -115,10 +116,15 @@ class MCPHelper:
 
     @staticmethod
     def build_cache_scope(user_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
-        """Identity scope for toolset reuse; None (no reuse) unless both ids are known."""
-        if not user_id or not session_id:
+        """Identity scope for toolset reuse; None (no reuse) unless both ids are known.
+
+        Prefers the conversation of the running turn: isolated root runs get a
+        new ADK session id per message, which would defeat reuse across turns.
+        """
+        conversation_or_session = current_conversation_id() or session_id
+        if not user_id or not conversation_or_session:
             return None
-        return json.dumps([str(user_id), str(session_id)])
+        return json.dumps([str(user_id), str(conversation_or_session)])
 
     @staticmethod
     def create_mcp_context_headers(

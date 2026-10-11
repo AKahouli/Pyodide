@@ -1,4 +1,4 @@
-import { compactAgentActivityUpdate } from './agent-activity-delta';
+import { RESYNC_INTERVAL_CHARS, compactAgentActivityUpdate } from './agent-activity-delta';
 
 describe('compactAgentActivityUpdate', () => {
   it('sends only the appended detail and drops an unchanged summary', () => {
@@ -58,5 +58,16 @@ describe('compactAgentActivityUpdate', () => {
     }
 
     expect(client).toBe(detail);
+  });
+
+  it('sends a full replacement when the detail crosses a resync boundary', () => {
+    const before = 'a'.repeat(RESYNC_INTERVAL_CHARS - 2);
+    const after = `${before}bcd`;
+
+    const wire = compactAgentActivityUpdate({ detail: before }, { detail: after });
+
+    expect(wire).toEqual({ detail: after });
+    expect(compactAgentActivityUpdate({ detail: after }, { detail: `${after}e` }))
+      .toMatchObject({ detailDelta: 'e', detailOffset: after.length });
   });
 });

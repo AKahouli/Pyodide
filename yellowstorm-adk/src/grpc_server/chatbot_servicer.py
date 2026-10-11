@@ -50,6 +50,7 @@ from src.grpc_server.conversation_session_seed import (
     ConversationSessionSeedService,
     SessionSeedConflictError,
 )
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import begin_toolset_turn
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
     reset_conversation_latency_trace,
@@ -507,9 +508,11 @@ class ChatbotServicer(
                 index_task.add_done_callback(self._background_tasks.discard)
 
             # Start background processing task
+            toolset_turn = begin_toolset_turn(request.conversation_id)
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
+            bg_task.add_done_callback(lambda _task: toolset_turn.release())
 
             # Stream chunks from queue
             while True:
@@ -753,9 +756,11 @@ class ChatbotServicer(
                 root_handle = registry.register(request.conversation_id, root_scope)
                 internal_request.abort_signal = root_handle.abort_event
 
+            toolset_turn = begin_toolset_turn(request.conversation_id)
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
+            bg_task.add_done_callback(lambda _task: toolset_turn.release())
 
             if root_handle is not None:
 
