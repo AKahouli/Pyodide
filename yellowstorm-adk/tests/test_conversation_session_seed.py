@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from google.adk.errors.already_exists_error import AlreadyExistsError
 
 from src.grpc_server.conversation_session_seed import (
     APP_NAME,
@@ -59,6 +60,7 @@ async def test_seed_is_idempotent_for_same_request():
     existing = type("Session", (), {"state": {"branch_seed_idempotency_key": "request-1"}})()
     storage = AsyncMock()
     storage.get_session.return_value = existing
+    storage.create_session.side_effect = AlreadyExistsError("exists")
     service = ConversationSessionSeedService(storage)
 
     assert await service.seed(
@@ -67,7 +69,7 @@ async def test_seed_is_idempotent_for_same_request():
         idempotency_key="request-1",
         history=[("user", "question")],
     ) is False
-    storage.create_session.assert_not_awaited()
+    storage.append_event.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -75,6 +77,7 @@ async def test_seed_rejects_an_existing_session_from_another_request():
     existing = type("Session", (), {"state": {"branch_seed_idempotency_key": "other"}})()
     storage = AsyncMock()
     storage.get_session.return_value = existing
+    storage.create_session.side_effect = AlreadyExistsError("exists")
     service = ConversationSessionSeedService(storage)
 
     with pytest.raises(SessionSeedConflictError):
@@ -187,3 +190,26 @@ async def test_seed_falls_back_to_append_event_when_private_hooks_are_missing(tm
     ) is True
     loaded = await storage.get_session(app_name=APP_NAME, user_id="user-1", session_id="turn_1")
     assert [event.content.parts[0].text for event in loaded.events] == ["q", "a"]
+
+
+@pytest.mark.asyncio
+async def test_seed_of_a_new_session_skips_the_full_session_read():
+    session = type("Session", (), {"state": {}})()
+    storage = AsyncMock()
+    storage.create_session.return_value = session
+    service = ConversationSessionSeedService(storage)
+
+    assert await service.seed(
+        user_id="user-1", session_id="session-1", idempotency_key="k", history=[]
+    ) is True
+    storage.get_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_warm_up_prepares_tables_and_survives_a_failure():
+    storage = AsyncMock()
+    storage.prepare_tables.side_effect = RuntimeError("db down")
+
+    await ConversationSessionSeedService(storage).warm_up()
+
+    storage.prepare_tables.assert_awaited_once()

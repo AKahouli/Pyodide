@@ -7,12 +7,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
+from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 from sqlalchemy import select
 
+from yellowmind_observability import get_logger
+
 from src.config.settings import get_settings
+
+logger = get_logger(__name__)
 
 
 APP_NAME = "manager_app"
@@ -48,22 +53,25 @@ class ConversationSessionSeedService:
     ) -> bool:
         entries = [(role, text.strip()) for role, text in history if text.strip()]
 
-        existing = await self._session_service.get_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-        )
-        if existing:
-            if existing.state.get(SEED_KEY_STATE) == idempotency_key:
+        # Create first: seeds almost always target a new id, and create_session
+        # already checks for a duplicate, so the full session read (state plus
+        # every event) is only paid on a retry.
+        try:
+            session = await self._session_service.create_session(
+                app_name=APP_NAME,
+                user_id=user_id,
+                session_id=session_id,
+                state={SEED_KEY_STATE: idempotency_key},
+            )
+        except AlreadyExistsError:
+            existing = await self._session_service.get_session(
+                app_name=APP_NAME,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            if existing and existing.state.get(SEED_KEY_STATE) == idempotency_key:
                 return False
             raise SessionSeedConflictError(f"Session {session_id} already exists")
-
-        session = await self._session_service.create_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-            state={SEED_KEY_STATE: idempotency_key},
-        )
 
         try:
             await self._append_history(session, entries)
@@ -135,6 +143,26 @@ class ConversationSessionSeedService:
                 else update_time
             )
             await sql_session.commit()
+
+    async def warm_up(self) -> None:
+        """Run ADK's one-time schema check and table setup (about 1.5 s on a
+        remote database) at startup instead of inside the first user turn.
+
+        Best effort: on failure the first seed simply runs the setup itself
+        and owns that outcome, so this only records a concise warning.
+        """
+        prepare = getattr(self._session_service, "prepare_tables", None)
+        if prepare is None:
+            return
+        try:
+            await prepare()
+        except Exception as error:
+            logger.warning(
+                "dependency.request.failed",
+                dependency="session_database",
+                operation="prepare_tables",
+                error=error,
+            )
 
     async def delete(
         self, *, user_id: str, session_id: str, idempotency_key: str

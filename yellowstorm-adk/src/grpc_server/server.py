@@ -1,5 +1,6 @@
 """gRPC server initialization and startup logic."""
 
+import asyncio
 import grpc
 from concurrent import futures
 from structlog import get_logger
@@ -169,6 +170,9 @@ async def start_grpc_server(
         await close_checkpointer()
         raise
     logger.info(f"✅ [gRPC] V2 Server started successfully on {host}:{port}")
+    # Overlap the session database's one-time setup with the idle time before
+    # the first request; a request arriving earlier waits on ADK's own lock.
+    session_seed_warm_up = asyncio.create_task(servicer.conversation_session_seed.warm_up())
     # The listener is bound and serving: signal readiness to the supervisor.
     if on_ready is not None:
         try:
