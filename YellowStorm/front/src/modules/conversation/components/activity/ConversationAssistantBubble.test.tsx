@@ -25,6 +25,7 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
+    'stream.activity.agentPrepared': 'Request prepared',
     'stream.activity.thinking': `Thinking… ${options?.seconds}s`,
     'stream.activity.assistant': 'Assistant',
     'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
@@ -253,7 +254,7 @@ describe('ConversationAssistantBubble', () => {
 
     const summaries = container.querySelectorAll('[data-agent-summary]');
     expect(summaries).toHaveLength(2);
-    expect(summaries[0]).toHaveTextContent('Preparing your request');
+    expect(summaries[0]).toHaveTextContent('Request prepared');
     expect(summaries[1]).toHaveTextContent('Inspect the financial report');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
   });
@@ -306,7 +307,7 @@ describe('ConversationAssistantBubble', () => {
         isStreaming={false}
         components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed', actorName: 'Smart Agent' } }]}
       />);
-      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
     } finally {
       vi.useRealTimers();
     }
@@ -319,7 +320,7 @@ describe('ConversationAssistantBubble', () => {
       isStreaming={false}
       components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } }]}
     />);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
     expect(container).not.toHaveTextContent('Thinking');
   });
 
@@ -459,7 +460,7 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent(/start|contracts|parallel|call|now/);
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
     expect(screen.getAllByText(/Activate Skill/)).not.toHaveLength(0);
@@ -594,7 +595,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByRole('button', { name: 'Preparing your request, Completed. Show full reasoning' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Request prepared, Completed. Show full reasoning' })).toBeInTheDocument();
     const activityRows = screen.getAllByRole('button', { name: `${repeatedDetail}, Completed. Show full reasoning` });
     expect(activityRows).toHaveLength(3);
     fireEvent.click(activityRows[0]);
@@ -628,7 +629,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByText(/Preparing your request/)).toBeInTheDocument();
+    expect(screen.getByText(/Request prepared/)).toBeInTheDocument();
     expect(screen.getByText(/quarterly revenue/)).toBeInTheDocument();
     expect(screen.getAllByText(/Calculate the totals/)).not.toHaveLength(0);
     expect(screen.queryByText('stream.activity.toolFallback')).not.toBeInTheDocument();
@@ -1244,7 +1245,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText('Your AI summary is ready.')).toBeInTheDocument();
     expect(screen.getAllByText('AI_Summary.pdf')).not.toHaveLength(0);
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-agent-summary]')[0]).toHaveTextContent('Preparing your request');
+    expect(container.querySelectorAll('[data-agent-summary]')[0]).toHaveTextContent('Request prepared');
   });
 
   it('shows tool states, mobile progress, and retry for a failed response', () => {

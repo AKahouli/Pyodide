@@ -296,7 +296,7 @@ describe('ConversationContent', () => {
 
     const { container } = render(<ConversationContent />);
 
-    expect(container).toHaveTextContent('stream.activity.agentPlanning');
+    expect(container).toHaveTextContent('stream.activity.agentPrepared');
     expect(container).not.toHaveTextContent('stream.activity.thinking');
   });
 });

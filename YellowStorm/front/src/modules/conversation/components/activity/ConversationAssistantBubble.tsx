@@ -152,6 +152,13 @@ function isAwaitingAgentOutput(data: AgentActivityData, isStreaming: boolean, is
   return isStreaming && (data.status === 'running' || (isLatest && data.status === 'completed'));
 }
 
+// Label key for an agent row with no summary of its own once it is not
+// thinking: "preparing" while it runs, "prepared" once done (it used to say
+// "preparing" forever after the reply arrived).
+function agentFallbackLabelKey(status: AgentActivityData['status']) {
+  return status === 'running' ? 'stream.activity.agentPlanning' as const : 'stream.activity.agentPrepared' as const;
+}
+
 function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; isLatest: boolean; redactSensitiveText: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const duration = formatActivityDuration(data.durationMs);
@@ -160,7 +167,7 @@ function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: 
   const active = isStreaming && data.status === 'running';
   const thinking = awaiting && !preview;
   const thinkingSeconds = useElapsedSeconds(thinking);
-  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
+  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
   const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || summary;
   return (
@@ -212,7 +219,7 @@ function RestrictedAgentActivityRow({ data, isStreaming, isLatest }: Readonly<{ 
   const active = isStreaming && data.status === 'running';
   const thinking = isAwaitingAgentOutput(data, isStreaming, isLatest) && !safeSummary;
   const thinkingSeconds = useElapsedSeconds(thinking);
-  const summary = safeSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
+  const summary = safeSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   return (
     <div className='flex min-h-7 items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground'>
       <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
@@ -315,7 +322,7 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
       : resolveToolSummary(current.data) || resolveToolFallbackName(current.data) || t('stream.activity.toolFallback')
     : current.type === 'artifact'
       ? sanitizeActivityFilename(current.data.filename) || t('stream.activity.generated')
-      : currentAgentSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t('stream.activity.agentPlanning'));
+      : currentAgentSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey((current.data as AgentActivityData).status)));
   const statusLabel = t(`stream.activity.toolStatus.${status}`);
 
   return (
