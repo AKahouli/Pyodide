@@ -86,6 +86,8 @@
   "createEdit.fields.additionalInstruction": "Instruction supplémentaire",
   "createEdit.fields.instructionPlaceholder": "Instructions supplémentaires (optionnel)",
   "createEdit.fields.ignorePrePrompt": "Ignorer le pré-prompt du type d'agent",
+  "createEdit.fields.genUiEnabled": "Interface générative",
+  "createEdit.fields.genUiEnabledHint": "Ajoute le format de réponse interactif (cartes, graphiques, tableaux, pastilles de sources) aux instructions de cet agent et affiche ses réponses avec ce format.",
   "createEdit.fields.model": "Modèle",
   "createEdit.fields.modelDefault": "Par défaut (Modèles administrateur)",
   "createEdit.fields.reasoningEffort": "Effort de raisonnement",

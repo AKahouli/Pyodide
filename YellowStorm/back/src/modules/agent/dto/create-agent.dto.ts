@@ -170,6 +170,11 @@ export class CreateAgentDto {
   @IsBoolean()
   ignorePrePrompt?: boolean;
 
+  @ApiPropertyOptional({ description: 'Generative UI (OpenUI answers); defaults to true on creation', default: true })
+  @IsOptional()
+  @IsBoolean()
+  genUiEnabled?: boolean;
+
   @ApiPropertyOptional({ description: 'Knowledge base workspace IDs', type: [String] })
   @IsOptional()
   @IsArray()

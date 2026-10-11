@@ -30,11 +30,11 @@ describe('answer render mode', () => {
     rendererState.shouldThrow = false;
     rendererState.throwOn = null;
     vi.stubEnv('VITE_OPENUI_RENDER_ENABLED', 'true');
-    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'OpenUI Experiment', slug: 'openui-experiment' }] as never, isInitialized: true });
+    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Generative UI agent', slug: 'research-assistant', genUiEnabled: true }] as never, isInitialized: true });
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it('renders the answer with OpenUI for an openui- agent', async () => {
+  it('renders the answer with OpenUI for an agent with generative UI on, whatever its slug', async () => {
     render(bubble());
     expect(await screen.findByTestId('openui-stub')).toHaveTextContent('root = Stack([title])');
   });
@@ -50,9 +50,9 @@ describe('answer render mode', () => {
     );
     const liveText = (content: string): MessageComponent => ({ id: 'live', type: 'text', data: { content } });
 
-    it('warms the OpenUI chunk as soon as the stream start names an openui- agent', () => {
+    it('warms the OpenUI chunk as soon as the stream start names a generative UI agent', () => {
       render(liveBubble([]));
-      expect(preloadOpenUiForAgent).toHaveBeenCalledWith(expect.objectContaining({ slug: 'openui-experiment' }));
+      expect(preloadOpenUiForAgent).toHaveBeenCalledWith(expect.objectContaining({ genUiEnabled: true }));
     });
 
     it('renders the growing reply through OpenUI with isStreaming, never through markdown', async () => {
@@ -66,11 +66,18 @@ describe('answer render mode', () => {
     });
   });
 
-  it('keeps markdown for a regular agent', () => {
-    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Regular', slug: 'research-assistant' }] as never });
+  it('keeps markdown for an agent with generative UI off, even with an openui- slug', () => {
+    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Regular', slug: 'openui-lookalike', genUiEnabled: false }] as never });
     render(bubble());
     expect(screen.queryByTestId('openui-stub')).not.toBeInTheDocument();
     expect(screen.getByText(/root = Stack/)).toBeInTheDocument();
+  });
+
+  it('still renders a stored OpenUI program for an agent whose toggle was switched off later', async () => {
+    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Regular', slug: 'regular', genUiEnabled: false }] as never });
+    const stored: MessageComponent = { id: 'answer', type: 'text', data: { content: 'root = Card([title])\ntitle = TextContent("Hello")', actorId: 'agent-1' } };
+    render(<ConversationAssistantBubble conversationId='c' messageId='m' components={[stored]} isStreaming={false} />);
+    expect(await screen.findByTestId('openui-stub')).toHaveTextContent('root = Card([title])');
   });
 
   it('keeps markdown when the feature flag is off', () => {

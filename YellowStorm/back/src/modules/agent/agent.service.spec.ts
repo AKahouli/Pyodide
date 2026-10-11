@@ -6,6 +6,7 @@ import { freezeRootCapabilityCeiling, scopeCandidateToFrozenCeiling } from '../c
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
+import { OPENUI_OUTPUT_FORMAT_PROMPT } from './prompts/openui-output-format.generated';
 import { AgentRecord } from './repositories/agent-record.mapper';
 
 describe('AgentService connector skill inheritance', () => {
@@ -63,6 +64,7 @@ describe('AgentService connector skill inheritance', () => {
     email: undefined,
     instruction: '',
     ignorePrePrompt: false,
+    genUiEnabled: false,
     knowledgeBases: [],
     tools: [],
     skills: [],
@@ -237,6 +239,21 @@ describe('AgentService connector skill inheritance', () => {
     expect(settings.embedEnabled).toBe(true);
     expect(settings.restEnabled).toBe(true);
     expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
+  });
+
+  it('maps genUiEnabled through create (default ON), update and response contracts', () => {
+    const { service } = createService();
+    const record = makeRecord({ genUiEnabled: false });
+    const opts = { id: record._id, isDefault: false, slug: 'agent', agentTypeSlug: 'worker' };
+    const base = { name: 'Agent', slug: 'agent', agentType: record.agentType, role: 'Role' };
+
+    expect((service as any).dtoToCreateInput('user-1', base, opts).genUiEnabled).toBe(true);
+    expect((service as any).dtoToCreateInput('user-1', { ...base, genUiEnabled: false }, opts).genUiEnabled).toBe(false);
+    expect((service as any).dtoToUpdateInput({ genUiEnabled: true }, record, {}).genUiEnabled).toBe(true);
+    expect((service as any).dtoToUpdateInput({ name: 'Other' }, record, {})).not.toHaveProperty('genUiEnabled');
+    const toResponse = (genUiEnabled: boolean | undefined) => (service as any).toResponse({ ...record, genUiEnabled, agentType: { _id: record.agentType, name: 'Worker' } });
+    expect(toResponse(true).genUiEnabled).toBe(true);
+    expect(toResponse(undefined).genUiEnabled).toBe(false);
   });
 
   it('maps reasoning effort through create, update, and response contracts', () => {
@@ -730,6 +747,24 @@ describe('AgentService connector skill inheritance', () => {
       { agentTypeId: 'type-mono', modelId: 'selected-model' },
     ]);
     expect(result[0].chatbot.model).toBe('selected-model');
+  });
+
+  it.each([[true, true], [false, false], [undefined, false]])('appends the OpenUI output format to the agent prompt only when genUiEnabled is %s', async (genUiEnabled, appended) => {
+    const { service, modelsService } = createService();
+    const agent: IAgentForStream = {
+      id: 'gen-ui-agent', name: 'Gen UI', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker',
+      role: 'Role', description: '', temperature: 0, model: 'model-1', instruction: 'Answer about contracts.',
+      ignorePrePrompt: true, genUiEnabled, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([agent]);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, undefined, ['gen-ui-agent']);
+
+    expect(result[0].prompt.startsWith('Answer about contracts.')).toBe(true);
+    expect(result[0].prompt.includes(OPENUI_OUTPUT_FORMAT_PROMPT)).toBe(appended);
   });
 
   it('prefers a supported request reasoning effort for an untagged agent', async () => {
@@ -1427,7 +1462,7 @@ describe('AgentService root binding resolution (WP01)', () => {
 
   const root = (over: Partial<AgentRecord> = {}): AgentRecord => ({
     _id: 'root-1', name: 'Root', slug: 'root', agentType: monoTypeId, agentTypeSlug: 'mono-agent',
-    role: '', description: '', temperature: 0, instruction: '', ignorePrePrompt: false,
+    role: '', description: '', temperature: 0, instruction: '', ignorePrePrompt: false, genUiEnabled: false,
     knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [],
     connectorActionSelections: [], guardrails: {}, deploymentSettings: {},
     enable_temporary_child_agents: false, max_temporary_child_agents: 4,

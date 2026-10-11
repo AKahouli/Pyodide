@@ -25,7 +25,7 @@ export function loadOpenUiRenderer(): Promise<RendererModule> {
  * start), so the first answer does not wait on the download. Failures are
  * left to the real render, which retries the load and has its own fallback.
  */
-export function preloadOpenUiForAgent(agent: Pick<Agent, 'slug'> | undefined | null): void {
+export function preloadOpenUiForAgent(agent: Pick<Agent, 'genUiEnabled'> | undefined | null): void {
   if (resolveAnswerRenderMode(agent) !== 'openui') return;
   loadOpenUiRenderer().catch(() => undefined);
 }

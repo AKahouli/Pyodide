@@ -82,6 +82,11 @@ export class UpdateAgentDto {
   @IsBoolean()
   ignorePrePrompt?: boolean;
 
+  @ApiPropertyOptional({ description: 'Generative UI (OpenUI answers)' })
+  @IsOptional()
+  @IsBoolean()
+  genUiEnabled?: boolean;
+
   @ApiPropertyOptional({ description: 'Knowledge base workspace IDs', type: [String] })
   @IsOptional()
   @IsArray()

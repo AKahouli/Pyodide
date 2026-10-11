@@ -1,36 +1,40 @@
-# OpenUI render mode (phase-1 spike)
+# OpenUI render mode
 
-An agent can answer in [OpenUI Lang](https://www.openui.com/docs) instead of markdown. The Python ADK runtime and the
-NestJS SSE stream are unchanged: OpenUI Lang is plain text in the usual `text` component, rendered here.
+An agent can answer in [OpenUI Lang](https://www.openui.com/docs) instead of markdown. OpenUI Lang is plain text in the usual
+`text` component of the NestJS SSE stream (the Python ADK runtime is unchanged), rendered here.
 
-## How the front decides
+## The per-agent toggle
 
-`resolveAnswerRenderMode` (render-mode.ts) returns `openui` only when **both** hold:
+Each agent has a **Generative UI** toggle (`genUiEnabled`, agent edit form; personal agents and admin default agents). It is ON
+for newly created agents; the migration `0048_agent_gen_ui` set existing agents OFF, except those whose slug starts with
+`openui-` (the old spike convention, now irrelevant).
 
-1. the build has `VITE_OPENUI_RENDER_ENABLED=true` (off by default; the OpenUI chunk is never requested otherwise);
-2. the agent that produced the answer has a `slug` starting with `openui-`.
+ON does two things:
 
-Anything else renders markdown, exactly as before. `slug` is already part of every `Agent` the front receives, so no
-backend contract changed. If the spike graduates, replace the slug convention with an explicit `renderMode` field on the
-agent config (DTO, Mongo/Drizzle mapper, `Agent` type).
+1. **Back end** (`AgentService.buildAgentsForStream`): appends the OpenUI output-format block to the prompt it builds from the
+   agent's own pre-prompt and DB instruction (`appendGenUiOutputFormat`, back/src/modules/agent/prompts). The agent's own prompt
+   stays in the database; code only adds the format block. Playbook, A2A and agent-task prompts are not touched.
+2. **Front end**: `resolveAnswerRenderMode` (render-mode.ts) returns `openui` when the producing agent has `genUiEnabled` and the
+   build has `VITE_OPENUI_RENDER_ENABLED=true` (global kill switch; off = markdown everywhere and the OpenUI chunk is never
+   requested). The agent comes from the agents already in the store, so there is no per-message lookup.
 
-## Register the `openui-experiment` agent
+Answers keep the form they were produced in: a stored text that starts with `root = Card(` or `root = Report(` is rendered as an
+OpenUI program even after the toggle was switched off, and a markdown answer of an agent switched on later falls back to markdown
+inside the renderer.
 
-1. Generate the prompt (needs `npm install` first):
+## The output-format prompt
 
-   ```bash
-   cd YellowStorm/front
-   npm run openui:prompt            # writes scripts/generated/openui-system-prompt.txt (git-ignored)
-   node scripts/generate-openui-prompt.mjs - > prompt.txt   # or print to stdout
-   ```
+`scripts/generate-openui-prompt.mjs` builds the block from the library we render and writes the committed module
+`back/src/modules/agent/prompts/openui-output-format.generated.ts` (plus a plain-text copy in `scripts/generated/`, git-ignored):
 
-2. In the agent library create an agent:
-   - **Name**: `openui-experiment` (the slug is derived from the name; keep the `openui-` prefix).
-   - **Instruction**: paste the generated prompt (about 31k characters, under the 50,000 limit; re-generate after upgrading `@openuidev/*`).
-   - **Ignore pre-prompt**: on, so the platform pre-prompt does not ask for markdown.
-   - Pick a capable model; no tools or knowledge bases are required.
-3. Start the front with the flag: `VITE_OPENUI_RENDER_ENABLED=true npm run dev`, open `#/conversation`, tag or select the
-   agent and ask for e.g. "a table of the three largest EU economies with a bar chart".
+```bash
+cd YellowStorm/front
+npm run openui:prompt                              # regenerate after changing rules/examples or upgrading @openuidev/*
+node scripts/generate-openui-prompt.mjs --check    # exits 1 when the committed module is stale (also run by prompt-freshness.test.ts)
+```
+
+Commit the regenerated module together with the change. The block is no longer pasted into an agent instruction (so the 50,000
+character instruction limit does not apply to it); an agent such as `openui-experiment` only keeps its own role text.
 
 ## Component library
 
@@ -93,7 +97,7 @@ would mean overriding each report component, which is not done.
   (`ThemeProviderContext`; "system" resolves through the media query).
 - `devtools-off.ts` sets react-lang's once-only guard flag so its development inspector (fetched from cdn.jsdelivr.net,
   blocked by the CSP) is never mounted. Keep it the first import of any module that loads `@openuidev/react-lang`.
-- `preload.ts` warms the lazy chunk when an `openui-` agent is tagged, is the conversation's agent, or a stream start
+- `preload.ts` warms the lazy chunk when a generative UI agent is tagged, is the conversation's agent, or a stream start
   names it.
 
 ## Citations
@@ -111,7 +115,7 @@ buttons) show the marker literally or drop it; the prompt tells the agent to avo
 markdown a fallback source widget instead of dropping a marker. Unknown markers stay literal text; citations the text never marks
 are listed after the answer, like markdown. The sources menu in the message actions works from the stored components and needs nothing here.
 `scripts/generate-openui-prompt.mjs` adds the rules that teach the agent this (markers only inside the components above,
-copied verbatim, no sources list, no `sources` on Card). Re-run `npm run openui:prompt` and re-paste the instruction after changing them.
+copied verbatim, no sources list, no `sources` on Card). Re-run `npm run openui:prompt` and commit the generated back-end module after changing them.
 
 ## Copy and export
 

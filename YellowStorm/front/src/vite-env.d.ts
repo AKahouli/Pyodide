@@ -4,7 +4,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_CONVERSATION_LATENCY_UI_ENABLED?: string;
-  /** "true" lets agents whose slug starts with "openui-" answer in OpenUI Lang (phase-1 spike). */
+  /** Global kill switch for generative UI: "true" lets agents with the genUiEnabled toggle answer in OpenUI Lang. */
   readonly VITE_OPENUI_RENDER_ENABLED?: string;
   readonly VITE_API_URL?: string;
   readonly VITE_SOCKET_BASE_URL?: string;

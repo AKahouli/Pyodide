@@ -21,7 +21,7 @@ import { statusIcon, ToolRow } from './ToolActivityDetails';
 import { ConversationUiTargets, collectUiTargets } from '@/modules/platform-copilot/UiTargetActions';
 import { OpenUiAnswer } from '../openui/OpenUiAnswer';
 import { preloadOpenUiForAgent } from '../openui/preload';
-import { resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
+import { isOpenUiRenderEnabled, resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
 
 interface NarrativeProps {
   conversationId: string;
@@ -517,9 +517,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     });
     partsCacheRef.current = nextCache;
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
-    // OpenUI agents answer in OpenUI Lang: their text parts go to the OpenUI
-    // renderer (markdown fallback inside), every other part renders as usual.
-    const segments: AnswerSegment[] = renderMode === 'openui' ? segmentAnswerParts(parts) : [{ kind: 'parts', parts }];
+    // Generative-UI agents answer in OpenUI Lang: their text parts go to the OpenUI
+    // renderer (markdown fallback inside); so do stored programs of an agent since switched
+    // off. Every other part renders as usual.
+    const segments: AnswerSegment[] = isOpenUiRenderEnabled() ? segmentAnswerParts(parts, renderMode) : [{ kind: 'parts', parts }];
     segments.forEach((segment) => {
       if (segment.kind === 'openui') {
         answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} partId={segment.componentId} />);

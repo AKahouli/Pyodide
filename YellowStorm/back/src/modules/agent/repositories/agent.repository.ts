@@ -25,6 +25,8 @@ export interface CreateAgentInput {
   email?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  /** Absent = OFF; AgentService.dtoToCreateInput passes the product default (ON) for user-created agents. */
+  genUiEnabled?: boolean;
   knowledgeBases: string[];
   tools: string[];
   skills: string[];
@@ -54,7 +56,7 @@ export interface CreateAgentInput {
 export interface UpdateAgentInput {
   name?: string; slug?: string; agentType?: string; agentTypeSlug?: string; role?: string;
   description?: string; temperature?: number; llmModel?: string | null; reasoningEffort?: string | null; email?: string | null;
-  instruction?: string; ignorePrePrompt?: boolean;
+  instruction?: string; ignorePrePrompt?: boolean; genUiEnabled?: boolean;
   enable_temporary_child_agents?: boolean; max_temporary_child_agents?: number;
   rootExecutionPolicy?: Record<string, unknown> | null;
   delegateAgentIds?: string[];
@@ -88,6 +90,7 @@ export class AgentRepository {
         email: input.email ?? null,
         instruction: input.instruction,
         ignorePrePrompt: input.ignorePrePrompt,
+        genUiEnabled: input.genUiEnabled ?? false,
         agentTypeId: input.agentType,
         agentTypeSlug: input.agentTypeSlug,
         enableTemporaryChildAgents: input.enable_temporary_child_agents,
@@ -214,6 +217,7 @@ export class AgentRepository {
         email: input.email ?? null,
         instruction: input.instruction,
         ignorePrePrompt: input.ignorePrePrompt,
+        genUiEnabled: input.genUiEnabled ?? false,
         agentTypeId: input.agentType,
         agentTypeSlug: input.agentTypeSlug,
         enableTemporaryChildAgents: input.enable_temporary_child_agents,
@@ -288,7 +292,7 @@ export class AgentRepository {
       const scalarMap: [keyof UpdateAgentInput, string][] = [
         ['name', 'name'], ['slug', 'slug'], ['agentType', 'agentTypeId'], ['agentTypeSlug', 'agentTypeSlug'],
         ['role', 'role'], ['description', 'description'], ['temperature', 'temperature'], ['llmModel', 'llmModel'],
-        ['reasoningEffort', 'reasoningEffort'], ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'],
+        ['reasoningEffort', 'reasoningEffort'], ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'], ['genUiEnabled', 'genUiEnabled'],
         ['enable_temporary_child_agents', 'enableTemporaryChildAgents'], ['max_temporary_child_agents', 'maxTemporaryChildAgents'],
         ['rootExecutionPolicy', 'rootExecutionPolicy'],
         ['isDefault', 'isDefault'], ['isActive', 'isActive'], ['isDefaultForType', 'isDefaultForType'],
