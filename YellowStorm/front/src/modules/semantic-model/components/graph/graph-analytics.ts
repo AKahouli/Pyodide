@@ -15,6 +15,8 @@ export interface GraphRecord {
   missing: number;
   /** Values that read as dates, by field key. */
   dates: Record<string, string>;
+  /** Links the record has in all the data the person may see, read or not; null when the server did not say. */
+  linkTotal: number | null;
 }
 
 export interface GraphField {
@@ -96,6 +98,7 @@ export function buildGraphIndex(outline: GraphOutline | null, model: SemanticGra
       fields,
       missing: missingKeys.size,
       dates: row.d ?? {},
+      linkTotal: row.n ?? null,
     };
   });
   const byId = new Map(records.map((record) => [record.id, record]));
@@ -128,6 +131,17 @@ export const withValues = (record: GraphRecord, values: Record<string, unknown>)
 });
 
 export const otherEnd = (link: GraphLink, id: string) => (link.source === id ? link.target : link.source);
+
+/**
+ * Links a record has that lead to records not shown: the server's count less the links to records read (or, given `shown`,
+ * to records shown). Zero when the server did not count.
+ */
+export function unreadLinks(index: GraphIndex, record: GraphRecord, shown?: Set<string>): number {
+  if (record.linkTotal === null) return 0;
+  const links = index.linksOf.get(record.id) ?? [];
+  const reached = shown ? links.filter((link) => shown.has(otherEnd(link, record.id))).length : links.length;
+  return Math.max(0, record.linkTotal - reached);
+}
 
 /** The records within `depth` links of the start, either way. */
 export function neighbourhood(index: GraphIndex, start: string, depth: number): Map<string, number> {

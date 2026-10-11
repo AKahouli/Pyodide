@@ -158,8 +158,11 @@ export interface GraphOutline {
   /** Null when read around one record. */
   totals?: GraphTotals | null;
   concepts: Array<{ id: string; fields: string[] }>;
-  /** Id, concept id, name, missing field keys, and dates by field. */
-  records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string> }>;
+  /**
+   * Id, concept id, name, missing field keys, dates by field, and `n`: how many links the record has in all the data
+   * the person may see, read or not (absent when the server did not count them).
+   */
+  records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string>; n?: number }>;
   /** Id, relation id, source, target. */
   links: Array<{ id: string; r: string; s: string; t: string }>;
 }

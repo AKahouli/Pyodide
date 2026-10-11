@@ -71,7 +71,7 @@ export const semanticModelApi = {
     ));
   },
   /** A bounded part of the data graph: the first records shared among the concepts, the records of one concept, or one record with its neighbours. */
-  async getGraphOutline(id: string, dataRevisionId?: string, query?: { limit?: number; conceptId?: string; focus?: string }): Promise<GraphOutline> {
+  async getGraphOutline(id: string, dataRevisionId?: string, query?: { limit?: number; conceptId?: string; focus?: string; depth?: number }): Promise<GraphOutline> {
     return unwrap(await apiClient.get<ApiResponse<GraphOutline>>(API_ENDPOINTS.semanticModels.graphOutline(id), { params: { dataRevisionId, ...query } }));
   },
   async getGraphRecord(id: string, recordId: string, dataRevisionId?: string): Promise<GraphRecordValues> {

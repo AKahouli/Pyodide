@@ -29,6 +29,8 @@ import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/wor
 /** Records the graph view reads by default, and the most it may ask for (the runtime enforces the same bounds). */
 const DEFAULT_GRAPH_WINDOW = 2000;
 const MAX_GRAPH_WINDOW = 5000;
+/** How many links away from a focused record the graph view may read (the runtime enforces the same bound). */
+const MAX_FOCUS_DEPTH = 8;
 
 export interface GraphOutlineQuery {
   dataRevisionId?: string;
@@ -36,6 +38,8 @@ export interface GraphOutlineQuery {
   conceptId?: string;
   /** A record to read with its neighbours, instead of the first records of the data. */
   focus?: string;
+  /** With `focus`: how many links away to read, closest first and within `limit`; 1 (the record's neighbours) when absent. */
+  depth?: number;
 }
 
 /** A concept refresh reads one concept's sources again; the runtime keeps every other concept's data in use. */
@@ -676,7 +680,8 @@ export class SemanticPopulationRefreshService {
 
   /**
    * A bounded part of the data graph, without values: what the graph view draws and counts. At most `limit` records
-   * (shared among the concepts, or all of one concept), or one record with its neighbours; `truncated` and `totals` tell
+   * (shared among the concepts, or all of one concept), or one record with the records within `depth` links of it (closest
+   * first, within `limit`); `truncated` and `totals` tell
    * what the person may see beyond it. The scope is computed on every read and the runtime reads only what it allows.
    */
   async graphOutline(userId: string, modelId: string, query: GraphOutlineQuery = {}) {
@@ -687,6 +692,8 @@ export class SemanticPopulationRefreshService {
       nodeLimit: Math.min(Math.max(Math.trunc(query.limit ?? DEFAULT_GRAPH_WINDOW) || DEFAULT_GRAPH_WINDOW, 1), MAX_GRAPH_WINDOW),
       conceptId: query.conceptId,
       focusIds: query.focus ? [query.focus] : undefined,
+      // Only a read around a record goes deeper than one link; 1 is the runtime's default and is not sent.
+      ...(query.focus && query.depth ? { depth: Math.min(Math.max(Math.trunc(query.depth) || 1, 1), MAX_FOCUS_DEPTH) } : {}),
     });
     return graphWindowOutline(window);
   }

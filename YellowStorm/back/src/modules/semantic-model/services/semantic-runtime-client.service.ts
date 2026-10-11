@@ -232,7 +232,8 @@ export interface RuntimeBoundGraph {
   modelId: string;
   modelVersionId: string;
   dataRevisionId: string;
-  nodes: { id: string; label: string; properties: Record<string, unknown> }[];
+  /** `degree`: the record's visible links in the whole revision, set by a window read that draws neighbours; absent otherwise. */
+  nodes: { id: string; label: string; properties: Record<string, unknown>; degree?: number }[];
   edges: {
     id: string;
     label: string;
@@ -257,6 +258,8 @@ export interface RuntimeGraphWindowOptions {
   /** Records to read with their neighbours (or alone with `neighbours: false`) instead of the first records of the data. */
   focusIds?: string[];
   neighbours?: boolean;
+  /** With `focusIds` and neighbours: links away to read (the runtime reads 1 and caps at 8 when absent). */
+  depth?: number;
 }
 
 export interface RuntimeCorrectionCommand {
@@ -1373,6 +1376,7 @@ export class SemanticRuntimeClientService {
         ...(options.conceptId ? { conceptId: options.conceptId } : {}),
         ...(options.focusIds?.length ? { focusIds: options.focusIds } : {}),
         ...(options.neighbours === false ? { neighbours: false } : {}),
+        ...(options.depth && options.depth > 1 ? { depth: options.depth } : {}),
       },
     );
   }

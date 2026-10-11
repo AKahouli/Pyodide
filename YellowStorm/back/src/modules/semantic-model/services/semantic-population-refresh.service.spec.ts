@@ -1291,6 +1291,26 @@ describe('SemanticPopulationRefreshService', () => {
         expect.objectContaining({ nodeLimit: 2000 }));
     });
 
+    it('reads around a focus record as deep as asked, within bounds, and only then', async () => {
+      const { runtime, service } = setup();
+      await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 8, limit: 5000 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 5000, conceptId: undefined, focusIds: ['n-1'], depth: 8 });
+      await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 99 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'], expect.objectContaining({ depth: 8 }));
+      // Without a focus there is nothing to go deep from (the client leaves out a depth of 1).
+      await service.graphOutline('u-1', 'model-1', { depth: 8 });
+      expect(runtime.getBoundGraphWindow.mock.calls.at(-1)?.[3]).not.toHaveProperty('depth');
+    });
+
+    it('carries the runtime degree of a record into the outline as n', async () => {
+      const { runtime, service } = setup();
+      const base = await runtime.getBoundGraphWindow();
+      runtime.getBoundGraphWindow.mockResolvedValueOnce({ ...base, nodes: [Object.assign({}, base.nodes[0], { degree: 4 })] });
+      const outline = await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 8 });
+      expect(outline.records).toEqual([{ id: 'n-1', c: 'c-customer', l: 'Acme', n: 4 }]);
+    });
+
     it('reads one record alone for its values, with the scope recomputed on every read', async () => {
       const { runtime, service, graphSearch } = setup();
       const record = await service.graphRecord('u-1', 'model-1', 'n-1');

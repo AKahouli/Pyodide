@@ -73,12 +73,28 @@ async def select_visible_records(pool: Any, revision_id: str, allowed_workspace_
     return [(str(row["id"]), str(row["concept_id"])) for row in rows]
 
 
+async def _visible_neighbours(pool: Any, revision_id: str, allowed: list[str], frontier: list[str],
+                              seen: list[str], limit: int) -> list[tuple[str, str]]:
+    """Up to ``limit`` visible records, not in ``seen``, linked (accepted links, either direction)
+    to a record of ``frontier``, in id order."""
+    rows = await pool.fetch(
+        f"SELECT e.id, e.concept_id FROM {_ENTITIES} e WHERE e.data_revision_id = $1 "
+        f"AND {visible_entity_clause('e', '$2')} AND NOT (e.id = ANY($4::text[])) AND e.id IN ("
+        f"SELECT r.target_entity_id FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' "
+        "AND r.source_entity_id = ANY($3::text[]) UNION "
+        f"SELECT r.source_entity_id FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' "
+        "AND r.target_entity_id = ANY($3::text[])) ORDER BY e.id LIMIT $5",
+        revision_id, allowed, frontier, seen, limit)
+    return [(str(row["id"]), str(row["concept_id"])) for row in rows]
+
+
 async def select_focus_records(pool: Any, revision_id: str, allowed_workspace_ids: list[str],
-                               focus_ids: list[str], *, neighbours: bool,
-                               limit: int) -> tuple[list[tuple[str, str]], bool]:
-    """The visible ones among ``focus_ids`` and, with ``neighbours``, the visible records linked
-    to them (either direction, accepted links), at most ``limit`` in all, the focus first.
-    Returns the records and whether more were left out."""
+                               focus_ids: list[str], *, neighbours: bool, limit: int,
+                               depth: int = 1) -> tuple[list[tuple[str, str]], bool]:
+    """The visible ones among ``focus_ids`` and, with ``neighbours``, the visible records within
+    ``depth`` accepted links of them (either direction), at most ``limit`` in all, the focus first
+    and then level by level, so the closest records are the ones kept. Returns the records and
+    whether more were left out by ``limit`` (records beyond ``depth`` are not "left out")."""
     allowed = list(allowed_workspace_ids)
     focus_rows = await pool.fetch(
         f"SELECT e.id, e.concept_id FROM {_ENTITIES} e WHERE e.data_revision_id = $1 AND e.id = ANY($3::text[]) "
@@ -89,18 +105,38 @@ async def select_focus_records(pool: Any, revision_id: str, allowed_workspace_id
     records = records[:limit]
     if not neighbours or not records or truncated:
         return records, truncated
-    focus = [record_id for record_id, _concept in records]
-    room = limit - len(records)
+    frontier = [record_id for record_id, _concept in records]
+    seen = list(frontier)
+    for _level in range(max(1, depth)):
+        room = limit - len(records)
+        around = await _visible_neighbours(pool, revision_id, allowed, frontier, seen, room + 1)
+        if len(around) > room:
+            return records + around[:room], True
+        if not around:
+            break
+        records += around
+        frontier = [record_id for record_id, _concept in around]
+        seen += frontier
+    return records, False
+
+
+async def count_visible_degrees(pool: Any, revision_id: str, allowed_workspace_ids: list[str],
+                                record_ids: list[str]) -> dict[str, int]:
+    """How many accepted links each of ``record_ids`` (already visible) has to a visible record,
+    whatever their direction; a link to itself counts once. Hidden records never add to a count."""
+    if not record_ids:
+        return {}
     rows = await pool.fetch(
-        f"SELECT e.id, e.concept_id FROM {_ENTITIES} e WHERE e.data_revision_id = $1 "
-        f"AND {visible_entity_clause('e', '$2')} AND NOT (e.id = ANY($3::text[])) AND e.id IN ("
-        f"SELECT r.target_entity_id FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' "
-        "AND r.source_entity_id = ANY($3::text[]) UNION "
-        f"SELECT r.source_entity_id FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' "
-        "AND r.target_entity_id = ANY($3::text[])) ORDER BY e.id LIMIT $4",
-        revision_id, allowed, focus, room + 1)
-    around = [(str(row["id"]), str(row["concept_id"])) for row in rows]
-    return records + around[:room], len(around) > room
+        "WITH ends AS (SELECT r.source_entity_id AS own, r.target_entity_id AS other "
+        f"FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' AND r.source_entity_id = ANY($3::text[]) "
+        "UNION ALL SELECT r.target_entity_id, r.source_entity_id "
+        f"FROM {_LINKS} r WHERE r.data_revision_id = $1 AND r.state = 'accepted' AND r.target_entity_id = ANY($3::text[]) "
+        "AND r.source_entity_id <> r.target_entity_id) "
+        "SELECT ends.own AS id, count(*) AS links FROM ends "
+        f"JOIN {_ENTITIES} e ON e.data_revision_id = $1 AND e.id = ends.other AND {visible_entity_clause('e', '$2')} "
+        "GROUP BY ends.own",
+        revision_id, list(allowed_workspace_ids), list(record_ids))
+    return {str(row["id"]): int(row["links"]) for row in rows}
 
 
 async def list_links_among(pool: Any, revision_id: str, record_ids: list[str]) -> list[dict[str, str]]:

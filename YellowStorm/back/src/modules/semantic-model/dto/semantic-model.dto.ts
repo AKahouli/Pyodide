@@ -1555,6 +1555,14 @@ export class GraphOutlineQueryDto {
   @IsString()
   @MaxLength(300)
   focus?: string;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1, maximum: 8, description: 'With `focus`: how many links away from that record to read (closest first, within `limit`)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(8)
+  depth?: number;
 }
 
 export class GraphSearchQueryDto {

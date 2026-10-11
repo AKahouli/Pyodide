@@ -158,16 +158,19 @@ class ScopedGraphRead(_WorkspaceScoped):
 
 MAX_GRAPH_WINDOW_NODES = 5000
 DEFAULT_GRAPH_WINDOW_NODES = 2000
+MAX_FOCUS_DEPTH = 8
 
 
 class ScopedGraphWindowRead(_WorkspaceScoped):
     """A bounded part of the graph: at most ``nodeLimit`` records (shared among the concepts, or
-    all of one ``conceptId``), or the ``focusIds`` records with their neighbours."""
+    all of one ``conceptId``), or the ``focusIds`` records with the records within ``depth`` links
+    of them (closest first, still at most ``nodeLimit`` in all)."""
 
     node_limit: int = Field(DEFAULT_GRAPH_WINDOW_NODES, alias="nodeLimit", ge=1, le=MAX_GRAPH_WINDOW_NODES)
     concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
     focus_ids: list[str] = Field(default_factory=list, alias="focusIds", max_length=50)
     neighbours: bool = True
+    depth: int = Field(1, ge=1, le=MAX_FOCUS_DEPTH)
 
     @field_validator("focus_ids")
     @classmethod
@@ -377,7 +380,9 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
     graph, and the counts are of visible records and links. Without ``focusIds`` the window is
     the first records of the data, shared evenly among the concepts (or all from one concept)
     plus the visible totals; with them it is those records and, unless ``neighbours`` is false,
-    the records linked to them."""
+    the records within ``depth`` links of them (1 by default), at most ``nodeLimit`` in all and
+    the closest first. Unless ``neighbours`` is false, every node carries ``degree``: its visible
+    links in the whole revision, so a viewer can tell which records have relations not read."""
     pool = _population_read_pool(request)
     binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     revision_id = binding["data_revision_id"]
@@ -386,7 +391,7 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
     if command.focus_ids:
         records, truncated = await window_store.select_focus_records(
             pool, revision_id, allowed, command.focus_ids, neighbours=command.neighbours,
-            limit=command.node_limit)
+            limit=command.node_limit, depth=command.depth)
     else:
         overview = await window_store.count_visible_overview(pool, revision_id, allowed)
         concept_counts = overview["concepts"]
@@ -404,6 +409,10 @@ async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead
         raise HTTPException(status_code=409, detail=exc.code) from exc
     await _restore_graph_values(pool, binding, nodes)
     shown = {node["id"] for node in nodes}
+    if command.neighbours:
+        degrees = await window_store.count_visible_degrees(pool, revision_id, allowed, sorted(shown))
+        for node in nodes:
+            node["degree"] = degrees.get(node["id"], 0)
     edges = [{"id": f"{link['relationId']}:{link['sourceId']}:{link['targetId']}", "label": link["relationId"],
               "sourceId": link["sourceId"], "targetId": link["targetId"],
               "properties": {"relation_id": link["relationId"]}}

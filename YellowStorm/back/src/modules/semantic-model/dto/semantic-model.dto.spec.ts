@@ -121,4 +121,11 @@ describe('GraphOutlineQueryDto', () => {
     await expect(query({ focus: 'x'.repeat(301) })).rejects.toBeDefined();
     await expect(query({ unknown: '1' })).rejects.toBeDefined();
   });
+
+  it('reads the depth around the focus record as a number within 1 to 8', async () => {
+    await expect(query({ focus: 'r1', depth: '8' })).resolves.toMatchObject({ focus: 'r1', depth: 8 });
+    await expect(query({ focus: 'r1', depth: '1' })).resolves.toMatchObject({ depth: 1 });
+    expect((await query({ focus: 'r1' })).depth).toBeUndefined();
+    for (const depth of ['0', '9', '-1', '1.5', 'deep']) await expect(query({ focus: 'r1', depth })).rejects.toBeDefined();
+  });
 });

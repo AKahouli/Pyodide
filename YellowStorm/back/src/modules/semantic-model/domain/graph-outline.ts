@@ -5,7 +5,7 @@
 
 export interface OutlineSourceGraph {
   dataRevisionId: string;
-  nodes: Array<{ id: string; label: string; properties: Record<string, unknown> }>;
+  nodes: Array<{ id: string; label: string; properties: Record<string, unknown>; degree?: number }>;
   edges: Array<{ id: string; label: string; sourceId: string; targetId: string; properties: Record<string, unknown> }>;
   specification: { concepts: Array<{ conceptId: string; allowedFields: string[] }> };
 }
@@ -39,6 +39,8 @@ const labelOf = (node: OutlineSourceGraph['nodes'][number]) => String(node.prope
 /**
  * Every record with its concept, name, missing fields and dates, and every link — enough to draw, count,
  * filter by period and find paths, without the values themselves (a mail body can weigh more than the rest).
+ * `n` is how many links the record has in the whole data the person may see, drawn or not; it is left out when
+ * the runtime did not count them.
  */
 export function graphOutline(graph: OutlineSourceGraph) {
   const fields = fieldsByConcept(graph);
@@ -55,7 +57,8 @@ export function graphOutline(graph: OutlineSourceGraph) {
         if (isMissingValue(value)) missing.push(field);
         else if (typeof value === 'string' && value.length <= 32 && ISO_DATE.test(value.trim())) dates[field] = value.trim();
       }
-      return { id: node.id, c: concept, l: labelOf(node), ...(missing.length ? { m: missing } : {}), ...(Object.keys(dates).length ? { d: dates } : {}) };
+      return { id: node.id, c: concept, l: labelOf(node), ...(missing.length ? { m: missing } : {}), ...(Object.keys(dates).length ? { d: dates } : {}),
+        ...(typeof node.degree === 'number' ? { n: node.degree } : {}) };
     }),
     links: graph.edges.filter((edge) => ids.has(edge.sourceId) && ids.has(edge.targetId))
       .map((edge) => ({ id: edge.id, r: edge.label, s: edge.sourceId, t: edge.targetId })),

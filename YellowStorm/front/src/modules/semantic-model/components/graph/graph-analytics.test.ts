@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphOutline, SemanticGraph } from '../../types';
 import {
-  buildGraphIndex, countPer, mergeOutlines, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords,
+  buildGraphIndex, countPer, mergeOutlines, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords, unreadLinks,
 } from './graph-analytics';
 
 const FIELDS: Record<string, string[]> = { 'c-mail': ['sujet', 'envoye_le'], 'c-person': ['nom'], 'c-file': ['nom_fichier'] };
@@ -38,6 +38,24 @@ const edges = [
 const index = buildGraphIndex({ concepts: Object.entries(FIELDS).map(([id, fields]) => ({ id, fields })), records: nodes, links: edges }, model);
 
 describe('graph analytics', () => {
+  it('counts the links of a record not read yet from the server count and the links read', () => {
+    const counted = buildGraphIndex({
+      concepts: [{ id: 'c-mail', fields: [] }, { id: 'c-person', fields: [] }],
+      records: [{ id: 'm1', c: 'c-mail', l: 'Hello', n: 4 }, { id: 'p1', c: 'c-person', l: 'Ana', n: 1 }, { id: 'p2', c: 'c-person', l: 'Bo' }],
+      links: [edge('e1', 'm1', 'p1', 'r-sent')],
+    }, null);
+    expect(counted.byId.get('m1')!.linkTotal).toBe(4);
+    expect(unreadLinks(counted, counted.byId.get('m1')!)).toBe(3);
+    // Every link read, or no count from the server: nothing unread.
+    expect(unreadLinks(counted, counted.byId.get('p1')!)).toBe(0);
+    expect(counted.byId.get('p2')!.linkTotal).toBeNull();
+    expect(unreadLinks(counted, counted.byId.get('p2')!)).toBe(0);
+    // Against the records shown, a link to one left out is still to be shown.
+    expect(unreadLinks(counted, counted.byId.get('m1')!, new Set(['m1']))).toBe(4);
+    expect(unreadLinks(counted, counted.byId.get('m1')!, new Set(['m1', 'p1']))).toBe(3);
+    expect(unreadLinks(counted, counted.byId.get('p1')!, new Set(['p1']))).toBe(1);
+  });
+
   it('names fields, concepts and links as people read them', () => {
     const mail = index.byId.get('m1')!;
     expect(mail.conceptLabel).toBe('Message');

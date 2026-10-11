@@ -20,9 +20,21 @@ vi.mock('../graph/graph-export', () => exportMocks);
 vi.mock('../graph/GraphCanvas', async () => {
   const React = await import('react');
   return {
-    GraphCanvas: React.forwardRef(function FakeCanvas(props: { nodes: Array<{ id: string; label: string; concept: string }>; onSelect: (id: string) => void }, ref) {
+    GraphCanvas: React.forwardRef(function FakeCanvas(props: {
+      nodes: Array<{ id: string; label: string; concept: string; more?: number; moreLabel?: string; open?: boolean; info?: boolean }>;
+      badgeLabels: { less: string; info: string }; busyId?: string | null;
+      onSelect: (id: string) => void; onOpen: (id: string) => void; onExpand: (id: string) => void; onCollapse: (id: string) => void; onInfo: (id: string) => void;
+    }, ref) {
       React.useImperativeHandle(ref, () => ({ fit: vi.fn(), centerOn: vi.fn() }));
-      return <div data-testid='canvas'>{props.nodes.map((item) => <button key={item.id} type='button' aria-label={`${item.label} · ${item.concept}`} onClick={() => props.onSelect(item.id)} />)}</div>;
+      return <div>
+        <div data-testid='canvas'>{props.nodes.map((item) => <button key={item.id} type='button' aria-label={`${item.label} · ${item.concept}`} data-more={item.more} data-open={item.open || undefined} data-busy={props.busyId === item.id || undefined} title={item.moreLabel}
+          onClick={() => props.onSelect(item.id)} onDoubleClick={() => props.onOpen(item.id)} />)}</div>
+        <div data-testid='badges'>{props.nodes.flatMap((item) => [
+          item.more ? <button key={`${item.id}+`} type='button' aria-label={`${item.moreLabel} · ${item.label}`} onClick={() => props.onExpand(item.id)} /> : null,
+          item.open ? <button key={`${item.id}-`} type='button' aria-label={`${props.badgeLabels.less} · ${item.label}`} onClick={() => props.onCollapse(item.id)} /> : null,
+          item.info ? <button key={`${item.id}i`} type='button' aria-label={`${props.badgeLabels.info} · ${item.label}`} onClick={() => props.onInfo(item.id)} /> : null,
+        ])}</div>
+      </div>;
     }),
   };
 });
@@ -32,6 +44,7 @@ const VALUES: Record<string, Record<string, unknown>> = {
   m1: { sujet: 'Hello', corps: LONG, cle_message: null },
   m2: { sujet: 'Invoice', corps: 'Short', cle_message: 'k2' },
   p1: { nom: 'Ana' },
+  m3: { sujet: 'Receipt' },
 };
 const graph = {
   dataRevisionId: 'rev-9',
@@ -55,6 +68,11 @@ const structure = {
 function renderViewer(props: Partial<React.ComponentProps<typeof SemanticModelGraphViewer>> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={client}><SemanticModelGraphViewer open onClose={vi.fn()} modelId="model-1" {...props} /></QueryClientProvider>);
+}
+
+/** Opens the details of a record from its "i" badge: the panel stays closed until then. */
+async function showDetails(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(screen.getByRole('button', { name: `graphViewer.recordInfo · ${label}` }));
 }
 
 async function pick(user: ReturnType<typeof userEvent.setup>, text: string, name: RegExp) {
@@ -187,6 +205,198 @@ describe('SemanticModelGraphViewer', () => {
       expect(found).toHaveBeenCalledWith(true);
     });
 
+    describe('exploring by double-click', () => {
+      // Two records are unlinked to m1 and stay out of its neighbourhood; m1 has links to unread records (n: 4, one read).
+      const explorable = {
+        ...part,
+        concepts: graph.concepts,
+        records: [{ id: 'm1', c: 'c-mail', l: 'Hello', n: 4 }, { id: 'p1', c: 'c-person', l: 'Ana', n: 2 }, { id: 'p9', c: 'c-person', l: 'Zoe', n: 0 }],
+        links: [{ id: 'e1', r: 'r-sent', s: 'm1', t: 'p1' }],
+      };
+      const around = {
+        dataRevisionId: 'rev-9', truncated: false, nodeLimit: 5000, totals: null, concepts: graph.concepts,
+        records: [{ id: 'm1', c: 'c-mail', l: 'Hello', n: 4 }, { id: 'p1', c: 'c-person', l: 'Ana', n: 2 }, { id: 'm2', c: 'c-mail', l: 'Invoice', n: 2 }, { id: 'm3', c: 'c-mail', l: 'Receipt', n: 1 }],
+        links: [{ id: 'e1', r: 'r-sent', s: 'm1', t: 'p1' }, { id: 'e2', r: 'r-sent', s: 'm2', t: 'p1' }, { id: 'e3', r: 'r-sent', s: 'm3', t: 'm2' }],
+      };
+      beforeEach(() => { apiMocks.getGraphOutline.mockResolvedValue(explorable); });
+
+      it('marks the records that have links not read yet, and only those', async () => {
+        renderViewer();
+        const hello = await screen.findByRole('button', { name: 'Hello · mail' });
+        expect(hello).toHaveAttribute('data-more', '3');
+        expect(hello).toHaveAttribute('title', 'graphViewer.moreLinks');
+        expect(screen.getByRole('button', { name: 'Ana · person' })).toHaveAttribute('data-more', '1');
+        expect(screen.getByRole('button', { name: 'Zoe · person' })).not.toHaveAttribute('data-more');
+      });
+
+      const open = async (user: ReturnType<typeof userEvent.setup>, name: string) => user.dblClick(screen.getByRole('button', { name }));
+
+      it('reads the record 2 links away by default, adds it to the graph and shows only that neighbourhood', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await open(user, 'Hello · mail');
+
+        expect(await screen.findByRole('button', { name: 'Invoice · mail' })).toBeInTheDocument();
+        expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'm1', depth: 2, limit: 5000 });
+        // The record is selected; what is not near it (or too far) is left out; the totals of the whole graph are kept.
+        expect(screen.queryByRole('complementary', { name: 'graphViewer.recordPanel' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Zoe · person' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Receipt · mail' })).not.toBeInTheDocument();
+        expect(screen.getByText('graphViewer.windowShowing')).toBeInTheDocument();
+        expect(screen.getByText('graphViewer.focusOn')).toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: /graphViewer.focus/ })).toHaveValue('2');
+        expect(screen.queryByText('graphViewer.exploreCapped')).not.toBeInTheDocument();
+      });
+
+      it('goes as deep as the Focus select says, and reads again when it changes', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        await user.click(screen.getByRole('button', { name: 'Hello · mail' }));
+        const focus = screen.getByRole('combobox', { name: /graphViewer.focus/ });
+        expect(within(focus).getAllByRole('option')).toHaveLength(9);
+
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await user.selectOptions(focus, '3');
+        await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'm1', depth: 3, limit: 5000 }));
+        expect(await screen.findByRole('button', { name: 'Receipt · mail' })).toBeInTheDocument();
+
+        // The depth chosen is the one a double-click uses.
+        apiMocks.getGraphOutline.mockResolvedValueOnce({ ...around, records: [{ id: 'p9', c: 'c-person', l: 'Zoe', n: 0 }], links: [] });
+        await open(user, 'Ana · person');
+        await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'p1', depth: 3, limit: 5000 }));
+      });
+
+      it('shows that it is reading, over the graph and on the bubble, then why it could not', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        let fail: (error: Error) => void = () => undefined;
+        apiMocks.getGraphOutline.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+        await open(user, 'Hello · mail');
+        expect(await screen.findByText('graphViewer.exploring')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Hello · mail' })).toHaveAttribute('data-busy', 'true');
+        expect(screen.getByRole('button', { name: 'Ana · person' })).not.toHaveAttribute('data-busy');
+
+        fail(new Error('The semantic runtime did not answer in time'));
+        expect(await screen.findByRole('alert')).toHaveTextContent('graphViewer.loadNeighboursFailed');
+        await waitFor(() => expect(screen.queryByText('graphViewer.exploring')).not.toBeInTheDocument());
+        expect(screen.getByRole('button', { name: 'Hello · mail' })).not.toHaveAttribute('data-busy');
+      });
+
+      it('opens a neighbour from where it is, then closes it again with a double-click, bringing back its badge', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await open(user, 'Hello · mail');
+        const invoice = await screen.findByRole('button', { name: 'Invoice · mail' });
+        expect(invoice).toHaveAttribute('data-more', '1');
+
+        apiMocks.getGraphOutline.mockResolvedValueOnce({
+          ...around, records: [{ id: 'm2', c: 'c-mail', l: 'Invoice', n: 2 }, { id: 'm3', c: 'c-mail', l: 'Receipt', n: 1 }], links: [{ id: 'e3', r: 'r-sent', s: 'm3', t: 'm2' }],
+        });
+        await open(user, 'Invoice · mail');
+        expect(await screen.findByRole('button', { name: 'Receipt · mail' })).toBeInTheDocument();
+        expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'm2', depth: 2, limit: 5000 });
+        expect(screen.getByRole('button', { name: 'Hello · mail' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Invoice · mail' })).not.toHaveAttribute('data-more');
+        const reads = apiMocks.getGraphOutline.mock.calls.length;
+
+        // Closing it hides what only it showed; what is read stays read, so nothing is fetched.
+        await open(user, 'Invoice · mail');
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Receipt · mail' })).not.toBeInTheDocument());
+        expect(screen.getByRole('button', { name: 'Invoice · mail' })).toHaveAttribute('data-more', '1');
+        expect(screen.getByRole('button', { name: 'Hello · mail' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Zoe · person' })).not.toBeInTheDocument();
+        expect(apiMocks.getGraphOutline).toHaveBeenCalledTimes(reads);
+      });
+
+      it('closing a record also closes what was opened from inside it, back to its direct links', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await open(user, 'Hello · mail');
+        await screen.findByRole('button', { name: 'Invoice · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce({ ...around, records: [{ id: 'm3', c: 'c-mail', l: 'Receipt', n: 1 }, { id: 'm2', c: 'c-mail', l: 'Invoice', n: 2 }], links: [{ id: 'e3', r: 'r-sent', s: 'm3', t: 'm2' }] });
+        await open(user, 'Invoice · mail');
+        await screen.findByRole('button', { name: 'Receipt · mail' });
+
+        await open(user, 'Hello · mail');
+        // Nothing opened any more: Hello folds back to its direct links, and what Invoice opened is hidden again.
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Receipt · mail' })).not.toBeInTheDocument());
+        expect(screen.getByRole('combobox', { name: /graphViewer.focus/ })).toHaveValue('1');
+      });
+
+      it('shows one more level from the "+" badge, reading only 1 link, and leaves the double-click depth alone', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce({
+          ...around, records: [{ id: 'm1', c: 'c-mail', l: 'Hello', n: 4 }, { id: 'p1', c: 'c-person', l: 'Ana', n: 2 }], links: [{ id: 'e1', r: 'r-sent', s: 'm1', t: 'p1' }],
+        });
+        await user.click(screen.getByRole('button', { name: 'graphViewer.moreLinks · Hello' }));
+        await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'm1', limit: 5000 }));
+        // The record is now open (it can be closed), and the Focus select shows 1 link without changing what a double-click reads.
+        expect(await screen.findByRole('button', { name: 'graphViewer.collapseRecord · Hello' })).toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: /graphViewer.focus/ })).toHaveValue('1');
+        expect(screen.queryByRole('button', { name: 'Zoe · person' })).not.toBeInTheDocument();
+
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await open(user, 'Ana · person');
+        await waitFor(() => expect(apiMocks.getGraphOutline).toHaveBeenLastCalledWith('model-1', 'rev-9', { focus: 'p1', depth: 2, limit: 5000 }));
+      });
+
+      it('closes a record from its "-" badge', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce(around);
+        await open(user, 'Hello · mail');
+        await screen.findByRole('button', { name: 'Invoice · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce({ ...around, records: [{ id: 'm3', c: 'c-mail', l: 'Receipt', n: 1 }, { id: 'm2', c: 'c-mail', l: 'Invoice', n: 2 }], links: [{ id: 'e3', r: 'r-sent', s: 'm3', t: 'm2' }] });
+        await user.click(screen.getByRole('button', { name: 'graphViewer.moreLinks · Invoice' }));
+        await screen.findByRole('button', { name: 'Receipt · mail' });
+        const reads = apiMocks.getGraphOutline.mock.calls.length;
+
+        await user.click(screen.getByRole('button', { name: 'graphViewer.collapseRecord · Invoice' }));
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Receipt · mail' })).not.toBeInTheDocument());
+        expect(screen.queryByRole('button', { name: 'graphViewer.collapseRecord · Invoice' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'graphViewer.collapseRecord · Hello' })).toBeInTheDocument();
+        expect(apiMocks.getGraphOutline).toHaveBeenCalledTimes(reads);
+      });
+
+      it('opens the details of a record from its "i" badge only, and the panel closes again', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        // Selecting leaves the panel closed, but the selection is there for the other tools.
+        await user.click(screen.getByRole('button', { name: 'Hello · mail' }));
+        expect(screen.queryByRole('complementary', { name: 'graphViewer.recordPanel' })).not.toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: /graphViewer.focus/ })).toBeEnabled();
+        expect(apiMocks.getGraphRecord).not.toHaveBeenCalled();
+
+        await showDetails(user, 'Ana');
+        const panel = await screen.findByRole('complementary', { name: 'graphViewer.recordPanel' });
+        expect(within(panel).getByRole('heading', { name: 'Ana' })).toBeInTheDocument();
+        await user.click(within(panel).getByRole('button', { name: 'graphViewer.closeRecord' }));
+        expect(screen.queryByRole('complementary', { name: 'graphViewer.recordPanel' })).not.toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: /graphViewer.focus/ })).toBeEnabled();
+      });
+
+      it('says when the server kept only the closest records', async () => {
+        const user = userEvent.setup();
+        renderViewer();
+        await screen.findByRole('button', { name: 'Hello · mail' });
+        apiMocks.getGraphOutline.mockResolvedValueOnce({ ...around, truncated: true });
+        await open(user, 'Hello · mail');
+        expect(await screen.findByText('graphViewer.exploreCapped')).toBeInTheDocument();
+      });
+    });
+
     it('shows why the neighbours could not be loaded', async () => {
       const user = userEvent.setup();
       renderViewer();
@@ -209,6 +419,8 @@ describe('SemanticModelGraphViewer', () => {
       renderViewer();
       await screen.findByRole('button', { name: 'Hello · mail' });
       await pick(user, 'hel', /Hello/);
+      expect(screen.queryByRole('complementary', { name: 'graphViewer.recordPanel' })).not.toBeInTheDocument();
+      await showDetails(user, 'Hello');
 
       const panel = screen.getByRole('complementary', { name: 'graphViewer.recordPanel' });
       expect(within(panel).getByRole('heading', { name: 'Hello' })).toBeInTheDocument();
@@ -237,11 +449,22 @@ describe('SemanticModelGraphViewer', () => {
       await waitFor(() => expect(missing).toHaveBeenCalledWith(false));
     });
 
+    it('focuses on a record near it without asking the server when the whole graph is read', async () => {
+      const user = userEvent.setup();
+      renderViewer();
+      await screen.findByRole('button', { name: 'Hello · mail' });
+      await user.dblClick(screen.getByRole('button', { name: 'Hello · mail' }));
+      expect(await screen.findByText('graphViewer.focusOn')).toBeInTheDocument();
+      expect(apiMocks.getGraphOutline).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: 'Invoice · mail' })).not.toHaveAttribute('data-more');
+    });
+
     it('lists linked records by relationship and moves to one', async () => {
       const user = userEvent.setup();
       renderViewer();
       await screen.findByRole('button', { name: 'Ana · person' });
       await pick(user, 'ana', /Ana/);
+      await showDetails(user, 'Ana');
       const linked = screen.getByRole('region', { name: 'graphViewer.linked' });
       expect(within(linked).getByRole('button', { name: /sent by.*2 Message/ })).toBeInTheDocument();
       await user.click(within(linked).getByRole('button', { name: 'Invoice' }));
@@ -253,6 +476,7 @@ describe('SemanticModelGraphViewer', () => {
       renderViewer({ canEdit: true });
       await screen.findByRole('button', { name: 'Hello · mail' });
       await pick(user, 'hel', /Hello/);
+      await showDetails(user, 'Hello');
       const panel = screen.getByRole('complementary', { name: 'graphViewer.recordPanel' });
       expect((await within(panel).findAllByRole('button', { name: 'corrections.fixValueOf' })).length).toBe(2);
       expect(within(panel).getByRole('button', { name: 'corrections.hideRecord' })).toBeInTheDocument();

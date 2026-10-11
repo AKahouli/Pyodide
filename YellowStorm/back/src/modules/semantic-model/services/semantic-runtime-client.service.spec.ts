@@ -92,6 +92,18 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     });
   });
 
+  it('sends the depth around a focus record only when it is deeper than one link', async () => {
+    const window = { dataRevisionId: 'dr_1', nodes: [], edges: [], truncated: false, nodeLimit: 5000, totals: null };
+    fetchMock.mockResolvedValueOnce(jsonResponse(window)).mockResolvedValueOnce(jsonResponse(window));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await client.getBoundGraphWindow('m1', 'u1', ['ws-1'], { nodeLimit: 5000, focusIds: ['r1'], depth: 8 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      actorUserId: 'u1', environment: 'draft', allowedWorkspaceIds: ['ws-1'], nodeLimit: 5000, focusIds: ['r1'], depth: 8,
+    });
+    await client.getBoundGraphWindow('m1', 'u1', ['ws-1'], { focusIds: ['r1'], depth: 1 });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('depth');
+  });
+
   it('refuses to read a graph window without a workspace scope', async () => {
     const client = new SemanticRuntimeClientService(config() as any);
     await expect(client.getBoundGraphWindow('m1', 'u1', undefined as unknown as string[])).rejects.toThrow();

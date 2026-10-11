@@ -22,6 +22,12 @@ describe('graph outline', () => {
     expect(JSON.stringify(outline)).not.toContain('xxxx');
   });
 
+  it('carries the number of links the runtime counted as n, and leaves it out when it did not count', () => {
+    const counted = graphOutline({ ...graph, nodes: [{ ...graph.nodes[0], degree: 7 }, { ...graph.nodes[1], degree: 0 }] });
+    expect(counted.records.map((record) => record.n)).toEqual([7, 0]);
+    expect(graphOutline(graph).records.every((record) => !('n' in record))).toBe(true);
+  });
+
   it('adds to a window outline whether records were left out and the totals', () => {
     const totals = { records: 9, links: 3, concepts: { 'c-mail': 5, 'c-person': 4 }, relations: { 'r-sent': 3 } };
     const outline = graphWindowOutline({ ...graph, truncated: true, nodeLimit: 2, totals });

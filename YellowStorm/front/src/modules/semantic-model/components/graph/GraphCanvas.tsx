@@ -16,6 +16,13 @@ export interface CanvasNode {
   concept: string;
   ring?: boolean;
   degree: number;
+  /** Links to records not shown: the bubble wears a "+" badge that shows them, named by `moreLabel`. */
+  more?: number;
+  moreLabel?: string;
+  /** A record opened from here: the bubble wears a "-" badge that closes it. */
+  open?: boolean;
+  /** A record, not a concept bubble: it wears an "i" badge that opens its details. */
+  info?: boolean;
 }
 export interface CanvasEdge { id: string; source: string; target: string; label: string }
 export type CanvasLayout = 'force' | 'concept' | 'radial';
@@ -27,6 +34,11 @@ export interface GraphCanvasHandle {
 }
 
 const MISSING_RING = '#fbbf24';
+const MORE_BADGE = '#0284c7';
+const LESS_BADGE = '#b45309';
+const INFO_BADGE = '#475569';
+/** Radius of a badge in pixels at zoom 1: large enough to hit. */
+const BADGE_R = 10;
 /** How long the layout may be worked out before the first drawing, in milliseconds. */
 const PRESETTLE_MS = 300;
 
@@ -93,9 +105,19 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
   selectedId: string | null;
   highlight: { ids: Set<string>; links?: Set<string> } | null;
   linkNames: boolean;
+  /** The record being read from the server: its bubble pulses. */
+  busyId?: string | null;
   label: string;
+  /** Names of the "-" and "i" badges, each followed by the record's name. */
+  badgeLabels: { less: string; info: string };
   onSelect: (id: string | null) => void;
   onOpen: (id: string) => void;
+  /** The "+" badge: show one more level around the record. */
+  onExpand: (id: string) => void;
+  /** The "-" badge: close what the record opened. */
+  onCollapse: (id: string) => void;
+  /** The "i" badge: open the record's details. */
+  onInfo: (id: string) => void;
 }>>(function GraphCanvas(props, ref) {
   const container = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -159,6 +181,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
   };
   const restyleRef = useRef(restyle);
   restyleRef.current = restyle;
+
+  // The record being read pulses; it is added and removed apart from restyle so hovering never restarts the pulse.
+  const markBusy = () => {
+    const { node } = drawn.current;
+    if (!node) return;
+    const busyId = live.current.busyId ?? null;
+    node.each(function (d) {
+      const group = d3Selection.select(this);
+      const ring = group.select<SVGCircleElement>('circle.busy');
+      if (d.id !== busyId) { ring.remove(); return; }
+      if (!ring.empty()) return;
+      const pulse = group.insert('circle', 'circle.body').attr('class', 'busy').attr('fill', 'none').attr('stroke', '#38bdf8').attr('stroke-width', 4).attr('pointer-events', 'none');
+      pulse.append('animate').attr('attributeName', 'r').attr('values', `${d.r + 6};${d.r + 20};${d.r + 6}`).attr('dur', '1.1s').attr('repeatCount', 'indefinite');
+      pulse.append('animate').attr('attributeName', 'opacity').attr('values', '1;0.15;1').attr('dur', '1.1s').attr('repeatCount', 'indefinite');
+    });
+  };
+  const markBusyRef = useRef(markBusy);
+  markBusyRef.current = markBusy;
 
   // New data: positions start afresh and the first drawing is fitted.
   useEffect(() => { positions.current.clear(); fitted.current = false; }, [props.dataKey]);
@@ -253,7 +293,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
 
     const node = g.append('g').selectAll<SVGGElement, SimNode>('g').data(sim0).join('g')
       .attr('role', 'button').attr('tabindex', 0)
-      .attr('aria-label', (d) => (d.node.sub ? `${d.node.label} · ${d.node.sub}` : d.node.label))
+      .attr('aria-label', (d) => [d.node.label, d.node.sub].filter(Boolean).join(' · '))
       .style('cursor', 'pointer')
       .on('click', (event, d) => { event.stopPropagation(); live.current.onSelect(d.id); })
       .on('dblclick', (event, d) => { event.stopPropagation(); live.current.onOpen(d.id); })
@@ -266,7 +306,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
     node.filter((d) => Boolean(d.node.ring)).append('circle')
       .attr('r', (d) => d.r + 5).attr('fill', 'none').attr('stroke', MISSING_RING).attr('stroke-width', 2).attr('stroke-dasharray', '4 3').attr('opacity', 0.85);
     node.append('circle').attr('class', 'body').attr('r', (d) => d.r).attr('fill', (d) => d.node.color);
-    node.append('title').text((d) => (d.node.sub ? `${d.node.label} · ${d.node.sub}` : d.node.label));
+    node.append('title').text((d) => [d.node.label, d.node.sub].filter(Boolean).join(' · '));
     node.each(function (d) {
       const group = d3Selection.select(this);
       const maxLen = Math.max(8, Math.round(d.r / 3));
@@ -279,6 +319,30 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
       if (line2) text(yOff + 13, line2.length > maxLen ? `${line2.slice(0, maxLen - 1)}…` : line2, 10, 'white');
       if (d.node.sub && d.r >= 30) text(line2 ? yOff + 26 : 16, d.node.sub, 8, 'rgba(255,255,255,0.55)', 400);
     });
+
+    // Badges on a bubble are buttons of their own: a click on one never selects, drags or deselects.
+    const addBadge = (which: d3Selection.Selection<SVGGElement, SimNode, SVGGElement, unknown>, name: string, dx: number, dy: number,
+      glyph: string, fill: string, label: (d: SimNode) => string, act: (id: string) => void) => {
+      const badge = which.append('g').attr('class', `badge-${name}`).attr('role', 'button').attr('tabindex', 0)
+        .attr('aria-label', label).style('cursor', 'pointer')
+        // Sat just outside the rim, so a badge never covers the name inside the bubble.
+        .attr('transform', (d) => { const out = (d.r + BADGE_R * 0.7) / Math.hypot(dx, dy); return `translate(${out * dx},${out * dy})`; })
+        .on('mousedown', (event) => event.stopPropagation())
+        .on('touchstart', (event) => event.stopPropagation())
+        .on('dblclick', (event) => event.stopPropagation())
+        .on('click', (event, d) => { event.stopPropagation(); act(d.id); })
+        .on('keydown', (event: KeyboardEvent, d) => {
+          event.stopPropagation();
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); act(d.id); }
+        });
+      badge.append('title').text(label);
+      badge.append('circle').attr('r', BADGE_R).attr('fill', fill).attr('stroke', '#ffffff').attr('stroke-width', 1.5);
+      badge.append('text').attr('text-anchor', 'middle').attr('dy', 4).attr('fill', 'white').attr('font-size', 13).attr('font-weight', 700)
+        .attr('font-family', 'system-ui, sans-serif').attr('pointer-events', 'none').text(glyph);
+    };
+    addBadge(node.filter((d) => (d.node.more ?? 0) > 0), 'more', 0.72, -0.72, '+', MORE_BADGE, (d) => d.node.moreLabel ?? '+', (id) => live.current.onExpand(id));
+    addBadge(node.filter((d) => Boolean(d.node.open)), 'less', -0.72, -0.72, '−', LESS_BADGE, (d) => `${live.current.badgeLabels.less} · ${d.node.label}`, (id) => live.current.onCollapse(id));
+    addBadge(node.filter((d) => Boolean(d.node.info)), 'info', 0.72, 0.72, 'i', INFO_BADGE, (d) => `${live.current.badgeLabels.info} · ${d.node.label}`, (id) => live.current.onInfo(id));
 
     const draw = () => {
       link.attr('x1', (d) => (d.source as SimNode).x ?? 0).attr('y1', (d) => (d.source as SimNode).y ?? 0)
@@ -304,12 +368,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
 
     drawn.current = { node, link, linkLabel };
     restyleRef.current();
+    markBusyRef.current();
     return () => { sim.stop(); };
     // `fit` reads refs only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, layout, radialCenter, conceptOrder]);
 
   useEffect(() => { restyleRef.current(); }, [props.selectedId, props.highlight, props.linkNames]);
+  useEffect(() => { markBusyRef.current(); }, [props.busyId]);
 
   return <div ref={container} className='relative h-full w-full'>
     <svg ref={svgRef} className='h-full w-full' role='group' aria-label={props.label} />

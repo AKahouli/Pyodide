@@ -39,6 +39,7 @@ class Calls:
         self.scopes: list[list[str]] = []
         self.quotas: dict[str, int] | None = None
         self.focus: dict | None = None
+        self.degrees_asked: list[list[str]] = []
         self.links_asked: list[list[str]] = []
 
 
@@ -63,10 +64,15 @@ def _client(monkeypatch, *, concepts: dict[str, int], calls: Calls,
         chosen = [record for concept in sorted(quotas) for record in records.get(concept, [])[:quotas[concept]]]
         return chosen
 
-    async def select_focus_records(pool, revision_id, allowed, focus_ids, *, neighbours, limit):
+    async def select_focus_records(pool, revision_id, allowed, focus_ids, *, neighbours, limit, depth):
         calls.scopes.append(allowed)
-        calls.focus = {"ids": focus_ids, "neighbours": neighbours, "limit": limit}
+        calls.focus = {"ids": focus_ids, "neighbours": neighbours, "limit": limit, "depth": depth}
         return [("a:1", "a"), ("b:1", "b")], True
+
+    async def count_visible_degrees(pool, revision_id, allowed, record_ids):
+        calls.scopes.append(allowed)
+        calls.degrees_asked.append(record_ids)
+        return {"a:1": 3}
 
     async def list_links_among(pool, revision_id, record_ids):
         calls.links_asked.append(record_ids)
@@ -84,6 +90,7 @@ def _client(monkeypatch, *, concepts: dict[str, int], calls: Calls,
     monkeypatch.setattr(window_store, "count_visible_overview", count_visible_overview)
     monkeypatch.setattr(window_store, "select_visible_records", select_visible_records)
     monkeypatch.setattr(window_store, "select_focus_records", select_focus_records)
+    monkeypatch.setattr(window_store, "count_visible_degrees", count_visible_degrees)
     monkeypatch.setattr(window_store, "list_links_among", list_links_among)
     monkeypatch.setattr(routes, "read_projection_nodes", read_nodes)
     return TestClient(app)
@@ -125,10 +132,29 @@ def test_focus_window_reads_neighbours_without_totals(monkeypatch):
     calls = Calls()
     client = _client(monkeypatch, concepts={}, calls=calls)
     data = client.post(URL, json=body(focusIds=["a:1"], nodeLimit=50), headers=AUTH).json()
-    assert calls.focus == {"ids": ["a:1"], "neighbours": True, "limit": 50}
+    assert calls.focus == {"ids": ["a:1"], "neighbours": True, "limit": 50, "depth": 1}
     assert data["totals"] is None and data["truncated"] is True
     single = client.post(URL, json=body(focusIds=["a:1"], neighbours=False, nodeLimit=1), headers=AUTH)
     assert single.status_code == 200 and calls.focus["neighbours"] is False
+
+
+def test_focus_window_reads_as_deep_as_asked_and_reports_the_cap(monkeypatch):
+    calls = Calls()
+    client = _client(monkeypatch, concepts={}, calls=calls)
+    data = client.post(URL, json=body(focusIds=["a:1"], depth=8, nodeLimit=5000), headers=AUTH).json()
+    assert calls.focus == {"ids": ["a:1"], "neighbours": True, "limit": 5000, "depth": 8}
+    assert data["truncated"] is True and data["nodeLimit"] == 5000
+
+
+def test_every_drawn_node_carries_its_visible_degree_but_a_single_record_read_does_not(monkeypatch):
+    calls = Calls()
+    client = _client(monkeypatch, concepts={}, calls=calls)
+    data = client.post(URL, json=body(focusIds=["a:1"]), headers=AUTH).json()
+    # A record the store has no link for has degree 0; the scope reaches the count too.
+    assert {node["id"]: node["degree"] for node in data["nodes"]} == {"a:1": 3, "b:1": 0}
+    assert calls.degrees_asked == [["a:1", "b:1"]] and all(scope == ["ws-a"] for scope in calls.scopes)
+    single = client.post(URL, json=body(focusIds=["a:1"], neighbours=False), headers=AUTH).json()
+    assert all("degree" not in node for node in single["nodes"]) and len(calls.degrees_asked) == 1
 
 
 def test_links_only_among_records_the_graph_returned(monkeypatch):
@@ -142,6 +168,7 @@ def test_links_only_among_records_the_graph_returned(monkeypatch):
 @pytest.mark.parametrize("override", [
     {"nodeLimit": 0}, {"nodeLimit": 5001}, {"focusIds": [""]}, {"focusIds": ["x"] * 51},
     {"unexpected": 1}, {"allowedWorkspaceIds": None}, {"conceptId": "x" * 201},
+    {"depth": 0}, {"depth": 9}, {"depth": "deep"},
 ])
 def test_window_request_is_validated(monkeypatch, override):
     client = _client(monkeypatch, concepts={}, calls=Calls())
@@ -152,6 +179,42 @@ def test_window_requires_a_scope_and_a_pinned_revision(monkeypatch):
     client = _client(monkeypatch, concepts={}, calls=Calls())
     assert client.post(URL, json={"actorUserId": "u-1"}, headers=AUTH).status_code == 422
     assert client.post(URL, json=body(dataRevisionId="dr-old"), headers=AUTH).status_code == 409
+
+
+class _FakeChainPool:
+    """A path of records c:0 - c:1 - ... - c:5 (all visible), answering the two statements of a
+    focus read the way the database would: the focus rows, then the unseen neighbours of a frontier."""
+
+    def __init__(self, size: int = 6) -> None:
+        self.ids = [f"c:{index}" for index in range(size)]
+        self.neighbour_queries = 0
+
+    async def fetch(self, sql, revision_id, allowed, wanted, *rest):
+        if "UNION" not in sql:
+            rows = [i for i in self.ids if i in wanted]
+            return [{"id": i, "concept_id": "c"} for i in rows][: rest[0]]
+        self.neighbour_queries += 1
+        seen, limit = rest
+        frontier = set(wanted)
+        near = {self.ids[at + step] for i in frontier for at in [self.ids.index(i)] for step in (-1, 1)
+                if 0 <= at + step < len(self.ids)}
+        return [{"id": i, "concept_id": "c"} for i in sorted(near - set(seen))][:limit]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth,limit,expected,truncated", [
+    (1, 50, ["c:2", "c:1", "c:3"], False),
+    (2, 50, ["c:2", "c:1", "c:3", "c:0", "c:4"], False),
+    (8, 50, ["c:2", "c:1", "c:3", "c:0", "c:4", "c:5"], False),
+    (8, 4, ["c:2", "c:1", "c:3", "c:0"], True),   # closest first; the cap says records were left out
+    (1, 1, ["c:2"], True),
+])
+async def test_focus_walks_level_by_level_within_depth_and_cap(depth, limit, expected, truncated):
+    pool = _FakeChainPool()
+    records, more = await window_store.select_focus_records(
+        pool, "dr", ["ws"], ["c:2"], neighbours=True, limit=limit, depth=depth)
+    assert [record_id for record_id, _ in records] == expected and more is truncated
+    assert pool.neighbour_queries <= depth
 
 
 class _FakeAgePool:
@@ -298,3 +361,32 @@ async def test_focus_expands_to_visible_neighbours_only(seeded_pool):
     capped, truncated = await window_store.select_focus_records(
         seeded_pool, "dr_w", ["ws-a"], ["p:1"], neighbours=True, limit=2)
     assert len(capped) == 2 and truncated is True
+
+
+@integration
+@pytest.mark.asyncio
+async def test_focus_reads_level_by_level_up_to_the_depth_and_the_cap(seeded_pool):
+    allowed = ["ws-a"]
+    # From m:3: p:2 is one link away, p:1 two (through p:2), m:1 three (through p:1); p:5 only by a suppressed link.
+    for depth, expected in [(1, ["m:3", "p:2"]), (2, ["m:3", "p:2", "p:1"]), (3, ["m:3", "p:2", "p:1", "m:1"]),
+                            (8, ["m:3", "p:2", "p:1", "m:1"])]:
+        records, truncated = await window_store.select_focus_records(
+            seeded_pool, "dr_w", allowed, ["m:3"], neighbours=True, limit=50, depth=depth)
+        assert [record_id for record_id, _ in records] == expected and truncated is False
+    # The cap keeps the closest records and says more were left out.
+    capped, truncated = await window_store.select_focus_records(
+        seeded_pool, "dr_w", allowed, ["m:3"], neighbours=True, limit=3, depth=8)
+    assert [record_id for record_id, _ in capped] == ["m:3", "p:2", "p:1"] and truncated is True
+    # A hidden record in the way (m:2, p:3, p:4 belong to ws-b) is never crossed.
+    reached, _ = await window_store.select_focus_records(
+        seeded_pool, "dr_w", allowed, ["m:1"], neighbours=True, limit=50, depth=8)
+    assert {record_id for record_id, _ in reached} == {"m:1", "p:1", "p:2", "m:3"}
+
+
+@integration
+@pytest.mark.asyncio
+async def test_degrees_count_only_visible_accepted_links(seeded_pool):
+    degrees = await window_store.count_visible_degrees(seeded_pool, "dr_w", ["ws-a"], ["p:1", "p:2", "m:1", "m:3", "p:5"])
+    # p:1: m:1 and p:2 (m:2 is hidden); p:5: its only link is suppressed.
+    assert degrees == {"p:1": 2, "p:2": 2, "m:1": 1, "m:3": 1}
+    assert await window_store.count_visible_degrees(seeded_pool, "dr_w", ["ws-a"], []) == {}
