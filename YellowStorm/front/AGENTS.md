@@ -5,6 +5,8 @@ Read this file before edits, then load only matching references below.
 
 ## Essential rules
 
+- New modules, services, runtimes or persistence require the user's approval of a concrete scoped proposal before implementation; follow [change control](../../docs/agent-context/architecture/change-control.md). Architecture changes also update the owning references/ADRs before full completion.
+
 - Find an existing sibling implementation before adding a pattern, helper or dependency; check `package.json` before adding a library.
 - Use `@/` for shared/cross-module imports and public module barrels; sibling imports stay within the module. Router lazy-loading and established governance exceptions are documented below.
 - Extend existing hash-router guards; preserve route lazy-loading boundaries.

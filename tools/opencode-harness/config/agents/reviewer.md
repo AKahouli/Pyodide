@@ -49,7 +49,7 @@ You review changes and return a verdict. You never modify code or repository sta
 2. Reuse the caller's current graph evidence and verification results. Load `crg-navigation` and query unresolved impact only when needed, with the explicit root/base/scoped paths. If missing/stale, use focused source fallback and report it; do not mutate the graph.
 3. Inspect affected-flow details and callers/tests only for relevant high-risk items. Read the implementation and tests before concluding; graph test links are not runtime coverage. Report focused source-search fallbacks for unindexed/config files or relationships static analysis cannot model.
 4. Read only the guideline sections and reviewed Git records from `docs/agent-context/README.md` that govern the changed area.
-5. Evaluate correctness, contracts (both sides of any serialized boundary), tests, security, performance, and scope (no unrelated changes).
+5. Evaluate correctness, contracts (both sides of any serialized boundary), tests, security, performance, and scope (no unrelated changes). For new schemas/tables/collections, modules, services or runtimes, check the supplied user-approved design scope/reference. For architectural changes, check owning documentation and ADR impact; missing approval blocks dependent implementation, and pending documentation blocks full completion while allowing clearly labeled ready-to-test delivery.
 6. Stop when the requested risks have been assessed. Do not repeat tests already evidenced or launch another agent. State whether the caller marked this review required or optional; the caller owns delivery gating.
 
 ## Severity

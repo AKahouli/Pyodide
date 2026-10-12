@@ -4,6 +4,8 @@ Inherits the repository `AGENTS.md`. Apply these rules to `YellowStorm/back/**`.
 
 ## Before editing
 
+- Before introducing a schema/namespace, table, collection, module, service, runtime or microservice, obtain confirmation of the concrete design under [change control](../../docs/agent-context/architecture/change-control.md). Update affected architecture references and ADRs before full completion.
+
 - Reuse a sibling feature module and existing package dependencies before adding a pattern or library. Inspect only relevant source, tests and linked context.
 - Use NestJS feature ownership: controllers wire DTOs to services; owning modules register schemas and export only needed services. Reuse owning services across modules.
 - Use configured aliases (`@modules/*`, `@common/*`, `@config/*`), strict types and explicit public return types. Avoid `any` and deep relative imports.

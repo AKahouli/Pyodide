@@ -70,6 +70,8 @@ Files to touch:
 Steps:
 1. ...
 Contract and data impact: sender/receiver, compatibility, migration, or None
+Architecture approval: reuse existing / confirmed named design + message reference / proposal pending; include independent service/schema alternative only when justified
+Documentation impact: owning references/ADR to update, or no-impact reason
 Verification:
 - `<exact command>` - what it proves
 Risks: | Risk | Impact | Mitigation |

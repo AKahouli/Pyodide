@@ -4,6 +4,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 
 | Scope | Reviewed context | Direct checks |
 | --- | --- | --- |
+| New schema/service/module/runtime or changed architecture | [Architecture change control](architecture/change-control.md), [ADR-0007](decisions/ADR-0007-architecture-approval-and-documentation.md) | confirmed design scope, source/contract verification and documentation-impact checkpoint |
 | Agent harness and knowledge workflow | [ADR-0001](decisions/ADR-0001-agent-knowledge.md), [ADR-0002](decisions/ADR-0002-fast-validation-and-parallel-work.md), [ADR-0003](decisions/ADR-0003-autonomy-and-qa-sign-in.md), [ADR-0004](decisions/ADR-0004-private-qa-and-regression-fixtures.md) (current browser policy) | `AGENTS.md`, OpenCode user settings |
 | Task checkpoints, interruption/resume, and reuse before edits | [ADR-0005](decisions/ADR-0005-task-checkpoints-and-reuse-gates.md), [Harness guide](../../tools/opencode-harness/README.md) | native plugin hooks, SQLite ownership, scoped diffs, and harness tests |
 | Frontend (`YellowStorm/front/**`) | [Scoped instructions and topic links](../../YellowStorm/front/AGENTS.md); read only matching references | frontend source and tests |
