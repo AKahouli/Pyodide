@@ -1,9 +1,12 @@
 import { isObjectId } from '@common/postgres/object-id';
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { AuthorizationService } from '@modules/authorization';
+import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
+import { UserService } from '@modules/user/user.service';
+import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
+import { UnauthorizedException } from '@modules/exceptions';
 
 type Headers = Record<string, string | string[] | undefined>;
 
@@ -15,7 +18,7 @@ type Headers = Record<string, string | string[] | undefined>;
  */
 @Injectable()
 export class SemanticAssistantActorGuard implements CanActivate {
-  constructor(private readonly authorization: AuthorizationService) {}
+  constructor(private readonly authorization: AuthorizationService, private readonly users: UserService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{ headers: Headers; user?: unknown }>();
@@ -27,6 +30,9 @@ export class SemanticAssistantActorGuard implements CanActivate {
     if (typeof correlationId !== 'string' || !correlationId.trim() || correlationId.length > 200) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid correlation id');
     }
+    const user = await this.users.findById(userId);
+    if (!user) throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND);
+    assertAccountApproved(user);
     const roles = await this.authorization.getUserRoles(userId);
     const permissions = await this.authorization.getUserPermissions(roles.map((role) => role.id));
     request.user = { _id: userId, permissions };

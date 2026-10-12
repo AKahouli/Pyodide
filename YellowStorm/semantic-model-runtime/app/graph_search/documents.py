@@ -141,6 +141,28 @@ def lexical_query(query: str, settings: SearchSettings | None = None) -> str | N
     return " | ".join(f"({part})" if " " in part else part for part in kept) or None
 
 
+def _is_reference(token: str) -> bool:
+    return len(words(token)) > 1 and (any(char.isdigit() for char in token) or "@" in token)
+
+
+def reference_phrases(query: str) -> list[str]:
+    """The written references of a request: a token made of several parts that holds a digit or an
+    ``@`` (``AV-2026-0135``, ``INV-2024-001``, ``alice@acme.com``), folded, as the record names carry them.
+    A name that contains one is the record asked for, whatever else the request says."""
+    phrases: list[str] = []
+    for token in fold(query).split():
+        if _is_reference(token):
+            phrase = "".join(char for char in token if char.isalnum() or char in "-_.@/:").strip("-_.@/:")
+            if phrase and phrase not in phrases:
+                phrases.append(phrase)
+    return phrases
+
+
+def reference_query(phrases: list[str]) -> str | None:
+    """The tsquery of written references alone (``reference_phrases``): each one as words that must follow each other."""
+    return " | ".join("(" + " <-> ".join(words(phrase)) + ")" for phrase in phrases) or None
+
+
 def humanize(name: str) -> str:
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
     spaced = re.sub(r"[_\-.]+", " ", spaced).strip()

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { HelpCircle, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
+import { HelpCircle, PanelLeftClose, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -69,13 +69,8 @@ function OutlineGroupSection({ group, activeAnchorId, onSelect, questionAriaLabe
   );
 }
 
-/**
- * Collapsible left rail listing conversation headings (h1–h3) grouped by the
- * user prompt that produced them. Always mounted and visible next to the
- * conversation thread at every viewport width — with an empty-state hint
- * until headings exist.
- */
-export function ConversationOutlineRail() {
+/** Conversation headings grouped by their originating user prompt. */
+export function ConversationOutlineRail({ embedded = false, onSelect }: Readonly<{ embedded?: boolean; onSelect?: () => void }>) {
   const { t } = useModuleTranslation('conversation');
   const messages = useDisplayMessages();
   const isStreaming = useConversationStore((s) => s.isStreaming);
@@ -97,24 +92,16 @@ export function ConversationOutlineRail() {
     [groups, normalizedQuery],
   );
 
-  if (collapsed) {
-    return (
-      <div data-outline-rail='collapsed' className='flex shrink-0 flex-col items-center border-r border-border/50 py-3'>
-        <Button variant='ghost' size='icon' className='size-8' aria-label={t('outline.expand')} title={t('outline.expand')} onClick={() => setOutlineCollapsed(false)}>
-          <PanelLeftOpen className='size-4' />
-        </Button>
-      </div>
-    );
-  }
+  if (collapsed && !embedded) return null;
 
   return (
-    <nav data-outline-rail='expanded' aria-label={t('outline.title')} className='flex w-60 shrink-0 flex-col border-r border-border/50'>
-      <div className='flex items-center justify-between gap-2 px-3 pb-1 pt-3'>
+    <nav data-outline-rail='expanded' aria-label={t('outline.title')} className='flex h-full min-h-0 min-w-0 flex-1 flex-col'>
+      {!embedded && <div className='flex items-center justify-between gap-2 px-3 pb-1 pt-3'>
         <span className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('outline.title')}</span>
         <Button variant='ghost' size='icon' className='size-7' aria-label={t('outline.collapse')} title={t('outline.collapse')} onClick={() => setOutlineCollapsed(true)}>
           <PanelLeftClose className='size-4' />
         </Button>
-      </div>
+      </div>}
       {groups.length > 0 && (
         <div className='relative px-3 pb-2'>
           <Search className='pointer-events-none absolute left-5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' aria-hidden='true' />
@@ -134,7 +121,7 @@ export function ConversationOutlineRail() {
             : visibleGroups.length === 0
               ? <p data-outline-empty className='px-2 pt-1 text-xs leading-relaxed text-muted-foreground'>{t('outline.noResults')}</p>
               : visibleGroups.map((group) => (
-              <OutlineGroupSection key={group.key} group={group} activeAnchorId={activeAnchorId} onSelect={requestOutlineScroll} questionAriaLabel={t('outline.jumpToQuestion')} query={searchQuery} />
+              <OutlineGroupSection key={group.key} group={group} activeAnchorId={activeAnchorId} onSelect={(anchorId) => { requestOutlineScroll(anchorId); onSelect?.(); }} questionAriaLabel={t('outline.jumpToQuestion')} query={searchQuery} />
             ))}
         </div>
       </TooltipProvider>

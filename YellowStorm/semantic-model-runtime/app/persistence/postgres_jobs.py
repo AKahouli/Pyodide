@@ -19,6 +19,7 @@ from app.jobs.models import (
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
+from app.jobs.worker_liveness import ONLINE_WINDOW_SECONDS
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
 TERMINAL_JOB_STATES = {
@@ -39,6 +40,39 @@ def _object(value: Any) -> dict[str, Any]:
 def _fingerprint(value: Any) -> str:
     body = json.dumps(value, separators=(",", ":"), sort_keys=True)
     return f"sha256:{hashlib.sha256(body.encode()).hexdigest()}"
+
+
+# {window} is the ONLINE_WINDOW_SECONDS constant, never request input.
+_HEARTBEAT_COUNT_SQL = """(SELECT count(*) FROM semantic_jobs.worker_heartbeats w
+          WHERE own.queue_name = ANY(w.queues) AND w.last_seen > now() - make_interval(secs => {window}))"""
+
+# One statement: the job's own queued task fixes the queue and the creation order; the join counts
+# the other jobs' queued or running tasks on that queue created before it (index: tasks_claim_idx
+# on queue_name, state). ``heartbeats`` is a scalar subquery, or NULL before migration 035.
+_QUEUE_POSITION_SQL = """
+    WITH own AS (
+      SELECT queue_name, created_at, id, job_id FROM semantic_jobs.tasks
+      WHERE job_id = $1::uuid AND state = 'queued'
+      ORDER BY id LIMIT 1
+    )
+    SELECT own.queue_name,
+           count(DISTINCT o.job_id) FILTER (WHERE o.state = 'running') AS running,
+           count(DISTINCT o.job_id) FILTER (WHERE o.state = 'queued') AS queued,
+           (SELECT count(DISTINCT l.lease_owner) FROM semantic_jobs.tasks l
+             WHERE l.queue_name = own.queue_name AND l.state = 'running'
+               AND l.lease_expires_at > now()) AS live_leases,
+           {heartbeats} AS heartbeats
+    FROM own
+    LEFT JOIN semantic_jobs.tasks o
+      ON o.queue_name = own.queue_name AND o.state IN ('queued', 'running')
+     AND o.job_id <> own.job_id AND (o.created_at, o.id) < (own.created_at, own.id)
+    GROUP BY own.queue_name, own.created_at, own.id
+"""
+
+
+def _queue_position_sql(*, with_heartbeats: bool) -> str:
+    heartbeats = _HEARTBEAT_COUNT_SQL.format(window=ONLINE_WINDOW_SECONDS) if with_heartbeats else "NULL::bigint"
+    return _QUEUE_POSITION_SQL.format(heartbeats=heartbeats)
 
 
 class PostgresJobRepository:
@@ -359,7 +393,7 @@ class PostgresJobRepository:
         )
         if row is None:
             return None
-        return {
+        job = {
             "jobId": row["id"],
             "jobType": row["job_type"],
             "modelId": row["model_id"],
@@ -373,6 +407,51 @@ class PostgresJobRepository:
             "completedAt": row["completed_at"],
             "updatedAt": row["updated_at"],
         }
+        if row["state"] == "queued":
+            queue = await self.queue_position(job_id)
+            if queue is not None:
+                job["queue"] = queue
+        return job
+
+    async def queue_position(self, job_id: str) -> dict[str, Any] | None:
+        """Where a queued job stands on its task queue, as counts only.
+
+        ``ahead`` is the jobs created before this one that are still queued or running on the same
+        queue, whatever their model or workspace. ``workersOnline`` is the heartbeating workers on
+        the queue, or null when it cannot be told (heartbeat table not migrated yet and no running
+        task to prove a worker). A live task lease also proves a worker, so a worker that predates
+        heartbeats but is busy is not reported as absent."""
+        try:
+            row = await self.pool.fetchrow(_queue_position_sql(with_heartbeats=True), job_id)
+        except asyncpg.UndefinedTableError:
+            row = await self.pool.fetchrow(_queue_position_sql(with_heartbeats=False), job_id)
+        if row is None:
+            return None
+        running, queued = int(row["running"]), int(row["queued"])
+        online = row["heartbeats"]
+        if online is None:
+            workers_online = int(row["live_leases"]) or None
+        else:
+            workers_online = max(int(online), int(row["live_leases"]))
+        return {
+            "queueName": row["queue_name"],
+            "position": running + queued + 1,
+            "ahead": {"running": running, "queued": queued},
+            "workersOnline": workers_online,
+        }
+
+    async def count_online_workers(self, queue_name: str) -> int | None:
+        """Workers heartbeating on the queue now; null when the heartbeat table is not there yet."""
+        try:
+            return int(await self.pool.fetchval(
+                """
+                SELECT count(*) FROM semantic_jobs.worker_heartbeats
+                WHERE $1 = ANY(queues) AND last_seen > now() - make_interval(secs => %d)
+                """ % ONLINE_WINDOW_SECONDS,
+                queue_name,
+            ))
+        except asyncpg.UndefinedTableError:
+            return None
 
     async def list_jobs(
         self, *, actor_user_id: str, model_id: str, job_type: str, limit: int
@@ -412,13 +491,18 @@ class PostgresJobRepository:
         return await self.get_job(job_id, actor_user_id) if job_id else None
 
     async def request_cancel(self, job_id: str, actor_user_id: str) -> dict[str, Any] | None:
-        """Stop a job. One that has not started ends at once; a running one is asked to stop
-        and its worker ends it at its next progress report, keeping nothing it read."""
+        """Stop a job. One nobody is working on ends at once: not started, or whose worker's lease
+        has run out (it is gone, and could not be asked). One a worker holds is asked to stop and the
+        worker ends it at its next progress report, keeping nothing it read. Asking again after the
+        lease ran out ends it, so a stop never waits on a worker that no longer answers.
+
+        A run past its last chance to stop (``progress.cancellable`` false: the new data is being
+        saved) is left as it is; it finishes, or recovery runs it again if its worker died."""
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 job = await connection.fetchrow(
                     """
-                    SELECT id::text, state FROM semantic_jobs.jobs
+                    SELECT id::text, state, progress, job_type FROM semantic_jobs.jobs
                     WHERE id = $1::uuid AND actor_user_id = $2
                     FOR UPDATE
                     """,
@@ -427,37 +511,72 @@ class PostgresJobRepository:
                 )
                 if job is None:
                     return None
-                if job["state"] not in TERMINAL_JOB_STATES and job["state"] != "cancel_requested":
-                    running = await connection.fetchval(
-                        "SELECT count(*) FROM semantic_jobs.tasks WHERE job_id = $1::uuid AND state = 'running'",
+                if job["job_type"].startswith("graph_search."):
+                    # A search build whose generation lease ran out has no worker answering, whatever
+                    # its task lease says: stopping it must not wait for that one.
+                    await self._expire_stalled_search_leases(connection, job_id)
+                if job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
+                    live = await connection.fetchval(
+                        """
+                        SELECT count(*) FROM semantic_jobs.tasks
+                        WHERE job_id = $1::uuid AND state = 'running' AND lease_expires_at > now()
+                        """,
                         job_id,
                     )
-                    if running:
-                        await connection.execute(
-                            """
-                            UPDATE semantic_jobs.jobs SET state = 'cancel_requested', updated_at = now()
-                            WHERE id = $1::uuid
-                            """,
-                            job_id,
-                        )
-                        await connection.execute(
-                            """
-                            INSERT INTO semantic_jobs.events (job_id, event_type, payload)
-                            VALUES ($1::uuid, 'job.cancel_requested', '{}'::jsonb)
-                            """,
-                            job_id,
-                        )
+                    if live:
+                        if job["state"] != "cancel_requested":
+                            await connection.execute(
+                                """
+                                UPDATE semantic_jobs.jobs SET state = 'cancel_requested', updated_at = now()
+                                WHERE id = $1::uuid
+                                """,
+                                job_id,
+                            )
+                            await connection.execute(
+                                """
+                                INSERT INTO semantic_jobs.events (job_id, event_type, payload)
+                                VALUES ($1::uuid, 'job.cancel_requested', '{}'::jsonb)
+                                """,
+                                job_id,
+                            )
                     else:
                         await connection.execute(
                             """
                             UPDATE semantic_jobs.tasks
-                            SET state = 'cancelled', completed_at = now(), updated_at = now()
-                            WHERE job_id = $1::uuid AND state = 'queued'
+                            SET state = 'cancelled', completed_at = now(), lease_owner = NULL,
+                                lease_expires_at = NULL, updated_at = now()
+                            WHERE job_id = $1::uuid
+                              AND (state = 'queued' OR (state = 'running' AND lease_expires_at <= now()))
                             """,
                             job_id,
                         )
                         await self._finish_cancelled(connection, job_id, None)
         return await self.get_job(job_id, actor_user_id)
+
+    @staticmethod
+    async def _expire_stalled_search_leases(connection: Any, job_id: str | None = None) -> int:
+        """Expire the task lease of a search build whose generation lease ran out.
+
+        The two leases are renewed together, at each real step of progress, but the task's lasts
+        longer: a worker hung inside one step (a call that never returns) would keep its task for
+        minutes after its build stopped. The generation lease running out is the earlier and exact
+        signal. ``updated_at < lease_until`` keeps out a task claimed after that lease was left
+        behind (a new attempt not yet at its own generation claim). Recovery then requeues the task
+        or ends it as for any lost lease.
+        """
+        result = await connection.execute(
+            """
+            UPDATE semantic_jobs.tasks t
+            SET lease_expires_at = now() - interval '1 second', updated_at = now()
+            FROM semantic_graph_search.index_generations g
+            WHERE g.job_id = t.job_id AND g.state = 'indexing' AND g.lease_until < now()
+              AND t.state = 'running' AND t.lease_expires_at >= now()
+              AND t.updated_at < g.lease_until
+              AND ($1::uuid IS NULL OR t.job_id = $1::uuid)
+            """,
+            job_id,
+        )
+        return int(result.split()[-1]) if result else 0
 
     async def cancel_requested(self, job_id: str) -> bool:
         return await self.pool.fetchval(
@@ -493,12 +612,22 @@ class PostgresJobRepository:
             SET state = 'cancelled', error_code = 'cancelled', completed_at = now(), updated_at = now()
             WHERE id = $1::uuid AND state NOT IN ('completed', 'completed_with_gaps', 'failed',
                                                   'cancelled', 'superseded')
-            RETURNING model_id
+            RETURNING model_id, job_type
             """,
             job_id,
         )
         if job is None:
             return
+        # Tasks that never ran must not wait for a delivery of a job that is over.
+        await connection.execute(
+            """
+            UPDATE semantic_jobs.tasks SET state = 'cancelled', completed_at = now(), updated_at = now()
+            WHERE job_id = $1::uuid AND state = 'queued'
+            """,
+            job_id,
+        )
+        if job["job_type"].startswith("graph_search."):
+            await self._fail_cancelled_generations(connection, job_id)
         await connection.execute(
             """
             INSERT INTO semantic_jobs.events (job_id, task_id, event_type, payload)
@@ -512,6 +641,19 @@ class PostgresJobRepository:
                 connection, model_id=job["model_id"], event_type="population-status-changed",
                 resource=job_id, payload={"resource": job_id, "status": "cancelled", "reason": "job_terminal"},
             )
+
+    @staticmethod
+    async def _fail_cancelled_generations(connection: Any, job_id: str) -> None:
+        """A search index build stopped for good leaves its generation ``failed`` / ``cancelled``
+        (what is embedded stays), whatever happened to the worker that held it."""
+        await connection.execute(
+            """
+            UPDATE semantic_graph_search.index_generations
+            SET state = 'failed', owner = NULL, lease_until = NULL, last_error_code = 'cancelled'
+            WHERE job_id = $1::uuid AND state IN ('queued', 'indexing')
+            """,
+            job_id,
+        )
 
     async def list_events(
         self, job_id: str, actor_user_id: str, after: int, limit: int
@@ -1031,6 +1173,18 @@ class PostgresJobRepository:
             node_prefix,
             boot_prefix,
         )
+        # A search index build owns its generation under the same lease owner: that lease goes
+        # too, or the next worker would find the generation still held.
+        await self.pool.execute(
+            """
+            UPDATE semantic_graph_search.index_generations
+            SET lease_until = now() - interval '1 second'
+            WHERE state = 'indexing' AND lease_until > now()
+              AND starts_with(owner, $1) AND NOT starts_with(owner, $2)
+            """,
+            node_prefix,
+            boot_prefix,
+        )
         return int(result.split()[-1]) if result else 0
 
     async def recover_stalled_tasks(
@@ -1058,6 +1212,19 @@ class PostgresJobRepository:
         """
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                await self._expire_stalled_search_leases(connection)
+                # A build stopped while its worker was gone (or by an earlier version) must not
+                # leave its generation "indexing" for good: once the lease ran out it is failed.
+                await connection.execute(
+                    """
+                    UPDATE semantic_graph_search.index_generations g
+                    SET state = 'failed', owner = NULL, lease_until = NULL, last_error_code = 'cancelled'
+                    FROM semantic_jobs.jobs j
+                    WHERE g.job_id = j.id AND j.state = 'cancelled'
+                      AND g.state IN ('queued', 'indexing')
+                      AND (g.lease_until IS NULL OR g.lease_until < now())
+                    """
+                )
                 expired = await connection.fetch(
                     """
                     SELECT t.id, t.attempt_count, t.job_id::text AS job_id,
@@ -1181,6 +1348,22 @@ class PostgresJobRepository:
                     )
                     republished += 1
 
+                # A generation no live job will build (its lease ran out and its job ended, or never
+                # was set) must not read "indexing" for good: it fails, and a build can be asked again.
+                # After the tasks above, so a job that just ran out of attempts takes its generation along.
+                await connection.execute(
+                    """
+                    UPDATE semantic_graph_search.index_generations g
+                    SET state = 'failed', owner = NULL, lease_until = NULL,
+                        last_error_code = 'index_interrupted'
+                    WHERE g.state = 'indexing'
+                      AND (g.lease_until IS NULL OR g.lease_until < now())
+                      AND NOT EXISTS (
+                        SELECT 1 FROM semantic_jobs.jobs j
+                        WHERE j.id = g.job_id
+                          AND j.state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested'))
+                    """
+                )
                 return {"exhausted": exhausted, "requeued": len(requeue_running) + republished}
 
     async def claim_outbox(

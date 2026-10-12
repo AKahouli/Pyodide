@@ -46,7 +46,19 @@ _FIELD_KEYS = ("sourceAttribute", "targetAttribute", "mode", "label", "extractio
 
 
 class DerivationError(ValueError):
-    """A derivation that cannot run as described; the message is an error code."""
+    """A derivation that cannot run as described; the message is an error code.
+
+    ``reason`` says what is wrong inside that code, ``field`` the target field it concerns and
+    ``detail`` the reader's own words, for the model check; none changes the code a run reports.
+    """
+
+    def __init__(self, code: str, reason: str | None = None, field: str | None = None,
+                 detail: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.reason = reason
+        self.field = field
+        self.detail = detail
 
 
 def _mode(field: dict) -> str:
@@ -79,35 +91,38 @@ def field_plan(derivation: dict) -> dict[str, Any]:
 
 def _normalize_field(field: Any, source: dict, target: dict, items: bool = False) -> dict:
     if not isinstance(field, dict):
-        raise DerivationError("invalid_derivations")
+        raise DerivationError("invalid_derivations", "field_shape")
 
     def readable(name: Any) -> bool:
         # A field of the source record, or (when the derivation expands a field) of the item.
         return name in source["allowedFields"] or (items and is_item_attribute(name))
     mode = _mode(field)
     target_attribute = field.get("targetAttribute")
-    if mode not in FIELD_MODES or target_attribute not in target["allowedFields"]:
-        raise DerivationError("invalid_derivations")
+    field_id = target_attribute if isinstance(target_attribute, str) else None
+    if mode not in FIELD_MODES:
+        raise DerivationError("invalid_derivations", "mode_unknown", field_id)
+    if target_attribute not in target["allowedFields"]:
+        raise DerivationError("invalid_derivations", "target_unknown", field_id)
     if mode in ("direct", "extract") and not readable(field.get("sourceAttribute")):
-        raise DerivationError("invalid_derivations")
+        raise DerivationError("invalid_derivations", "source_field_unknown", field_id)
     if mode == "direct" and "mode" not in field:
         # A field copied as it is: the shape every derivation had before the field modes.
         return {"sourceAttribute": field["sourceAttribute"], "targetAttribute": target_attribute}
     if mode == "constant" and not isinstance(field.get("constantValue"), (str, int, float, bool)):
-        raise DerivationError("invalid_derivations")
+        raise DerivationError("invalid_derivations", "constant_value", field_id)
     if mode == "computed":
         computed = field.get("computed")
         source_input = (computed.get("input") or {}) if isinstance(computed, dict) else {}
         # A joined input reads each of its parts; a fixed text part reads nothing.
         parts = source_input.get("parts") if source_input.get("kind") == "join" else [source_input]
         if not isinstance(parts, list):
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "recipe_input", field_id)
         for part in parts:
             kind = part.get("kind") if isinstance(part, dict) else None
             # A "column" of a source record is one of its fields.
             if (kind not in ("column", "field", "text") or (kind == "text" and part is source_input)
                     or (kind == "column" and not readable(part.get("name")))):
-                raise DerivationError("invalid_derivations")
+                raise DerivationError("invalid_derivations", "recipe_input", field_id)
     return {key: field[key] for key in _FIELD_KEYS if key in field}
 
 
@@ -127,42 +142,44 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
     if entries is None:
         return []
     if not isinstance(entries, list) or len(entries) > MAX_DERIVATIONS:
-        raise DerivationError("invalid_derivations")
+        raise DerivationError("invalid_derivations", "shape")
     normalized: list[dict] = []
     for entry in entries:
         if not isinstance(entry, dict):
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "shape")
         derivation_id = entry.get("derivationId")
         target = concepts.get(entry.get("conceptId"))
         source = concepts.get(entry.get("sourceConceptId"))
         if not isinstance(derivation_id, str) or not derivation_id or target is None or source is None:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "concept_unknown")
         if target["conceptId"] == source["conceptId"]:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "same_concept")
         fields = entry.get("fieldMappings")
         if not isinstance(fields, list) or not fields:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "no_fields")
         try:
             expand = normalize_expand(entry.get("expand"), source["allowedFields"])
         except ExpandError as exc:
-            raise DerivationError("invalid_derivations") from exc
+            raise DerivationError("invalid_derivations", "expand") from exc
         mapped = [_normalize_field(field, source, target, items=expand is not None) for field in fields]
         targets = [field["targetAttribute"] for field in mapped]
         if len(set(targets)) != len(targets):
-            raise DerivationError("invalid_derivations")
-        if any(component not in targets for component in target["keyComponents"]):
-            raise DerivationError("unmapped_identity")
+            duplicated = next(name for name in targets if targets.count(name) > 1)
+            raise DerivationError("invalid_derivations", "duplicate_target", duplicated)
+        missing_key = next((component for component in target["keyComponents"] if component not in targets), None)
+        if missing_key is not None:
+            raise DerivationError("unmapped_identity", None, missing_key)
         rule = entry.get("conflictRule") or "most_frequent"
         order_by = entry.get("orderBy")
         if rule not in CONFLICT_RULES:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "conflict_rule")
         if rule == "latest" and order_by not in source["allowedFields"]:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "order_by")
         if rule != "latest":
             order_by = None
         label_field = entry.get("labelField")
         if label_field is not None and label_field not in targets:
-            raise DerivationError("invalid_derivations")
+            raise DerivationError("invalid_derivations", "label_field", label_field)
         mapping_version = entry.get("mappingVersion")
         derivation = {
             "derivationId": derivation_id, "conceptId": target["conceptId"],
@@ -176,13 +193,16 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         ai_settings = entry.get("aiSettings")
         if ai_settings is not None:
             if not isinstance(ai_settings, dict):
-                raise DerivationError("invalid_derivations")
+                raise DerivationError("invalid_derivations", "ai_settings")
             derivation["aiSettings"] = ai_settings
         try:
             field_plan(derivation)
+        except RuleError as exc:
+            raise DerivationError("invalid_derivations", "field_rules", detail=str(exc)) from exc
+        try:
             normalize_ai_settings(ai_settings)
         except RuleError as exc:
-            raise DerivationError("invalid_derivations") from exc
+            raise DerivationError("invalid_derivations", "ai_settings", detail=str(exc)) from exc
         normalized.append(derivation)
     targets = {derivation["conceptId"] for derivation in normalized}
     if any(derivation["sourceConceptId"] in targets for derivation in normalized):
@@ -325,6 +345,12 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
         readings[entity["entityId"]] = {
             "values": {field: values.get(field) for field, item in by_field.items() if _mode(item) != "direct"},
             "evidence": evidence}
+        if outcome is not None:
+            # Fields the AI never read because of its row limit: left to the rules, not missing values.
+            limited = [attribute for attribute in plan["extractions"]
+                       if (outcome["fields"].get(attribute) or {}).get("detail") == "ai_row_limit"]
+            if limited:
+                readings[entity["entityId"]]["aiLimited"] = limited
     gaps = cell_gaps(derivation["conceptId"], None, plan["extractions"], missing, len(ordered),
                      reader.stats, unit="records") if reader is not None else []
     for gap in gaps:
@@ -334,7 +360,8 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
 
 def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                    source_assertions: list[dict], readings: dict[str, dict] | None = None, *,
-                   max_entities: int = MAX_MATERIALIZED_ENTITIES, max_assertions: int = MAX_ASSERTIONS) -> dict:
+                   max_entities: int = MAX_MATERIALIZED_ENTITIES, max_assertions: int = MAX_ASSERTIONS,
+                   observer: Any = None) -> dict:
     """One target record per distinct key found in the source records, shaped like a source's output.
 
     ``readings`` (from :func:`read_derived_fields`) holds, per source record, the values and evidence
@@ -381,11 +408,24 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
             identity[component] = normalized
         if len(identity) != len(key_components):
             missing = next(component for component in key_components if component not in identity)
+            if missing in ((readings.get(entity["entityId"]) or {}).get("aiLimited") or ()):
+                # The AI never read this record (its row limit): the run reports the limit once.
+                if observer is not None:
+                    observer.ai_limited_row(missing)
+                continue
             gaps.append({"kind": "missing_identity", "conceptId": target["conceptId"], "rowNumber": None,
                          "detail": f"{entity.get('label') or entity['entityId']} has no value for '{by_target[missing] or missing}'",
                          "field": missing, "derivationId": derivation["derivationId"],
                          "values": {"record": entity.get("label") or entity["entityId"]}})
+            if observer is not None:
+                observer.missing_row(missing, lambda entity=entity: {name: _text(value_of(entity, name))
+                                                                     for name in by_target if name in by_field},
+                                     record=str(entity.get("label") or entity["entityId"]))
             continue
+        if observer is not None:
+            observer.keyed_row(identity, lambda entity=entity: {name: _text(value_of(entity, name))
+                                                                for name in by_target if name in by_field},
+                               record=str(entity.get("label") or entity["entityId"]))
         key = entity_key(target["namespace"], identity)
         group = groups.get(key)
         if group is None:
@@ -414,6 +454,11 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                 gaps.append({"kind": "conflicting_values", "conceptId": target["conceptId"], "rowNumber": None,
                              "detail": f"attribute '{target_attribute}' has {distinct} different values",
                              "field": target_attribute, "derivationId": derivation["derivationId"]})
+                if observer is not None:
+                    observer.conflict(target_attribute, candidates[0][0], next(
+                        text for text, _member in candidates if text != candidates[0][0]), group["identity"],
+                        record=str(members[0].get("label") or members[0]["entityId"]),
+                        rows=len(candidates), distinct=distinct)
                 continue
             if len(assertions) >= max_assertions:
                 gaps.append({"kind": "assertion_cap", "conceptId": target["conceptId"], "rowNumber": None,

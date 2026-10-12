@@ -13,6 +13,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.persistence.partitions import ensure_generation_partitions, ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning, delete_model
 
 DSN = os.environ.get("SEMANTIC_RUNTIME_TEST_DATABASE_URL")
@@ -41,6 +42,7 @@ async def _seed(connection: asyncpg.Connection, model: str) -> None:
     await connection.execute(
         "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash, projection_ref) "
         "VALUES ($1, $2, 'v1', $3, $4)", revision, model, SPEC_HASH, ref)
+    await ensure_revision_partitions(connection, revision)
     await connection.execute(
         "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, data_revision_id, "
         "projection_ref) VALUES ($1, 'draft', 'v1', $2, $3)", model, revision, ref)
@@ -57,6 +59,7 @@ async def _seed(connection: asyncpg.Connection, model: str) -> None:
         "INSERT INTO semantic_graph_search.index_generations (model_id, data_revision_id, projection_ref, spec_hash, "
         "embedding_fingerprint, state) VALUES ($1, $2, $3, $4, 'fp', 'ready') RETURNING index_id",
         model, revision, ref, SPEC_HASH)
+    await ensure_generation_partitions(connection, index_id)
     await connection.execute(
         "INSERT INTO semantic_graph_search.entity_documents (index_id, entity_id, concept_id, label, label_key, "
         "search_text, lexical, content_hash, status) VALUES ($1, $2, 'c', 'A', 'a', 'a', to_tsvector('simple', 'a'), $3, 'exact_only')",

@@ -5,16 +5,24 @@ import { AgentService } from '../agent/agent.service';
 import { BadRequestException } from '../exceptions/exceptions/http.exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import type { ScenarioInput, ScenarioRecord } from './evaluation.types';
+import { PgEvaluationDatasetStore } from './persistence/pg-evaluation-dataset.store';
 import { PgEvaluationScenarioStore } from './persistence/pg-evaluation-scenario.store';
 
 @Injectable()
 export class ScenarioService {
     constructor(
         private readonly scenarios: PgEvaluationScenarioStore,
+        private readonly datasets: PgEvaluationDatasetStore,
         private readonly logger: LoggerService,
         private readonly agentService: AgentService,
     ) {
         this.logger.setContext(ScenarioService.name);
+    }
+
+    /** A scenario may only be aimed at a dataset its creator owns. */
+    private async assertDatasetUsable(userId: string, datasetId: string): Promise<void> {
+        const dataset = await this.datasets.findByIdForCreator(datasetId, userId);
+        if (!dataset) throw new NotFoundException(ErrorCode.NOT_FOUND);
     }
 
     async create(userId: string, permissions: string[], data: ScenarioInput): Promise<ScenarioRecord> {
@@ -27,6 +35,7 @@ export class ScenarioService {
             if (!input.name) throw new BadRequestException('Scenario name is required');
             if (!input.agentId) throw new BadRequestException('Scenario agentId is required');
             if (!input.datasetId) throw new BadRequestException('Scenario datasetId is required');
+            await this.assertDatasetUsable(userId, input.datasetId);
             return await this.scenarios.create({
                 name: input.name,
                 agentId: input.agentId,
@@ -67,7 +76,9 @@ export class ScenarioService {
             if (data.agentId && data.agentId.toString().toLowerCase() !== existing.agentId) {
                 await this.assertCanManageAgent(userId, permissions, data.agentId.toString());
             }
-            const updated = await this.scenarios.update(id, this.parseInput(data));
+            const input = this.parseInput(data);
+            if (input.datasetId) await this.assertDatasetUsable(userId, input.datasetId);
+            const updated = await this.scenarios.update(id, input);
             if (!updated) {
                 throw new NotFoundException(`Scenario with ID ${id} not found`);
             }

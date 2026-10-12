@@ -64,6 +64,7 @@ import { RootDelegateInternalController } from './controllers/root-delegate-inte
 import { RootInputController } from './controllers/root-input.controller';
 import { RootWorkPublicController } from './controllers/root-work-public.controller';
 import { RootWorkPublicService } from './root-work/root-work-public.service';
+import { RootForegroundWorkersService } from './root-work/root-foreground-workers.service';
 import { RootInputService } from './root-work/root-input.service';
 import { RootResultController } from './controllers/root-result.controller';
 import { RootResultService } from './root-work/root-result.service';
@@ -77,6 +78,7 @@ import { RootBackgroundDriverService } from './root-work/root-background-driver.
 import { RootFollowupService } from './root-work/root-followup.service';
 import { RootFollowupStore } from './persistence/postgres/root-followup.store';
 import { RootBackgroundSubmissionService } from './root-work/root-background-submission.service';
+import { RootConversationReplyService } from './root-work/root-conversation-reply.service';
 import { RootBackgroundInputService } from './root-work/root-background-input.service';
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
@@ -106,7 +108,7 @@ import { ConversationNameService } from './services/conversation-name.service';
     ReportController,
     ConversationFileController,
   ],
-  providers: [ConversationRootResolverService, RootFollowupService, RootFollowupStore, RootWorkPublicService, ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService, RootDelegateDefinitionService, RootInputService, RootResultService, RootEvidenceService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundJobStore, RootBackgroundEventStore, RootBackgroundLifecycleService, RootBackgroundDriverService, RootBackgroundSubmissionService, RootBackgroundInputService],
+  providers: [RootConversationReplyService, ConversationRootResolverService, RootFollowupService, RootFollowupStore, RootWorkPublicService, ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService, RootDelegateDefinitionService, RootInputService, RootResultService, RootEvidenceService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundJobStore, RootBackgroundEventStore, RootBackgroundLifecycleService, RootBackgroundDriverService, RootBackgroundSubmissionService, RootBackgroundInputService, RootForegroundWorkersService],
   exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

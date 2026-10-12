@@ -11,6 +11,9 @@ export interface NativeInputSchema {
   maxItems?: number;
   minimum?: number;
   maximum?: number;
+  title?: string;
+  description?: string;
+  examples?: Array<string | number | boolean>;
 }
 
 const DATA_KEYS = new Set(['type', 'properties', 'required', 'items', 'enum', 'additionalProperties',
@@ -26,6 +29,12 @@ export function sanitizeNativeInputSchema(raw: unknown, depth = 0,
   const type = source.type;
   if (!['object', 'array', 'string', 'number', 'integer', 'boolean'].includes(String(type))) return null;
   const result: NativeInputSchema = { type: type as NativeInputSchema['type'] };
+  for (const key of ['title', 'description'] as const) {
+    if (typeof source[key] === 'string') result[key] = source[key].slice(0, key === 'title' ? 100 : 500);
+  }
+  if (Array.isArray(source.examples)) result.examples = source.examples.filter((item) =>
+    typeof item === 'string' && item.length <= 200 || typeof item === 'boolean'
+    || typeof item === 'number' && Number.isFinite(item)).slice(0, 4);
   for (const key of ['minLength', 'maxLength', 'minItems', 'maxItems', 'minimum', 'maximum'] as const) {
     const bound = source[key];
     if (bound === undefined) continue;

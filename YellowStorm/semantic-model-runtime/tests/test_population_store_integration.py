@@ -24,12 +24,14 @@ async def pool():
         await connection.execute("DROP SCHEMA IF EXISTS semantic_jobs CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_population CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_runtime CASCADE")
+        await connection.execute("DROP SCHEMA IF EXISTS semantic_graph_search CASCADE")
         for name in ("001_durable_jobs.sql", "005_runtime_store.sql", "006_population_store.sql",
                       "008_versioned_specification_mirrors.sql",
                       "009_invalidate_unverified_age_projections.sql",
                       "010_ui_signal_outbox.sql", "015_population_execution_fingerprint.sql",
                        "016_draft_population_binding.sql",
-                       "017_current_specification_selection.sql", "029_assertion_candidates.sql"):
+                       "017_current_specification_selection.sql", "029_assertion_candidates.sql",
+                       "022_graph_search.sql", "031_partition_revision_tables.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()

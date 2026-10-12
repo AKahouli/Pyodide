@@ -34,6 +34,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const clearReplyingTo = useConversationStore((s) => s.clearReplyingTo);
   const isAwaitingFirstChunk = useIsAwaitingFirstChunk();
   const isStreaming = useConversationStore((s) => s.isStreaming);
+  const runningCount = useConversationStore((s) => Object.values(s.liveAnswers ?? {}).filter((answer) => answer.conversationId === conversationId).length);
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const selectedSemanticModelId = useSelectedSemanticModelId();
@@ -115,9 +116,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
     return m.length > 0 ? m : undefined;
   }, [currentConversation, user?.id]);
 
-  const { files: uploadFiles, addFiles, removeFile, completedFileIds, isUploading, clearAll } = useConversationFileUpload({ conversationId, onError: (msg) => toast.error(msg) });
+  const { files: uploadFiles, addFiles, removeFile, completedFileIds, isUploading, clearSubmitted } = useConversationFileUpload({ conversationId, onError: (msg) => toast.error(msg) });
 
-  const status = isAwaitingFirstChunk || isStreaming ? ('streaming' as const) : ('ready' as const);
+  const concurrentReplies = currentConversation?.concurrentRepliesEnabled === true;
+  const status = !concurrentReplies && (isAwaitingFirstChunk || isStreaming) ? ('streaming' as const) : ('ready' as const);
 
   // Calculate countdown for placeholder
   const getLimitPlaceholder = useMemo(() => {
@@ -149,7 +151,15 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
 
   const handleSubmit = useCallback(
     async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
-      if (!message.text?.trim() && !completedFileIds.length) return;
+      if (!message.text?.trim() && !completedFileIds.length) return false;
+      const differentAgent = !!agentIds?.length && !(agentIds.length === 1 && agentIds[0] === currentConversation?.rootAgentId);
+      if ((runningCount > 0 || isStreaming || isAwaitingFirstChunk) && (!concurrentReplies || differentAgent || teamIds?.length || memberIds?.length)) {
+        toast.error(t('input.waitForReply'));
+        return false;
+      }
+      const submittedSkillIds = [...useConversationStore.getState().selectedSkillIds];
+      const submittedConnector = connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined;
+      const submittedReplyId = replyingToMessage?.id;
 
       await workspacePersistenceQueue.current;
       const submittedWorkspaceIds = workspaceIds ?? selectedWorkspaceIds;
@@ -172,6 +182,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         }));
 
       await sendMessage(conversationId, {
+        requestId: crypto.randomUUID(),
         content: message.text || '',
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
@@ -186,16 +197,17 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
         parentMessageId: replyingToMessage?.id,
-        connectorRepo: runtimeManaged ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
-        skillIds: !runtimeManaged && useConversationStore.getState().selectedSkillIds.length
-          ? useConversationStore.getState().selectedSkillIds
+        connectorRepo: runtimeManaged ? undefined : submittedConnector,
+        skillIds: !runtimeManaged && submittedSkillIds.length
+          ? submittedSkillIds
           : undefined,
       });
 
-      clearAll();
-      clearReplyingTo();
+      clearSubmitted(uploadFiles.filter((file) => file.status === 'completed').map((file) => file.localId));
+      if (useConversationStore.getState().replyingToMessage?.id === submittedReplyId) clearReplyingTo();
+      return true;
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearSubmitted, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort, isStreaming, isAwaitingFirstChunk, concurrentReplies, currentConversation?.rootAgentId, runningCount, t],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -229,8 +241,9 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   }, [replyingToMessage, user?.id, currentConversation]);
 
   return (
-    <div className='shrink-0 z-10 p-4 bg-background/80 backdrop-blur-xs border-t border-border/50'>
+    <div data-conversation-composer className='shrink-0 z-10 px-3 py-2 md:px-4 bg-background/80 [&_textarea]:min-h-10 [&_textarea]:max-h-40 backdrop-blur-xs border-t border-border/50'>
       {isLimitExceeded && <UsageLimitBanner />}
+      {concurrentReplies && runningCount > 0 && <p className='mb-1 text-xs text-muted-foreground' role='status'>{t('input.runningReplies', { count: runningCount })}</p>}
 
       {replyingToMessage && (
         <div className='flex items-center gap-3 p-3 mb-3 bg-muted/40 rounded-xl border border-border/40 animate-in slide-in-from-bottom-2 duration-200'>
@@ -265,7 +278,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         onStop={stopStream}
         status={status}
         disabled={inputDisabled || isLimitExceeded}
-        submitDisabled={isUploading || isStreaming || isAwaitingFirstChunk}
+        submitDisabled={isUploading || (!concurrentReplies && (isStreaming || isAwaitingFirstChunk))}
         placeholder={isLimitExceeded ? getLimitPlaceholder : undefined}
         onFilesAdded={handleFilesAdded}
         onFileRemoved={handleFileRemoved}
@@ -296,10 +309,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           />
         }
       />
-      <div className='mt-2 flex min-h-5 items-center justify-between gap-3 px-1'>
+      {(!runtimeManaged || latestContextTelemetry) && <div className='mt-1 flex min-h-0 items-center justify-between gap-3 px-1'>
         {!runtimeManaged && <SelectedConnectorRepo />}
         {latestContextTelemetry && <ContextMeter {...latestContextTelemetry} />}
-      </div>
+      </div>}
     </div>
   );
 }

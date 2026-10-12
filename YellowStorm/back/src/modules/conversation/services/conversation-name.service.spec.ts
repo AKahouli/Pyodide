@@ -69,4 +69,12 @@ describe('ConversationNameService conversation name generation', () => {
     expect(updateConversationInternal).not.toHaveBeenCalled();
     expect(sendToUser).not.toHaveBeenCalled();
   });
+  it('keeps the default title when the runtime returns an empty name', async () => {
+    const { service, chatbotClient, updateConversationInternal, sendToUser } = buildService(null, { conversation_name: '  ' });
+
+    await expect((service as any).generateConversationName('user-1', 'conversation-1', 'hello', undefined, chatbotClient)).resolves.toBeUndefined();
+
+    expect(updateConversationInternal).not.toHaveBeenCalled();
+    expect(sendToUser).not.toHaveBeenCalled();
+  });
 });

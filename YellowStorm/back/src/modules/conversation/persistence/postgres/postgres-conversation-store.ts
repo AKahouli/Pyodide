@@ -38,12 +38,27 @@ import { ErrorCode } from '../../../exceptions/constants/error-codes';
 export class PostgresConversationStore implements ConversationStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
+  private governedAudienceWhere(userId: string, enabled?: boolean) {
+    if (!enabled) return ne(schema.conversations.runtimeMode, 'governed');
+    return sql`(${schema.conversations.runtimeMode} <> 'governed' OR EXISTS (
+      SELECT 1 FROM governance.governance_scopes scope
+      WHERE scope.id = (${schema.conversations.governanceContext}->>'scopeId')
+        AND scope.status = 'active'
+        AND (scope.audience_mode = 'all_authenticated'
+          OR EXISTS (SELECT 1 FROM governance.governance_scope_audience_users au WHERE au.scope_id = scope.id AND au.user_id = ${userId})
+          OR EXISTS (SELECT 1 FROM governance.governance_scope_audience_groups ag
+            JOIN identity.user_group_members gm ON gm.group_id = ag.group_id
+            WHERE ag.scope_id = scope.id AND gm.user_id = ${userId}))))`;
+  }
+
   async findActiveAccessById(id: string): Promise<ConversationAccessRecord | null> {
     const [conversation] = await this.db
       .select({
         id: schema.conversations.id,
         createdBy: schema.conversations.createdBy,
         projectId: schema.conversations.projectId,
+        governanceContext: schema.conversations.governanceContext,
+        runtimeMode: schema.conversations.runtimeMode,
         memberIds: sql<string[]>`COALESCE((SELECT array_agg(gm.user_id ORDER BY gm.position) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
         invitedEmails: sql<string[]>`COALESCE((SELECT array_agg(gi.email ORDER BY gi.position) FROM conversation.conversation_group_invites gi WHERE gi.conversation_id = ${schema.conversations.id}), ARRAY[]::varchar[])`,
       })
@@ -60,6 +75,8 @@ export class PostgresConversationStore implements ConversationStore {
       id: conversation.id.trim(),
       createdBy: conversation.createdBy.trim(),
       projectId: conversation.projectId?.trim() ?? null,
+      governanceScopeId: (conversation.governanceContext as { scopeId?: string } | null)?.scopeId,
+      runtimeMode: conversation.runtimeMode as ConversationRecord['runtimeMode'],
       memberIds: conversation.memberIds.map((value) => value.trim()),
       invitedEmails: conversation.invitedEmails,
     };
@@ -583,6 +600,7 @@ export class PostgresConversationStore implements ConversationStore {
     const conditions = [
       ...(access ? [access] : []),
        eq(schema.conversations.initializationStatus, 'ready'),
+       this.governedAudienceWhere(input.userId, input.governedAudienceEnabled),
     ];
     if (input.isArchived !== undefined)
       conditions.push(eq(schema.conversations.isArchived, input.isArchived));
@@ -657,6 +675,7 @@ export class PostgresConversationStore implements ConversationStore {
     const unscopedProject = Boolean(input.projectIdUnscoped && input.projectId && input.projectId !== 'none');
     const conditions = [
       eq(schema.conversations.initializationStatus, 'ready'),
+      this.governedAudienceWhere(input.userId, input.governedAudienceEnabled),
       unscopedProject
         ? undefined
         : input.runtimePurpose === 'platform_copilot'
@@ -736,6 +755,7 @@ export class PostgresConversationStore implements ConversationStore {
         projectId: schema.conversations.projectId,
         runtimeMode: schema.conversations.runtimeMode,
         runtimePurpose: schema.conversations.runtimePurpose,
+        governanceContext: schema.conversations.governanceContext,
         pinnedAgentId: schema.conversations.pinnedAgentId,
         rootAgentId: schema.conversations.rootAgentId,
         createdAt: schema.conversations.createdAt,
@@ -755,6 +775,7 @@ export class PostgresConversationStore implements ConversationStore {
       pinnedAgentId: row.pinnedAgentId?.trim() ?? null,
       rootAgentId: row.rootAgentId?.trim() ?? null,
       runtimeMode: row.runtimeMode as ConversationRecord['runtimeMode'],
+      governanceScopeId: (row.governanceContext as { scopeId?: string } | null)?.scopeId,
       runtimePurpose: row.runtimePurpose as ConversationRecord['runtimePurpose'],
       lastMessageAt: row.lastMessageAt ?? undefined,
     }));

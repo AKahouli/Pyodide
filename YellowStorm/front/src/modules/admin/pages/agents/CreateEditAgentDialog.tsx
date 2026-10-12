@@ -111,6 +111,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               model: agent.model || '',
               instruction: agent.instruction || '',
               ignorePrePrompt: agent.ignorePrePrompt,
+              genUiEnabled: agent.genUiEnabled ?? false,
               tools: agent.tools || [],
               skills: agent.skills || [],
               disabledSkills: agent.disabledSkills || [],
@@ -376,6 +377,16 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                         <label htmlFor='ignore-preprompt' className='text-sm font-medium leading-none'>
                           {t('defaultAgents.form.ignorePreprompt')}
                         </label>
+                      </div>
+
+                      <div className='space-y-1'>
+                        <div className='flex items-center space-x-2'>
+                          <Checkbox id='gen-ui-enabled' checked={watch('genUiEnabled')} onCheckedChange={(checked) => setValue('genUiEnabled', checked === true)} />
+                          <label htmlFor='gen-ui-enabled' className='text-sm font-medium leading-none'>
+                            {t('defaultAgents.form.genUiEnabled')}
+                          </label>
+                        </div>
+                        <p className='pl-6 text-xs text-muted-foreground'>{t('defaultAgents.form.genUiEnabledHint')}</p>
                       </div>
 
                       <div className='space-y-2'>

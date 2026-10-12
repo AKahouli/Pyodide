@@ -33,6 +33,39 @@ describe('BackendPreAdkTracker', () => {
     }
   });
 
+  it('reports the root-route stages that close the unattributed pre-ADK gap', () => {
+    const { restore } = mockHrtimeSequence([
+      0n,
+      0n, 400_000_000n,   // rootBackgroundReadinessMs (overlaps the others)
+      0n, 450_000_000n,   // rootDelegationResolutionMs
+      450_000_000n, 500_000_000n, // rootExecutionAdmissionMs
+      500_000_000n, 530_000_000n, // rootNativeStateRecordMs
+      530_000_000n, 580_000_000n, // rootSessionSeedMs
+    ]);
+    try {
+      const tracker = new BackendPreAdkTracker();
+      tracker.begin('rootBackgroundReadinessMs');
+      tracker.end('rootBackgroundReadinessMs');
+      tracker.begin('rootDelegationResolutionMs');
+      tracker.end('rootDelegationResolutionMs');
+      tracker.begin('rootExecutionAdmissionMs');
+      tracker.end('rootExecutionAdmissionMs');
+      tracker.begin('rootNativeStateRecordMs');
+      tracker.end('rootNativeStateRecordMs');
+      tracker.begin('rootSessionSeedMs');
+      tracker.end('rootSessionSeedMs');
+      expect(tracker.toBreakdown()).toEqual({
+        rootDelegationResolutionMs: 450,
+        rootBackgroundReadinessMs: 400,
+        rootExecutionAdmissionMs: 50,
+        rootNativeStateRecordMs: 30,
+        rootSessionSeedMs: 50,
+      });
+    } finally {
+      restore();
+    }
+  });
+
   it('is first-write-wins on both boundaries', () => {
     const { restore } = mockHrtimeSequence([
       0n,

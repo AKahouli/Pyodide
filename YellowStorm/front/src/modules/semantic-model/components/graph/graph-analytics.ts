@@ -15,6 +15,8 @@ export interface GraphRecord {
   missing: number;
   /** Values that read as dates, by field key. */
   dates: Record<string, string>;
+  /** Links the record has in all the data the person may see, read or not; null when the server did not say. */
+  linkTotal: number | null;
 }
 
 export interface GraphField {
@@ -36,6 +38,8 @@ export interface GraphLink {
 
 export interface GraphConcept {
   key: string;
+  /** The concept's id, as the server names it. */
+  conceptId: string;
   label: string;
   count: number;
 }
@@ -56,6 +60,17 @@ export const isMissing = (value: unknown) => value === null || value === undefin
 export const fold = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 const EMPTY_OUTLINE: GraphOutline = { concepts: [], records: [], links: [] };
+
+/** The part read first with more records and links read around one record; the first part keeps its totals. */
+export function mergeOutlines(current: GraphOutline, more: GraphOutline): GraphOutline {
+  const concepts = new Map(current.concepts.map((concept) => [concept.id, concept]));
+  for (const concept of more.concepts) if (!concepts.has(concept.id)) concepts.set(concept.id, concept);
+  const records = new Map(current.records.map((record) => [record.id, record]));
+  for (const record of more.records) if (!records.has(record.id)) records.set(record.id, record);
+  const links = new Map(current.links.map((link) => [link.id, link]));
+  for (const link of more.links) if (!links.has(link.id)) links.set(link.id, link);
+  return { ...current, concepts: [...concepts.values()], records: [...records.values()], links: [...links.values()] };
+}
 
 /** Reads the outline once: records with their fields' names, links, concepts and how linked each record is. */
 export function buildGraphIndex(outline: GraphOutline | null, model: SemanticGraph | null): GraphIndex {
@@ -83,6 +98,7 @@ export function buildGraphIndex(outline: GraphOutline | null, model: SemanticGra
       fields,
       missing: missingKeys.size,
       dates: row.d ?? {},
+      linkTotal: row.n ?? null,
     };
   });
   const byId = new Map(records.map((record) => [record.id, record]));
@@ -101,7 +117,7 @@ export function buildGraphIndex(outline: GraphOutline | null, model: SemanticGra
   const degree = new Map(records.map((record) => [record.id, linksOf.get(record.id)!.length]));
   const concepts = new Map<string, GraphConcept>();
   for (const record of records) {
-    const concept = concepts.get(record.concept) ?? { key: record.concept, label: record.conceptLabel, count: 0 };
+    const concept = concepts.get(record.concept) ?? { key: record.concept, conceptId: record.conceptId, label: record.conceptLabel, count: 0 };
     concept.count++;
     concepts.set(record.concept, concept);
   }
@@ -115,6 +131,17 @@ export const withValues = (record: GraphRecord, values: Record<string, unknown>)
 });
 
 export const otherEnd = (link: GraphLink, id: string) => (link.source === id ? link.target : link.source);
+
+/**
+ * Links a record has that lead to records not shown: the server's count less the links to records read (or, given `shown`,
+ * to records shown). Zero when the server did not count.
+ */
+export function unreadLinks(index: GraphIndex, record: GraphRecord, shown?: Set<string>): number {
+  if (record.linkTotal === null) return 0;
+  const links = index.linksOf.get(record.id) ?? [];
+  const reached = shown ? links.filter((link) => shown.has(otherEnd(link, record.id))).length : links.length;
+  return Math.max(0, record.linkTotal - reached);
+}
 
 /** The records within `depth` links of the start, either way. */
 export function neighbourhood(index: GraphIndex, start: string, depth: number): Map<string, number> {

@@ -114,14 +114,10 @@ def _guard(connection, binding, correlate=False, require_native_owner=True):
     if execution and execution['role'] == 'followup':
         followup = ((execution['result_payload'] or {}).get('nativeState') or {}).get('followup') or {}
         seal = ((parent['result_payload'] or {}).get('nativeState') or {}).get('schedulingSeal') or {}
-        writer = connection.execute(text('''SELECT 1 FROM conversation.conversation_executions
-            WHERE id=:id AND conversation_id=:conversation AND message_id=:message AND status='running'
-                AND expires_at > clock_timestamp() FOR UPDATE'''),
-            {'id': grant.execution_id, 'conversation': grant.conversation_id,
-                'message': followup.get('publicationMessageId')}).one_or_none()
-        if (not writer or not followup.get('manifestDigest') or followup['manifestDigest'] != seal.get('digest')
+        if (not followup.get('publicationMessageId') or not followup.get('manifestDigest')
+            or followup['manifestDigest'] != seal.get('digest')
             or seal.get('followupExecutionId') != grant.execution_id):
-            raise BackgroundOwnershipError('Synthesis writer or sealed manifest authority changed')
+            raise BackgroundOwnershipError('Synthesis sealed manifest authority changed')
     invocation_id = metadata.get('invocation_id')
     if invocation_id and job['native_invocation_id'] not in (None, invocation_id):
         raise BackgroundOwnershipError('Background native invocation mapping conflicts')

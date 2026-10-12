@@ -15,12 +15,12 @@ vi.mock('socket.io-client', () => ({
 }));
 vi.mock('@/lib/api/config', () => ({
   getSocketBaseUrl: () => 'http://x',
-  AUTH_STORAGE_KEYS: { accessToken: 'at' },
 }));
 
+import { setAccessToken } from '@/lib/api/access-token-store';
 import { useBrowserSession, normalizeUrl } from './useBrowserSession';
 
-beforeEach(() => { localStorage.setItem('at', 'tok'); emit.mockClear(); });
+beforeEach(() => { setAccessToken('tok'); emit.mockClear(); });
 
 describe('normalizeUrl', () => {
   it('strips hash and trailing slash and lowercases host', () => {

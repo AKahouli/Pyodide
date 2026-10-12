@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
+import { ServiceUnavailableException, ErrorCode } from '@modules/exceptions';
 import {
   AdmitExecutionInput,
   AdmitExecutionResult,
@@ -15,6 +16,12 @@ import {
 interface PgErrorShape {
   code?: string;
   constraint?: string;
+  cause?: PgErrorShape;
+}
+
+function pgError(error: unknown): PgErrorShape | undefined {
+  const candidate = error as PgErrorShape | undefined;
+  return candidate?.code ? candidate : candidate?.cause;
 }
 
 @Injectable()
@@ -36,42 +43,47 @@ export class PostgresConversationExecutionStore implements ConversationExecution
 
   async admit(input: AdmitExecutionInput): Promise<AdmitExecutionResult> {
     if (this.unavailable) {
+      if (input.nativeSessionId) throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'Isolated turn admission is unavailable');
       return { admitted: true };
     }
     try {
-      // Single atomic statement: capacity gates + insert. Same-conversation
-      // and per-message exclusivity are hard-enforced by the partial unique
-      // indexes (uq_conversation_executions_running_conversation /
-      // uq_conversation_executions_message) even under concurrent races.
-      const result = await this.db.execute(sql`
-        INSERT INTO conversation.conversation_executions
-          (id, conversation_id, user_id, message_id, owner_replica_id, status, expires_at)
-        SELECT
-          ${input.executionId}::char(24),
-          ${input.conversationId}::char(24),
-          ${input.userId}::char(24),
-          ${input.messageId}::char(24),
-          ${input.ownerReplicaId},
-          'running',
-          ${input.expiresAt.toISOString()}::timestamptz
-        WHERE
-          (SELECT count(*) FROM conversation.conversation_executions
-            WHERE status = 'running' AND expires_at > now()
-              AND user_id = ${input.userId}::char(24)) < ${input.maxActiveRunsPerUser}
-          AND (SELECT count(*) FROM conversation.conversation_executions
-            WHERE status = 'running' AND expires_at > now()) < ${input.maxActiveRunsFleet}
-        RETURNING id
-      `);
-      if ((result.rowCount ?? 0) === 1) {
-        return { admitted: true };
-      }
-      return { admitted: false, reason: 'capacity' };
+      // Serialize the admission decision across replicas: quotas count executions,
+      // including distinct isolated turns within the same conversation.
+      return await this.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(73124, 1)`);
+        const conflict = await tx.execute(sql`
+          SELECT 1 FROM conversation.conversation_executions
+          WHERE conversation_id = ${input.conversationId}::char(24) AND status = 'running'
+            AND (native_session_id IS NULL OR ${input.nativeSessionId ?? null}::text IS NULL
+              OR native_session_id = ${input.nativeSessionId ?? null}) LIMIT 1
+        `);
+        if (conflict.rowCount) return { admitted: false as const, reason: 'conversation_busy' as const };
+        const result = await tx.execute(sql`
+          INSERT INTO conversation.conversation_executions
+            (id, conversation_id, user_id, message_id, owner_replica_id, native_session_id, status, expires_at)
+          SELECT
+            ${input.executionId}::char(24), ${input.conversationId}::char(24),
+            ${input.userId}::char(24), ${input.messageId}::char(24),
+            ${input.ownerReplicaId}, ${input.nativeSessionId ?? null}, 'running',
+            ${input.expiresAt.toISOString()}::timestamptz
+          WHERE
+            (SELECT count(*) FROM conversation.conversation_executions
+              WHERE status = 'running' AND expires_at > now()
+                AND user_id = ${input.userId}::char(24)) < ${input.maxActiveRunsPerUser}
+            AND (SELECT count(*) FROM conversation.conversation_executions
+              WHERE status = 'running' AND expires_at > now()) < ${input.maxActiveRunsFleet}
+          RETURNING id
+        `);
+        return result.rowCount === 1 ? { admitted: true as const }
+          : { admitted: false as const, reason: 'capacity' as const };
+      });
     } catch (error) {
       const conflict = this.classifyConflict(error);
       if (conflict) {
         return { admitted: false, reason: conflict };
       }
       if (this.markUnavailableOnMissingTable(error)) {
+        if (input.nativeSessionId) throw error;
         // Migration 0011 not applied yet: degrade to process-local limits
         // rather than breaking every stream.
         return { admitted: true };
@@ -170,7 +182,7 @@ export class PostgresConversationExecutionStore implements ConversationExecution
   }
 
   private classifyConflict(error: unknown): ConversationExecutionConflictReason | null {
-    const candidate = error as PgErrorShape | null;
+    const candidate = pgError(error);
     if (!candidate || candidate.code !== '23505') {
       return null;
     }
@@ -184,7 +196,7 @@ export class PostgresConversationExecutionStore implements ConversationExecution
   }
 
   private markUnavailableOnMissingTable(error: unknown): boolean {
-    const candidate = error as PgErrorShape | null;
+    const candidate = pgError(error);
     if (candidate?.code === '42P01') {
       if (!this.unavailable) {
         this.unavailable = true;

@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 
 from app.persistence.model_clone_store import CloneTargetNotEmpty, clone_model_data
+from app.persistence.partitions import ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning
 from app.population.compiler import canonical_spec_hash
 
@@ -44,6 +45,7 @@ async def _seed(connection: asyncpg.Connection, model: str, version: str) -> Non
         "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash, projection_ref, "
         "validation_state, coverage) VALUES ($1, $2, $3, $4, $5, 'valid', $6::jsonb)",
         revision, model, version, spec_hash, f"age:v1:pop_{revision}", json.dumps({"conceptId": CONCEPT}))
+    await ensure_revision_partitions(connection, revision)
     await connection.execute(
         "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, data_revision_id, "
         "projection_ref) VALUES ($1, 'draft', $2, $3, $4)", model, version, revision, f"age:v1:pop_{revision}")

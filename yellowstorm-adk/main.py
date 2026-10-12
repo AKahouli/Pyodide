@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
         logger.warning("azure.core.pipeline.policies.http_logging_policy")
         logger.warning("azure.monitor.opentelemetry.exporter.export._base")
     else:
-        # logging in elastic search or locally
+        # Bootstrap the shared observability SDK.
         LOG_JSON_FORMAT = TypeAdapter(bool).validate_python(
             getenv("LOG_JSON_FORMAT", False)
         )

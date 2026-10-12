@@ -116,6 +116,28 @@ describe('SemanticModelInspector', () => {
     await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
   });
 
+  it('offers the fields the last run suggested as the unique ones, and saves them only when asked', async () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }, { key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().suggestIdentity('customer', ['country', 'number', 'gone']);
+    hookState.rules=[{ conceptId: 'customer', fields: ['country'] }];
+    renderInspector(true);
+    // Fields that are no longer on the concept are not offered.
+    expect(screen.getByRole('status')).toHaveTextContent('identity.suggested');
+    expect(saveIdentityRule).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'identity.useSuggested' }));
+    await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().identitySuggestion).toBeNull());
+  });
+
+  it('lets the person turn the suggestion down', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().suggestIdentity('customer', ['number']);
+    renderInspector(true);
+    fireEvent.click(screen.getByRole('button', { name: 'identity.dismissSuggested' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(saveIdentityRule).not.toHaveBeenCalled();
+  });
+
   it('warns when a mapped concept has nothing that makes it unique', () => {
     useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }] }] });
     useSemanticModelEditorStore.getState().select('customer');

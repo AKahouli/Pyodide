@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+import re
 from typing import Any, Dict, List, Optional
 
 from src.logger.logging import get_logger
@@ -79,7 +80,9 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
         ])
     lines.extend([
         "</available_skills>",
-        "When a task matches a skill description, call activate_skill with the skill name before proceeding.",
+        "When a task matches a skill description, load that skill once with activate_skill, then follow its returned instructions. "
+        "A successful activation remains available in this task's history; do not activate the same skill again. "
+        "Apply only skills compatible with your current role and exposed tools.",
     ])
 
     catalog = "\n".join(lines)
@@ -172,5 +175,42 @@ def make_activate_skill_tool(skills: Optional[List[Any]]):
         )
 
     activate_skill.__name__ = "activate_skill"
+    activate_skill._available_skill_names = frozenset(skill_map)
     from src.root_runtime.leaf_tools import register_tool_execution_kind
     return register_tool_execution_kind(activate_skill, "leaf")
+
+
+def limit_loaded_skill_activation(callback_context, llm_request):
+    """Offer only skills whose successful body is absent from scoped history."""
+    tool = (llm_request.tools_dict or {}).get('activate_skill')
+    names = getattr(getattr(tool, 'func', tool), '_available_skill_names', None)
+    if not names:
+        return None
+    loaded = set()
+    for content in llm_request.contents or []:
+        for part in content.parts or []:
+            response = part.function_response
+            if response is not None and response.name == 'activate_skill':
+                value = response.response.get('result')
+                if isinstance(value, str):
+                    match = re.match(r'<skill_content name="([^"]+)">', value)
+                    if match:
+                        loaded.add(match.group(1))
+    remaining = sorted(names - loaded)
+    if remaining == sorted(names):
+        return None
+    for configured in llm_request.config.tools or []:
+        declarations = configured.function_declarations or []
+        for declaration in declarations:
+            if declaration.name == 'activate_skill' and remaining:
+                if declaration.parameters_json_schema is not None:
+                    declaration.parameters_json_schema['properties']['name']['enum'] = remaining
+                elif declaration.parameters is not None:
+                    declaration.parameters.properties['name'].enum = remaining
+        configured.function_declarations = [declaration for declaration in declarations
+            if declaration.name != 'activate_skill' or remaining]
+    llm_request.config.tools = [tool for tool in llm_request.config.tools or []
+        if tool.function_declarations or tool.model_dump(exclude_none=True, exclude={'function_declarations'})]
+    if not remaining:
+        llm_request.tools_dict.pop('activate_skill', None)
+    return None

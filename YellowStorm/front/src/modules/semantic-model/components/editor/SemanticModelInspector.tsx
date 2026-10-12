@@ -11,7 +11,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { type SourceMappingTarget, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace } from '../mapping/SourceMappingDrawer';
-import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
+import type { AttributeDefinition, SemanticNodeType, SemanticRelationType } from '../../types';
 import { businessKey, guessAttributeType } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
 import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
@@ -26,6 +26,7 @@ import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
+import { FieldGraphPane } from './FieldGraphPane';
 import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
 import { SettingsPane } from '../settings/SettingsPane';
 import { withSearchIndex } from '../../searchSettings';
@@ -37,20 +38,18 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const select = useSemanticModelEditorStore((state) => state.select);
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
-  const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
   const knowledgePanel = <KnowledgePanel modelId={modelId} switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
-  if (!selectedId||(!node&&!relation&&!record)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
+  if (!selectedId||(!node&&!relation)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
   const content = <>
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
-    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
+    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
     {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
-    {record && <RecordForm record={record} canEdit={canEdit} />}
     </div>
   </>;
   return workspace
@@ -239,6 +238,11 @@ export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ mod
     onError: (error) => showError(t('identity.saveError'), { description: parseApiError(error).message }),
   });
   const toggle = (key: string) => save.mutate(fields.includes(key) ? fields.filter((field) => field !== key) : [...fields, key]);
+  // Fields the last run's health report suggests: offered here, applied only when the person says so.
+  const suggestion = useSemanticModelEditorStore((state) => state.identitySuggestion);
+  const clearSuggestion = useSemanticModelEditorStore((state) => state.clearIdentitySuggestion);
+  const offered = suggestion?.conceptId === node.id && canEdit
+    ? suggestion.fields.filter((key) => node.attributes.some((attribute) => attribute.key === key)) : [];
   const labels = useLabelFields(modelId);
   const labelField = labels.data?.find((rule) => rule.conceptId === node.id)?.field;
   const labelValid = Boolean(labelField && node.attributes.some((attribute) => attribute.key === labelField));
@@ -260,6 +264,13 @@ export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ mod
   return <div className='space-y-2'>
     {!bare && <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />}
     {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
+    {offered.length > 0 && <div role='status' className='space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3 text-xs'>
+      <p>{t('identity.suggested', { fields: offered.map((key) => node.attributes.find((attribute) => attribute.key === key)?.label ?? key).join(' + ') })}</p>
+      <div className='flex gap-2'>
+        <Button size='sm' className='h-8' disabled={save.isPending} onClick={() => save.mutate(offered, { onSuccess: clearSuggestion })}>{t('identity.useSuggested')}</Button>
+        <Button size='sm' variant='ghost' className='h-8' onClick={clearSuggestion}>{t('identity.dismissSuggested')}</Button>
+      </div>
+    </div>}
     {node.attributes.length === 0 ? <p className='text-xs text-muted-foreground'>{t('identity.noFields')}</p>
       : <div className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
         const active = fields.includes(attribute.key);
@@ -403,18 +414,6 @@ function RelationSentenceEditor({ relation, labels, onChange }: Readonly<{ relat
   </section>;
 }
 
-function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {
-  const { t } = useModuleTranslation('semantic-model');
-  const graph = useSemanticModelEditorStore((state) => state.graph);
-  const commit = useSemanticModelEditorStore((state) => state.commit);
-  const select = useSemanticModelEditorStore((state) => state.select);
-  const type = graph?.nodes.find((candidate) => candidate.id === item.nodeTypeId);
-  const update = (changes: Partial<Omit<SemanticRecord,'id'|'nodeTypeId'>>) => commit({type:'record.update',id:item.id,changes},(current) => ({...current,records:current.records.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate)}));
-  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('records.type')} value={type?.label??''} /><ReadOnlyField label={t('field.label')} value={item.label} />{type?.attributes.map((attribute)=><ReadOnlyField key={attribute.key} label={attribute.label} value={String(item.values[attribute.key]??'')} />)}</div>;
-  return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => { commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)})); select(null); }}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
-}
-
-
 function ReadOnlyField({ label,value }: Readonly<{ label: string; value: string }>) { return <div><p className='text-xs font-medium text-muted-foreground'>{label}</p><p className='mt-1 text-sm'>{value}</p></div>; }
 
 /** A concept's fields, one compact row each; a row opens for its description, other names and choices. */
@@ -449,6 +448,7 @@ function AttributeEditor({ attributes,onChange,bare }: Readonly<{ attributes: At
         {open && <div className='space-y-3 pb-2 pl-8 pr-1 pt-2'>
           <Field label={t('field.description')} help={t('attributes.descriptionHelp')}><Textarea className='min-h-[3.5rem] resize-y text-sm' rows={2} value={attribute.description ?? ''} placeholder={t('attributes.descriptionPlaceholder')} aria-label={t('attributes.descriptionFor', { name: attribute.label })} onChange={(event) => edit(index, { description: event.target.value })} /></Field>
           <Field label={t('aliases.title')}><AliasChips values={attribute.aliases ?? []} onChange={(aliases) => edit(index, { aliases })} placeholder={t('aliases.fieldPlaceholder', { name: attribute.label })} compact /></Field>
+          <FieldGraphPane attribute={attribute} onChange={(next) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? next : item))} />
           {attribute.type === 'text' && <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={attribute.label} onChange={(searchIndex) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? withSearchIndex(item, searchIndex) : item))} />}
           {attribute.type === 'enum' && <Field label={t('attributes.options')}><Input className='h-8 text-sm' defaultValue={attribute.options?.join(', ') ?? ''} onBlur={(event) => edit(index, { options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) })} placeholder={t('attributes.optionsPlaceholder')} aria-label={t('attributes.optionsFor', { name: attribute.label })} /></Field>}
           <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='mr-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>

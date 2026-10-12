@@ -76,6 +76,33 @@ describe('RunProgress steps and AI calls', () => {
     expect(screen.getByText('population.progress.ai.skipped')).toBeInTheDocument();
   });
 
+  it('follows the saved records, not the sources read, once every source is read', () => {
+    render(<RunProgress running progress={{ ...base, phase: 'saving', total: 3, done: 3, step: { unit: 'entries', done: 1000, total: 4000 } }} />);
+    expect(screen.getByText('population.progress.phase.saving')).toBeInTheDocument();
+    expect(screen.getByText('25%')).toBeInTheDocument();
+    expect(screen.queryByText('100%')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+    const bar = screen.getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '1000');
+    expect(bar).toHaveAttribute('aria-valuemax', '4000');
+    expect(screen.getByText('population.progress.step.entries')).toBeInTheDocument();
+    // The sources-read count stays as a secondary line.
+    expect(screen.getByText(/population.progress.filesRead/)).toBeInTheDocument();
+  });
+
+  it('shows the graph being built with its own count, and no percent while the step has no total', () => {
+    const { rerender } = render(<RunProgress running progress={{ ...base, phase: 'projecting', total: 3, done: 3, step: { unit: 'elements', done: 500, total: 2000 } }} />);
+    expect(screen.getByText('population.progress.phase.projecting')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.step.elements')).toBeInTheDocument();
+    expect(screen.getByText('25%')).toBeInTheDocument();
+    rerender(<RunProgress running progress={{ ...base, phase: 'projecting', total: 3, done: 3, step: { unit: 'loading', done: 0, total: null } }} />);
+    expect(screen.getByText('population.progress.step.loadingUnknown')).toBeInTheDocument();
+    expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
+    rerender(<RunProgress running progress={{ ...base, phase: 'comparing', total: 3, done: 3 }} />);
+    expect(screen.getByText('population.progress.phase.comparing')).toBeInTheDocument();
+    expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
+  });
+
   it('shows no step once the run is over', () => {
     render(<RunProgress running={false} progress={{ ...base, done: 1, step: { unit: 'rows', done: 10, total: 10 } }} />);
     expect(screen.queryByText('population.progress.step.rows')).not.toBeInTheDocument();

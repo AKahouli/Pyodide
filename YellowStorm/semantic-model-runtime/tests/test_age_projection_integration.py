@@ -7,7 +7,7 @@ import asyncpg
 import pytest
 
 from app.population.age_projection import (compile_projection, drop_projection,
-                                            project_revision, projection_counts,
+                                            project_revision, projection_counts, read_projection_graph,
                                             projection_exists, validate_projection)
 
 DSN = os.environ.get("SEMANTIC_AGEGRAPH_TEST_DATABASE_URL")
@@ -39,6 +39,45 @@ async def test_live_projection_round_trip() -> None:
             await drop_projection(connection, graph)
         assert await projection_exists(connection, graph) is False
         await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_bulk_load_stores_what_cypher_reads_and_resolves_link_ends() -> None:
+    graph = f"pop_test_{uuid.uuid4().hex[:20]}"
+    connection = await _age_connection()
+    entities = [
+        {"entityId": "a:1", "conceptId": "customer", "label": "O'Brien", "attributes": {"city": "Paris", "none": None,
+         "tags": ["x", None], "score": 1.5, "n": 3, "ok": True}},
+        {"entityId": "a:2", "conceptId": "customer", "label": "Two"},
+        {"entityId": "i:1", "conceptId": "invoice", "label": "Inv"},
+    ]
+    relationships = [{"sourceEntityId": "a:1", "targetEntityId": "a:2", "relationId": "knows"},
+                     {"sourceEntityId": "i:1", "targetEntityId": "a:1", "relationId": "billed"}]
+    plan = compile_projection(entities, relationships)
+    try:
+        async with connection.transaction():
+            await project_revision(connection, graph=graph, plan=plan, batch_rows=100)
+            assert await projection_counts(connection, graph) == {"vertices": 3, "edges": 2}
+        # No map is left behind, and Cypher reads the records and the links as it would have written them.
+        assert await connection.fetchval("SELECT to_regclass('pg_temp.proj_vertex_ids')") is None
+        read = await read_projection_graph(_Pool(connection), f"age:v2:{graph}")
+        nodes = {node["id"]: node["properties"] for node in read["nodes"]}
+        assert nodes["a:1"]["city"] == "Paris" and "none" not in nodes["a:1"]
+        assert nodes["a:1"]["tags"] == ["x", None] and nodes["a:1"]["score"] == 1.5 and nodes["a:1"]["n"] == 3
+        assert nodes["a:1"]["record_label"] == "O'Brien" and nodes["a:1"]["ok"] is True
+        assert sorted(edge["id"] for edge in read["edges"]) == ["billed:i:1:a:1", "knows:a:1:a:2"]
+    finally:
+        if await projection_exists(connection, graph):
+            await drop_projection(connection, graph)
+        await connection.close()
+
+
+class _Pool:
+    def __init__(self, connection) -> None:  # type: ignore[no-untyped-def]
+        self.connection = connection
+
+    def acquire(self):  # type: ignore[no-untyped-def]
+        return AsyncContext(self.connection)
 
 
 class ScriptedPool:

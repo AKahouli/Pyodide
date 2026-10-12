@@ -50,6 +50,20 @@ type ClientApiError = {
   details?: unknown;
 };
 /**
+ * The reasons an answer carries beyond its code (`error.details[].message`), when it has any: the
+ * generic text of a code says that something is refused, the details say what.
+ */
+export function apiErrorDetails(error: unknown): string[] {
+  if (!isAxiosError(error)) return [];
+  const details = (error.response?.data as BackendErrorResponse | undefined)?.error?.details;
+  if (!Array.isArray(details)) return [];
+  return details.flatMap((item: unknown) => {
+    const message = (item as { message?: unknown } | null)?.message;
+    return typeof message === "string" && message.trim() ? [message.trim()] : [];
+  });
+}
+
+/**
  * Parse an error into a standardized ApiError
  */
 export function parseApiError(error: unknown): ApiError {

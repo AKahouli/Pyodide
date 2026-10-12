@@ -207,7 +207,7 @@ export class PostgresMessageStore implements MessageStore {
           components: input.components,
           isStreaming: false,
           isComplete: true,
-          executionStatus: 'completed',
+          executionStatus: input.terminalStatus ?? 'completed',
           executionTerminalAt: now,
           interruptionReason: null,
           inputTokens: input.inputTokens,

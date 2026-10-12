@@ -18,6 +18,16 @@ describe('semantic model editor store', () => {
     expect(useSemanticModelEditorStore.getState().selectionTick).toBe(before + 1);
   });
 
+  it('opens the unique-field editor of a concept with fields to offer, and forgets them when dismissed', () => {
+    const { suggestIdentity, clearIdentitySuggestion } = useSemanticModelEditorStore.getState();
+    suggestIdentity('customer', ['number', 'country']);
+    const state = useSemanticModelEditorStore.getState();
+    expect(state).toMatchObject({ selectedId: 'customer', detailsOpen: true, identitySuggestion: { conceptId: 'customer', fields: ['number', 'country'] } });
+    expect(state.focusRequest).toMatchObject({ id: 'customer', section: 'identity' });
+    clearIdentitySuggestion();
+    expect(useSemanticModelEditorStore.getState().identitySuggestion).toBeNull();
+  });
+
   it('tracks an operation and restores it through undo and redo', () => {
     const node = { id: 'node', key: 'party', label: 'Party', description: '', category: 'business_object' as const, recordPolicy: 'none' as const, systemKey: null, aliases: [], attributes: [], position: { x: 0, y: 0 } };
     useSemanticModelEditorStore.getState().hydrate(graph);

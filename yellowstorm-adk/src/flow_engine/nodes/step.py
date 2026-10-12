@@ -26,7 +26,6 @@ from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_tool_scope import (
     build_prompt_input_context,
-    build_sandbox_prompt_note,
     build_step_tool_scope,
 )
 from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
@@ -396,7 +395,7 @@ def _build_available_file_context(file_names: list[str]) -> str:
     return (
         "<available_mcp_file_names>\n"
         f"{json.dumps(payload, ensure_ascii=False)}\n"
-        "These are the exact workspace filenames available for MCP tool calls. Decide whether to use them from the selected tool's schema, preprompt, skill instructions, and MCP docstring. Only send file_name or file_names when that tool declares the parameter. Preserve filenames exactly and choose the relevant file or files for the call. If the list is empty, do not send a filename parameter. Sandbox-local filenames, when applicable, are listed separately under Sandbox Files.\n"
+        "These are the exact workspace filenames available for MCP tool calls. Decide whether to use them from the selected tool's schema, preprompt, skill instructions, and MCP docstring. Only send file_name or file_names when that tool declares the parameter. Preserve filenames exactly and choose the relevant file or files for the call. If the list is empty, do not send a filename parameter.\n"
         "</available_mcp_file_names>"
     )
 
@@ -825,7 +824,7 @@ async def run_step(
                         _merge_human_context(state, new_human_context),
                     )
             elif metadata.get("executionStrategy") == "deterministic_script":
-                deterministic_payload = _execute_deterministic_step(
+                deterministic_payload = await _execute_deterministic_step(
                     metadata,
                     input_context if isinstance(input_context, dict) else {},
                     node_id,
@@ -984,9 +983,6 @@ async def _execute_step(
         human_context=human_context,
         hitl_memory=_as_record_list(state.get("hitl_memory")),
     )
-    sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)
-    if sandbox_prompt_note:
-        user_msg = f"{user_msg}\n\nSandbox Files:\n{sandbox_prompt_note}"
     replay_instructions = str(metadata.get("replay_instructions") or "")
     execution_mode = str(metadata.get("execution_mode") or "live")
     if replay_instructions and execution_mode in ("replay_strict", "replay_flex", "replay_adaptive"):
@@ -1160,7 +1156,7 @@ async def _execute_step(
     return full_output, components, trace_collector
 
 
-def _execute_deterministic_step(
+async def _execute_deterministic_step(
     metadata: dict[str, Any],
     input_context: dict[str, Any],
     node_id: str,
@@ -1171,11 +1167,8 @@ def _execute_deterministic_step(
         source = metadata.get("script_source")
     if not isinstance(source, dict):
         raise ValueError("Deterministic script metadata is missing scriptSource")
-    validation = metadata.get("scriptValidation")
-    if not isinstance(validation, dict):
-        validation = metadata.get("script_validation")
-    if not isinstance(validation, dict) or validation.get("status") != "passed":
-        raise ValueError("Deterministic script requires passed validation metadata")
+    # scriptValidation/script_validation metadata travels with the request and is
+    # NOT trusted: content validation happens inside the sandbox module itself.
     script = str(source.get("code") or "")
     script_hash = str(source.get("sha256") or "")
     actual_hash = _script_hash(script)
@@ -1183,7 +1176,7 @@ def _execute_deterministic_step(
         raise ValueError("Deterministic script hash does not match script source")
     if source.get("kind") != "advisor_generated":
         logger.warning("[step] Running deterministic script from non-advisor source", node_id=node_id)
-    output = run_deterministic_script(script, input_context)
+    output = await asyncio.to_thread(run_deterministic_script, script, input_context)
     trace_metadata = {
         "executionStrategy": "deterministic_script",
         "scriptHash": script_hash,

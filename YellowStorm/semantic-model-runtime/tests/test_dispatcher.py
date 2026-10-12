@@ -114,3 +114,13 @@ async def test_recovery_is_optional_for_repositories_without_it(monkeypatch: pyt
     repo = NoRecoveryRepo()
     monkeypatch.setattr("app.jobs.dispatcher.celery_app.send_task", lambda *a, **kw: None)
     assert await OutboxDispatcher(repo).recover_once() == {"exhausted": 0, "requeued": 0}
+
+
+def test_broker_ssl_only_verifies_rediss():
+    import ssl
+
+    from app.workers.celery_app import broker_ssl
+
+    assert broker_ssl("amqp://user:pass@host:5672/vhost") is False
+    assert broker_ssl("redis://:pass@host:6379/3") is False
+    assert broker_ssl("rediss://:pass@host:6380/3") == {"ssl_cert_reqs": ssl.CERT_NONE}

@@ -30,6 +30,8 @@ export interface GroupConversationMeta {
 }
 
 export interface Conversation {
+  rootAgentId?: string | null;
+  concurrentRepliesEnabled?: boolean;
   id: string;
   title: string;
   createdBy: string;
@@ -680,6 +682,9 @@ export interface SendMessagePayload {
 }
 
 export interface NativeInputSchema {
+  title?: string;
+  description?: string;
+  examples?: Array<string | number | boolean>;
   type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean';
   properties?: Record<string, NativeInputSchema>;
   required?: string[];
@@ -695,6 +700,8 @@ export interface NativeInputSchema {
 
 export interface PendingRootInput {
   executionId: string;
+  originAssistantMessageId?: string;
+  originQuestionMessageId?: string;
   epoch: number;
   mode?: 'foreground' | 'background';
   inputs: Array<{ inputId: string; inputVersion?: number; kind: 'confirmation' | 'input'; message?: string;
@@ -706,8 +713,12 @@ export interface RootWorkSnapshot {
   watermark: string;
   stopRequestId: string;
   jobs: Array<{ executionId: string; parentExecutionId: string; role: 'library_worker' | 'temporary_worker' | 'fanout_driver' | 'followup';
-    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled';
-    createdAt: string; deadline: string; publicationMessageId?: string }>;
+    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled' | 'cancellation_requested' | 'not_started';
+    mode?: 'foreground' | 'background';
+    createdAt: string; deadline: string; task?: string; publicationMessageId?: string;
+    originQuestionMessageId?: string; originAssistantMessageId?: string;
+    fanoutItems?: Array<{ executionId: string; status: string; label?: string; workerRole?: 'temporary_worker' | 'library_worker' }> }>;
+  foregroundWorkers?: RootWorkSnapshot['jobs'];
 }
 
 export interface ConversationClientContextV1 {
@@ -729,11 +740,20 @@ export interface CreateReportPayload {
 
 // SSE Stream Events
 export interface StreamStartEvent {
+  createdAt?: string;
+  questionMessageId?: string;
+  /** The agent expected to answer, when the backend route fixes it up front. */
+  agentId?: string;
+  agentName?: string;
   conversationId: string;
   messageId: string;
 }
 
 export interface ActiveStreamSnapshot {
+  createdAt?: string;
+  questionMessageId?: string;
+  agentId?: string;
+  agentName?: string;
   conversationId: string;
   messageId: string;
   revision: number;
@@ -835,6 +855,7 @@ export interface ShareResponse {
   title: string;
   accessToken?: string; // For public shares
   recipientEmails?: string[]; // For private shares
+  recipientUserIds?: string[];
   forkedConversationIds?: string[];
   notFound?: string[];
   invalid?: string[];
@@ -869,6 +890,8 @@ export interface RootExecutionTextResult {
 }
 
 export interface RootExecutionEvidenceLocation {
+  /** Classification from the authorized producer record, independent of cached message metadata. */
+  sourceKind?: 'web';
   page?: number;
   mimeType?: string;
   evidenceId: string;

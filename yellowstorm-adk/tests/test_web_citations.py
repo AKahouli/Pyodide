@@ -64,6 +64,25 @@ def test_conversation_connector_registers_only_normalized_web_evidence(monkeypat
     assert context.state["_connector_web_sources"][0]["object"]["content"]["exact_text"] == "Evidence"
 
 
+def test_large_trusted_fetch_is_bounded_before_registering_source_state(monkeypatch) -> None:
+    import json
+    async def fetch(*args, **kwargs):
+        return {'url': 'https://example.com/page', 'content': 'évidence 🌍' * 50000}
+    monkeypatch.setattr('src.flow_engine.mcp.call_mcp_tool', fetch)
+    binding = {'connector_id': 'c1', 'connector_name': 'Web', 'connector_slug': 'web',
+        'mcp_transport_type': 'streamable_http', 'mcp_server_url': 'https://mcp.example.com',
+        'actions': [{'action_key': 'fetch', 'parameter_schema': {}, 'result_kind': 'web_fetch', 'citation_mode': 'text_fragment'}]}
+    tool = create_connector_tools([binding], ConnectorToolContext())[-1]
+    context = SimpleNamespace(state={}, invocation_id='turn')
+    response = asyncio.run(tool.func(tool_context=context))
+    assert len(json.dumps(response, separators=(',', ':')).encode()) <= 131072
+    assert response['truncation']['rawPayloadOmitted'] is True
+    assert response['citation_sources'][0]['reference'] == '1'
+    source = context.state['_connector_web_sources'][0]['object']['content']
+    assert source['source'] == 'https://example.com/page'
+    assert len(source['exact_text']) < 50000
+
+
 def test_playbook_collector_emits_first_class_web_citation() -> None:
     collector = ToolResultCollector()
     response = normalize_web_connector_response(

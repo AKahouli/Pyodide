@@ -137,25 +137,6 @@ class AgentRepository:
                     return True
         return False
 
-    def has_code_interpreter(self) -> bool:
-        """Check if any of the current agents have search tools.
-
-        Scans all agents in the repository to determine if any have search
-        capabilities based on their tool configurations.
-
-        Returns:
-            bool: True if at least one agent has search tools available,
-                False if no agents have search capabilities.
-        """
-        for agent in self.agents:
-            tools = agent.get('tools', []) or []
-            for tool in tools:
-                if isinstance(tool, dict) and tool.get('name', '').lower() == 'code interpreter':
-                    return True
-                elif isinstance(tool, str) and tool.lower() == 'code interpreter':
-                    return True
-        return False
-
     def _get_normalized_agent_name(self, agent: Dict[str, Any]) -> str:
         """Get normalized name from agent.
         

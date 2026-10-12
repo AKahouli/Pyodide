@@ -331,6 +331,7 @@ async def test_persist_population_revision_writes_canonical_rows():
     from app.workers.population_tasks import persist_population_revision
 
     calls: list = []
+    timeouts: list = []
 
     class FakePool:
         async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
@@ -341,8 +342,31 @@ async def test_persist_population_revision_writes_canonical_rows():
             calls.append(("fetchrow", sql, params))
             return {"id": "row-1", "sequence": 1}
 
-        async def executemany(self, sql: str, rows):  # type: ignore[no-untyped-def]
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            calls.append(("fetch", sql, params))
+            return []
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
             calls.append(("executemany", sql, list(rows)))
+            timeouts.append(timeout)
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            calls.append(("execute", sql, params))
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
 
     spec_hash = canonical_spec_hash(base_spec())
     outcome = {
@@ -363,10 +387,162 @@ async def test_persist_population_revision_writes_canonical_rows():
     statements = [sql for _, sql, *_ in calls]
     assert any("semantic_runtime.specifications" in sql for sql in statements)
     assert any("semantic_population.data_revisions" in sql for sql in statements)
+    # The revision's partitions are made, then the revision row, then the rows go into them.
+    created = [i for i, sql in enumerate(statements) if sql.startswith("CREATE TABLE")]
+    inserted = next(i for i, sql in enumerate(statements) if "INSERT INTO semantic_population.data_revisions" in sql)
+    assert len(created) == 5 and max(created) < inserted
     assert any("semantic_population.entities" in sql for sql in statements)
     assert any("semantic_population.assertions" in sql for sql in statements)
     assert any("semantic_population.relationships" in sql for sql in statements)
     assert any("validation_state" in sql for sql in statements)
+    # Without an admin setting the writes keep today's limits: 10 s on the server and on each call.
+    assert [sql for kind, sql, _ in calls if kind == "execute" and "statement_timeout" in sql] == [
+        "SET statement_timeout = '10s'", "RESET statement_timeout"]
+    assert timeouts and set(timeouts) == {10}
+
+
+@pytest.mark.asyncio
+async def test_persist_population_revision_saves_with_the_run_limits():
+    from app.workers.population_tasks import persist_population_revision
+
+    calls: list = []
+    batches: list = []
+
+    class FakePool:
+        async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return 0
+
+        async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return {"id": "row-1", "sequence": 1}
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
+            if "semantic_population.entities" in sql:
+                batches.append((len(list(rows)), timeout))
+                calls.append("write")
+
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return []
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            if "statement_timeout" in sql:
+                calls.append(sql)
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
+
+    limited = command()
+    limited["payload"]["limits"] = {"saveBatchRows": 100, "saveStatementSeconds": 90}
+    outcome = {
+        "specHash": canonical_spec_hash(base_spec()),
+        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
+        "entities": [{"entityId": f"e{n}", "conceptId": "c1"} for n in range(250)],
+        "assertions": [], "relationships": [], "gaps": [], "counts": {}, "datasetFingerprints": [],
+    }
+    await persist_population_revision(FakePool(), limited, outcome)
+    assert batches == [(100, 90), (100, 90), (50, 90)]
+    assert calls == ["SET statement_timeout = '90s'", "write", "write", "write", "RESET statement_timeout"]
+
+
+@pytest.mark.asyncio
+async def test_saving_reports_the_rows_stored_of_all_of_them_as_one_step():
+    from app.workers.population_tasks import PopulationProgress, persist_population_revision
+
+    class FakePool:
+        async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return 0
+
+        async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return {"id": "row-1", "sequence": 1}
+
+        async def executemany(self, sql: str, rows, timeout=None):  # type: ignore[no-untyped-def]
+            pass
+
+        async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            return []
+
+        async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            pass
+
+        def acquire(self):  # type: ignore[no-untyped-def]
+            pool = self
+
+            class Held:
+                async def __aenter__(self):  # type: ignore[no-untyped-def]
+                    return pool
+
+                async def __aexit__(self, *exc):  # type: ignore[no-untyped-def]
+                    return False
+
+            return Held()
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self.acquire()
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    limited = command()
+    limited["payload"]["limits"] = {"saveBatchRows": 100, "saveStatementSeconds": 90}
+    outcome = {
+        "specHash": canonical_spec_hash(base_spec()),
+        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
+        "entities": [{"entityId": f"e{n}", "conceptId": "c1"} for n in range(150)],
+        "assertions": [{"entityId": f"e{n}", "attribute": "a", "value": "v"} for n in range(60)],
+        "relationships": [{"relationId": "r", "sourceEntityId": f"e{n}", "targetEntityId": "e0"} for n in range(40)],
+        "gaps": [], "counts": {}, "datasetFingerprints": [],
+    }
+    progress = PopulationProgress(report, min_interval=0)
+    progress.phase = "saving"
+    await persist_population_revision(FakePool(), limited, outcome, progress)
+    steps = [snapshot["step"] for snapshot in reports]
+    # Records, then values, then links: one growing count, so the bar never hits 100% before the end.
+    assert steps == [{"unit": "entries", "done": done, "total": 250} for done in (100, 150, 210, 250)]
+    assert {snapshot["phase"] for snapshot in reports} == {"saving"}
+
+
+@pytest.mark.asyncio
+async def test_a_stop_request_met_while_saving_does_not_end_the_run():
+    from app.workers.population_tasks import PopulationProgress, RunCancelled
+
+    async def report(_snapshot: dict) -> None:
+        raise RunCancelled()
+
+    progress = PopulationProgress(report, min_interval=0)
+    with pytest.raises(RunCancelled):
+        await progress.advance("rows", 1, 10)
+    progress.cancellable = False
+    await progress.advance("entries", 1, 10)
+
+
+@pytest.mark.asyncio
+async def test_progress_says_it_can_no_longer_be_stopped_only_once_that_is_so():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    progress = PopulationProgress(report, min_interval=0)
+    await progress.advance("rows", 1, 10)
+    progress.cancellable = False
+    await progress.advance("entries", 1, 10)
+    assert "cancellable" not in reports[0]
+    assert reports[1]["cancellable"] is False
 
 
 def test_preview_result_carries_output_without_revision():
@@ -700,3 +876,37 @@ async def test_progress_says_how_far_the_current_step_is_and_counts_ai_calls():
     # A finished source or a new phase has no step left; the AI tally runs for the whole run.
     await progress.enter("linking")
     assert "step" not in reports[-1] and reports[-1]["ai"]["planned"] == 40
+
+
+@pytest.mark.asyncio
+async def test_progress_names_the_concept_a_concept_refresh_makes_again():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    scoped = PopulationProgress(report, min_interval=0, scope_concept_id="c1")
+    await scoped.begin(1)
+    assert reports[-1]["scopeConceptId"] == "c1"
+    whole = PopulationProgress(report, min_interval=0)
+    await whole.begin(3)
+    assert "scopeConceptId" not in reports[-1]
+
+
+@pytest.mark.parametrize("source_field", ["document_name", "workspace_id", "document_id"])
+def test_document_command_accepts_each_document_property_as_metadata(source_field):
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"},
+        {"sourceField": source_field, "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["ok"] is True
+    assert validated["sources"][0]["fieldMappings"][1]["sourceField"] == source_field
+
+
+def test_document_command_rejects_a_metadata_mapping_reading_another_property():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "owner_id", "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"

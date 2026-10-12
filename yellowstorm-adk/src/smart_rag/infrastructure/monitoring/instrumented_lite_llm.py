@@ -76,7 +76,15 @@ class InstrumentedLiteLlm(LiteLlm):
         capacity = self.llm_client if isinstance(self.llm_client, CapacityClient) else None
         token = capacity.begin() if capacity else None
         try:
-            async with aclosing(super().generate_content_async(llm_request, stream=stream)) as responses:
+            provider = self
+            if not any(tool.function_declarations for tool in llm_request.config.tools or []):
+                # A request can lose its last tool after skill activation. Keep
+                # this adjustment local: the model may serve concurrent requests.
+                provider = self.model_copy()
+                provider._additional_args = {key: value for key, value in self._additional_args.items()
+                    if key != 'parallel_tool_calls'}
+            from src.smart_rag.infrastructure.monitoring.model_response_recovery import recover_empty_response
+            async with aclosing(recover_empty_response(super(InstrumentedLiteLlm, provider).generate_content_async, llm_request, stream, self.model)) as responses:
                 async for response in responses:
                     if is_primary_call:
                         trace.mark_llm_first_delta()

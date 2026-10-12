@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Columns, KeyRound, Loader2, Play, Undo2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ComputedFieldRule, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
@@ -28,12 +28,25 @@ const TEXT_KIND: Record<MappingSourceKind, ReadingTextKind> = { document: 'docum
 /** "Read all fields with": a strategy, or (sheets) reading each column as it is. */
 export type ReadAllChoice = SourceExtractionStrategy | 'direct';
 
+// A document's metadata modes are listed apart (see DOCUMENT_METADATA_FIELDS), below the others.
 const MODES: Record<MappingSourceKind, SourceFieldMapping['mode'][]> = {
-  document: ['extract', 'metadata', 'constant', 'computed', 'ignore'],
+  document: ['extract', 'constant', 'computed', 'ignore'],
   sheet: ['direct', 'extract', 'computed', 'constant', 'ignore'],
   record: ['direct', 'extract', 'computed', 'constant', 'ignore'],
 };
 const NO_COLUMN = '__none';
+
+/** What a document mapping can fill a field with from the document itself: mode 'metadata', one per source field. */
+export const DOCUMENT_METADATA_FIELDS = ['document_name', 'workspace_id', 'document_id'] as const;
+export type DocumentMetadataField = typeof DOCUMENT_METADATA_FIELDS[number];
+const METADATA_LABEL = { document_name: 'metadata', workspace_id: 'workspaceId', document_id: 'documentId' } as const satisfies Record<DocumentMetadataField, string>;
+const METADATA_PREFIX = 'metadata:';
+
+/** The mode list entry a field shows: its mode, or for a document's metadata mode the property it reads. */
+function modeChoice(mapping: SourceFieldMapping, kind: MappingSourceKind): string {
+  if (kind !== 'document' || mapping.mode !== 'metadata') return mapping.mode;
+  return `${METADATA_PREFIX}${DOCUMENT_METADATA_FIELDS.find((field) => field === mapping.sourceField) ?? 'document_name'}`;
+}
 
 /** A name compared without case, accents, spaces or punctuation: “Référence client” reads “referenceclient”. */
 export function normalizeName(value: string) {
@@ -76,12 +89,12 @@ export function withAiPatch(mapping: SourceFieldMapping, patch: Pick<SourceField
  * The field read another way. Only what that way uses is kept, so the payload matches what the runtime
  * expects; a sheet field keeps its column to go back to it.
  */
-export function withMode(mapping: SourceFieldMapping, mode: SourceFieldMapping['mode'], kind: MappingSourceKind, fallbackColumn?: string): SourceFieldMapping {
+export function withMode(mapping: SourceFieldMapping, mode: SourceFieldMapping['mode'], kind: MappingSourceKind, fallbackColumn?: string, metadataField: DocumentMetadataField = 'document_name'): SourceFieldMapping {
   if (kind === 'document') {
     const next: SourceFieldMapping = {
       ...mapping,
       mode,
-      sourceField: mode === 'metadata' ? 'document_name' : null,
+      sourceField: mode === 'metadata' ? metadataField : null,
       constantValue: mode === 'constant' ? mapping.constantValue ?? '' : undefined,
       computed: mode === 'computed' ? mapping.computed ?? newComputedRule() : undefined,
       // A strategy only applies to extracted fields.
@@ -207,11 +220,13 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
   const { t } = useModuleTranslation('semantic-model');
   const attributeLabel = (key: string) => attributes.find((attribute) => attribute.key === key)?.label ?? key;
   const update = (index: number, next: SourceFieldMapping) => onChange(mappings.map((mapping, itemIndex) => itemIndex === index ? next : mapping));
-  const setMode = (index: number, mode: SourceFieldMapping['mode']) => {
+  const setMode = (index: number, choice: string) => {
     const mapping = mappings[index];
+    const metadataField = choice.startsWith(METADATA_PREFIX) ? choice.slice(METADATA_PREFIX.length) as DocumentMetadataField : undefined;
+    const mode = metadataField ? 'metadata' : choice as SourceFieldMapping['mode'];
     if (mode === 'ignore') onIgnore?.(mapping.targetAttribute);
     const attribute = attributes.find((item) => item.key === mapping.targetAttribute);
-    update(index, withMode(mapping, mode, kind, attribute ? sameNamedColumn(attribute, columns) : undefined));
+    update(index, withMode(mapping, mode, kind, attribute ? sameNamedColumn(attribute, columns) : undefined, metadataField));
   };
   const modeLabel = (mode: SourceFieldMapping['mode']) => t(`mapping.method.${mode}`);
   const record = kind === 'record';
@@ -270,10 +285,17 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
               {columnChoices.map((column) => <SelectItem key={column} value={column}>{columnName(column)}</SelectItem>)}
             </SelectContent>
           </Select>}
-          <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
+          <Select value={modeChoice(mapping, kind)} onValueChange={(value) => setMode(index, value)}>
             <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
             <SelectContent>
               {MODES[kind].map((mode) => <SelectItem key={mode} value={mode}>{modeLabel(mode)}</SelectItem>)}
+              {kind === 'document' && <>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel className='py-1 text-[11px] font-medium text-muted-foreground'>{t('mapping.methodGroupDocument')}</SelectLabel>
+                  {DOCUMENT_METADATA_FIELDS.map((field) => <SelectItem key={field} value={`${METADATA_PREFIX}${field}`}>{t(`mapping.method.${METADATA_LABEL[field]}`)}</SelectItem>)}
+                </SelectGroup>
+              </>}
             </SelectContent>
           </Select>
           {mapping.mode === 'extract' && <Select value={mapping.extractionStrategy ?? 'deterministic'} onValueChange={(value: SourceExtractionStrategy) => update(index, withStrategy(mapping, value))}>

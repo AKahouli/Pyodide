@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -6,6 +6,7 @@ import { LoggerService } from '@modules/logger';
 import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
+import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -34,6 +35,7 @@ export class ConnectorMcpRuntimeService {
     @Inject('ConnectorAuthService') private readonly auth: ConnectorAuthService,
     private readonly logger: LoggerService,
     private readonly workspaceShares: WorkspaceShareService,
+    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
   ) {
     this.logger.setContext(ConnectorMcpRuntimeService.name);
   }
@@ -64,17 +66,18 @@ export class ConnectorMcpRuntimeService {
       runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
       connectorId: connector.id,
     });
-    if (connector.authSourceType !== 'none' && Object.keys(resolvedAuth.headers).length === 0) {
+    if (!this.mcpJwt?.isJwtServer(connector.mcpServerUrl) && connector.authSourceType !== 'none' && Object.keys(resolvedAuth.headers).length === 0) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector has no usable background credential.');
     }
 
     const dynamicHeaders = await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []);
-    const headers = {
+    let headers = {
       ...this.safeConfiguredHeaders(connector.mcpServerConfig),
       ...resolvedAuth.headers,
       ...dynamicHeaders,
       ...(input.authoritativeHeaders ?? {}),
     };
+    if (this.mcpJwt) headers = await this.mcpJwt.headers(connector.mcpServerUrl, input.authorizationUserId, headers);
     const transport = await this.createTransport(connector.mcpTransportType, connector.mcpServerUrl, headers);
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const client = new Client({ name: 'yellowstorm-evidence-search', version: '1.0.0' });
@@ -111,7 +114,7 @@ export class ConnectorMcpRuntimeService {
   }
 
   private async createTransport(transportType: string, serverUrl: string, headers: Record<string, string>): Promise<Transport> {
-    const requestInit: RequestInit = { headers };
+    const requestInit: RequestInit = { headers, ...(this.mcpJwt?.isJwtServer(serverUrl) ? { redirect: 'error' as const } : {}) };
     if (transportType === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(serverUrl), { requestInit });

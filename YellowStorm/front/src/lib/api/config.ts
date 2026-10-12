@@ -109,8 +109,9 @@ export function getSocketBaseUrl(): string {
   return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 }
 
+// The access token lives only in memory (see lib/api/access-token-store.ts);
+// session continuity is owned by the HttpOnly refresh cookie.
 export const AUTH_STORAGE_KEYS = {
-  accessToken: 'yellostorm_access_token',
   user: 'yellostorm_user',
 } as const;
 
@@ -296,11 +297,13 @@ export const API_ENDPOINTS = {
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    activeStreams: (id: string) => `/conversations/${id}/active-streams`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
     rootInputs: (id: string) => `/conversations/${id}/root-inputs`,
     rootBackgroundInput: (id: string, executionId: string) => `/conversations/${id}/root-inputs/background/${executionId}`,
     rootWork: (id: string) => `/conversations/${id}/root-work`,
     rootWorkStop: (id: string) => `/conversations/${id}/root-work/stop`,
+    rootWorkCancelJob: (id: string, executionId: string) => `/conversations/${id}/root-work/jobs/${executionId}/cancel`,
     rootWorkEvents: (id: string) => `/conversations/${id}/root-work/events`,
     rootResult: (id: string, executionId: string) => `/conversations/${id}/root-results/${executionId}`,
     rootEvidence: (id: string, executionId: string, evidenceId: string) => `/conversations/${id}/root-results/${executionId}/evidence/${evidenceId}`,
@@ -329,7 +332,9 @@ export const API_ENDPOINTS = {
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,
+    shareUsers: (id: string) => `/conversations/${id}/share/users`,
     revokeShare: (convId: string, shareId: string) => `/conversations/${convId}/share/${shareId}`,
+    revokeShareRecipient: (convId: string, shareId: string, recipientId: string) => `/conversations/${convId}/share/${shareId}/recipients/${recipientId}`,
     publicShare: (accessToken: string) => `/conversations/shared/${accessToken}`,
   },
   analytics: {
@@ -491,6 +496,8 @@ export const API_ENDPOINTS = {
     workspaceSourceMapping: (id: string) => `/semantic-models/${id}/source-mappings/workspace`,
     conceptRecords: (id: string, conceptId: string) => `/semantic-models/${id}/concepts/${conceptId}/records`,
     searchIndex: (id: string) => `/semantic-models/${id}/search-index`,
+    searchIndexStop: (id: string) => `/semantic-models/${id}/search-index/stop`,
+    searchIndexRestart: (id: string) => `/semantic-models/${id}/search-index/restart`,
     assistantChanges: (id: string) => `/semantic-models/${id}/assistant/changes`,
     assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
@@ -531,9 +538,11 @@ export const API_ENDPOINTS = {
     populationFreshness: (id: string) => `/semantic-models/${id}/population/freshness`,
     canvasPositions: (id: string) => `/semantic-models/${id}/canvas-positions`,
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
+    check: (id: string) => `/semantic-models/${id}/check`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
     reviewQueue: (id: string) => `/semantic-models/${id}/review-queue`,
+    health: (id: string) => `/semantic-models/${id}/health`,
     resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
     dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },

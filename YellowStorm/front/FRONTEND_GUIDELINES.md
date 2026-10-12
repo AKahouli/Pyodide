@@ -233,7 +233,9 @@ During migration a module may run **both paths** — Zustand store reads from th
 
 ### Browser storage
 
-`localStorage` for `yellostorm_access_token`, `yellostorm_user`, and UI prefs. `sessionStorage` for maintenance info. Keys always declared as exported constants.
+`localStorage` for `yellostorm_user` (display cache) and UI prefs — never credentials: the access token lives in memory
+(`lib/api/access-token-store.ts`) and session continuity comes from the HttpOnly refresh cookie (`restoreSessionFromCookie()`).
+`sessionStorage` for maintenance info and the refresh attempt id. Keys always declared as exported constants.
 
 ---
 

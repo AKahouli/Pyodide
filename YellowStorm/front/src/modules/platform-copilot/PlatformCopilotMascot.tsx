@@ -38,10 +38,17 @@ function clampLauncherPosition(position: LauncherPosition, launcher: HTMLButtonE
   const rect = launcher.getBoundingClientRect();
   const maxLeft = Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, window.innerWidth - rect.width - PLATFORM_COPILOT_LAUNCHER_MARGIN);
   const maxTop = Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, window.innerHeight - rect.height - PLATFORM_COPILOT_LAUNCHER_MARGIN);
-  return {
+  const clamped = {
     left: Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, Math.min(maxLeft, position.left)),
     top: Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, Math.min(maxTop, position.top)),
   };
+  const composer = document.querySelector('[data-conversation-composer]')?.getBoundingClientRect();
+  if (composer && composer.width > 0 && composer.height > 0
+    && clamped.left < composer.right && clamped.left + rect.width > composer.left
+    && clamped.top < composer.bottom && clamped.top + rect.height > composer.top) {
+    clamped.top = Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, composer.top - rect.height - PLATFORM_COPILOT_LAUNCHER_MARGIN);
+  }
+  return clamped;
 }
 
 function releaseLauncherPointer(launcher: HTMLButtonElement, pointerId: number) {
@@ -129,8 +136,9 @@ export function PlatformCopilotMascot() {
   React.useEffect(() => {
     const keepLauncherInViewport = () => {
       setLauncherPosition((position) => {
-        if (!position || !launcherRef.current) return position;
-        const clamped = clampLauncherPosition(position, launcherRef.current);
+        if (!launcherRef.current || (!position && !document.querySelector('[data-conversation-composer]'))) return position;
+        const rect = launcherRef.current.getBoundingClientRect();
+        const clamped = clampLauncherPosition(position ?? { left: rect.left, top: rect.top }, launcherRef.current);
         launcherPositionRef.current = clamped;
         return clamped;
       });
@@ -148,6 +156,35 @@ export function PlatformCopilotMascot() {
       return clamped;
     });
   }, [open]);
+
+  React.useLayoutEffect(() => {
+    if (open) return;
+    let composer: Element | null = null;
+    const avoidComposer = () => {
+      const launcher = launcherRef.current;
+      if (!launcher || !composer) return;
+      const rect = launcher.getBoundingClientRect();
+      const current = launcherPositionRef.current ?? { left: rect.left, top: rect.top };
+      const next = clampLauncherPosition(current, launcher);
+      if (next.left === current.left && next.top === current.top) return;
+      launcherPositionRef.current = next;
+      setLauncherPosition(next);
+    };
+    const resizeObserver = new ResizeObserver(avoidComposer);
+    const observeComposer = () => {
+      const next = document.querySelector('[data-conversation-composer]');
+      if (next === composer) return;
+      resizeObserver.disconnect();
+      composer = next;
+      if (composer) resizeObserver.observe(composer);
+      avoidComposer();
+    };
+    // Conversation content may mount after its route's loading state.
+    const mutationObserver = new MutationObserver(observeComposer);
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    observeComposer();
+    return () => { resizeObserver.disconnect(); mutationObserver.disconnect(); };
+  }, [open, location.pathname]);
 
   const pageContext = React.useMemo<PlatformCopilotPageContext>(() => {
     const match = location.pathname.match(/^\/playbooks\/([^/]+)(?:\/executions\/([^/]+))?/);

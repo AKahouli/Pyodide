@@ -112,6 +112,7 @@ export interface ConversationResponse {
   pinnedAgentId?: string | null;
   /** Bound root for standard untagged turns; distinct from copilot pinning. */
   rootAgentId?: string | null;
+  concurrentRepliesEnabled?: boolean;
   governanceContext?: {
     programId: string;
     scopeId: string;

@@ -36,8 +36,9 @@ describe('RegisterModal', () => {
     expect(useAuthModalStore.getState().registerSuccess).toBe(true);
   }, 15000);
 
-  it('shows mapped error when email already exists', async () => {
-    registerMock.mockRejectedValue({ code: 'ERR_1101' });
+  it('shows the same generic success state for an already-registered email (no enumeration)', async () => {
+    // The API answers 201 with the generic result, so the UI cannot tell the two cases apart.
+    registerMock.mockResolvedValue(undefined);
 
     render(<RegisterModal open onOpenChange={vi.fn()} onSwitchToLogin={vi.fn()} />);
 
@@ -46,6 +47,7 @@ describe('RegisterModal', () => {
     await userEvent.type(screen.getByLabelText('register.confirmPassword.label'), testPassword);
     await userEvent.click(screen.getByRole('button', { name: 'register.submit' }));
 
-    expect(await screen.findByText('register.error.emailExists')).toBeInTheDocument();
+    expect(await screen.findByText('register.success.title')).toBeInTheDocument();
+    expect(screen.queryByText('register.error.emailExists')).not.toBeInTheDocument();
   });
 });

@@ -127,7 +127,7 @@ async def test_shared_owned_fanout_runs_original_items_and_reauthorizes_terminal
     from google.protobuf import json_format
     from src.root_runtime.background_fanout import OwnedFanoutAdapter, classify_fanout_history
     from src.root_runtime.fanout import build_fanout_workflow
-    from tests.wp04.test_delegate_dispatcher import _Scripted, _text
+    from tests.wp04.test_delegate_dispatcher import _Scripted, _text, _fc
     from google.adk.agents.context import Context
     from google.adk.events.request_input import RequestInput
     from google.adk.workflow.utils._workflow_hitl_utils import create_request_input_response, get_request_input_interrupt_ids
@@ -159,7 +159,25 @@ async def test_shared_owned_fanout_runs_original_items_and_reauthorizes_terminal
         calls.append(scope.execution_id)
         if wait and scope.execution_id == scopes[0].execution_id:
             return FunctionNode(func=parking, name='parking', rerun_on_resume=True)
-        return LlmAgent(name='worker', model=_Scripted(scope.execution_id, [_text('Owned item output')]))
+        from src.skills.runtime import make_activate_skill_tool, limit_loaded_skill_activation
+        skill_body = 'Bounded research ' + scope.execution_id
+        activate_skill = make_activate_skill_tool([{'name': 'research', 'instructions': skill_body}])
+
+        def finish_after_skill(req):
+            own_task = next(item['task'] for item in manifest['items'] if item['executionId'] == scope.execution_id)
+            assert any('<task>' + own_task + '</task>' in (part.text or '')
+                for content in req.contents or [] for part in content.parts or [])
+            responses = [part.function_response.response
+                for content in req.contents or [] for part in content.parts or []
+                if part.function_response is not None]
+            assert responses == [{'result': '<skill_content name="research">\n' + skill_body + '\n</skill_content>'}]
+            assert 'activate_skill' not in req.tools_dict
+            assert not any(declaration.name == 'activate_skill' for tool in req.config.tools or []
+                for declaration in tool.function_declarations or [])
+            return _text('Owned item output')
+
+        return LlmAgent(name='worker', tools=[activate_skill], before_model_callback=limit_loaded_skill_activation,
+            model=_Scripted(scope.execution_id, [_fc('activate_skill', {'name': 'research'}), finish_after_skill]))
     monkeypatch.setattr('src.root_runtime.background_fanout._post', post)
     monkeypatch.setattr('src.root_runtime.dispatcher._compile_candidate', compile_selected)
     root = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id=scopes[0].parent_execution_id,

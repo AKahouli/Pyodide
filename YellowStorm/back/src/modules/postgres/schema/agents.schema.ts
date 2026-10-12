@@ -35,6 +35,10 @@ export const agents = pgTable(
     email: varchar('email', { length: 320 }),
     instruction: text('instruction').notNull().default(''),
     ignorePrePrompt: boolean('ignore_pre_prompt').notNull().default(false),
+    // Generative UI: the run appends the OpenUI output-format block to the prompt and the
+    // front renders this agent's answers with OpenUI. Rows default OFF (system agents, raw
+    // inserts); personal/admin creation turns it ON in AgentService.dtoToCreateInput.
+    genUiEnabled: boolean('gen_ui_enabled').notNull().default(false),
 
     agentTypeId: char('agent_type_id', { length: 24 }).notNull(),
     agentTypeSlug: varchar('agent_type_slug', { length: 100 }).notNull().default(''),

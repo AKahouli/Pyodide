@@ -191,6 +191,8 @@ export interface IAgentResponse {
   reasoning_effort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  /** Generative UI (OpenUI): the run appends the output-format block and the front renders the answers with OpenUI. */
+  genUiEnabled: boolean;
   knowledgeBases: string[];
   tools: string[];
   connectors?: string[];
@@ -234,6 +236,8 @@ export interface IAgentForStream {
   reasoningEffort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  /** Generative UI (OpenUI): the run appends the output-format block to the prompt. Absent = off. */
+  genUiEnabled?: boolean;
   knowledgeBases: string[];
   toolIds: string[];
   connectorIds?: string[];

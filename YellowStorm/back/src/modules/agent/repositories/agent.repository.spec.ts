@@ -83,6 +83,15 @@ describeIntegration('AgentRepository create/findById (integration)', () => {
   afterEach(async () => { await deleteAgents(db, created.splice(0)); });
   afterAll(async () => { await close(); });
 
+  it('persists a newly created mono-agent background policy rather than displaying unsaved defaults', async () => {
+    const policy = { version: 1, background: { enabled: true, maxOutstandingPerConversation: 2 },
+      temporaryWorkers: { enabled: true, maxPerWorkGroup: 4 } };
+    const input = createInput({ rootExecutionPolicy: policy });
+    created.push(input.id);
+    await createAgent(repo, db, input);
+    expect((await repo.findById(input.id))!.rootExecutionPolicy).toEqual(policy);
+  });
+
   it('creates an agent with junctions and reads it back in lean-doc shape', async () => {
     const toolId = oid(); const skillId = oid(); const connectorId = oid(); const wsId = oid();
     const input = createInput({

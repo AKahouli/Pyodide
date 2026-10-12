@@ -25,6 +25,8 @@ describe('SemanticModelController validation synchronization', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(controller.validate({ _id: { toString: () => 'user-id' } } as never, 'model-id'))
@@ -41,10 +43,12 @@ describe('SemanticModelController graph search', () => {
       expand: jest.fn().mockResolvedValue({ status: 'found' }),
       indexStatus: jest.fn().mockResolvedValue({ index: { state: 'ready' } }),
       ensureIndex: jest.fn().mockResolvedValue({ jobId: 'job-1' }),
+      stopIndex: jest.fn().mockResolvedValue({ stopped: true }),
+      restartIndex: jest.fn().mockResolvedValue({ restarted: true }),
     };
     const unused = {} as never;
     const controller = new SemanticModelController(
-      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never, unused,
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, graphSearch as never, unused, unused, unused,
     );
     const user = { _id: { toString: () => 'user-id' } } as never;
 
@@ -52,10 +56,40 @@ describe('SemanticModelController graph search', () => {
     await controller.expandSearch(user, 'model-id', { environment: 'draft', seedEntityIds: ['e-1'], steps: [{}] } as never);
     await controller.searchIndex(user, 'model-id', { environment: 'production' } as never);
     await controller.ensureSearchIndex(user, 'model-id', { environment: 'draft' } as never);
+    await controller.stopSearchIndex(user, 'model-id', { environment: 'draft' } as never);
+    await controller.restartSearchIndex(user, 'model-id', { environment: 'draft' } as never);
 
     expect(graphSearch.search).toHaveBeenCalledWith('user-id', 'model-id', { environment: 'production', query: 'acme' });
     expect(graphSearch.expand).toHaveBeenCalledWith('user-id', 'model-id', { environment: 'draft', seedEntityIds: ['e-1'], steps: [{}] });
     expect(graphSearch.indexStatus).toHaveBeenCalledWith('user-id', 'model-id', 'production');
     expect(graphSearch.ensureIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
+    expect(graphSearch.stopIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
+    expect(graphSearch.restartIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
+  });
+});
+
+describe('SemanticModelController model check', () => {
+  it('passes the person and model to the check service', async () => {
+    const modelCheck = { check: jest.fn().mockResolvedValue({ errorCount: 0, issues: [] }) };
+    const unused = {} as never;
+    const controller = new SemanticModelController(
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, modelCheck as never, unused,
+    );
+
+    await expect(controller.check({ _id: { toString: () => 'user-id' } } as never, 'model-id')).resolves.toEqual({ errorCount: 0, issues: [] });
+    expect(modelCheck.check).toHaveBeenCalledWith('user-id', 'model-id');
+  });
+});
+
+describe('SemanticModelController model health', () => {
+  it('passes the person and model to the health service', async () => {
+    const modelHealth = { health: jest.fn().mockResolvedValue({ state: 'ready', concepts: [] }) };
+    const unused = {} as never;
+    const controller = new SemanticModelController(
+      unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, unused, modelHealth as never,
+    );
+
+    await expect(controller.health({ _id: { toString: () => 'user-id' } } as never, 'model-id')).resolves.toEqual({ state: 'ready', concepts: [] });
+    expect(modelHealth.health).toHaveBeenCalledWith('user-id', 'model-id');
   });
 });

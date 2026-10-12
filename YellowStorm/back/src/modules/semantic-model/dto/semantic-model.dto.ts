@@ -674,9 +674,73 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
   archiveTimeoutSeconds?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 1024, description: 'Largest single e-mail read, in MB; a bigger one is kept as an unread row' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1024)
+  maxEmlMb?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500, description: 'Largest single attachment read, in MB; a bigger one is listed but its text is not read' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxAttachmentMb?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 5, description: 'How deep attached e-mails are opened as e-mails of their own (0: not opened)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(5)
+  maxNesting?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2000, description: 'Most pages read of one PDF' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(2000)
+  maxPdfPages?: number;
+
+  @ApiPropertyOptional({ minimum: 1000, maximum: 1000000, description: 'Most cells read of one workbook' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(1000000)
+  maxSheetCells?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2000, description: 'Most slides read of one presentation' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(2000)
+  maxSlides?: number;
+
+  @ApiPropertyOptional({ minimum: 5000, maximum: 500000, description: 'Most characters of an attachment text kept in its record' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5000) @Max(500000)
+  maxAttachmentChars?: number;
+
+  @ApiPropertyOptional({ minimum: 5000, maximum: 500000, description: 'Most characters of an e-mail body kept in its record' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5000) @Max(500000)
+  maxBodyChars?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1024, description: 'Most a zipped office file may hold once decompressed, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1024)
+  maxInflatedMb?: number;
+
   @ApiPropertyOptional({ minimum: 30, maximum: 3600, description: 'Time "Start over from scratch" may take to clear the data of a model, in seconds' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(30) @Max(3600)
   purgeTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 50000, description: 'Rows written per batch when a run saves its data' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(50000)
+  saveBatchRows?: number;
+
+  @ApiPropertyOptional({ minimum: 5, maximum: 600, description: 'Time one save batch may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
+  saveStatementSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 20000, description: 'Graph elements (records or links) written per statement when a run builds its graph' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(20000)
+  projectionBatchRows?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 256, description: 'Texts sent per embedding call when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(256)
+  embeddingBatchSize?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 16, description: 'Embedding calls in flight at once when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(16)
+  embeddingParallelCalls?: number;
+
+  @ApiPropertyOptional({ minimum: 5, maximum: 600, description: 'Time one embedding call may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5) @Max(600)
+  embeddingTimeoutSeconds?: number;
+
+  @ApiPropertyOptional({ minimum: 500, maximum: 50000, description: 'Records read per page when a search index is built' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(500) @Max(50000)
+  indexReadPageRows?: number;
 }
 
 export class DerivedFieldMappingDto {
@@ -1500,6 +1564,41 @@ export class SaveCanvasPositionsDto {
   @ValidateNested({ each: true })
   @Type(() => CanvasPositionDto)
   positions!: CanvasPositionDto[];
+}
+
+export class GraphOutlineQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+
+  @ApiPropertyOptional({ default: 2000, maximum: 5000, description: 'Records to read, shared among the concepts' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5000)
+  limit?: number;
+
+  @ApiPropertyOptional({ description: 'Read the records of this concept only' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  conceptId?: string;
+
+  @ApiPropertyOptional({ description: 'Read this record with its neighbours instead' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  focus?: string;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1, maximum: 8, description: 'With `focus`: how many links away from that record to read (closest first, within `limit`)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(8)
+  depth?: number;
 }
 
 export class GraphSearchQueryDto {

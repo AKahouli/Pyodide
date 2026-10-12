@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -26,7 +26,7 @@ import {
 } from '../system/interfaces/login-settings.interface';
 import { WorkspaceInitializerService } from '../workspace/workspace-initializer.service';
 import { TokenPair, LoginResponse, DeviceInfoData, SessionInfo } from './interfaces/auth.interface';
-import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ServiceUnavailableException, ConflictException, InternalServerException } from '../exceptions';
+import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ServiceUnavailableException, ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -37,9 +37,13 @@ import {
 } from './utils/session-store-errors';
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
 import { PgSessionStore } from './persistence/pg-session.store';
+import { LoginLockoutService } from './throttle/login-lockout.service';
+
+const REGISTER_RESPONSE_MESSAGE =
+  'If this email can be registered, a verification link has been sent. Please check your inbox.';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   /**
    * How long a standalone claimed-but-unattached rotation window is treated
    * as an in-flight concurrent rotation (retryable conflict) rather than a
@@ -49,11 +53,13 @@ export class AuthService {
   private static readonly STANDALONE_CLAIM_GRACE_MS = 30_000;
 
   private readonly bcryptRounds: number;
+  private readonly registerMinDurationMs: number;
   private readonly appName: string;
   private readonly frontendUrl: string;
   private readonly passwordResetExpiryHours: number;
   private readonly receiptCrypto: RotationReceiptCrypto;
   private readonly receiptWindowSeconds: number;
+  private dummyPasswordHash?: Promise<string>;
   constructor(
     private readonly sessionStore: PgSessionStore,
     private readonly userService: UserService,
@@ -71,9 +77,11 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly loginLockout: LoginLockoutService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
+    this.registerMinDurationMs = this.configService.get<number>('auth.registerMinDurationMs', 1000);
     this.appName = this.configService.get<string>('app.name', 'YelloStorm');
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -84,10 +92,25 @@ export class AuthService {
     this.receiptWindowSeconds = this.configService.get<number>('auth.rotationReceiptWindowSeconds', 120);
   }
 
+  /** Warm the decoy hash so the first unknown-email login is not measurably slower. */
+  async onModuleInit(): Promise<void> {
+    await this.getDummyPasswordHash();
+  }
+
+  /**
+   * Decoy bcrypt hash at the configured cost, compared against when the email
+   * is unknown so response time does not reveal whether an account exists.
+   */
+  private getDummyPasswordHash(): Promise<string> {
+    this.dummyPasswordHash ??= bcrypt.hash(crypto.randomBytes(16).toString('hex'), this.bcryptRounds);
+    return this.dummyPasswordHash;
+  }
+
   /**
    * Register a new user
    */
-  async register(dto: RegisterDto): Promise<{ message: string; userId: string }> {
+  async register(dto: RegisterDto): Promise<{ message: string }> {
+    const startedAt = Date.now();
     if (!this.systemService.isRegistrationEnabled()) {
       throw new ForbiddenException(
         ErrorCode.REGISTRATION_DISABLED,
@@ -95,16 +118,24 @@ export class AuthService {
       );
     }
 
-    const user = await this.userService.create({
-      email: dto.email,
-      password: dto.password,
-    });
+    let user: Awaited<ReturnType<UserService['create']>>;
+    try {
+      user = await this.userService.create({
+        email: dto.email,
+        password: dto.password,
+      });
+    } catch (error) {
+      if (error instanceof ConflictException && error.code === ErrorCode.USER_ALREADY_EXISTS) {
+        return await this.registerResultForExistingEmail(dto.password, startedAt);
+      }
+      throw error;
+    }
     // Assign default (free) plan to new user
     let defaultPlan;
     try {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
-        user._id.toString(),
+        user._id,
         defaultPlan.id,
         defaultPlan.slug,
       );
@@ -124,7 +155,7 @@ export class AuthService {
     try {
       const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
       await this.workspaceInitializer.getOrCreatePersonalWorkspace(
-        user._id.toString(),
+        user._id,
         workspaceStorage,
       );
       this.logger.log('Personal workspace created for new user', {
@@ -140,19 +171,51 @@ export class AuthService {
 
     // Create the user's human agent (empty role/description until profile completion)
     await this.humainAgentService.ensureForUser({
-      userId: user._id.toString(),
+      userId: user._id,
       email: user.email,
     });
 
-    this.logger.log('User registered', { userId: user._id, email: user.email });
+    this.logger.log('User registered', { userId: user._id });
 
-    // Send verification email
-    await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
+    // Not awaited: SMTP latency must not distinguish a new registration from an existing email.
+    if (user.emailVerificationToken) {
+      this.sendVerificationEmail(user._id, user.email, user.emailVerificationToken).catch((err: unknown) => {
+        this.logger.warn('Failed to send verification email after registration', {
+          userId: user._id,
+          error: (err as Error).message,
+        });
+      });
+    } else {
+      this.logger.warn('Registered user has no verification token, skipping verification email', { userId: user._id });
+    }
 
-    return {
-      message: 'Registration successful. Please check your email to verify your account.',
-      userId: user._id.toString(),
-    };
+    await this.padRegisterDuration(startedAt);
+    return { message: REGISTER_RESPONSE_MESSAGE };
+  }
+
+  /**
+   * An already-registered email must be indistinguishable from a new
+   * registration (same status, same body, similar latency), otherwise the
+   * endpoint is an account-enumeration oracle. The password is hashed anyway
+   * to match the cost of the real path; nothing about the email is logged.
+   */
+  private async registerResultForExistingEmail(password: string, startedAt: number): Promise<{ message: string }> {
+    await bcrypt.hash(password, this.bcryptRounds);
+    this.logger.log('Registration attempted for an existing account');
+    await this.padRegisterDuration(startedAt);
+    return { message: REGISTER_RESPONSE_MESSAGE };
+  }
+
+  /**
+   * Both register outcomes wait until a common floor (measured from the start
+   * of the call) has elapsed, so the cheaper existing-email path is not
+   * measurably faster than user, plan, workspace and agent creation.
+   */
+  private async padRegisterDuration(startedAt: number): Promise<void> {
+    const remainingMs = this.registerMinDurationMs - (Date.now() - startedAt);
+    if (remainingMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
+    }
   }
 
   /**
@@ -163,19 +226,39 @@ export class AuthService {
     ipAddress: string,
     userAgent: string,
   ): Promise<{ loginResponse: LoginResponse; refreshToken: string }> {
-    // Find user
-    const user = await this.userService.findByEmail(dto.email);
-    if (!user) {
+    // Lock is per (IP, email) so an attacker cannot lock the real owner out;
+    // the attempt is counted before the comparison so concurrent bursts are bounded.
+    this.loginLockout.assertNotLocked(dto.email, ipAddress);
+    const lockSeconds = this.loginLockout.reserveAttempt(dto.email, ipAddress);
+
+    let user: Awaited<ReturnType<UserService['findByEmail']>>;
+    let isPasswordValid: boolean;
+    try {
+      user = await this.userService.findByEmail(dto.email);
+      // Unknown email and wrong password must be indistinguishable: same error,
+      // and one bcrypt comparison either way (decoy hash when there is no user).
+      isPasswordValid = user
+        ? await this.userService.validatePassword(user, dto.password)
+        : await bcrypt.compare(dto.password, await this.getDummyPasswordHash());
+    } catch (error) {
+      // Store outage etc.: not a credential failure, do not count it.
+      this.loginLockout.release(dto.email, ipAddress);
+      throw error;
+    }
+    if (!user || !isPasswordValid) {
+      if (lockSeconds !== null) {
+        // userId only; absent for unknown emails so the log cannot confirm an account.
+        this.logger.warn('Login temporarily locked after repeated failures', {
+          userId: user?._id,
+          lockSeconds,
+        });
+      }
       throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
     }
+    this.loginLockout.recordSuccess(dto.email, ipAddress);
 
+    // Account state is only revealed to someone who proved the password.
     assertAccountAccessible(user);
-
-    // Validate password
-    const isPasswordValid = await this.userService.validatePassword(user, dto.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
-    }
 
     // Check if email is verified
     if (!user.emailVerified) {
@@ -190,7 +273,7 @@ export class AuthService {
     const deviceInfo = this.parseUserAgent(userAgent);
 
     // Fetch user permissions for login response and JWT
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
@@ -200,28 +283,27 @@ export class AuthService {
     const tokens = await this.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     // Update last login
-    await this.userService.updateLastLogin(user._id.toString());
+    await this.userService.updateLastLogin(user._id);
 
     // Ensure the user has a human agent (covers already-registered users on next login)
     await this.humainAgentService.ensureForUser({
-      userId: user._id.toString(),
+      userId: user._id,
       email: user.email,
-      firstName: user.profile?.firstName,
-      lastName: user.profile?.lastName,
-      role: user.profile?.role,
-      description: user.profile?.description,
+      firstName: user.profile.firstName,
+      lastName: user.profile.lastName,
+      role: user.profile.role,
+      description: user.profile.description,
     });
 
     this.logger.log('User logged in', {
       userId: user._id,
-      email: user.email,
       newLocation: isNewLocation,
     });
 
     // Send new location alert email (async, don't block login)
     if (isNewLocation) {
-      this.sendNewLocationAlertEmail(user.email, ipAddress, deviceInfo).catch((err) => {
-        this.logger.warn('Failed to send new location alert email', { error: err.message });
+      this.sendNewLocationAlertEmail(user._id, user.email, ipAddress, deviceInfo).catch((err: unknown) => {
+        this.logger.warn('Failed to send new location alert email', { error: (err as Error).message });
       });
     }
 
@@ -230,28 +312,28 @@ export class AuthService {
         accessToken: tokens.accessToken,
         expiresIn: tokens.expiresIn,
         user: {
-          id: user._id.toString(),
+          id: user._id,
           email: user.email,
           emailVerified: user.emailVerified,
           profileComplete: user.profileComplete,
           appearance: {
-            colorTheme: user.appearance?.colorTheme ?? 'default',
-            language: user.appearance?.language ?? 'en',
+            colorTheme: user.appearance.colorTheme,
+            language: user.appearance.language,
           },
           profile: {
-            firstName: user.profile?.firstName,
-            lastName: user.profile?.lastName,
-            company: user.profile?.company,
+            firstName: user.profile.firstName,
+            lastName: user.profile.lastName,
+            company: user.profile.company,
           },
           consents: {
-            privacyPolicy: user.consents?.privacyPolicy,
-            privacyPolicyAcceptedAt: user.consents?.privacyPolicyAcceptedAt,
-            dataSharing: user.consents?.dataSharing,
-            dataSharingAcceptedAt: user.consents?.dataSharingAcceptedAt,
+            privacyPolicy: user.consents.privacyPolicy,
+            privacyPolicyAcceptedAt: user.consents.privacyPolicyAcceptedAt,
+            dataSharing: user.consents.dataSharing,
+            dataSharingAcceptedAt: user.consents.dataSharingAcceptedAt,
           },
           plan: user.planId
             ? {
-                id: user.planId.toString(),
+                id: user.planId,
                 slug: user.planSlug,
                 startedAt: user.planStartedAt,
               }
@@ -292,7 +374,7 @@ export class AuthService {
     const refreshTokenHash = await bcrypt.hash(refreshToken, this.bcryptRounds);
 
     // Enforce max sessions limit
-    await this.enforceSessionLimit(String(user._id));
+    await this.enforceSessionLimit(user._id);
 
     // Create session
     const session = await this.sessionStore.create({
@@ -307,7 +389,7 @@ export class AuthService {
 
     // Use pre-fetched permissions or fetch fresh ones
     if (!permissions || !roleNames) {
-      const userRoles = user.roles || [];
+      const userRoles = user.roles;
       [permissions, roleNames] = await Promise.all([
         this.authorizationService.getUserPermissions(userRoles),
         this.authorizationService.getUserRoleNames(userRoles),
@@ -316,7 +398,7 @@ export class AuthService {
 
     // Generate access token with sessionId for immediate revocation support
     const accessPayload = {
-      sub: user._id.toString(),
+      sub: user._id,
       email: user.email,
       type: 'access' as const,
       sessionId: session.id,
@@ -402,7 +484,8 @@ export class AuthService {
         !session.rotatedToSessionId && !!session.rotatedAt;
       const claimIsFresh =
         claimedButUnattached &&
-        Date.now() - session.rotatedAt!.getTime() <
+        session.rotatedAt !== null &&
+        Date.now() - session.rotatedAt.getTime() <
           AuthService.STANDALONE_CLAIM_GRACE_MS;
 
       if (
@@ -467,7 +550,7 @@ export class AuthService {
 
     const accessDenial = getAccountAccessDenial(user.status);
     if (accessDenial) {
-      await this.invalidateAllUserSessions(user._id.toString());
+      await this.invalidateAllUserSessions(user._id);
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
@@ -626,13 +709,13 @@ export class AuthService {
       return null;
     }
 
-    const user = await this.userService.findById(session.userId.toString());
+    const user = await this.userService.findById(session.userId);
     if (!user) {
       return null;
     }
     const accessDenial = getAccountAccessDenial(user.status);
     if (accessDenial) {
-      await this.invalidateAllUserSessions(user._id.toString());
+      await this.invalidateAllUserSessions(user._id);
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
@@ -650,14 +733,14 @@ export class AuthService {
     user: AuthUser,
     sessionId: string,
   ): Promise<string> {
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
     const accessPayload = {
-      sub: user._id.toString(),
+      sub: user._id,
       email: user.email,
       type: 'access' as const,
       sessionId,
@@ -675,7 +758,7 @@ export class AuthService {
   /**
    * Logout - invalidate current session
    */
-  async logout(refreshToken: string): Promise<void> {
+  async logout(refreshToken: string | undefined): Promise<void> {
     if (!refreshToken) {
       return;
     }
@@ -750,7 +833,7 @@ export class AuthService {
       os: result.os.name,
       osVersion: result.os.version,
       device: result.device.model,
-      deviceType: result.device.type || 'desktop',
+      deviceType: result.device.type ?? 'desktop',
     };
   }
 
@@ -844,8 +927,8 @@ export class AuthService {
    */
   async resendVerificationEmail(userId: string, email: string): Promise<void> {
     const token = await this.userService.generateEmailVerificationToken(userId);
-    await this.sendVerificationEmail(email, token);
-    this.logger.log('Verification email resent', { userId, email });
+    await this.sendVerificationEmail(userId, email, token);
+    this.logger.log('Verification email resent', { userId });
   }
 
   /**
@@ -859,7 +942,7 @@ export class AuthService {
     if (user.emailVerified) {
       throw new BadRequestException(ErrorCode.EMAIL_ALREADY_VERIFIED, 'Email is already verified');
     }
-    await this.resendVerificationEmail(user._id.toString(), user.email);
+    await this.resendVerificationEmail(user._id, user.email);
   }
 
   /**
@@ -872,7 +955,7 @@ export class AuthService {
     if (rawToken) {
       await this.sendPasswordResetEmail(email, rawToken);
     } else {
-      this.logger.debug('Forgot password requested for non-existent email', { email });
+      this.logger.debug('Forgot password requested for non-existent email');
     }
   }
 
@@ -881,7 +964,7 @@ export class AuthService {
    */
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const user = await this.userService.resetPassword(token, newPassword);
-    await this.invalidateAllUserSessions(user._id.toString());
+    await this.invalidateAllUserSessions(user._id);
     this.logger.log('Password reset completed and sessions invalidated', { userId: user._id });
   }
 
@@ -916,7 +999,7 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send password reset email', { email, error: result.error });
+      this.logger.error('Failed to send password reset email', { error: result.error });
     }
   }
 
@@ -931,7 +1014,7 @@ export class AuthService {
   /**
    * Send verification email
    */
-  private async sendVerificationEmail(email: string, token: string): Promise<void> {
+  private async sendVerificationEmail(userId: string, email: string, token: string): Promise<void> {
     if (!this.emailService.isAvailable()) {
       this.logger.warn('Email service not available, skipping verification email');
       return;
@@ -956,7 +1039,7 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send verification email', { email, error: result.error });
+      this.logger.error('Failed to send verification email', { userId, error: result.error });
     }
   }
 
@@ -964,6 +1047,7 @@ export class AuthService {
    * Send new login location alert email
    */
   private async sendNewLocationAlertEmail(
+    userId: string,
     email: string,
     ipAddress: string,
     deviceInfo: DeviceInfoData,
@@ -1013,9 +1097,9 @@ export class AuthService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send new location alert email', { email, error: result.error });
+      this.logger.error('Failed to send new location alert email', { userId, error: result.error });
     } else {
-      this.logger.log('New location alert email sent', { email, ipAddress });
+      this.logger.log('New location alert email sent', { userId });
     }
   }
 }

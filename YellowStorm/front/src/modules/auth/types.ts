@@ -115,7 +115,6 @@ export interface LoginResponse {
 
 export interface RegisterResponse {
   message: string;
-  userId: string;
 }
 
 export interface RefreshResponse {

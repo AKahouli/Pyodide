@@ -11,9 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+import logging
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable
 
+from app.persistence.partitions import (REVISION_TABLES, drop_generation_partitions, drop_revision_partitions,
+                                        ensure_revision_partitions, with_partition_locks)
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
+
+
+logger = logging.getLogger(__name__)
 
 
 def _json(value: Any) -> str:
@@ -22,11 +30,13 @@ def _json(value: Any) -> str:
 
 def revision_id_for(model_version_id: str, execution_fingerprint: str,
                     dataset_fingerprints: list[str], correction_sequence: int,
-                    reset_generation: int = 0) -> str:
+                    reset_generation: int = 0, variant: str = "") -> str:
     """Deterministic data-revision id for a fixed spec, inputs and watermark.
 
     A model whose data was cleared counts its resets, so its next build is a
-    new revision rather than one kept for another environment."""
+    new revision rather than one kept for another environment. ``variant`` (the digest of the
+    records) tells apart a run that read other values from the same inputs, when the revision
+    it would reuse is already projected and cannot change."""
     from app.population.engine_version import population_engine_version
 
     body = _json({"modelVersionId": model_version_id,
@@ -34,7 +44,8 @@ def revision_id_for(model_version_id: str, execution_fingerprint: str,
                   "executionFingerprint": execution_fingerprint,
                   "datasets": sorted(dataset_fingerprints),
                   "correctionSequence": correction_sequence,
-                  **({"resetGeneration": reset_generation} if reset_generation else {})})
+                  **({"resetGeneration": reset_generation} if reset_generation else {}),
+                  **({"variant": variant} if variant else {})})
     return "dr_" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
 
 
@@ -73,26 +84,117 @@ async def create_data_revision(pool: Any, *, revision_id: str, model_id: str,
                                source_observations: list[dict[str, Any]],
                                correction_sequence: int,
                                coverage: dict[str, Any]) -> str:
-    row = await pool.fetchrow(
-        """
-        INSERT INTO semantic_population.data_revisions
-          (id, model_id, model_version_id, spec_hash, execution_fingerprint,
-           source_observations, correction_sequence, coverage)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
-        ON CONFLICT (id) DO NOTHING
-        RETURNING id
-        """,
-        revision_id, model_id, model_version_id, spec_hash, execution_fingerprint,
-        _json(source_observations), correction_sequence, _json(coverage),
-    )
+    """Create the revision and its partitions (migration 031) in one transaction. The partitions
+    come first: attaching them locks the revisions table, and that must not upgrade a row lock."""
+    async def create(connection: Any) -> Any:
+        await ensure_revision_partitions(connection, revision_id)
+        return await connection.fetchrow(
+            """
+            INSERT INTO semantic_population.data_revisions
+              (id, model_id, model_version_id, spec_hash, execution_fingerprint,
+               source_observations, correction_sequence, coverage)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            """,
+            revision_id, model_id, model_version_id, spec_hash, execution_fingerprint,
+            _json(source_observations), correction_sequence, _json(coverage),
+        )
+    row = await with_partition_locks(pool, create)
     return row["id"] if row else revision_id
 
 
+def content_digest(entities: list[dict[str, Any]], assertions: list[dict[str, Any]],
+                   relationships: list[dict[str, Any]]) -> str:
+    """What a population holds, whatever the order: its records, the values they carry and the links."""
+    body = _json({
+        "entities": sorted([entity["entityId"], entity.get("label", ""), entity.get("attributes", {})]
+                           for entity in entities),
+        "assertions": sorted([assertion["entityId"], assertion["attribute"], assertion.get("value")]
+                             for assertion in assertions),
+        "relationships": sorted([link["relationId"], link["sourceEntityId"], link["targetEntityId"]]
+                                for link in relationships)})
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+async def replace_revision_rows(connection: Any, revision_id: str, *, coverage: dict[str, Any],
+                                source_observations: list[dict[str, Any]],
+                                timeout: float | None = None) -> None:
+    """Empty a revision's partitions and record what its new rows were read from. The caller writes the
+    new rows in the same transaction, so readers see the old rows or the new ones, never a mix.
+
+    Deletes follow the partitions' lock order: the tables referencing the records first, the records last."""
+    options = {} if timeout is None else {"timeout": timeout}
+    for table in REVISION_TABLES:
+        await connection.execute(
+            f"DELETE FROM {table.schema}.{table.name} WHERE data_revision_id = $1", revision_id, **options)
+    await connection.execute(
+        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb, source_observations = $3::jsonb "
+        "WHERE id = $1", revision_id, _json(coverage), _json(source_observations), **options)
+
+
+async def update_revision_reading(pool: Any, revision_id: str, *, coverage: dict[str, Any],
+                                  source_observations: list[dict[str, Any]]) -> None:
+    """What a revision's rows were read from and how completely, when the rows themselves are kept."""
+    await pool.execute(
+        "UPDATE semantic_population.data_revisions SET coverage = $2::jsonb || CASE WHEN coverage ? 'graphExposure' "
+        "THEN jsonb_build_object('graphExposure', coverage -> 'graphExposure') ELSE '{}'::jsonb END, "
+        "source_observations = $3::jsonb WHERE id = $1", revision_id, _json(coverage), _json(source_observations))
+
+
+# Rows written per call: each call must finish within the worker pool's statement limit,
+# whatever the size of the run.
+WRITE_CHUNK_ROWS = 2000
+
+
+@dataclass(frozen=True)
+class SaveBudget:
+    """How the saving step writes: rows per call, and the seconds one call may take.
+
+    ``seconds`` of None leaves the connection's own limit in force. ``on_rows`` is told how many
+    rows each written call carried, so a long save can report how far it is."""
+    rows: int = WRITE_CHUNK_ROWS
+    seconds: int | None = None
+    on_rows: Callable[[int], Awaitable[None]] | None = field(default=None, compare=False)
+
+
+@asynccontextmanager
+async def save_connection(pool: Any, budget: SaveBudget) -> AsyncIterator[Any]:
+    """One connection whose server statement limit allows ``budget.seconds`` for the writes made on it.
+
+    The pool's limit is back when the connection is returned; a connection that cannot be
+    reset is closed instead of going back with the longer limit."""
+    async with pool.acquire() as connection:
+        if budget.seconds is not None:
+            await connection.execute(f"SET statement_timeout = '{int(budget.seconds)}s'")
+        try:
+            yield connection
+        finally:
+            if budget.seconds is not None:
+                try:
+                    await connection.execute("RESET statement_timeout")
+                except Exception:
+                    logger.warning("could not reset the statement timeout; closing the connection", exc_info=True)
+                    connection.terminate()
+
+
+async def _executemany_chunked(pool: Any, sql: str, rows: list[tuple[Any, ...]],
+                               budget: SaveBudget = SaveBudget()) -> None:
+    # The client-side limit is only passed when set: the pool's own applies otherwise.
+    options = {} if budget.seconds is None else {"timeout": budget.seconds}
+    for start in range(0, len(rows), budget.rows):
+        chunk = rows[start:start + budget.rows]
+        await pool.executemany(sql, chunk, **options)
+        if budget.on_rows is not None:
+            await budget.on_rows(len(chunk))
+
+
 async def store_entities(pool: Any, *, model_id: str, revision_id: str,
-                         entities: list[dict[str, Any]]) -> int:
+                         entities: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not entities:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.entities
           (id, model_id, data_revision_id, concept_id, namespace, identity_key,
@@ -105,15 +207,17 @@ async def store_entities(pool: Any, *, model_id: str, revision_id: str,
           _json(entity.get("identity", {})), entity.get("label", ""),
           _json(entity.get("attributes", {})), _json(entity.get("provenance", {})))
          for entity in entities],
+        budget,
     )
     return len(entities)
 
 
 async def store_entity_aliases(pool: Any, *, revision_id: str,
-                               aliases: list[dict[str, Any]]) -> int:
+                               aliases: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not aliases:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.entity_identities
           (entity_id, data_revision_id, alias_namespace, alias_key)
@@ -122,6 +226,7 @@ async def store_entity_aliases(pool: Any, *, revision_id: str,
         """,
         [(alias["entityId"], revision_id, alias["aliasNamespace"], alias["aliasKey"])
          for alias in aliases],
+        budget,
     )
     return len(aliases)
 
@@ -157,16 +262,19 @@ def split_assertions(assertions: list[dict[str, Any]]) -> tuple[list[dict[str, A
 
 
 async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
-                           assertions: list[dict[str, Any]]) -> int:
+                           assertions: list[dict[str, Any]], budget: SaveBudget = SaveBudget(),
+                           split: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None) -> int:
+    """``split`` is ``split_assertions(assertions)`` when the caller already made it (to count the rows)."""
     if not assertions:
         return 0
-    served, candidates = split_assertions(assertions)
+    served, candidates = split if split is not None else split_assertions(assertions)
     rows = [(model_id, revision_id, assertion["entityId"], assertion["attribute"],
              assertion.get("value"), assertion.get("origin", "source"),
              _json(assertion.get("evidence", {})),
              (assertion.get("evidence", {}) or {}).get("mappingVersion"))
             for assertion in served]
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.assertions
           (model_id, data_revision_id, entity_id, attribute, value, origin,
@@ -175,9 +283,11 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
         ON CONFLICT (data_revision_id, entity_id, attribute) DO NOTHING
         """,
         rows,
+        budget,
     )
     if candidates:
-        await pool.executemany(
+        await _executemany_chunked(
+            pool,
             """
             INSERT INTO semantic_population.assertion_candidates
               (model_id, data_revision_id, entity_id, attribute, value, origin, evidence, mapping_version)
@@ -188,15 +298,17 @@ async def store_assertions(pool: Any, *, model_id: str, revision_id: str,
               _json(assertion.get("evidence", {})),
               (assertion.get("evidence", {}) or {}).get("mappingVersion"))
              for assertion in candidates],
+            budget,
         )
     return len(rows)
 
 
 async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
-                              relationships: list[dict[str, Any]]) -> int:
+                              relationships: list[dict[str, Any]], budget: SaveBudget = SaveBudget()) -> int:
     if not relationships:
         return 0
-    await pool.executemany(
+    await _executemany_chunked(
+        pool,
         """
         INSERT INTO semantic_population.relationships
           (model_id, data_revision_id, relation_id, source_entity_id,
@@ -209,6 +321,7 @@ async def store_relationships(pool: Any, *, model_id: str, revision_id: str,
           relationship["sourceEntityId"], relationship["targetEntityId"],
           relationship.get("matchingStrategy"))
          for relationship in relationships],
+        budget,
     )
     return len(relationships)
 
@@ -407,70 +520,84 @@ async def purge_model_data(pool: Any, model_id: str, *,
     (manual snapshots). Data served to another environment (published) stays
     until that environment moves on. Returns the projection graphs no longer
     referenced, for the caller to drop from the graph database. ``timeout_s`` is how long
-    the clearing may take (the admin's purge time)."""
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            # The API pool stops statements after a few seconds; clearing a large model
-            # cascades through every record, so the purge gets its own budget.
-            await connection.execute(f"SET LOCAL statement_timeout = '{int(timeout_s)}s'")
-            # One purge at a time per model, and none while a build runs.
-            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                                     f"purge:{model_id}")
-            running = await connection.fetchval(
-                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
-                model_id, list(_TERMINAL_JOB_STATES),
+    the clearing may take (the admin's purge time).
+
+    The rows of a revision and of its search generations live in partitions of their own
+    (migration 031): they are dropped with the partition, then the small revision and generation
+    rows go. Dropping takes brief exclusive locks on the partitioned tables, so a lock held by
+    another query is waited for a few seconds and the purge is tried again (``with_partition_locks``)."""
+    async def purge(connection: Any) -> dict[str, Any]:
+        # One purge at a time per model, and none while a build runs.
+        await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                 f"purge:{model_id}")
+        running = await connection.fetchval(
+            "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
+            model_id, list(_TERMINAL_JOB_STATES),
+        )
+        if running:
+            raise PopulationRunning(model_id)
+        await connection.execute(
+            "DELETE FROM semantic_runtime.active_bindings "
+            "WHERE model_id = $1 AND environment = 'draft'", model_id)
+        kept = {row["data_revision_id"] for row in await connection.fetch(
+            "SELECT data_revision_id FROM semantic_runtime.active_bindings "
+            "WHERE model_id = $1", model_id)}
+        doomed = await connection.fetch(
+            "SELECT id, projection_ref FROM semantic_population.data_revisions "
+            "WHERE model_id = $1 AND NOT (id = ANY($2::text[]))", model_id, sorted(kept))
+        doomed_ids = [row["id"] for row in doomed]
+        generations = await connection.fetch(
+            "SELECT index_id::text FROM semantic_graph_search.index_generations "
+            "WHERE data_revision_id = ANY($1::text[])", doomed_ids)
+        await drop_generation_partitions(connection, [row["index_id"] for row in generations],
+                                         timeout=timeout_s)
+        await drop_revision_partitions(connection, doomed_ids, timeout=timeout_s)
+        removed = await connection.fetch(
+            "DELETE FROM semantic_population.data_revisions "
+            "WHERE id = ANY($1::text[]) RETURNING id, projection_ref", doomed_ids, timeout=timeout_s)
+        review_items = await connection.fetchval(
+            "WITH gone AS (DELETE FROM semantic_population.review_items "
+            "WHERE model_id = $1 AND (data_revision_id IS NULL "
+            "OR NOT (data_revision_id = ANY($2::text[]))) RETURNING 1) "
+            "SELECT count(*) FROM gone", model_id, sorted(kept))
+        # Finished builds would otherwise be handed back as "already done".
+        jobs = await connection.fetchval(
+            "WITH gone AS (DELETE FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND job_type = 'population.run' AND state = ANY($2::text[]) RETURNING 1) "
+            "SELECT count(*) FROM gone", model_id, list(_TERMINAL_JOB_STATES))
+        readings = 0
+        if forget_document_reading:
+            readings = await connection.fetchval(
+                "WITH gone AS (DELETE FROM semantic_population.document_extractions "
+                "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
+                timeout=timeout_s)
+        generation = await connection.fetchval(
+            "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
+            "ON CONFLICT (model_id) DO UPDATE SET generation = "
+            "semantic_population.model_data_resets.generation + 1, reset_at = now() "
+            "RETURNING generation", model_id)
+        if emit_signal:
+            await enqueue_ui_signal(
+                connection, model_id=model_id, event_type="data-revision-changed",
+                resource="draft",
+                payload={"resource": "draft", "status": "cleared", "reason": "data_cleared"},
             )
-            if running:
-                raise PopulationRunning(model_id)
-            await connection.execute(
-                "DELETE FROM semantic_runtime.active_bindings "
-                "WHERE model_id = $1 AND environment = 'draft'", model_id)
-            kept = {row["data_revision_id"] for row in await connection.fetch(
-                "SELECT data_revision_id FROM semantic_runtime.active_bindings "
-                "WHERE model_id = $1", model_id)}
-            removed = await connection.fetch(
-                "DELETE FROM semantic_population.data_revisions "
-                "WHERE model_id = $1 AND NOT (id = ANY($2::text[])) "
-                "RETURNING id, projection_ref", model_id, sorted(kept), timeout=timeout_s)
-            review_items = await connection.fetchval(
-                "WITH gone AS (DELETE FROM semantic_population.review_items "
-                "WHERE model_id = $1 AND (data_revision_id IS NULL "
-                "OR NOT (data_revision_id = ANY($2::text[]))) RETURNING 1) "
-                "SELECT count(*) FROM gone", model_id, sorted(kept))
-            # Finished builds would otherwise be handed back as "already done".
-            jobs = await connection.fetchval(
-                "WITH gone AS (DELETE FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND job_type = 'population.run' AND state = ANY($2::text[]) RETURNING 1) "
-                "SELECT count(*) FROM gone", model_id, list(_TERMINAL_JOB_STATES))
-            readings = 0
-            if forget_document_reading:
-                readings = await connection.fetchval(
-                    "WITH gone AS (DELETE FROM semantic_population.document_extractions "
-                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id,
-                    timeout=timeout_s)
-            generation = await connection.fetchval(
-                "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
-                "ON CONFLICT (model_id) DO UPDATE SET generation = "
-                "semantic_population.model_data_resets.generation + 1, reset_at = now() "
-                "RETURNING generation", model_id)
-            if emit_signal:
-                await enqueue_ui_signal(
-                    connection, model_id=model_id, event_type="data-revision-changed",
-                    resource="draft",
-                    payload={"resource": "draft", "status": "cleared", "reason": "data_cleared"},
-                )
-    return {
-        "modelId": model_id,
-        "resetGeneration": int(generation),
-        "revisions": len(removed),
-        "keptRevisions": len(kept),
-        "reviewItems": int(review_items or 0),
-        "jobs": int(jobs or 0),
-        "documentReadings": int(readings or 0),
-        "projections": sorted({row["projection_ref"] for row in removed
-                               if row["projection_ref"]}),
-    }
+        return {
+            "modelId": model_id,
+            "resetGeneration": int(generation),
+            "revisions": len(removed),
+            "keptRevisions": len(kept),
+            "reviewItems": int(review_items or 0),
+            "jobs": int(jobs or 0),
+            "documentReadings": int(readings or 0),
+            "projections": sorted({row["projection_ref"] for row in removed
+                                   if row["projection_ref"]}),
+        }
+
+    # The API pool stops statements after a few seconds; clearing a large model
+    # gets its own budget.
+    return await with_partition_locks(pool, purge, statement_timeout_s=timeout_s)
 
 
 class ModelJobsRunning(Exception):
@@ -478,8 +605,9 @@ class ModelJobsRunning(Exception):
 
 
 # Every runtime table keyed by the model id, children before parents. Rows hanging off them
-# (entities -> identities, snapshots -> manual rows/links, generations -> entity documents,
-# jobs -> tasks/events/outbox) go with them by cascade.
+# (snapshots -> manual rows/links, jobs -> tasks/events/outbox) go with them by cascade. The big
+# per-revision tables are not here: their partitions are dropped first (``delete_model``), which
+# a ``DELETE ... WHERE model_id`` over every model's rows would only slow down.
 _MODEL_TABLES = (
     "semantic_jobs.ui_signal_outbox",
     "semantic_graph_search.embedding_cache",
@@ -487,10 +615,6 @@ _MODEL_TABLES = (
     "semantic_runtime.active_bindings",
     "semantic_population.review_items",
     "semantic_population.corrections",
-    "semantic_population.relationships",
-    "semantic_population.assertion_candidates",
-    "semantic_population.assertions",
-    "semantic_population.entities",
     "semantic_population.document_extractions",
     "semantic_population.data_revisions",
     "semantic_population.manual_snapshots",
@@ -507,38 +631,53 @@ async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
 
     Refuses while one of its jobs is not finished (the caller must wait or cancel it).
     Idempotent: a model with no rows deletes nothing. Returns the projection graphs
-    that were referenced, for the caller to drop from the graph database."""
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                                     f"purge:{model_id}")
-            running = await connection.fetchval(
-                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
-                "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
-            if running:
-                raise ModelJobsRunning(model_id)
-            refs = await connection.fetch(
-                "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
-                "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
-                "UNION SELECT projection_ref FROM semantic_graph_search.index_generations "
-                "WHERE model_id = $1", model_id)
-            counts: dict[str, int] = {}
-            for table in _MODEL_TABLES:
-                # Two small tables key the model as a uuid; compare as text so any id is accepted.
-                column = "model_id::text" if table in _UUID_MODEL_TABLES else "model_id"
-                deleted = await connection.fetchval(
-                    f"WITH gone AS (DELETE FROM {table} WHERE {column} = $1 RETURNING 1) "
-                    "SELECT count(*) FROM gone", model_id)
-                counts[table] = int(deleted or 0)
-    return {"modelId": model_id, "deleted": counts,
-            "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
+    that were referenced, for the caller to drop from the graph database. ``deleted`` counts
+    the rows deleted per table, and for the partitioned tables the partitions dropped."""
+    async def delete(connection: Any) -> dict[str, Any]:
+        await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                 f"purge:{model_id}")
+        running = await connection.fetchval(
+            "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+            "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
+        if running:
+            raise ModelJobsRunning(model_id)
+        refs = await connection.fetch(
+            "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
+            "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
+            "UNION SELECT projection_ref FROM semantic_graph_search.index_generations "
+            "WHERE model_id = $1", model_id)
+        generations = await connection.fetch(
+            "SELECT index_id::text FROM semantic_graph_search.index_generations WHERE model_id = $1", model_id)
+        revisions = await connection.fetch(
+            "SELECT id FROM semantic_population.data_revisions WHERE model_id = $1", model_id)
+        counts: dict[str, int] = {}
+        for table, count in (await drop_generation_partitions(
+                connection, [row["index_id"] for row in generations])).items():
+            counts[f"semantic_graph_search.{table}"] = count
+        for table, count in (await drop_revision_partitions(
+                connection, [row["id"] for row in revisions])).items():
+            counts[f"semantic_population.{table}"] = count
+        for table in _MODEL_TABLES:
+            # Two small tables key the model as a uuid; compare as text so any id is accepted.
+            column = "model_id::text" if table in _UUID_MODEL_TABLES else "model_id"
+            deleted = await connection.fetchval(
+                f"WITH gone AS (DELETE FROM {table} WHERE {column} = $1 RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id)
+            counts[table] = int(deleted or 0)
+        return {"modelId": model_id, "deleted": counts,
+                "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
+
+    return await with_partition_locks(pool, delete)
 
 
 async def get_active_binding(pool: Any, model_id: str,
                              environment: str = "production") -> dict[str, Any] | None:
     row = await pool.fetchrow(
         "SELECT model_id, environment, model_version_id, data_revision_id, "
-        "projection_ref, correction_sequence, version "
+        "projection_ref, correction_sequence, version, "
+        # The fields the served graph shows: its readers give the others back from the stored records.
+        "(SELECT r.coverage -> 'graphExposure' FROM semantic_population.data_revisions r "
+        "WHERE r.id = active_bindings.data_revision_id) AS graph_exposure "
         "FROM semantic_runtime.active_bindings WHERE model_id = $1 AND environment = $2",
         model_id, environment,
     )
@@ -619,25 +758,47 @@ async def set_revision_validation(pool: Any, revision_id: str, state: str) -> bo
     return row is not None
 
 
+# Sets a revision's coverage.graphExposure (the fields its graph shows) to $4; an empty one removes it.
+_SET_GRAPH_EXPOSURE = (
+    "coverage = CASE WHEN $4::jsonb = '{}'::jsonb THEN COALESCE(coverage, '{}'::jsonb) - 'graphExposure' "
+    "ELSE COALESCE(coverage, '{}'::jsonb) || jsonb_build_object('graphExposure', $4::jsonb) END")
+
+
 async def set_revision_projection(pool: Any, revision_id: str, projection_ref: str,
-                                  expected_projection_ref: str | None = None) -> bool:
-    row = await pool.fetchrow(
-        "UPDATE semantic_population.data_revisions SET projection_ref = $2 "
-        "WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
-        revision_id, projection_ref, expected_projection_ref,
-    )
+                                  expected_projection_ref: str | None = None,
+                                  graph_exposure: dict[str, Any] | None = None) -> bool:
+    """Record the graph a revision is projected to, with the exposure it was built with (when given)."""
+    if graph_exposure is None:
+        row = await pool.fetchrow(
+            "UPDATE semantic_population.data_revisions SET projection_ref = $2 "
+            "WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
+            revision_id, projection_ref, expected_projection_ref,
+        )
+    else:
+        row = await pool.fetchrow(
+            "UPDATE semantic_population.data_revisions SET projection_ref = $2, " + _SET_GRAPH_EXPOSURE
+            + " WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
+            revision_id, projection_ref, expected_projection_ref, _json(graph_exposure),
+        )
     return row is not None
 
 
-async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str, new_ref: str) -> bool:
+async def replace_revision_projection(pool: Any, revision_id: str, old_ref: str, new_ref: str,
+                                      graph_exposure: dict[str, Any] | None = None) -> bool:
     """Point a revision, the bindings serving it and its search index generations at a
     rebuilt graph, together; False (nothing changed) when the revision no longer uses
-    ``old_ref``."""
+    ``old_ref``. ``graph_exposure`` is the fields the rebuilt graph shows, stored in the same step."""
     async with pool.acquire() as connection:
         async with connection.transaction():
-            moved = await connection.fetchval(
-                "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
-                "WHERE id = $1 AND projection_ref = $2 RETURNING id", revision_id, old_ref, new_ref)
+            if graph_exposure is None:
+                moved = await connection.fetchval(
+                    "UPDATE semantic_population.data_revisions SET projection_ref = $3 "
+                    "WHERE id = $1 AND projection_ref = $2 RETURNING id", revision_id, old_ref, new_ref)
+            else:
+                moved = await connection.fetchval(
+                    "UPDATE semantic_population.data_revisions SET projection_ref = $3, " + _SET_GRAPH_EXPOSURE
+                    + " WHERE id = $1 AND projection_ref = $2 RETURNING id",
+                    revision_id, old_ref, new_ref, _json(graph_exposure))
             if moved is None:
                 return False
             await connection.execute(
@@ -729,6 +890,110 @@ async def count_revision_entities_by_concept(pool: Any, revision_id: str) -> dic
     return {str(row["concept_id"]): int(row["entities"]) for row in rows}
 
 
+def visible_entity_clause(alias: str, param: str) -> str:
+    """SQL predicate: every workspace the record was read from is in ``param`` (a text[]).
+    A record typed by hand carries no workspace in its provenance, so any scope keeps it;
+    one source from a workspace outside the scope hides the whole record. Canonical-store
+    twin of the search index's ``_visible`` — one visibility rule for every reader."""
+    sources = (f"CASE WHEN jsonb_typeof({alias}.provenance -> 'sources') = 'array' "
+               f"THEN {alias}.provenance -> 'sources' ELSE '[]'::jsonb END")
+    return ("NOT EXISTS (SELECT 1 FROM jsonb_array_elements(" + sources + ") AS src(item) "
+            "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '' "
+            f"AND NOT ((src.item -> 'assetRef' ->> 'workspaceId') = ANY({param}::text[])))")
+
+
+async def split_entity_visibility(pool: Any, revision_id: str,
+                                  allowed_workspace_ids: list[str]) -> tuple[set[str], set[str]]:
+    """Ids of the revision's records this scope may see, and the rest. A record shows only when
+    the canonical rows vouch for it AND every workspace it was read from is in the scope —
+    so an id the store cannot account for stays hidden."""
+    rows = await pool.fetch(
+        f"SELECT id, NOT {visible_entity_clause('e', '$2')} AS hidden "
+        "FROM semantic_population.entities e WHERE data_revision_id = $1",
+        revision_id, list(allowed_workspace_ids),
+    )
+    visible = {row["id"] for row in rows if not row["hidden"]}
+    return visible, {row["id"] for row in rows if row["hidden"]}
+
+
+async def count_revision_rows_visible(pool: Any, revision_id: str,
+                                      allowed_workspace_ids: list[str]) -> dict[str, int]:
+    """Row counts over the records this scope may see (records, their assertions, links whose
+    two ends are visible)."""
+    row = await pool.fetchrow(
+        "SELECT (SELECT count(*) FROM semantic_population.entities e "
+        f"WHERE e.data_revision_id = $1 AND {visible_entity_clause('e', '$2')}) AS entities, "
+        "(SELECT count(*) FROM semantic_population.assertions a WHERE a.data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities e WHERE e.data_revision_id = a.data_revision_id "
+        f"AND e.id = a.entity_id AND {visible_entity_clause('e', '$2')})) AS assertions, "
+        "(SELECT count(*) FROM semantic_population.relationships r WHERE r.data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities se WHERE se.data_revision_id = r.data_revision_id "
+        f"AND se.id = r.source_entity_id AND {visible_entity_clause('se', '$2')}) "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities te WHERE te.data_revision_id = r.data_revision_id "
+        f"AND te.id = r.target_entity_id AND {visible_entity_clause('te', '$2')})) AS relationships",
+        revision_id, list(allowed_workspace_ids),
+    )
+    return {"entities": int(row["entities"]), "assertions": int(row["assertions"]),
+            "relationships": int(row["relationships"])}
+
+
+async def count_revision_entities_by_concept_visible(pool: Any, revision_id: str,
+                                                     allowed_workspace_ids: list[str]) -> dict[str, int]:
+    rows = await pool.fetch(
+        "SELECT concept_id, count(*) AS entities FROM semantic_population.entities e "
+        f"WHERE data_revision_id = $1 AND {visible_entity_clause('e', '$2')} GROUP BY concept_id",
+        revision_id, list(allowed_workspace_ids),
+    )
+    return {str(row["concept_id"]): int(row["entities"]) for row in rows}
+
+
+async def list_revision_entities_visible(pool: Any, revision_id: str, limit: int,
+                                         concept_id: str | None,
+                                         allowed_workspace_ids: list[str],
+                                         quotas: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    """A page of the revision's records this scope may see, in id order. With ``quotas`` (records
+    wanted per concept) the page holds the first records of each concept, as many as its quota."""
+    columns = "id, concept_id, namespace, label, attributes, provenance, identity_key"
+    if quotas is not None:
+        if not quotas:
+            return []
+        concepts = sorted(quotas)
+        rows = await pool.fetch(
+            f"SELECT x.* FROM unnest($2::text[], $3::int[]) AS q(concept_id, quota) "
+            f"CROSS JOIN LATERAL (SELECT {columns} FROM semantic_population.entities e "
+            f"WHERE e.data_revision_id = $1 AND e.concept_id = q.concept_id AND {visible_entity_clause('e', '$4')} "
+            "ORDER BY e.id LIMIT q.quota) x ORDER BY x.id",
+            revision_id, concepts, [quotas[concept] for concept in concepts], list(allowed_workspace_ids),
+        )
+        return [_entity_row(dict(row)) for row in rows]
+    rows = await pool.fetch(
+        f"SELECT {columns} "
+        "FROM semantic_population.entities e WHERE data_revision_id = $1 "
+        f"AND ($3::text IS NULL OR concept_id = $3) AND {visible_entity_clause('e', '$4')} "
+        "ORDER BY id LIMIT $2",
+        revision_id, limit, concept_id, list(allowed_workspace_ids),
+    )
+    return [_entity_row(dict(row)) for row in rows]
+
+
+async def list_revision_relationships_visible(pool: Any, revision_id: str,
+                                              allowed_workspace_ids: list[str],
+                                              limit: int = 20000) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy, state "
+        "FROM semantic_population.relationships r WHERE data_revision_id = $1 "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities se WHERE se.data_revision_id = r.data_revision_id "
+        f"AND se.id = r.source_entity_id AND {visible_entity_clause('se', '$2')}) "
+        "AND EXISTS (SELECT 1 FROM semantic_population.entities te WHERE te.data_revision_id = r.data_revision_id "
+        f"AND te.id = r.target_entity_id AND {visible_entity_clause('te', '$2')}) "
+        "ORDER BY relation_id, source_entity_id, target_entity_id LIMIT $3",
+        revision_id, list(allowed_workspace_ids), limit,
+    )
+    return [{"relationId": row["relation_id"], "sourceEntityId": row["source_entity_id"],
+             "targetEntityId": row["target_entity_id"],
+             "matchingStrategy": row["matching_strategy"], "state": row.get("state") or "accepted"} for row in rows]
+
+
 async def iter_revision_entities(pool: Any, revision_id: str, page_size: int = 5000):  # type: ignore[no-untyped-def]
     """Every entity of a revision, a page at a time in id order (a revision can hold hundreds of
     thousands): yields lists shaped like :func:`list_revision_entities`."""
@@ -757,6 +1022,18 @@ def _entity_row(values: dict[str, Any]) -> dict[str, Any]:
         else dict(values.get("provenance") or {}),
         "identity": _json_object(values.get("identity_key")),
     }
+
+
+async def list_revision_entities_by_id(pool: Any, revision_id: str,
+                                       entity_ids: list[str]) -> list[dict[str, Any]]:
+    """The named records of a revision (those that exist), in id order, shaped like :func:`iter_revision_entities`."""
+    if not entity_ids:
+        return []
+    rows = await pool.fetch(
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        "FROM semantic_population.entities WHERE data_revision_id = $1 AND id = ANY($2::text[]) ORDER BY id",
+        revision_id, list(entity_ids))
+    return [_entity_row(dict(row)) for row in rows]
 
 
 async def list_revision_entities(pool: Any, revision_id: str,
@@ -795,9 +1072,12 @@ def _like_pattern(text: str) -> str:
 async def search_revision_entities(pool: Any, revision_id: str, concept_id: str, *,
                                    query: str | None = None, limit: int = 50,
                                    offset: int = 0,
-                                   filters: dict[str, str] | None = None) -> tuple[int, list[dict[str, Any]]]:
+                                   filters: dict[str, str] | None = None,
+                                   allowed_workspace_ids: list[str] | None = None) -> tuple[int, list[dict[str, Any]]]:
     """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``,
-    and to those whose given fields each contain their filter text (``__label__`` is the record's name)."""
+    and to those whose given fields each contain their filter text (``__label__`` is the record's name).
+    ``allowed_workspace_ids`` hides the records read from a workspace outside the scope; ``None`` (the
+    worker's own reads) sees everything."""
     pattern = _like_pattern(query) if query and query.strip() else None
     where = ("data_revision_id = $1 AND concept_id = $2 "
              "AND ($3::text IS NULL OR label ILIKE $3 OR attributes::text ILIKE $3 "
@@ -816,6 +1096,9 @@ async def search_revision_entities(pool: Any, revision_id: str, concept_id: str,
         # A key field lives in the matching key, not among the attributes.
         where += (f" AND (attributes->>{key} ILIKE {value} OR (CASE WHEN left(identity_key, 1) = '{{' "
                   f"THEN identity_key::jsonb->>{key} END) ILIKE {value})")
+    if allowed_workspace_ids is not None:
+        arguments.append(list(allowed_workspace_ids))
+        where += f" AND {visible_entity_clause('semantic_population.entities', f'${len(arguments)}')}"
     total = await pool.fetchval(
         f"SELECT count(*) FROM semantic_population.entities WHERE {where}", *arguments)
     page = len(arguments)
@@ -953,7 +1236,9 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
     observations = json.loads(observations) if isinstance(observations, str) else list(observations or [])
     coverage = _json_object(row["coverage"])
     return {"sourceObservations": [item for item in observations if isinstance(item, dict)],
-            "completeEnumeration": bool(coverage.get("completeEnumeration", True))}
+            "completeEnumeration": bool(coverage.get("completeEnumeration", True)),
+            "userSampleLimits": [item for item in coverage.get("userSampleLimits") or [] if isinstance(item, dict)],
+            "health": coverage.get("health") if isinstance(coverage.get("health"), dict) else None}
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,

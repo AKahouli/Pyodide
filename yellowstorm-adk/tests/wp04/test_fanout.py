@@ -130,5 +130,118 @@ async def test_background_fanout_returns_only_a_stable_reference_and_uncertain_a
     assert (await tool.func(**args))['status'] == 'outcome_unknown'
     context.run_node.assert_not_awaited()
     config['background_fanout_enabled'] = False
-    with pytest.raises(ValueError, match='unavailable'):
-        await tool.func(**args)
+    post.reset_mock()
+    rejection = await tool.func(**args)
+    assert rejection['status'] == 'failed' and rejection['allowed_modes'] == ['foreground']
+    assert rejection['error_code'] == 'fanout_mode_unavailable'
+    assert 'execution_id' not in rejection and 'result_ref' not in rejection
+    post.assert_not_awaited()
+    context.run_node.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('background,mode', [(False, 'background'), (False, 'invalid'), (True, 'invalid')])
+async def test_unavailable_mode_rejects_before_admission_and_logs_bounded_failure(monkeypatch, background, mode):
+    from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+    from unittest.mock import AsyncMock, Mock
+    scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
+    context = SimpleNamespace(function_call_id='call', branch='root', run_node=AsyncMock())
+    config = {'fanout_enabled': True, 'worker_permit_version': 1, 'max_parallel_workers': 1,
+        'max_fanout_items': 2, 'background_fanout_enabled': background}
+    tool = build_fanout_dispatcher(None, None, config, scope)
+    post = AsyncMock(); warning = Mock()
+    monkeypatch.setattr('src.root_runtime.fanout._post', post)
+    monkeypatch.setattr('src.root_runtime.fanout.outcome_logger.warning', warning)
+    result = await tool.func(items=[{'key': 'one', 'task': 'Private task'}], worker_type='temporary',
+        tool_context=context, mode=mode)
+    assert result['status'] == 'failed' and result['error_code'] == 'fanout_mode_unavailable'
+    assert result['allowed_modes'] == (['foreground', 'background'] if background else ['foreground'])
+    assert 'execution_id' not in result and 'result_ref' not in result
+    post.assert_not_awaited(); context.run_node.assert_not_awaited()
+    warning.assert_called_once_with('tool.call.failed', tool_name='run_fanout', operation='validate_mode', run_id=scope.execution_id)
+    if not background:
+        assert 'only mode="foreground"' in tool.description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', [None, 'foreground'])
+async def test_foreground_mode_works_without_background_permission(monkeypatch, mode):
+    from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+    from unittest.mock import AsyncMock
+    scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
+    branch = 'root.run_fanout@call'
+    manifest_id = hashlib.sha256(f'{scope.execution_id}:{branch}'.encode()).hexdigest()[:24]
+    native_id = 'item_' + hashlib.sha256(f'{manifest_id}:one'.encode()).hexdigest()
+    item_branch = f'{branch}.{native_id}.spawn_temporary_worker@{native_id}'
+    manifest = {'manifestId': manifest_id, 'nativeCallId': 'call', 'nativeCallBranch': branch,
+        'version': 1, 'mode': 'foreground', 'target': {'kind': 'temporary'}, 'items': [{'key': 'one',
+        'nativeRunId': native_id, 'nativeCallBranch': item_branch,
+        'executionId': hashlib.sha256(f'{scope.execution_id}:{item_branch}'.encode()).hexdigest()[:24]}]}
+    post = AsyncMock(return_value=manifest)
+    monkeypatch.setattr('src.root_runtime.fanout._post', post)
+    context = SimpleNamespace(function_call_id='call', branch='root', run_node=AsyncMock(return_value={'status': 'completed'}))
+    tool = build_fanout_dispatcher(None, None, {'fanout_enabled': True, 'worker_permit_version': 1,
+        'max_parallel_workers': 1, 'max_fanout_items': 2, 'background_fanout_enabled': False}, scope)
+    args = {} if mode is None else {'mode': mode}
+    assert await tool.func(items=[{'key': 'one', 'task': 'Bounded'}], worker_type='temporary', tool_context=context, **args) == {'status': 'completed'}
+    assert post.call_args.args[1] == 'fanout-manifest' and post.call_args.args[2]['mode'] == 'foreground'
+    assert context.run_node.call_args.kwargs['raise_on_wait'] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reason', ['Fan-out input reference is not authorized', 'Invalid foreground fan-out proposal',
+    'Invalid fan-out target', 'Fan-out finite item or payload limit exceeded', 'Invalid or duplicate fan-out item'])
+async def test_confirmed_proposal_rejection_returns_recovery_without_admission(monkeypatch, reason):
+    import httpx
+    from unittest.mock import AsyncMock, Mock
+    from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+    scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
+    context = SimpleNamespace(function_call_id='call', branch='root', run_node=AsyncMock())
+    request = httpx.Request('POST', 'http://internal/fanout-manifest')
+    response = httpx.Response(400, request=request, json={'error': {'message': reason, 'details': 'private response'}})
+    post = AsyncMock(side_effect=httpx.HTTPStatusError('rejected', request=request, response=response))
+    warning = Mock()
+    monkeypatch.setattr('src.root_runtime.fanout._post', post)
+    monkeypatch.setattr('src.root_runtime.fanout.outcome_logger.warning', warning)
+    tool = build_fanout_dispatcher(None, None, {'fanout_enabled': True, 'worker_permit_version': 1,
+        'max_parallel_workers': 1, 'max_fanout_items': 2}, scope)
+    result = await tool.func(items=[{'key': 'one', 'task': 'Private task', 'contextRefs': ['conversation-id']}],
+        worker_type='temporary', tool_context=context)
+    assert result['status'] == 'failed' and result['error_code'] == 'fanout_proposal_rejected'
+    assert 'No fan-out work was submitted' in result['safe_error']
+    assert 'execution_id' not in result and 'result_ref' not in result
+    assert 'private response' not in str(result) and 'Private task' not in str(result)
+    if reason == 'Fan-out input reference is not authorized':
+        assert 'never conversation or document IDs' in result['safe_error']
+    assert post.await_count == 1
+    context.run_node.assert_not_awaited()
+    warning.assert_called_once_with('tool.call.failed', tool_name='run_fanout', operation='validate_manifest', run_id=scope.execution_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['unknown400', 'malformed400', 'wrongshape400', 'oversized400', 'conflict', 'timeout'])
+async def test_unconfirmed_rejection_never_claims_no_admission(monkeypatch, case):
+    import httpx
+    from unittest.mock import AsyncMock
+    from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+    request = httpx.Request('POST', 'http://internal/fanout-manifest')
+    if case == 'timeout':
+        error = httpx.ReadTimeout('uncertain', request=request)
+    else:
+        body = {'error': {'message': 'Unknown rejection'}} if case == 'unknown400' else {
+            'error': {'message': 'Fan-out input reference is not authorized'}}
+        response = httpx.Response(409 if case == 'conflict' else 400, request=request,
+            **({'content': 'not-json'} if case == 'malformed400' else
+               {'json': {'error': []}} if case == 'wrongshape400' else
+               {'json': {**body, 'padding': 'x' * 8192}} if case == 'oversized400' else {'json': body}))
+        error = httpx.HTTPStatusError('uncertain', request=request, response=response)
+    post = AsyncMock(side_effect=error)
+    monkeypatch.setattr('src.root_runtime.fanout._post', post)
+    scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
+    context = SimpleNamespace(function_call_id='call', branch='root', run_node=AsyncMock())
+    tool = build_fanout_dispatcher(None, None, {'fanout_enabled': True, 'worker_permit_version': 1,
+        'max_parallel_workers': 1, 'max_fanout_items': 2}, scope)
+    with pytest.raises(type(error)) as captured:
+        await tool.func(items=[{'key': 'one', 'task': 'Bounded'}], worker_type='temporary', tool_context=context)
+    assert captured.value is error and post.await_count == 1
+    context.run_node.assert_not_awaited()

@@ -29,10 +29,12 @@ export const RecentChats = memo(function RecentChats({
   rows,
   loading,
   showAllChatsLink = false,
+  compact = false,
 }: {
   rows: HistoryRow[];
   loading?: boolean;
   showAllChatsLink?: boolean;
+  compact?: boolean;
 }) {
   const { t } = useModuleTranslation('sidebar');
   const navigate = useNavigate();
@@ -123,6 +125,7 @@ export const RecentChats = memo(function RecentChats({
   );
 
   const dayGroups = useMemo(() => groupByDay(disambiguateTitles(rows)), [rows]);
+  const displayedGroups = compact ? [{ bucket: 'today' as const, rows: disambiguateTitles(rows) }] : dayGroups;
   const dayLabels = useMemo(
     () => ({
       today: t('recentChats.today'),
@@ -160,17 +163,17 @@ export const RecentChats = memo(function RecentChats({
 
   return (
     <div
-      className={cn('min-h-full', isOver && 'rounded-md bg-primary/5 ring-1 ring-primary/40')}
+      className={cn(!compact && 'min-h-full', isOver && 'rounded-md bg-primary/5 ring-1 ring-primary/40')}
       onDragOver={onDragOver}
       onDragEnter={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {dayGroups.map(({ bucket, rows: groupRows }) => (
+      {displayedGroups.map(({ bucket, rows: groupRows }) => (
         <div key={bucket}>
-          <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
+          {!compact && <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
             {dayLabels[bucket]}
-          </div>
+          </div>}
           <SidebarMenu className='pr-1'>
             {groupRows.map((row) =>
               row.kind === 'v2' ? (

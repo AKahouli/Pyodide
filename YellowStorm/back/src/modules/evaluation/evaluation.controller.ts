@@ -49,8 +49,8 @@ export class EvaluationController {
     @Delete('datasets/:id')
     @HttpCode(HttpStatus.NO_CONTENT)
     @ApiOperation({ summary: 'Delete a dataset' })
-    async deleteDataset(@Param('id') id: string) {
-        return this.evaluationService.deleteDataset(id);
+    async deleteDataset(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+        return this.evaluationService.deleteDataset(user._id.toString(), id);
     }
 
     // ==========================================

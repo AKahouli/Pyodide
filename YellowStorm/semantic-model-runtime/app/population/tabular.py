@@ -74,12 +74,15 @@ def row_sample(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
-                          source_ref: dict[str, Any]) -> dict[str, Any]:
+                          source_ref: dict[str, Any], observer: Any = None) -> dict[str, Any]:
     """Map prepared rows to entities and source assertions for one concept.
 
     ``source_ref`` carries ``assetRef``, ``mappingVersion`` and an optional
     ``labelField`` naming the attribute used as the human label; otherwise the
-    first identity component labels the entity.
+    first identity component labels the entity. A row may carry ``_ai_limited``, the fields the
+    AI never read because of its row limit: an empty key field among them is no missing value
+    (the run reports the limit once). ``observer`` (a ``ConceptHealth``) is told what happens to
+    each row, for the model health report.
     """
     key_components: list[str] = compiled["keyComponents"]
     allowed = set(compiled["allowedFields"])
@@ -108,15 +111,23 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
         for component in key_components:
             normalized = normalize_identity_value(row.get(component))
             if normalized is None:
+                missing = True
+                if component in (row.get("_ai_limited") or ()):
+                    if observer is not None:
+                        observer.ai_limited_row(component)
+                    break
                 gaps.append({"kind": "missing_identity", "conceptId": compiled["conceptId"],
                              "rowNumber": row_number, "detail": f"identity component '{component}' is empty",
                              "field": component, "assetRef": source_ref.get("assetRef"),
                              "values": row_sample(row)})
-                missing = True
+                if observer is not None:
+                    observer.missing_row(component, row, number=row_number)
                 break
             identity[component] = normalized
         if missing:
             continue
+        if observer is not None:
+            observer.keyed_row(identity, row, number=row_number)
         key = entity_key(compiled["namespace"], identity)
         entity = entities.get(key)
         if entity is None:
@@ -162,8 +173,10 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                                                 **({"item": row["_item"]} if row.get("_item") is not None else {})}})
             elif current != value:
                 gaps.append({"kind": "conflicting_values", "conceptId": compiled["conceptId"],
-                             "rowNumber": row_number,
+                             "rowNumber": row_number, "field": field,
                              "detail": f"attribute '{field}' has competing source values"})
+                if observer is not None:
+                    observer.conflict(field, current, value, identity, number=row_number)
 
     counts["gaps"] = len(gaps)
     return {"entities": list(entities.values()), "assertions": assertions, "gaps": gaps,

@@ -8,10 +8,20 @@ class ToolDescriptionProvider:
     """Provides formatted tool descriptions for agents."""
 
     @staticmethod
-    def get_tools_description(tools: Union[List[Union[str, Dict]], List[Dict[str, Any]]]) -> str:
+    def get_tools_description(
+        tools: Union[List[Union[str, Dict]], List[Dict[str, Any]]],
+        configured_tools_are_declared: bool = False,
+    ) -> str:
         """Get formatted tool descriptions for inclusion in agent prompts.
 
         Uses custom descriptions from tool configs if provided, otherwise falls back to defaults.
+
+        ``configured_tools_are_declared``: the caller attaches every configured
+        (dict) tool to the model as a function declaration that already carries
+        its description, and appends each tool's ``prompt`` itself. Repeating
+        both here cost about 4k input tokens per model call, so configured
+        tools with their own description are left out and no per-tool prompt
+        is added.
         """
         if not tools:
             return ""
@@ -32,6 +42,9 @@ class ToolDescriptionProvider:
                 # Dictionary format - use custom description if provided
                 tool_name = tool.get('name', 'unknown')
                 custom_description = tool.get('description')
+
+                if custom_description and configured_tools_are_declared:
+                    continue
 
                 if custom_description:
                     # Use custom description with additional info from tool config
@@ -57,7 +70,7 @@ class ToolDescriptionProvider:
                     config_details = []
                     if 'top_k' in tool and tool['top_k'] != 4:
                         config_details.append(f"configured with top_k: {tool['top_k']}")
-                    if 'prompt' in tool and tool['prompt']:
+                    if 'prompt' in tool and tool['prompt'] and not configured_tools_are_declared:
                         config_details.append(f"additional instructions: {tool['prompt']}")
 
                     if config_details:

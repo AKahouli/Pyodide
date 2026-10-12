@@ -53,6 +53,18 @@ function getSdk(): ObservabilityLogger {
   return sharedSdk;
 }
 
+/**
+ * Emits one registered event (contracts/observability/log-events.v1.json) through the process's SDK writer.
+ * Never throws and never waits: a log call must not fail the business path.
+ */
+export function logDomainEvent(severity: 'info' | 'warn' | 'error', eventName: string, attrs: LogAttrs): void {
+  try {
+    getSdk()[severity](eventName, attrs);
+  } catch {
+    // Diagnostics are best effort by contract (docs/observability/logging-contract.md rule 2).
+  }
+}
+
 @Injectable({ scope: Scope.TRANSIENT })
 export class LoggerService implements NestLoggerService {
   private context?: string;

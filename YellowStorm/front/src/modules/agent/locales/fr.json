@@ -86,6 +86,8 @@
   "createEdit.fields.additionalInstruction": "Instruction supplémentaire",
   "createEdit.fields.instructionPlaceholder": "Instructions supplémentaires (optionnel)",
   "createEdit.fields.ignorePrePrompt": "Ignorer le pré-prompt du type d'agent",
+  "createEdit.fields.genUiEnabled": "Interface générative",
+  "createEdit.fields.genUiEnabledHint": "Ajoute le format de réponse interactif (cartes, graphiques, tableaux, pastilles de sources) aux instructions de cet agent et affiche ses réponses avec ce format.",
   "createEdit.fields.model": "Modèle",
   "createEdit.fields.modelDefault": "Par défaut (Modèles administrateur)",
   "createEdit.fields.reasoningEffort": "Effort de raisonnement",
@@ -529,7 +531,7 @@
       },
       "background": {
         "enabled": "Tâches en arrière-plan",
-        "enabledHint": "Travail durable qui survit à la fermeture du navigateur (désactivé à l'échelle de la plateforme jusqu'à qualification).",
+        "enabledHint": "Exécute le travail long en arrière-plan pour continuer à discuter après la confirmation de l’agent. Nécessite un runtime prêt pour les tâches en arrière-plan.",
         "maxOutstanding": "Max en cours par conversation",
         "timeout": "Délai d'expiration (secondes)",
         "maxAttempts": "Max de tentatives sûres"

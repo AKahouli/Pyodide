@@ -1,5 +1,6 @@
-export { apiClient, AUTH_LOST_EVENT, clearAuthData, refreshAccessToken, scheduleProactiveRefresh } from './client';
+export { apiClient, AUTH_LOST_EVENT, clearAuthData, refreshAccessToken, restoreSessionFromCookie, scheduleProactiveRefresh } from './client';
 export type { ApiError, ApiResponse } from './client';
+export { getAccessToken, setAccessToken } from './access-token-store';
 export {
   AuthTransientError,
   bumpAuthGeneration,

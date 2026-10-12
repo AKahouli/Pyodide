@@ -107,6 +107,28 @@ export interface RuntimeDerivation {
   expand?: DerivedExpand;
 }
 
+/**
+ * The derivations a refresh of one concept makes again: those making the concept itself (from the kept
+ * records of the concept it is made from) and those reading it or a concept made again, down the chain.
+ * The runtime applies the same rule; the others are left out of the command so they are neither sent nor read.
+ */
+export function derivationsRefreshedWith<T extends { conceptId: string; sourceConceptId: string }>(derivations: T[], conceptId: string): T[] {
+  const refreshed = new Set([conceptId]);
+  const rerun = new Set(derivations.filter((derivation) => derivation.conceptId === conceptId));
+  rerun.forEach((derivation) => refreshed.add(derivation.conceptId));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const derivation of derivations) {
+      if (!rerun.has(derivation) && refreshed.has(derivation.sourceConceptId)) {
+        rerun.add(derivation);
+        refreshed.add(derivation.conceptId);
+        grew = true;
+      }
+    }
+  }
+  return derivations.filter((derivation) => rerun.has(derivation));
+}
+
 export const derivedFieldMode = (field: Pick<DerivedFieldMapping, 'mode'>): DerivedFieldMode => field.mode ?? 'direct';
 
 export function derivedFieldUsesAi(field: DerivedFieldMapping): boolean {

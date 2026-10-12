@@ -5,7 +5,7 @@
  */
 
 import { memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Layers, MoreHorizontal, Plus, FileText } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuItem, SidebarMenuAction } from '@/components/ui/sidebar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -18,12 +18,13 @@ export const WorkspaceButton = memo(function WorkspaceButton({ label }: { label?
   const { t: tCommon } = useModuleTranslation('common');
   useWorkspaceStoreTranslator();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const openCreateModal = useWorkspaceStore((state) => state.openCreateModal);
   const openCreateTemplateModal = useWorkspaceStore((state) => state.openCreateTemplateModal);
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={label ?? t('button.tooltip')} onClick={() => navigate('/workspace')}>
+      <SidebarMenuButton tooltip={label ?? t('button.tooltip')} isActive={pathname === '/workspace' || pathname.startsWith('/workspace/')} onClick={() => navigate('/workspace')}>
         <Layers />
         <span>{label ?? t('button.label')}</span>
       </SidebarMenuButton>

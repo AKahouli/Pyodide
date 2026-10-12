@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphOutline, SemanticGraph } from '../../types';
 import {
-  buildGraphIndex, countPer, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords,
+  buildGraphIndex, countPer, mergeOutlines, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords, unreadLinks,
 } from './graph-analytics';
 
 const FIELDS: Record<string, string[]> = { 'c-mail': ['sujet', 'envoye_le'], 'c-person': ['nom'], 'c-file': ['nom_fichier'] };
@@ -38,13 +38,31 @@ const edges = [
 const index = buildGraphIndex({ concepts: Object.entries(FIELDS).map(([id, fields]) => ({ id, fields })), records: nodes, links: edges }, model);
 
 describe('graph analytics', () => {
+  it('counts the links of a record not read yet from the server count and the links read', () => {
+    const counted = buildGraphIndex({
+      concepts: [{ id: 'c-mail', fields: [] }, { id: 'c-person', fields: [] }],
+      records: [{ id: 'm1', c: 'c-mail', l: 'Hello', n: 4 }, { id: 'p1', c: 'c-person', l: 'Ana', n: 1 }, { id: 'p2', c: 'c-person', l: 'Bo' }],
+      links: [edge('e1', 'm1', 'p1', 'r-sent')],
+    }, null);
+    expect(counted.byId.get('m1')!.linkTotal).toBe(4);
+    expect(unreadLinks(counted, counted.byId.get('m1')!)).toBe(3);
+    // Every link read, or no count from the server: nothing unread.
+    expect(unreadLinks(counted, counted.byId.get('p1')!)).toBe(0);
+    expect(counted.byId.get('p2')!.linkTotal).toBeNull();
+    expect(unreadLinks(counted, counted.byId.get('p2')!)).toBe(0);
+    // Against the records shown, a link to one left out is still to be shown.
+    expect(unreadLinks(counted, counted.byId.get('m1')!, new Set(['m1']))).toBe(4);
+    expect(unreadLinks(counted, counted.byId.get('m1')!, new Set(['m1', 'p1']))).toBe(3);
+    expect(unreadLinks(counted, counted.byId.get('p1')!, new Set(['p1']))).toBe(1);
+  });
+
   it('names fields, concepts and links as people read them', () => {
     const mail = index.byId.get('m1')!;
     expect(mail.conceptLabel).toBe('Message');
     expect(mail.fields.map((field) => field.label)).toEqual(['Subject', 'Sent on']);
     expect(index.byId.get('m3')!.missing).toBe(2);
     expect(index.links[0].label).toBe('sent by');
-    expect(index.concepts).toEqual([{ key: 'mail', label: 'Message', count: 3 }, { key: 'person', label: 'Correspondent', count: 2 }, { key: 'file', label: 'Attachment', count: 2 }]);
+    expect(index.concepts).toEqual([{ key: 'mail', conceptId: 'c-mail', label: 'Message', count: 3 }, { key: 'person', conceptId: 'c-person', label: 'Correspondent', count: 2 }, { key: 'file', conceptId: 'c-file', label: 'Attachment', count: 2 }]);
   });
 
   it('groups linked records by relationship and direction', () => {
@@ -91,5 +109,29 @@ describe('graph analytics', () => {
     expect(ids(shownRecords(index, { hidden: new Set(), period: { concept: 'mail', field: 'envoye_le', from: '2026-02', to: '2026-03' } })))
       .toEqual(['f1', 'f9', 'm2', 'p1']);
     expect(shownRecords(index, { hidden: new Set(['mail']), keep: 'm1' }).has('m1')).toBe(true);
+  });
+});
+
+describe('mergeOutlines', () => {
+  it('adds the records and links read around a record, keeping the first part and its totals', () => {
+    const totals = { records: 9, links: 4, concepts: { 'c-mail': 5, 'c-person': 4 }, relations: { 'r-sent': 4 } };
+    const first: GraphOutline = {
+      dataRevisionId: 'rev', truncated: true, totals,
+      concepts: [{ id: 'c-mail', fields: ['sujet'] }],
+      records: [node('m1', 'mail', 'Hello', { sujet: 'Hello' })],
+      links: [],
+    };
+    const more: GraphOutline = {
+      dataRevisionId: 'rev', truncated: false, totals: null,
+      concepts: [{ id: 'c-mail', fields: ['sujet'] }, { id: 'c-person', fields: ['nom'] }],
+      records: [node('m1', 'mail', 'Hello', { sujet: 'Hello' }), node('p1', 'person', 'Ana', { nom: 'Ana' })],
+      links: [edge('e1', 'm1', 'p1', 'r-sent')],
+    };
+    const merged = mergeOutlines(first, more);
+    expect(merged.records.map((record) => record.id)).toEqual(['m1', 'p1']);
+    expect(merged.links).toHaveLength(1);
+    expect(merged.concepts.map((concept) => concept.id)).toEqual(['c-mail', 'c-person']);
+    expect(merged).toMatchObject({ truncated: true, totals });
+    expect(mergeOutlines(merged, more).records).toHaveLength(2);
   });
 });

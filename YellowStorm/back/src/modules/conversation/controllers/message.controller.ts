@@ -198,6 +198,7 @@ export class MessageController {
       ? {
           runtimeMode: conversation.runtimeMode,
           createdBy: conversation.createdBy.toString(),
+          memberIds: (conversation.members ?? []).map((member) => member.userId.toString()),
           governanceContext: conversation.governanceContext
             ? {
                 programId: conversation.governanceContext.programId.toString(),
@@ -458,7 +459,8 @@ export class MessageController {
             playbookHandoffId: dto.playbookHandoffId,
             governanceOverride: governedRuntime ? {
               runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
               primaryAgentId: governedRuntime.primaryAgentId,
               allowedAgentIds: governedRuntime.allowedAgentIds,
               workspaceIds: governedRuntime.workspaceIds,
@@ -511,7 +513,8 @@ export class MessageController {
             playbookHandoffId: dto.playbookHandoffId,
             governanceOverride: governedRuntime ? {
               runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
               primaryAgentId: governedRuntime.primaryAgentId,
               allowedAgentIds: governedRuntime.allowedAgentIds,
               workspaceIds: governedRuntime.workspaceIds,
@@ -605,13 +608,18 @@ export class MessageController {
           playbookHandoffId: dto.playbookHandoffId,
         }, requestId, undefined, this.resolveDisplayName(user), governedRuntime ? {
           runtimeMode: 'governed',
-              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId && !dto.agentIds?.length),
+              rootBound: Boolean(governedRuntime.rootWork && conversation.rootAgentId === governedRuntime.primaryAgentId
+                && (!dto.agentIds?.length || (dto.agentIds.length === 1 && dto.agentIds[0] === conversation.rootAgentId))),
           primaryAgentId: governedRuntime.primaryAgentId,
           allowedAgentIds: governedRuntime.allowedAgentIds,
           workspaceIds: governedRuntime.workspaceIds,
           revisionId: governedRuntime.revisionId,
           scopeId: governedRuntime.scopeId,
-        } : undefined, latencyStart)
+        } : undefined, latencyStart,
+        // The stream re-reads the conversation unless the loaded document is
+        // still authoritative: attachments may create the system workspace
+        // after the load, and continuations validate the root work epoch.
+        dto.attachedFileIds?.length || dto.rootContinuation ? undefined : conversation)
         .catch((err) => {
           if ((err as { code?: ErrorCode }).code === ErrorCode.CHAT_ALREADY_STREAMING) return;
           this.logger.error('Stream start failed', {

@@ -68,10 +68,52 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('allows bound reads when runtime writes are disabled', async () => {
+  it('allows bound reads when runtime writes are disabled, scoped to the allowed workspaces', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ dataRevisionId: 'dr_1', nodes: [], edges: [] }));
     const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
-    await expect(client.getBoundGraph('m1', 'u1')).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
+    await expect(client.getBoundGraph('m1', 'u1', undefined, ['ws-1'])).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m1/graph/read');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ actorUserId: 'u1', environment: 'draft', allowedWorkspaceIds: ['ws-1'] });
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('reads a bounded graph window with the scope, limit, concept and focus', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ dataRevisionId: 'dr_1', nodes: [], edges: [], truncated: false, nodeLimit: 50, totals: null }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await client.getBoundGraphWindow('m1', 'u1', ['ws-1'], { nodeLimit: 50, conceptId: 'c1', focusIds: ['r1'], neighbours: false, dataRevisionId: 'dr_1' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m1/graph/window');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({
+      actorUserId: 'u1', environment: 'draft', allowedWorkspaceIds: ['ws-1'],
+      dataRevisionId: 'dr_1', nodeLimit: 50, conceptId: 'c1', focusIds: ['r1'], neighbours: false,
+    });
+  });
+
+  it('sends the depth around a focus record only when it is deeper than one link', async () => {
+    const window = { dataRevisionId: 'dr_1', nodes: [], edges: [], truncated: false, nodeLimit: 5000, totals: null };
+    fetchMock.mockResolvedValueOnce(jsonResponse(window)).mockResolvedValueOnce(jsonResponse(window));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await client.getBoundGraphWindow('m1', 'u1', ['ws-1'], { nodeLimit: 5000, focusIds: ['r1'], depth: 8 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      actorUserId: 'u1', environment: 'draft', allowedWorkspaceIds: ['ws-1'], nodeLimit: 5000, focusIds: ['r1'], depth: 8,
+    });
+    await client.getBoundGraphWindow('m1', 'u1', ['ws-1'], { focusIds: ['r1'], depth: 1 });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('depth');
+  });
+
+  it('refuses to read a graph window without a workspace scope', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.getBoundGraphWindow('m1', 'u1', undefined as unknown as string[])).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to read the graph without a workspace scope', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.getBoundGraph('m1', 'u1', undefined, undefined as unknown as string[])).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('maps runtime 409 to conflict and 404 to not-found', async () => {
@@ -143,6 +185,12 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       expect(url).toBe('http://runtime:8000/v1/semantic-model-search/models/m%2F1/index?environment=draft');
       expect(init.method).toBe('GET');
       expect(init.body).toBeUndefined();
+
+      // The progress of a build (camelCase, optional) reaches the caller as the runtime sent it.
+      const building = { state: 'indexing', stage: 'embedding', expectedCount: 8400, indexedCount: 1200, exactOnlyCount: 0, passageCount: 300, passageIndexedCount: 20, loadedCount: 8400,
+        buildMode: 'incremental', buildReason: null, carriedCount: 8250, rebuiltCount: 150, embeddedCount: 40 };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ index: building }));
+      await expect(client.getGraphSearchIndex('m1', 'draft', 'u1')).resolves.toEqual({ index: building });
     });
 
     it('builds an index only when runtime writes are on', async () => {
@@ -156,6 +204,38 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       await expect(client.ensureGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'production' }))
         .resolves.toMatchObject({ jobId: 'j1' });
       expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/indexes');
+    });
+
+    it('stops an index build through the runtime, which needs writes on', async () => {
+      const disabled = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      await expect(disabled.stopGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ stopped: true, index: { state: 'indexing' } }), { status: 200 }));
+      const client = new SemanticRuntimeClientService(config() as any);
+      await expect(client.stopGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .resolves.toMatchObject({ stopped: true });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://runtime:8000/v1/semantic-model-search/indexes/stop');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' });
+    });
+
+    it('restarts an index build through the runtime, which needs writes on', async () => {
+      const disabled = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      await expect(disabled.restartGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ restarted: true, jobId: 'j2', index: { state: 'queued' } }), { status: 202 }));
+      const client = new SemanticRuntimeClientService(config() as any);
+      await expect(client.restartGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' }))
+        .resolves.toMatchObject({ restarted: true, jobId: 'j2' });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://runtime:8000/v1/semantic-model-search/indexes/restart');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({ actorUserId: 'u1', modelId: 'm1', environment: 'draft' });
     });
 
     it('maps refused requests, missing bindings, revision changes and outages', async () => {

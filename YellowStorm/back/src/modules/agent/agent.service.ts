@@ -4,6 +4,7 @@ import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { deriveAgentSlug } from '@common/utils/slugify';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
+import { appendGenUiOutputFormat } from './prompts/gen-ui-output-format';
 import { MONO_AGENT_SLUG as MONO_AGENT_TYPE_SLUG, RootPolicyService } from './services/root-policy.service';
 import type { RootExecutionPolicy } from './interfaces/root-execution-policy.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -977,6 +978,8 @@ export class AgentService {
         });
         prompt += membersContext;
       }
+      // Generative UI: the agent's own prompt stays in the DB, only the output-format block is added here.
+      prompt = appendGenUiOutputFormat(prompt, agent.genUiEnabled);
       const grpcAgent: IGrpcAgent = {
         id: agent.id,
         name: agent.name,
@@ -985,6 +988,7 @@ export class AgentService {
         agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        connector_bindings: connectorBindings,
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
@@ -1032,6 +1036,7 @@ export class AgentService {
         connectorBindingCount: connectorBindings.length,
         promptLength: grpcAgent.prompt.length,
         ignorePrePrompt: agent.ignorePrePrompt,
+        genUiEnabled: agent.genUiEnabled === true,
         isDefault: agent.isDefault,
       });
 
@@ -1690,6 +1695,8 @@ export class AgentService {
       reasoningEffort: dto.reasoning_effort || undefined,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
+      // Product default: generative UI is ON for newly created agents (the column default is OFF).
+      genUiEnabled: dto.genUiEnabled ?? true,
       knowledgeBases: dto.knowledgeBases ?? [],
       tools: dto.tools ?? [],
       skills: dto.skills ?? [],
@@ -1737,6 +1744,7 @@ export class AgentService {
     if ('reasoning_effort' in dto) patch.reasoningEffort = dto.reasoning_effort || null;
     if (dto.instruction !== undefined) patch.instruction = dto.instruction;
     if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
+    if (dto.genUiEnabled !== undefined) patch.genUiEnabled = dto.genUiEnabled;
     if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
     if (dto.max_temporary_child_agents !== undefined) patch.max_temporary_child_agents = dto.max_temporary_child_agents;
     if (dto.rootExecutionPolicy !== undefined) {
@@ -1910,6 +1918,7 @@ export class AgentService {
       reasoning_effort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      genUiEnabled: (d.genUiEnabled as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as { toString(): string }[]) || []).map((id) =>
         id.toString(),
       ),
@@ -1982,6 +1991,7 @@ export class AgentService {
       reasoningEffort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      genUiEnabled: (d.genUiEnabled as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as { toString(): string }[]) || []).map((id) =>
         id.toString(),
       ),
