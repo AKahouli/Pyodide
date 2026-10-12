@@ -11,7 +11,8 @@ import pytest
 from app.datasource.dataset_query import query_parquet
 from app.datasource.datasets import prepare_parquet
 from app.datasource.discovery import discover, preview_source
-from app.datasource.email_archive import (BODY_CHARS, MESSAGE_COLUMNS, _addresses, iter_derived_files,
+from app.datasource.extraction_limits import BODY_CHARS
+from app.datasource.email_archive import (MESSAGE_COLUMNS, _addresses, iter_derived_files,
                                           iter_sheet_rows, read_messages, read_tnef, resolve_column,
                                           split_new_text)
 

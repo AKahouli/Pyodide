@@ -13,13 +13,17 @@ import shutil
 from typing import Any
 
 from .discovery import is_email_archive, max_source_bytes
+from .extraction_limits import EXTRACTION_LIMITS
 
 MAX_RESULT_BYTES = 10 * 1024 * 1024
 
 
-# What an admin's run limits change in the parser child: e-mails per archive, archive size, memory, time.
-ARCHIVE_LIMIT_VARIABLES = {"maxArchiveEmails": "SEMANTIC_EMAIL_MAX_ARCHIVE_EMAILS",
-                           "maxArchiveMb": "SEMANTIC_EMAIL_MAX_ARCHIVE_MB",
+# What an admin's run limits change in the parser child: e-mails per archive, archive size, what is read of
+# each mail and attachment, memory, time.
+READ_LIMIT_VARIABLES = {"maxArchiveEmails": "SEMANTIC_EMAIL_MAX_ARCHIVE_EMAILS",
+                        "maxArchiveMb": "SEMANTIC_EMAIL_MAX_ARCHIVE_MB",
+                        **{key: spec.env for key, spec in EXTRACTION_LIMITS.items()}}
+ARCHIVE_LIMIT_VARIABLES = {**READ_LIMIT_VARIABLES,
                            "parserMemoryMb": "SEMANTIC_PARSER_MEMORY_MB",
                            "archiveTimeoutSeconds": "SEMANTIC_EMAIL_PARSER_TIMEOUT_SECONDS"}
 
@@ -57,7 +61,7 @@ def _child_environment(email_archive: bool = False, limits: dict[str, str] | Non
     environment = {key: value for key, value in os.environ.items() if key in allowed}
     environment["SEMANTIC_PARSER_MEMORY_MB"] = configured.get("SEMANTIC_PARSER_MEMORY_MB", "512")
     environment["SEMANTIC_PARSER_TIMEOUT_SECONDS"] = str(parser_timeout_seconds(email_archive, limits))
-    for variable in ("SEMANTIC_EMAIL_MAX_ARCHIVE_EMAILS", "SEMANTIC_EMAIL_MAX_ARCHIVE_MB"):
+    for variable in READ_LIMIT_VARIABLES.values():
         if variable in configured:
             environment[variable] = configured[variable]
     return environment

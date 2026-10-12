@@ -24,10 +24,11 @@ from app.population.derived import derivation_items, derive_concept, field_plan,
 from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
 from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
 from app.population.document_rules import answer_options, normalize_ai_settings
-from app.population.run_limits import (MAX_SOURCES_PER_TASK, ai_pacing, identity_limits, index_build_limits,
+from app.population.run_limits import (DEFAULT_RUN_LIMITS, MAX_SOURCES_PER_TASK, ai_pacing, identity_limits, index_build_limits,
                                         max_run_sources, run_limits, source_cap_is_users, source_limits,
                                         source_record_cap)
 from app.datasource.email_archive import resolve_column
+from app.datasource.extraction_limits import EXTRACTION_LIMITS
 from app.population.engine_version import reader_version
 from app.population.expand import expand_rows, is_item_attribute, normalize_expand
 from app.population.row_health import ConceptHealth
@@ -45,6 +46,14 @@ DERIVED_UPLOAD_BATCH = 500
 # Bump when the e-mail texts or attachment names written to the workspace change.
 EMAIL_DERIVATION_VERSION = "email-derived-v1"
 EMAIL_DERIVATION_CACHE_CONCEPT = "__email_derived_files__"
+# The run limits that change what an e-mail archive's tables hold, and (a subset) which files are copied out of it.
+READ_LIMIT_KEYS = ("maxArchiveEmails", "maxArchiveMb", *EXTRACTION_LIMITS)
+DERIVATION_LIMIT_KEYS = ("maxEmlMb", "maxAttachmentMb", "maxNesting")
+
+
+def changed_limits(limits: dict, keys: tuple[str, ...]) -> dict:
+    """Those of ``keys`` that are not at their built-in value: a run that sets none keeps the cache keys it had."""
+    return {key: limits[key] for key in keys if limits.get(key) != DEFAULT_RUN_LIMITS[key]}
 QUERY_ROW_LIMIT = 1000
 # How long each progress report keeps the lease alive: a long run stays owned while it reports.
 PROGRESS_LEASE_SECONDS = 900
@@ -385,9 +394,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         return extraction_cache_key({
             "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
             "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
-            # Tables cut at the old e-mail or size limit are derived again once it changes.
-            "limits": {key: value for key, value in source_limits(limits, source).items()
-                       if key in ("maxArchiveEmails", "maxArchiveMb")}})
+            # Tables cut at the old e-mail or size limit are derived again once it changes, and so are the
+            # files that a mail, attachment or nesting limit now lets in or keeps out.
+            "limits": {**{key: value for key, value in source_limits(limits, source).items()
+                          if key in ("maxArchiveEmails", "maxArchiveMb")},
+                       **changed_limits(source_limits(limits, source), DERIVATION_LIMIT_KEYS)}})
 
     async def derive_archive(source: dict, path: Path) -> None:
         """Store the e-mails' texts and readable attachments in the workspace, where they are indexed.
@@ -474,8 +485,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
 
     def tabular_cache_key(entry: dict, options: dict | None, asset_ref: dict, content_digest: str | None) -> str:
         """Over everything that decides a sheet's reading: the file (its version, else its bytes),
-        the mapping and the concept."""
+        the mapping and the concept; for an e-mail archive also what is read of its mails and files."""
         from app.persistence.extraction_cache import extraction_cache_key
+        archive_limits = (changed_limits(source_limits(limits, entry["source"]), READ_LIMIT_KEYS)
+                          if is_email_archive(entry["source"].get("mimeType")) else None)
         return extraction_cache_key({
             # A changed file reader reads the table again (reading a table is cheap).
             "engine": TABULAR_READ_VERSION, "reader": reader_version(),
@@ -488,6 +501,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             "content": content_digest,
             # A reading cut at the old limit must not be reused once the limit changes.
             "recordCap": source_record_cap(limits, entry),
+            # Only present for an e-mail archive, so other sheets keep their cached reading.
+            **({"archiveLimits": archive_limits} if archive_limits else {}),
             # Only present with a recipe, so a sheet without one keeps its cached reading.
             **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
             **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}

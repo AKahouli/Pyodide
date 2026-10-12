@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.datasource.extraction_limits import EXTRACTION_LIMITS
+
 # A workspace mapping expands to one source per document, so a run can read thousands of files. The
 # hard ceiling of a run's sources, whatever an admin enters: admission and the run both stop at it.
 MAX_SOURCES_PER_TASK = 5000
@@ -26,6 +28,8 @@ DEFAULT_RUN_LIMITS = {
     "maxArchiveMb": 1024,
     "parserMemoryMb": 512,
     "archiveTimeoutSeconds": 900,
+    # What is read of each mail and attachment (sizes, nesting, pages, cells, slides, characters kept).
+    **{key: spec.default for key, spec in EXTRACTION_LIMITS.items()},
     # The "saving" step: rows written per batch, and seconds one batch may take.
     "saveBatchRows": 2000,
     "saveStatementSeconds": 10,
@@ -43,6 +47,7 @@ RUN_LIMIT_RANGES = {
     "maxArchiveMb": (10, 51200),
     "parserMemoryMb": (256, 16384),
     "archiveTimeoutSeconds": (60, 7200),
+    **{key: (spec.low, spec.high) for key, spec in EXTRACTION_LIMITS.items()},
     "saveBatchRows": (100, 50000),
     "saveStatementSeconds": (5, 600),
     "projectionBatchRows": (100, 20000),
