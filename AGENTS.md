@@ -1,114 +1,69 @@
 # YellowStorm Agent Instructions
 
-The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
+`build` owns the user request, integration, and the earliest verified ready-to-test result. Specialists answer bounded questions; use them when independent work or stronger verification justifies their cost.
 
-## Source of Truth
+## Authority and Product Rules
 
-1. Executable code, schemas, protos, tests.
-2. Guideline files and repository configuration.
-3. The user's current request and confirmed decisions.
-4. Obsidian memory (may be stale; verify against code before acting).
+- The user's current request and confirmed decisions govern intent. Code, schemas, protos, and tests establish current behavior; reviewed Git docs establish approved constraints. Hindsight contains fallible past experience.
+- "Conversation" means `http://localhost:5173/#/conversation`, not Conversation v2, unless requested.
+- LLM inference features use a dedicated YellowStorm ADK agent configurable in the agent library.
 
-## Product Rules
+## Repository and Guidelines
 
-- "Conversation" means the feature at `http://localhost:5173/#/conversation`, not Conversation v2, unless the user says v2.
-- Any feature that needs LLM inference is built as a dedicated agent through the YellowStorm ADK (configurable in the agent library), not as a direct chat-completion call.
-
-## Repository Map
-
-| Area | Path | Stack | Test |
-|---|---|---|---|
-| Backend | `YellowStorm/back` | NestJS 10, Mongoose, Drizzle/PostgreSQL, gRPC | `npm test -- <pattern>` (jest), `npm run lint`, `npm run build` |
-| Frontend | `YellowStorm/front` | React 18, Vite, TypeScript, Radix, Tailwind | `npm test -- <pattern>` (vitest), `npx tsc --noEmit -p .`, `npm run build` |
-| Agent runtime | `yellowstorm-adk` | Python 3.12, LangGraph, Google ADK, requirements.txt | `conda run -n meta pytest <path> -q` |
-
-Python always runs inside the conda `meta` environment, non-interactively (`conda run -n meta ...`). There is no Poetry project.
-
-## Required Guidelines (read by section only)
-
-| Changed paths | File |
-|---|---|
-| `YellowStorm/front/**` | `YellowStorm/front/FRONTEND_GUIDELINES.md` |
-| `YellowStorm/back/**` | `YellowStorm/back/BACKEND_GUIDELINES.md` |
-| Cross-boundary (REST, gRPC, proto, NestJS to ADK) | Both files: backend section 23 "Frontend to Backend Contract" and section 10 "gRPC", frontend section 6 "API Layer" |
-
-Both files are 500+ lines with numbered sections. Grep the `^## ` headings, then read only the sections that govern the change (for example: DTOs and validation, state management, streaming, testing, naming). Never load a whole guideline file.
-
-## Context Retrieval
-
-1. Graph first for code investigation: start with `get_minimal_context_tool(task=..., repo_root=<active worktree absolute path>)`, then use targeted CRG queries before structural Grep/Glob/Read. Load the global `crg-navigation` skill for accurate tool recipes. Refresh missing/stale graphs before relying on them; source wins when results disagree. Skip pure prose and git-only chores. Fall back to focused file scanning when indexing/static analysis cannot answer, and record the limitation in the handoff.
-2. Read only the line ranges the change needs.
-3. Vault memory (`obsidian_vault`, `strategy: "semantic"`) only for Tier 3 work, or when a Tier 2 task depends on historical decisions or invariants that code does not explain. Never for Tier 0 or 1.
-4. Context7 only for external library behavior local code cannot establish.
-
-## Working Principles
-
-- Implement the smallest correct change. No speculative features, abstractions, or unrelated cleanup.
-- Match the conventions of the package you are in before introducing a pattern.
-- Add or update tests for changed behavior and bug fixes.
-- Comments explain non-obvious intent, invariants, or workarounds only.
-- Files under ~300 lines and functions under ~50 are review thresholds; split along a responsibility boundary or justify briefly.
-- Never hardcode or print secrets. Use the i18n layer for user-facing frontend text.
-- For requests with several independent tasks, ask whether to do them all or one at a time. Otherwise do not ask; state assumptions and proceed.
-
-## Contracts and Boundaries
-
-For REST, gRPC, queues, and schemas verify both sender and receiver: field names and case, shapes and serialization, required/optional/default/absence semantics, compatibility and migration. `google.protobuf.Struct` values sent from NestJS use `toGrpcStruct()` at the call site; verify the current proto rather than documentation. When diagnosing a boundary failure trace the value layer by layer with redacted diagnostics, and remove temporary logging before completion.
-
-## Error Handling
-
-Never swallow exceptions with an empty catch. Validate at trust boundaries only. Use the package's established error types. Keep terminal routes in workflow graphs and make sure routers cannot loop forever.
-
-## Workflow Tiers and Gates
-
-| Tier | Scope | Required steps |
+| Area | Path | Focused verification |
 |---|---|---|
-| 0 Trivial | typo, formatting, comment, non-runtime config text | edit, lightweight check; no subagents |
-| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; run relevant checks; `reviewer` if runtime behavior changed |
-| 2 Standard | multi-file feature, bug fix, UI behavior, service change | diagnose unclear bugs and reproduce before editing; `plan` only if ambiguous; implement with tests; run relevant checks; `frontend-qa` if browser-visible; `reviewer` |
-| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; run relevant checks including integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
+| Backend | `YellowStorm/back` (NestJS, TypeScript) | `npm test -- <pattern>`; lint/build when affected |
+| Frontend | `YellowStorm/front` (React, Vite, TypeScript) | `npm test -- <pattern>`; `npx tsc --noEmit -p .`; build when affected |
+| Agent runtime | `yellowstorm-adk` (Python) | `conda run -n meta pytest <path> -q` |
 
-Subagent routing:
+Python always uses conda `meta` non-interactively. There is no Poetry project.
+Read only relevant sections of `YellowStorm/front/FRONTEND_GUIDELINES.md` or `YellowStorm/back/BACKEND_GUIDELINES.md`; find headings first. Cross-boundary changes require the backend contract/gRPC and frontend API sections.
 
-| Agent | Use when | Skip when |
+## Context and Token Budget
+
+- Reuse verified paths, decisions, graph freshness, and checks already in the session or handoff. Start a new code investigation with minimal CRG context and the active absolute worktree root; query only unresolved callers, impact, or tests. Source/tests resolve graph gaps. If the graph is unavailable, use focused source search immediately; refresh incrementally only when needed for a remaining analysis.
+- Read the necessary source ranges. For non-obvious design or contracts, use `docs/agent-context/README.md` to route to matching records. Avoid loading unrelated guidelines, full files, architecture listings, or raw test logs.
+- Hindsight recall is automatic at session start; manually retrieve only relevant history that is still missing. Context7 is for external library behavior local evidence cannot establish.
+- Set 2-5 observable acceptance criteria for a feature. Keep an inline plan when the approach is clear; use `plan` only for unresolved design choices. Follow-up feedback updates the existing criteria and plan.
+- Resolve uncertainty from current context first. Ask only for a decision or missing access that affects the result; use stated, reversible defaults for minor details. For multiple substantial testable phases, `build` asks once whether to finish end to end or pause after each completed phase, unless the current task already has a confirmed choice. Carry that choice through handoffs; routine steps, checks, fixes, and delegation need no repeated confirmation.
+
+## Implementation and Parallel Work
+
+- Make the smallest correct change, follow package conventions, and avoid unrelated cleanup. Use i18n for frontend text. Do not hardcode or print secrets.
+- Add/update tests for changed behavior and regressions when existing checks do not already prove the outcome. Never swallow exceptions; validate trust boundaries and preserve terminal workflow routes.
+- A confirmed user-reported defect becomes a focused regression: reproduce it, add/extend the smallest behavioral test that fails before the fix and passes after it when feasible, then rerun affected QA. Reuse existing coverage; if automation is impractical, retain a concise manual reproduction and state the gap. Memory records the confirmed cause/evidence, never an unverified hypothesis.
+- Reuse existing fixture helpers and approved test accounts with the required role. Give each concurrent run a unique namespace, independent auth/report files, owned data, and scoped cleanup. Use separate accounts/tenants when shared account state can race; otherwise isolated records may suffice. Prepare data before QA; never reset shared fixtures. See `docs/agent-context/testing/qa-fixtures.md` for current entry points.
+- Prefer concurrent independent searches, checks, and subagent tasks. Start useful independent work early and continue the primary task while it runs. Default to two concurrent specialists; add more only for distinct work that shortens delivery.
+- Use `worker` for independent implementation with explicit owned files. Give each worker disjoint files; `build` owns shared contracts, manifests, shared translations, and integration. Workers return required shared-file changes to `build`.
+- Native OpenCode Task supports `background: true` when enabled. Use it for exploration with independent primary work, optional review, and documentation. Completion arrives automatically: do not poll, sleep, duplicate work, or relaunch a finished task. Foreground calls are for results needed immediately.
+- Run focused checks and browser QA concurrently once their scoped source is stable. A required reviewer can run alongside QA. Assign each frontend QA task a unique run ID, private browser context, and owned page IDs; reuse them only within that task. MCP `--isolated` separates OpenCode processes, and `new_page.isolatedContext` plus explicit `pageId` separates tasks sharing one MCP instance. Avoid overlapping edits, duplicate suites, or mutations of the same test records.
+- Preserve acceptance results for unchanged behavior. After a fix, rerun only affected checks plus relevant adjacent coverage; widen verification for a concrete remaining risk.
+
+## Risk, Gates, and Delivery
+
+| Tier | Scope | Required verification |
 |---|---|---|
-| `explore` | ownership, call paths, or dependencies still unclear after one graph query | target and callers already known |
-| `plan` | Tier 3, ambiguity, several plausible designs, contract changes | obvious change, even if it touches several files |
-| `frontend-qa` | UI, layout, interaction, routing, forms, a11y, console, or network behavior changed | type-only or non-visible frontend change |
-| `reviewer` | non-trivial runtime, behavior, security, persistence, or contract change | Tier 0 |
-| `maintainer` | Full-tier change passed review and created durable knowledge | fact is obvious from code or git |
+| 0 Trivial | text, comments, formatting | lightweight check; no specialists |
+| 1 Local | isolated behavior or UI change | focused tests/checks; browser QA if visible; build self-review |
+| 2 Standard | ordinary multi-file feature or bug fix | reproduce unclear bugs; focused checks; browser QA if visible; build self-review |
+| 3 High risk | auth, permissions, quotas/billing, migrations, risky DB writes, breaking API/schema/proto, streaming, agent execution, cross-service behavior | verify both sides of boundaries; focused integration checks where feasible; blocking reviewer; browser QA if visible |
 
-## Gate Outcomes
+- For Tier 1/2, deliver **Ready to test** immediately when focused checks and frontend QA pass. Independent reviewer and maintainer are not delivery gates.
+- For Tier 3, report **Ready for local testing; review pending** after checks and QA pass while required review runs. Claim full completion only after critical/major review findings are resolved. Do not merge, deploy, or call required review passed while pending.
+- `reviewer` is required for Tier 3 or explicit user requests. Skip routine review otherwise; use a bounded background review only for a specific unresolved concern, not every task.
+- `maintainer` runs in the background only when verified work changes durable knowledge. Batch documentation changes in one call after source stabilizes; never wait for it to let the user test. It edits only `docs/agent-context/`; Git review approves those changes.
+- Gates are `PASS`, `FAIL` (reproduced defect), `BLOCKED` (environment/evidence missing), or `SKIPPED` (irrelevant). A started task is `PENDING`, never `PASS`. After two failed cycles on the same gate, report the evidence and blocker instead of repeating the same approach.
 
-`PASS`, `FAIL` (verified product defect), `BLOCKED` (environment or handoff insufficient; not a defect), `SKIPPED` (not applicable, with reason). After two unsuccessful fix cycles on the same gate, stop and report the blocker with the condensed evidence.
+## Contracts and Observability
 
-## Handoffs
+Verify sender and receiver for REST/gRPC/queues/schemas: names, casing, serialization, required/optional/default/absence semantics, and compatibility. NestJS protobuf `Struct` uses `toGrpcStruct()` at the call site; verify the current proto.
+For runtime instrumentation, read the relevant rules in `docs/observability/logging-contract.md`. Use the shared observability SDK and registered events, preserve trusted correlation, keep one detailed error owner, redact sensitive content, and avoid per-chunk logging or business-path I/O. Run `node scripts/observability/check-policy.mjs` for relevant runtime changes; run `node scripts/observability/run-gates.mjs --suite unit` for observability contract/SDK changes.
 
-Every subagent call carries: goal, acceptance criteria, repository area, changed files or base revision, verification already run, and the exact question to answer. Subagents never expand scope; only `maintainer` writes, and only through Obsidian tools.
+## Handoffs and Follow-up Experience
 
-## Memory Policy
-
-`Full`: new feature, durable decision, architecture or contract change, important invariant or pitfall. `Light`: a non-obvious implementation fact future agents will need. `None`: everything else. Details live in the `obsidian-context` skill.
-
-## Completion Report (max 25 lines)
-
-- What changed, with file paths.
-- Verification run and outcome (never claim a check that did not run).
-- Gate results, or why a gate was skipped or blocked.
-- Remaining risks or follow-ups.
-
-
-## Unified Logging & Observability
-
-For every runtime change, assess its observability impact. Follow  `docs/observability/logging-contract.md`
-
-- Use only the shared Yellowmind observability SDK / platform logger. Do not add `console.*`, `print()` diagnostics, custom handlers, custom sinks, direct Loki calls, or operational DB logging.
-- New application instrumentation must use a registered `event_name` from `contracts/observability/log-events.v1.json`. Register a genuinely new event centrally before using it; never invent dynamic event names.
-- Instrument terminal outcomes for changed HTTP/RPC, dependency, MCP/tool, LLM, job, stream, retry/fallback, and long-running execution boundaries when operationally relevant. A handled/returned failure is still a failure and must not become invisible.
-- Keep one detailed error owner. Log the detailed exception/stack at the originating boundary; upstream layers emit concise correlated outcomes instead of duplicating the same error.
-- Preserve trusted `trace_id`, `request_id`, authenticated user context, and relevant `workspace_id` / `conversation_id` / `run_id` / `job_id` / `agent_id`. Propagate existing context across boundaries; do not fabricate replacement IDs or perform lookups only for logging.
-- Never log credentials, tokens, authorization/cookies, full prompts/responses/documents, raw request/response objects, SQL parameters, signed URLs, or arbitrary object graphs. Prefer IDs, counts, status, duration, provider/model, attempt, and bounded error metadata.
-- Logging must never add remote/database I/O to a business path, wait for delivery, or use unbounded buffering. Do not build expensive diagnostic payloads before the severity gate.
-- Do not log per token/chunk/row/vector/heartbeat on high-frequency paths; use terminal summaries or metrics.
-- Add/update tests for new failure paths, context propagation, severity/event correctness, and redaction. Run `node scripts/observability/check-policy.mjs`; when observability contracts/SDKs change also run `node scripts/observability/run-gates.mjs --suite unit`.
-- `legacy.log` is migration compatibility only. New features should use registered domain events.
+- Each task carries: goal/acceptance criteria, root, owned files or task-scoped diff, snapshot/base, concise context evidence, checks already run, phase/execution choice when relevant, and the exact question. Reuse the same child session for follow-up. Exclude unrelated pre-existing edits from review scope.
+- If QA returns `AUTH_REQUIRED`, `build` asks once for this private context to sign in at the supplied URL/page, or identify an existing test-account/password-manager entry. Keep independent work running and resume the same QA child/context with blocked criteria after sign-in. New contexts may require fresh login; do not share browser state. A confirmed recipe avoids repeated account/method questions, not necessary authentication.
+- Before asking, reuse the confirmed login recipe or retrieve one scoped Hindsight result if missing. After real sign-in, persist a small note with `hindsight_ingest_document`, using a stable title per app/environment/role: origin/environment, method, supplied account alias/role, credential-store reference if available, browser policy `isolated`, and verification date. Keep ephemeral context/page IDs in the current handoff. Secrets stay in the browser/password manager; never request passwords/MFA in chat or deliberately retain secrets in memory, Git, transcripts, or artifacts. Verify actual access; never claim memory saved without a successful write, and do not block QA on a failed write.
+- Only `build` adds one short `Experience follow-up` when answering a human user: outcome, lesson/confirmed constraint (or `No durable lesson`), and next action if work remains. Child task prompts and synthetic completion notifications are internal handoffs; they do not require this line or another completion report. Automatic Hindsight capture handles persistence; do not launch a maintainer or extra reflection for the line. Never claim memory saved without confirmation.
+- Respond to user feedback by addressing the reported requirement and rerunning affected QA. Keep unrelated passed evidence. Internal background notifications do not restart the workflow or require another full completion report; notify only for a material finding, failure, or promised result.
+- Final replies lead with testable status and URL/route when relevant, then changed behavior, verification, and pending work/task IDs. Keep routine delivery under 12 lines. Git docs receive durable reviewed knowledge; raw interaction history stays in experience memory.

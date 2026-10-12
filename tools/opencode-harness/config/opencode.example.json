@@ -1,0 +1,148 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-5.6-sol",
+  "small_model": "openai/gpt-5.6-luna",
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 60000,
+    "preserve_recent_tokens": 20000
+  },
+  "provider": {
+    "openai": {
+      "models": {
+        "gpt-5.5": {
+          "limit": {
+            "context": 250000,
+            "output": 128000
+          }
+        },
+        "gpt-5.4": {
+          "limit": {
+            "context": 250000,
+            "output": 128000
+          }
+        }
+      }
+    },
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LiteLLM",
+      "options": {
+        "baseURL": "http://173.208.208.93:3014/",
+        "apiKey": "{env:LITELLM_API_KEY}"
+      },
+      "models": {
+        "deepseek-v4-pro": {
+          "name": "deepseek-v4-pro",
+          "limit": {
+            "context": 250000,
+            "output": 128000
+          }
+        },
+        "deepseek-v4-flash": {
+          "name": "deepseek-v4-flash",
+          "limit": {
+            "context": 250000,
+            "output": 128000
+          }
+        },
+        "litellm/glm-5.3-flash": {
+          "name": "glm-5.3-flash",
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "glm-5.2": {
+          "name": "glm-5.2",
+          "limit": {
+            "context": 300000,
+            "output": 128000
+          }
+        }
+      }
+    }
+  },
+  "mcp": {
+    "code-review-graph": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--from",
+        "code-review-graph[embeddings]",
+        "code-review-graph",
+        "serve"
+      ],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "chrome-devtools": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--isolated",
+        "--page-id-routing"
+      ]
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "headers": {
+        "Authorization": "{env:CONTEXT7_AUTHORIZATION}"
+      }
+    }
+  },
+  "permission": {
+    "skill": {
+      "*": "deny"
+    }
+  },
+  "agent": {
+    "build": {
+      "permission": {
+        "bash": {
+          "*": "allow",
+          "git push*": "ask",
+          "git reset --hard*": "ask",
+          "git rebase*": "ask",
+          "git checkout -- *": "ask",
+          "del *": "ask",
+          "rm *": "ask",
+          "Remove-Item*": "ask"
+        },
+        "task": {
+          "*": "deny",
+          "explore": "allow",
+          "plan": "allow",
+          "diagnostics": "allow",
+          "frontend-qa": "allow",
+          "reviewer": "allow",
+          "maintainer": "allow",
+          "worker": "allow"
+        },
+        "skill": {
+          "*": "deny",
+          "impeccable": "allow",
+          "frontend-design": "allow",
+          "context7-mcp": "allow",
+          "archify": "allow",
+          "find-skills": "allow",
+          "crg-navigation": "allow"
+        },
+        "chrome-devtools_*": "deny",
+        "obsidian_edit": "deny",
+        "obsidian_system": "deny",
+        "obsidian_workflow": "deny"
+      }
+    }
+  },
+  "plugin": [
+    "{env:USERPROFILE}/.hindsight/coding-agents"
+  ],
+  "subagent_depth": 1
+}
