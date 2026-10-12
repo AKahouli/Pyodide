@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bot, Database, Gauge, Mail, Network, RotateCcw, SearchCheck } from 'lucide-react';
+import { Bot, Database, Gauge, Mail, Network, Paperclip, RotateCcw, SearchCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { parseApiError } from '@/lib/api-error';
@@ -11,7 +11,7 @@ import { FormField, INPUT } from '../form/FormParts';
 import type { RunLimits } from '../../types';
 import { SettingsPane } from './SettingsPane';
 
-type RunLimitGroup = 'size' | 'ai' | 'archive' | 'rebuild' | 'save' | 'graph' | 'index';
+type RunLimitGroup = 'size' | 'ai' | 'archive' | 'extraction' | 'rebuild' | 'save' | 'graph' | 'index';
 
 /** Built-in limits and the ranges the back end and the runtime accept. */
 export const RUN_LIMIT_FIELDS: ReadonlyArray<{ key: keyof RunLimits; builtIn: number; min: number; max: number; group: RunLimitGroup }> = [
@@ -23,6 +23,16 @@ export const RUN_LIMIT_FIELDS: ReadonlyArray<{ key: keyof RunLimits; builtIn: nu
   { key: 'maxAiParallelCalls', builtIn: 8, min: 1, max: 32, group: 'ai' },
   { key: 'archiveTimeoutSeconds', builtIn: 900, min: 60, max: 7200, group: 'archive' },
   { key: 'parserMemoryMb', builtIn: 512, min: 256, max: 16384, group: 'archive' },
+  // Same built-in values and ranges as the runtime's extraction_limits.py (a back-end spec compares them).
+  { key: 'maxEmlMb', builtIn: 100, min: 1, max: 1024, group: 'extraction' },
+  { key: 'maxAttachmentMb', builtIn: 50, min: 1, max: 500, group: 'extraction' },
+  { key: 'maxNesting', builtIn: 3, min: 0, max: 5, group: 'extraction' },
+  { key: 'maxPdfPages', builtIn: 300, min: 1, max: 2000, group: 'extraction' },
+  { key: 'maxSheetCells', builtIn: 50000, min: 1000, max: 1000000, group: 'extraction' },
+  { key: 'maxSlides', builtIn: 500, min: 1, max: 2000, group: 'extraction' },
+  { key: 'maxAttachmentChars', builtIn: 100000, min: 5000, max: 500000, group: 'extraction' },
+  { key: 'maxBodyChars', builtIn: 100000, min: 5000, max: 500000, group: 'extraction' },
+  { key: 'maxInflatedMb', builtIn: 50, min: 1, max: 1024, group: 'extraction' },
   { key: 'purgeTimeoutSeconds', builtIn: 300, min: 30, max: 3600, group: 'rebuild' },
   { key: 'saveBatchRows', builtIn: 2000, min: 100, max: 50000, group: 'save' },
   { key: 'saveStatementSeconds', builtIn: 10, min: 5, max: 600, group: 'save' },
@@ -38,14 +48,15 @@ const GROUPS: Record<RunLimitGroup, { id: string; title: string; description: st
   size: { id: 'run-size', title: 'settings.runLimits.title', description: 'settings.runLimits.description', icon: <Gauge className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   ai: { id: 'ai-calls', title: 'settings.aiCalls.title', description: 'settings.aiCalls.description', icon: <Bot className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   archive: { id: 'email-archives', title: 'settings.archives.title', description: 'settings.archives.description', icon: <Mail className='h-4 w-4 text-muted-foreground' aria-hidden /> },
+  extraction: { id: 'email-extraction', title: 'settings.extraction.title', description: 'settings.extraction.description', icon: <Paperclip className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   rebuild: { id: 'rebuild', title: 'settings.rebuild.title', description: 'settings.rebuild.description', icon: <RotateCcw className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   save: { id: 'save-data', title: 'settings.saveBatch.title', description: 'settings.saveBatch.description', icon: <Database className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   graph: { id: 'graph-build', title: 'settings.graphBuild.title', description: 'settings.graphBuild.description', icon: <Network className='h-4 w-4 text-muted-foreground' aria-hidden /> },
   index: { id: 'index-build', title: 'settings.indexBuild.title', description: 'settings.indexBuild.description', icon: <SearchCheck className='h-4 w-4 text-muted-foreground' aria-hidden /> },
 };
 
-const NOTES: Record<RunLimitGroup, 'settings.runLimits.note' | 'settings.aiCalls.note' | 'settings.archives.note' | 'settings.rebuild.note' | 'settings.saveBatch.note' | 'settings.graphBuild.note' | 'settings.indexBuild.note'> = {
-  size: 'settings.runLimits.note', ai: 'settings.aiCalls.note', archive: 'settings.archives.note', rebuild: 'settings.rebuild.note', save: 'settings.saveBatch.note',
+const NOTES: Record<RunLimitGroup, 'settings.runLimits.note' | 'settings.aiCalls.note' | 'settings.archives.note' | 'settings.extraction.note' | 'settings.rebuild.note' | 'settings.saveBatch.note' | 'settings.graphBuild.note' | 'settings.indexBuild.note'> = {
+  size: 'settings.runLimits.note', ai: 'settings.aiCalls.note', archive: 'settings.archives.note', extraction: 'settings.extraction.note', rebuild: 'settings.rebuild.note', save: 'settings.saveBatch.note',
   graph: 'settings.graphBuild.note', index: 'settings.indexBuild.note',
 };
 
@@ -56,7 +67,7 @@ function invalid(key: keyof RunLimits, value: number | undefined): boolean {
 
 /**
  * Admin > Semantic models: how much one run may read and keep (`size`), how it calls the AI (`ai`), how long
- * it reads a mail archive (`archive`), how long "Start over from scratch" may take (`rebuild`) and how a run writes
+ * it reads a mail archive (`archive`), how much of each mail and attachment it reads (`extraction`), how long "Start over from scratch" may take (`rebuild`) and how a run writes
  * its data (`save`), how many graph elements go into the graph database at once (`graph`), how the search index is built (`index`: embedding batch size, parallel calls, call timeout, records
  * per page; performance only, never part of a run's or an index's identity), for every model.
  * All groups are saved in the same run limits: a pane saves only its own fields.

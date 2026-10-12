@@ -68,6 +68,7 @@ export function SemanticModelSettingsPage() {
     <RunLimitsSettings group='ai' />
     <RunLimitsSettings group='size' />
     <RunLimitsSettings group='archive' />
+    <RunLimitsSettings group='extraction' />
     <RunLimitsSettings group='rebuild' />
     <RunLimitsSettings group='save' />
     <RunLimitsSettings group='graph' />

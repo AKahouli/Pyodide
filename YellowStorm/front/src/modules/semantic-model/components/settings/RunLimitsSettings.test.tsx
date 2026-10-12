@@ -156,3 +156,38 @@ describe('RunLimitsSettings search index pane', () => {
       saveBatchRows: 5000, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 120, indexReadPageRows: 20000 }));
   });
 });
+
+describe('RunLimitsSettings mail and attachment reading pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'email-extraction': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { maxRecordsPerRun: 20000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('shows only the reading limits with their built-in values, and saves them with the other limits', async () => {
+    render(<RunLimitsSettings group='extraction' />);
+    const attachmentChars = await screen.findByLabelText('settings.runLimits.maxAttachmentChars');
+    expect(attachmentChars).toHaveAttribute('placeholder', '100000');
+    expect(screen.getByLabelText('settings.runLimits.maxEmlMb')).toHaveAttribute('placeholder', '100');
+    expect(screen.queryByLabelText('settings.runLimits.maxRecordsPerRun')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('settings.runLimits.parserMemoryMb')).not.toBeInTheDocument();
+
+    fireEvent.change(attachmentChars, { target: { value: '40000' } });
+    fireEvent.change(screen.getByLabelText('settings.runLimits.maxNesting'), { target: { value: '0' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    // Zero nesting is a choice (attached e-mails are listed, not opened), not an empty field.
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxRecordsPerRun: 20000, maxAttachmentChars: 40000, maxNesting: 0 }));
+  });
+
+  it('refuses values outside the ranges the runtime accepts', async () => {
+    render(<RunLimitsSettings group='extraction' />);
+    const save = (await screen.findByText('settings.save')).closest('button')!;
+    for (const [key, value] of [['maxNesting', '6'], ['maxPdfPages', '0'], ['maxSheetCells', '999'], ['maxAttachmentChars', '4999'], ['maxInflatedMb', '1025']]) {
+      const field = screen.getByLabelText(`settings.runLimits.${key}`);
+      fireEvent.change(field, { target: { value } });
+      expect(save).toBeDisabled();
+      fireEvent.change(field, { target: { value: '' } });
+      expect(save).not.toBeDisabled();
+    }
+  });
+});

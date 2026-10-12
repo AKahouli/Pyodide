@@ -470,6 +470,20 @@ export interface RunLimits {
   /** Also the most a mail archive connection may give its reader, and what one that sets none gets. */
   parserMemoryMb: number;
   archiveTimeoutSeconds: number;
+  /** What is read of each e-mail and attachment of a mail archive. */
+  maxEmlMb: number;
+  maxAttachmentMb: number;
+  /** Levels of attached e-mails opened as e-mails of their own; 0 lists them without opening them. */
+  maxNesting: number;
+  maxPdfPages: number;
+  maxSheetCells: number;
+  maxSlides: number;
+  /** Characters of an attachment's text kept in its record. */
+  maxAttachmentChars: number;
+  /** Characters of an e-mail's body kept in its record. */
+  maxBodyChars: number;
+  /** What a zipped office file may hold once decompressed, in MB. */
+  maxInflatedMb: number;
   /** Time "Start over from scratch" may take to clear a model's data, in seconds. */
   purgeTimeoutSeconds: number;
   /** Rows a run writes per batch when it saves its data. */
