@@ -4,6 +4,10 @@ mode: subagent
 reasoningEffort: medium
 steps: 30
 permission:
+  sdlc_checkpoint: allow
+  sdlc_prepare: allow
+  sdlc_resume: allow
+  sdlc_diff: allow
   "*": deny
   read:
     "*": allow

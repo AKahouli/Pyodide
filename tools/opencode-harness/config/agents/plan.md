@@ -6,6 +6,9 @@ reasoningEffort: high
 temperature: 0
 steps: 20
 permission:
+  sdlc_checkpoint: allow
+  sdlc_resume: allow
+  sdlc_diff: allow
   "*": deny
   read:
     "*": allow

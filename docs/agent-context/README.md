@@ -5,6 +5,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 | Scope | Reviewed context | Direct checks |
 | --- | --- | --- |
 | Agent harness and knowledge workflow | [ADR-0001](decisions/ADR-0001-agent-knowledge.md), [ADR-0002](decisions/ADR-0002-fast-validation-and-parallel-work.md), [ADR-0003](decisions/ADR-0003-autonomy-and-qa-sign-in.md), [ADR-0004](decisions/ADR-0004-private-qa-and-regression-fixtures.md) (current browser policy) | `AGENTS.md`, OpenCode user settings |
+| Task checkpoints, interruption/resume, and reuse before edits | [ADR-0005](decisions/ADR-0005-task-checkpoints-and-reuse-gates.md), [Harness guide](../../tools/opencode-harness/README.md) | native plugin hooks, SQLite ownership, scoped diffs, and harness tests |
 | Frontend (`YellowStorm/front/**`) | [Frontend guidelines](../../YellowStorm/front/FRONTEND_GUIDELINES.md) (matching sections) | frontend source and tests |
 | Browser QA accounts/data and user-reported regressions | [QA fixtures](testing/qa-fixtures.md), [E2E README](../../YellowStorm/front/tests/e2e/README.md) | run context, auth setup, fixture teardown, and regression tests |
 | Backend (`YellowStorm/back/**`) | [Backend guidelines](../../YellowStorm/back/BACKEND_GUIDELINES.md) (matching sections) | backend source and tests |

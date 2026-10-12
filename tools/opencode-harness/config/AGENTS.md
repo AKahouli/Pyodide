@@ -13,6 +13,8 @@
 
 ## CRG: graph-first code work
 
+- When the SDLC plugin is active, checkpoint intent/progress, read scoped docs/code, and prepare exact targets with a reuse decision before edits. Preserve task IDs through handoffs; use `sdlc_diff(file, taskID)` for scoped review. New unrelated work in the same chat uses `sdlc_checkpoint(newTask: true)`; same-task corrections reopen with `status: active`. Resume from persisted state rather than restarting discovery.
+
 - Start a new code investigation with `get_minimal_context_tool(task=..., repo_root=...)`. Reuse a caller's current scoped graph evidence instead of repeating this in every specialist. Pass the active repository/worktree's absolute `repo_root` to every repository-scoped graph call.
 - Load `crg-navigation` for task-specific recipes. Prefer targeted queries, `detail_level="minimal"`, bounded results, and depth 1-2. Aim for about five graph calls / 800 output tokens per investigation, expanding only when correctness requires it.
 - If the graph is missing/stale, use focused source search immediately. Refresh incrementally when needed for a remaining impact question and check the result; read-only subagents report refresh needs. Recheck after branch switches or external edits; matching HEAD does not establish working-tree freshness.
