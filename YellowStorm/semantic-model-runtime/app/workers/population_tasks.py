@@ -13,9 +13,11 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import time
 import uuid
 from functools import partial
 
+import structlog
 from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
@@ -39,6 +41,9 @@ from app.population.tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, m
 from .celery_app import POPULATION_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
+events = structlog.get_logger(__name__)
+# What an archive's reading counts as cut: a limit stopped it short, or a mail could not be read.
+CUT_READING = ("truncated", "tooLarge", "inflatedTooLarge", "notRead", "emlTooLarge", "bodyTruncated")
 ASSET_FETCH_WALL_SECONDS = 35
 # Files of an e-mail archive sent for indexing at once, and per batch awaited together.
 DERIVED_UPLOAD_CONCURRENCY = 8
@@ -54,6 +59,18 @@ DERIVATION_LIMIT_KEYS = ("maxEmlMb", "maxAttachmentMb", "maxNesting")
 def changed_limits(limits: dict, keys: tuple[str, ...]) -> dict:
     """Those of ``keys`` that are not at their built-in value: a run that sets none keeps the cache keys it had."""
     return {key: limits[key] for key in keys if limits.get(key) != DEFAULT_RUN_LIMITS[key]}
+
+
+def log_archive_read(tables: dict, started: float) -> None:
+    """One terminal summary of a full archive read: how many mails, and what the limits cut. Counts only."""
+    reading = {sheet: table.get("reading") or {} for sheet, table in tables.items() if isinstance(table, dict)}
+    counts = {**reading.get("messages", {}), **reading.get("attachments", {})}
+    events.info("semantic.email_archive.read", scope="tables", count=reading.get("messages", {}).get("total", 0),
+                outcome="cut" if any(counts.get(name) for name in CUT_READING) else "complete",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                detail=" ".join(f"{name}={value}" for name, value in sorted(reading.get("attachments", {}).items())))
+
+
 QUERY_ROW_LIMIT = 1000
 # How long each progress report keeps the lease alive: a long run stays owned while it reports.
 PROGRESS_LEASE_SECONDS = 900
@@ -471,13 +488,16 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
 
             key = str(data)
             if key not in email_tables:
+                started = time.monotonic()
                 email_tables[key] = await asyncio.to_thread(
                     prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables",
                     limits=source_limits(limits, source))
+                log_archive_read(email_tables[key], started)
             table = email_tables[key][selected_sheet(options)]
             await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
             return {**{name: table[name] for name in ("rowCount", "columns", "sizeBytes", "contentHash")},
-                    "datasetId": dataset_id(source, options)}
+                    "datasetId": dataset_id(source, options),
+                    **({"reading": table["reading"]} if table.get("reading") else {})}
         result = await asyncio.to_thread(
             prepare or partial(prepare_dataset_subprocess, limits=limits), source, options, data, artifact)
         # The parser answers with the preview and the prepared dataset beside it.
@@ -684,6 +704,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                  health_of(entry["conceptId"]).fields)
                     sheet_health.begin_source(source.get("originalName"), sheet=(options or {}).get("sheetName"),
                                               workspace_id=source.get("workspaceId"), rows_available=row_total)
+                    if isinstance(manifest, dict) and manifest.get("reading"):
+                        # What the mail reader left out or cut, with the limits it read under.
+                        sheet_health.set_reading(manifest["reading"], {
+                            key: value for key, value in source_limits(limits, source).items() if key in READ_LIMIT_KEYS})
                     await progress.advance("rows", 0, row_total)
                     missing_cells: dict[str, int] = {}
                     read_rows = 0

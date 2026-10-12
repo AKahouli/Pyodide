@@ -138,19 +138,31 @@ def test_the_text_of_an_attachment_is_cut_at_the_limit(monkeypatch: pytest.Monke
 def test_a_pdf_is_read_up_to_the_page_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(LIMITS["maxPdfPages"][1], "1")
     text, status = attachment_text(PDF_MIME, _pdf("Premiere page", "Seconde page"))
-    assert text == "Premiere page" and status == "extrait"
+    # A partial reading says so instead of passing for a whole one.
+    assert text == "Premiere page" and status == "tronqué : pages lues 1 sur 2"
+    monkeypatch.delenv(LIMITS["maxPdfPages"][1])
+    assert attachment_text(PDF_MIME, _pdf("Premiere page", "Seconde page"))[1] == "extrait"
 
 
 def test_a_workbook_is_read_up_to_the_cell_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(LIMITS["maxSheetCells"][1], "1000")
-    text, _ = attachment_text(XLSX_MIME, _xlsx(600))
+    text, status = attachment_text(XLSX_MIME, _xlsx(600))
     assert "Ligne 1\t1" in text and "Ligne 500" in text and "Ligne 600" not in text
+    assert status == "tronqué : 1000 cellules lues"
+
+
+def test_a_workbook_that_ends_on_the_cell_limit_was_read_whole(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(LIMITS["maxSheetCells"][1], "1000")
+    text, status = attachment_text(XLSX_MIME, _xlsx(500))
+    assert "Ligne 500" in text and status == "extrait"
 
 
 def test_a_presentation_is_read_up_to_the_slide_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(LIMITS["maxSlides"][1], "1")
-    text, _ = attachment_text(PPTX_MIME, _pptx(3))
-    assert text == "## Slide 1\nDiapo 1"
+    text, status = attachment_text(PPTX_MIME, _pptx(3))
+    assert text == "## Slide 1\nDiapo 1" and status == "tronqué : diapositives lues 1 sur 3"
+    monkeypatch.delenv(LIMITS["maxSlides"][1])
+    assert attachment_text(PPTX_MIME, _pptx(3))[1] == "extrait"
 
 
 def test_a_file_that_inflates_past_the_limit_is_not_read(monkeypatch: pytest.MonkeyPatch):
@@ -248,13 +260,13 @@ class Cache:
         self.rows[key] = output
 
 
-def _command(archive: bytes, limits: dict, *, index: bool = False) -> dict:
+def _command(archive: bytes, limits: dict, *, index: bool = False, sheet: str = "messages") -> dict:
     from test_population_task import command
 
+    key, name = ("cle_piece_jointe", "nom_fichier") if sheet == "attachments" else ("cle_message", "objet")
     source = {**SOURCE, "sizeBytes": len(archive), "indexInWorkspace": index}
-    cmd = command(sources=[{"conceptId": "c1", "source": source, "options": {"sheetName": "messages"},
-                            "columnMapping": {"cle_message": "customer_id", "objet": "name"},
-                            "mappingVersion": "map-v1"}])
+    cmd = command(sources=[{"conceptId": "c1", "source": source, "options": {"sheetName": sheet},
+                            "columnMapping": {key: "customer_id", name: "name"}, "mappingVersion": "map-v1"}])
     cmd["payload"]["limits"] = limits
     return cmd
 

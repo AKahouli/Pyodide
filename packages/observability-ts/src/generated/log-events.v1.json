@@ -60,6 +60,7 @@
     "dependency.recovered":       { "message": "Dependency recovered", "attributes": ["dependency"] },
     "semantic.job.no_worker_online": { "message": "Job queued with no worker online", "attributes": ["queue", "job_kind", "count"] },
     "semantic.graph_window.read": { "message": "Graph window read", "attributes": ["scope", "count", "outcome", "duration_ms", "detail"] },
+    "semantic.email_archive.read": { "message": "E-mail archive read", "attributes": ["scope", "count", "outcome", "duration_ms", "detail"] },
     "semantic.population.sources_skipped": { "message": "Population sources skipped", "attributes": ["scope", "reason_code", "count", "detail"] },
 
     "legacy.log":                 { "message": "Legacy log call", "attributes": ["logger_name", "level", "source", "detail"] },

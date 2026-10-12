@@ -36,6 +36,12 @@ TOO_COARSE_RATIO = 0.05
 UNIQUE_RATIO = 0.98
 MAX_SUGGESTED_FIELDS = 4
 SNAPSHOT_VERSION = 1
+# What an archive's reading counts that a person may want to know about, per table (see ``archive_reading``).
+READING_NOTABLE = {
+    "attachments": ("truncated", "scanned", "unsupported", "encrypted", "tooLarge", "inflatedTooLarge", "unreadable",
+                    "readerMissing"),
+    "messages": ("notRead", "emlTooLarge", "bodyTruncated"),
+}
 
 
 def _clip(value: Any, limit: int) -> Any:
@@ -113,6 +119,11 @@ class ConceptHealth:
                         "workspaceId": workspace_id, "rowsAvailable": rows_available, "rowsRead": 0,
                         **({"derivedFrom": derived_from} if derived_from else {})}
         self.sources.append(self._source)
+
+    def set_reading(self, counts: dict[str, int], limits: dict[str, int]) -> None:
+        """What reading the archive of the current source left out or cut, and the limits it was read with."""
+        if self._source is not None and counts:
+            self._source["reading"] = {"counts": dict(counts), "limits": dict(limits)}
 
     def rows_read(self, count: int) -> None:
         if self._source is not None:
@@ -304,11 +315,26 @@ class ConceptHealth:
         if self.ai is not None:
             findings.append({"kind": "ai_row_limit" if self.ai["rowsLimited"] else "ai_read", **self.ai,
                              "examples": []})
+        findings.extend(self._reading_findings())
         return {"conceptId": self.concept_id, "keyFields": self.key_fields,
                 "workspaceIds": sorted({source["workspaceId"] for source in self.sources if source.get("workspaceId")}),
                 "sources": self.sources, "rowsAvailable": rows_available, "rowsRead": rows_read,
                 "rowsKeyed": self.keyed, "recordsMade": records, "dropped": dropped,
                 **({"ai": self.ai} if self.ai is not None else {}), "findings": findings}
+
+    def _reading_findings(self) -> list[dict[str, Any]]:
+        """One finding per mail table that was read with something left out or cut."""
+        counts: dict[str, Counter[str]] = {}
+        limits: dict[str, dict[str, int]] = {}
+        for source in self.sources:
+            reading = source.get("reading")
+            if isinstance(reading, dict) and source.get("sheet"):
+                counts.setdefault(source["sheet"], Counter()).update(reading.get("counts") or {})
+                limits[source["sheet"]] = reading.get("limits") or {}
+        return [{"kind": "archive_reading", "sheet": sheet, "total": tally["total"], "counts": dict(tally),
+                 "limits": limits[sheet], "examples": []}
+                for sheet, tally in sorted(counts.items())
+                if any(tally[name] for name in READING_NOTABLE.get(sheet, ()))]
 
     def _coarse_finding(self, entities: int, conflict_rows: int) -> dict[str, Any]:
         top = self.tuples.most_common(MAX_TOP_KEYS)

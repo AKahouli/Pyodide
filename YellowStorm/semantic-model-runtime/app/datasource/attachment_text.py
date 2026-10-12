@@ -28,17 +28,21 @@ def _inflated(archive: zipfile.ZipFile, names: list[str], limits: ExtractionLimi
         raise InflatedTooLarge
 
 
-def _pdf(payload: bytes, limits: ExtractionLimits) -> str:
+# A reader returns the file's text and appends to ``cuts`` what it left unread because of a limit; the
+# status then says so ("tronqué : ...") instead of passing a partial reading off as a whole one.
+def _pdf(payload: bytes, limits: ExtractionLimits, cuts: list[str]) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(payload))
+    if len(reader.pages) > limits.pdf_pages:
+        cuts.append(f"tronqué : pages lues {limits.pdf_pages} sur {len(reader.pages)}")
     pages = []
     for page in reader.pages[:limits.pdf_pages]:
         pages.append(page.extract_text() or "")
     return "\n\n".join(pages)
 
 
-def _docx(payload: bytes, limits: ExtractionLimits) -> str:
+def _docx(payload: bytes, limits: ExtractionLimits, cuts: list[str]) -> str:
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         _inflated(archive, ["word/document.xml"], limits)
         root = ElementTree.fromstring(archive.read("word/document.xml"))
@@ -56,7 +60,7 @@ def _docx(payload: bytes, limits: ExtractionLimits) -> str:
     return "\n".join(paragraphs)
 
 
-def _xlsx(payload: bytes, limits: ExtractionLimits) -> str:
+def _xlsx(payload: bytes, limits: ExtractionLimits, cuts: list[str]) -> str:
     import openpyxl
 
     # openpyxl streams the sheets (bounded by the cell limit) but loads the shared strings, styles and
@@ -69,7 +73,8 @@ def _xlsx(payload: bytes, limits: ExtractionLimits) -> str:
         lines, cells = [], 0
         for sheet in workbook.worksheets:
             lines.append(f"## {sheet.title}")
-            for row in sheet.iter_rows(values_only=True):
+            rows = sheet.iter_rows(values_only=True)
+            for row in rows:
                 values = ["" if value is None else str(value) for value in row]
                 while values and not values[-1]:
                     values.pop()
@@ -77,6 +82,9 @@ def _xlsx(payload: bytes, limits: ExtractionLimits) -> str:
                     lines.append("\t".join(values))
                 cells += len(values)
                 if cells >= limits.sheet_cells:
+                    # Cut only if something is left to read: a workbook that ends on the limit is whole.
+                    if next(rows, None) is not None or sheet is not workbook.worksheets[-1]:
+                        cuts.append(f"tronqué : {limits.sheet_cells} cellules lues")
                     return "\n".join(lines)
         return "\n".join(lines)
     finally:
@@ -96,12 +104,15 @@ def _paragraphs(xml: bytes) -> list[str]:
     return lines
 
 
-def _pptx(payload: bytes, limits: ExtractionLimits) -> str:
+def _pptx(payload: bytes, limits: ExtractionLimits, cuts: list[str]) -> str:
     """Slide texts in order, each under a ``## Slide n`` heading, followed by that slide's speaker notes."""
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         names = set(archive.namelist())
-        slides = sorted((name for name in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)),
-                        key=_slide_number)[:limits.slides]
+        every_slide = sorted((name for name in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)),
+                             key=_slide_number)
+        slides = every_slide[:limits.slides]
+        if len(every_slide) > len(slides):
+            cuts.append(f"tronqué : diapositives lues {len(slides)} sur {len(every_slide)}")
         notes_of = {name: f"ppt/notesSlides/notesSlide{_slide_number(name)}.xml" for name in slides}
         _inflated(archive, [*slides, *(notes for notes in notes_of.values() if notes in names)], limits)
         sections = []
@@ -113,7 +124,7 @@ def _pptx(payload: bytes, limits: ExtractionLimits) -> str:
     return "\n\n".join(sections)
 
 
-def _plain(payload: bytes, limits: ExtractionLimits) -> str:
+def _plain(payload: bytes, limits: ExtractionLimits, cuts: list[str]) -> str:
     for encoding in ("utf-8-sig", "cp1252"):
         try:
             return payload.decode(encoding)
@@ -148,8 +159,9 @@ def attachment_text(content_type: str, payload: bytes | None,
     if reader is None or payload is None:
         return None, "non extrait"
     limits = limits or ExtractionLimits.from_environment()
+    cuts: list[str] = []
     try:
-        text = _tidy(reader(payload, limits))
+        text = _tidy(reader(payload, limits, cuts))
     except InflatedTooLarge:
         return None, "trop volumineux une fois décompressé"
     except ImportError:
@@ -159,8 +171,9 @@ def attachment_text(content_type: str, payload: bytes | None,
     if not text:
         return None, "sans texte (image ou scan ?)"
     if len(text) > limits.attachment_chars:
-        return text[:limits.attachment_chars].rstrip() + "…", f"tronqué à {limits.attachment_chars} caractères"
-    return text, "extrait"
+        cuts.append(f"tronqué à {limits.attachment_chars} caractères")
+        text = text[:limits.attachment_chars].rstrip() + "…"
+    return text, " ; ".join(cuts) or "extrait"
 
 
 def is_extractable(content_type: str) -> bool:
