@@ -3,6 +3,8 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import type { SemanticGraph } from '../domain/semantic-model.types';
+import { INDEX_BUILD_LIMIT_KEYS } from '../domain/semantic-source-mapping.types';
+import { pickRunLimits } from './semantic-extraction-settings.service';
 import {
   DEFAULT_SEARCH_INDEX_SETTINGS, DEFAULT_SEARCH_QUERY_SETTINGS, effectiveSearchIndexSettings, effectiveSearchQuerySettings,
   fieldSearchIndexProblems, pickFieldSearchIndex, pickSearchIndexSettings, pickSearchQuerySettings, searchIndexProblems,
@@ -65,7 +67,7 @@ export class SemanticSearchSettingsService {
    * the global ones (the admin changed them since) are left out, so they never fail a search.
    */
   async runtimePayload(graph: SemanticGraph | null): Promise<RuntimeSearchSettingsPayload> {
-    const [index, search] = await Promise.all([this.getIndexSettings(), this.getQuerySettings()]);
+    const [index, search, build] = await Promise.all([this.getIndexSettings(), this.getQuerySettings(), this.getBuildSettings()]);
     const fields: Record<string, Record<string, FieldSearchIndexSettings>> = {};
     for (const node of graph?.nodes ?? []) {
       for (const attribute of node.attributes ?? []) {
@@ -81,10 +83,20 @@ export class SemanticSearchSettingsService {
     return {
       index: { ...index.configured, ...(Object.keys(fields).length ? { fields } : {}) },
       search: search.configured,
+      ...(Object.keys(build).length ? { build } : {}),
     };
   }
 
-  private async read(column: 'index_settings' | 'search_settings'): Promise<unknown> {
+  /**
+   * How an index is built, as the admin set it with the run limits (the same settings page). Only the values
+   * set travel, so the runtime's environment applies to the rest; they never change an index's identity.
+   */
+  private async getBuildSettings(): Promise<NonNullable<RuntimeSearchSettingsPayload['build']>> {
+    const configured = pickRunLimits(await this.read('run_limits'));
+    return Object.fromEntries(INDEX_BUILD_LIMIT_KEYS.filter((key) => configured[key] !== undefined).map((key) => [key, configured[key]]));
+  }
+
+  private async read(column: 'index_settings' | 'search_settings' | 'run_limits'): Promise<unknown> {
     return this.database.query<{ value: unknown }>(
       `SELECT ${column} AS "value" FROM semantic_model.extraction_settings WHERE singleton`,
     ).then((result) => result.rows[0]?.value).catch(() => undefined);

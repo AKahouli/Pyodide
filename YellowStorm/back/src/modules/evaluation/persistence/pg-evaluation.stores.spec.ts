@@ -74,20 +74,25 @@ describeIntegration('PgEvaluation stores (integration)', () => {
 
       expect(first).toMatchObject({ name: 'first', items, createdBy: userId });
       expect(first).not.toHaveProperty('workspaceId');
-      expect(await datasets.findById(first.id)).toEqual(first);
+      expect(await datasets.findByIdForCreator(first.id, userId)).toEqual(first);
+      // Another creator's id reads the same dataset as not found.
+      expect(await datasets.findByIdForCreator(first.id, oid())).toBeNull();
       expect((await datasets.findByCreator(userId)).map((d) => d.id)).toEqual([first.id, second.id]);
     });
 
     it('treats a malformed or unknown id as not found and deletes idempotently', async () => {
       const created = await datasets.create({ name: 'to delete', items, createdBy: userId });
-      expect(await datasets.findById('not-an-id')).toBeNull();
-      expect(await datasets.findById(oid())).toBeNull();
+      expect(await datasets.findByIdForCreator('not-an-id', userId)).toBeNull();
+      expect(await datasets.findByIdForCreator(oid(), userId)).toBeNull();
       expect(await datasets.findByCreator('nope')).toEqual([]);
 
-      await datasets.deleteById(created.id);
-      await datasets.deleteById(created.id);
-      await datasets.deleteById('not-an-id');
-      expect(await datasets.findById(created.id)).toBeNull();
+      // A foreign creator's delete leaves the dataset alone.
+      await datasets.deleteByIdForCreator(created.id, oid());
+      expect(await datasets.findByIdForCreator(created.id, userId)).not.toBeNull();
+      await datasets.deleteByIdForCreator(created.id, userId);
+      await datasets.deleteByIdForCreator(created.id, userId);
+      await datasets.deleteByIdForCreator('not-an-id', userId);
+      expect(await datasets.findByIdForCreator(created.id, userId)).toBeNull();
     });
 
     it('strips U+0000 from the name and items, which jsonb and text reject', async () => {
@@ -119,15 +124,15 @@ describeIntegration('PgEvaluation stores (integration)', () => {
       const run = await newRun();
       expect(run).toMatchObject({ status: 'processing', completedRuns: 0, numRuns: 2, results: [], agentId, createdBy: userId });
       expect(run).not.toHaveProperty('error');
-      expect(await runs.findById(run.id)).toEqual(run);
+      expect(await runs.findById(run.id, userId)).toEqual(run);
     });
 
     it('appends iterations and counts each run once', async () => {
       const run = await newRun();
-      await runs.appendRunResults(run.id, [iteration(1), iteration(2)]);
-      await runs.appendRunResults(run.id, [iteration(1, 2)]);
+      await runs.appendRunResults(run.id, userId, [iteration(1), iteration(2)]);
+      await runs.appendRunResults(run.id, userId, [iteration(1, 2)]);
 
-      const stored = await runs.findById(run.id);
+      const stored = await runs.findById(run.id, userId);
       expect(stored?.completedRuns).toBe(2);
       expect(stored?.results.map((r) => `${r.runIndex}:${r.iterationIndex}`)).toEqual(['1:1', '1:2', '2:1']);
     });
@@ -135,10 +140,10 @@ describeIntegration('PgEvaluation stores (integration)', () => {
     it('does not lose iterations when runs are appended concurrently', async () => {
       const run = await newRun({ numRuns: 8 });
       await Promise.all(
-        Array.from({ length: 8 }, (_, i) => runs.appendRunResults(run.id, [iteration(1, i + 1), iteration(2, i + 1)])),
+        Array.from({ length: 8 }, (_, i) => runs.appendRunResults(run.id, userId, [iteration(1, i + 1), iteration(2, i + 1)])),
       );
 
-      const stored = await runs.findById(run.id);
+      const stored = await runs.findById(run.id, userId);
       expect(stored?.completedRuns).toBe(8);
       expect(stored?.results).toHaveLength(16);
       expect(new Set(stored?.results.map((r) => r.runIndex)).size).toBe(8);
@@ -146,25 +151,28 @@ describeIntegration('PgEvaluation stores (integration)', () => {
 
     it('strips U+0000 from appended results', async () => {
       const run = await newRun();
-      await runs.appendRunResults(run.id, [{ ...iteration(1), agentAnswer: 'bin\u0000ary' }]);
-      expect((await runs.findById(run.id))?.results[0].agentAnswer).toBe('binary');
+      await runs.appendRunResults(run.id, userId, [{ ...iteration(1), agentAnswer: 'bin\u0000ary' }]);
+      expect((await runs.findById(run.id, userId))?.results[0].agentAnswer).toBe('binary');
     });
 
     it('appending to a deleted run is a no-op', async () => {
       const run = await newRun();
-      await runs.deleteById(run.id);
-      await expect(runs.appendRunResults(run.id, [iteration(1)])).resolves.toBeUndefined();
-      expect(await runs.findById(run.id)).toBeNull();
+      await runs.deleteById(run.id, userId);
+      // Another creator can neither append to nor delete the run.
+      await expect(runs.appendRunResults(run.id, oid(), [iteration(1)])).resolves.toBeUndefined();
+      await expect(runs.deleteById(run.id, oid())).resolves.toBeUndefined();
+      expect(await runs.findById(run.id, userId)).toBeNull();
     });
 
     it('finalizes with an error, and a later finalize without one keeps it', async () => {
       const run = await newRun();
-      const failed = await runs.finalize(run.id, 'failed', 'boom');
+      const failed = await runs.finalize(run.id, userId, 'failed', 'boom');
       expect(failed).toMatchObject({ status: 'failed', error: 'boom' });
 
-      const completed = await runs.finalize(run.id, 'completed');
+      const completed = await runs.finalize(run.id, userId, 'completed');
       expect(completed).toMatchObject({ status: 'completed', error: 'boom' });
-      expect(await runs.finalize(oid(), 'completed')).toBeNull();
+      expect(await runs.finalize(oid(), userId, 'completed')).toBeNull();
+      expect(await runs.finalize(run.id, oid(), 'completed')).toBeNull();
     });
 
     it('lists an agent’s runs newest first', async () => {
@@ -172,15 +180,16 @@ describeIntegration('PgEvaluation stores (integration)', () => {
       await settle();
       const b = await newRun({ scenarioName: 'newer' });
 
-      const listed = (await runs.findByAgent(agentId)).map((r) => r.id);
+      const listed = (await runs.findByAgent(agentId, userId)).map((r) => r.id);
+      expect(await runs.findByAgent(agentId, oid())).toEqual([]);
       expect(listed.indexOf(b.id)).toBeLessThan(listed.indexOf(a.id));
     });
 
     it('nulls dataset_id when its dataset is deleted, keeping the run', async () => {
       const run = await newRun();
-      await datasets.deleteById(run.datasetId as string);
+      await datasets.deleteByIdForCreator(run.datasetId as string, userId);
 
-      const stored = await runs.findById(run.id);
+      const stored = await runs.findById(run.id, userId);
       expect(stored).not.toBeNull();
       expect(stored).not.toHaveProperty('datasetId');
     });
@@ -209,7 +218,7 @@ describeIntegration('PgEvaluation stores (integration)', () => {
       const dataset = await datasets.create({ name: 'cascade dataset', items, createdBy: userId });
       const scenario = await scenarios.create({ name: 'doomed', agentId, datasetId: dataset.id });
 
-      await datasets.deleteById(dataset.id);
+      await datasets.deleteByIdForCreator(dataset.id, userId);
       expect(await scenarios.findById(scenario.id)).toBeNull();
     });
 

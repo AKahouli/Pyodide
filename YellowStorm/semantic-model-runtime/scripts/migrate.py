@@ -15,6 +15,8 @@ import asyncpg
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "migrations"
+# A migration may rebuild indexes (037): the bookkeeping statements keep the short command timeout.
+MIGRATION_TIMEOUT_SECONDS = 4 * 3600
 
 
 async def migrate() -> None:
@@ -45,7 +47,7 @@ async def migrate() -> None:
                     raise RuntimeError(f"migration checksum mismatch: {path.name}")
                 continue
             async with connection.transaction():
-                await connection.execute(sql)
+                await connection.execute(sql, timeout=MIGRATION_TIMEOUT_SECONDS)
                 await connection.execute(
                     "INSERT INTO semantic_jobs.schema_migrations (version, checksum) VALUES ($1, $2)",
                     path.name,

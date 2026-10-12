@@ -19,10 +19,10 @@ vi.mock('@/modules/localization', () => ({
 }));
 vi.mock('@/modules/auth', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }));
 vi.mock('@/modules/project', () => ({
-  useProjects: () => [],
+  useProjects: () => [{ id: 'p1', name: 'Project Alpha' }],
   useSharedProjects: () => [],
   useProjectStore: (selector: (state: typeof projectStore) => unknown) => selector(projectStore),
-  CreateProjectDialog: () => null,
+  CreateProjectDialog: ({ open }: { open: boolean }) => open ? <div role='dialog' aria-label='create-project-preview'>Create project</div> : null,
   RenameProjectDialog: () => null,
   DeleteProjectDialog: () => null,
 }));
@@ -58,5 +58,21 @@ describe('ProjectsSection', () => {
     first.unmount();
     renderProjects();
     expect(screen.getByRole('button', { name: 'Projects' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('shows projects in a flyout and keeps its create dialog mounted', async () => {
+    render(<MemoryRouter><SidebarProvider defaultOpen={false}><ProjectsSection label='Projects' flyout /></SidebarProvider></MemoryRouter>);
+    await userEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    expect(screen.getByRole('dialog', { name: 'Projects' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Project Alpha' })).toHaveAttribute('href', '/projet/p1');
+    await userEvent.click(screen.getByRole('button', { name: 'conversations.newProject' }));
+    expect(screen.getByRole('dialog', { name: 'create-project-preview' })).toBeInTheDocument();
+  });
+
+  it('reveals the current project in the expanded navigation', () => {
+    render(<MemoryRouter initialEntries={['/projet/p1']}><SidebarProvider><ProjectsSection label='Projects' /></SidebarProvider></MemoryRouter>);
+    expect(screen.getByRole('button', { name: 'Projects' })).toHaveAttribute('data-active', 'true');
+    expect(screen.getByRole('button', { name: 'Projects' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Project Alpha' })).toBeInTheDocument();
   });
 });

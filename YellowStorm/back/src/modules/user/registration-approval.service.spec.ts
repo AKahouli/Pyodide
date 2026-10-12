@@ -119,6 +119,9 @@ describe('RegistrationApprovalService', () => {
 
     await expect(service.notifySuperAdminsOfRegistration(applicant)).resolves.toBeUndefined();
     expect(logger.error).toHaveBeenCalled();
+    const logged = JSON.stringify([...logger.error.mock.calls, ...logger.warn.mock.calls]);
+    expect(logged).not.toContain('sa@acme.io');
+    expect(logged).not.toContain(applicant.email);
   });
 
   it('does not throw when recipient lookup fails', async () => {
@@ -136,6 +139,7 @@ describe('RegistrationApprovalService decisions', () => {
 
   const makeUserDoc = (overrides: Record<string, unknown> = {}) => ({
     _id: userId,
+    id: userId.toString(),
     email: 'jane@acme.io',
     status: UserStatus.INACTIVE,
     registrationApproval: RegistrationApproval.PENDING,
@@ -242,6 +246,9 @@ describe('RegistrationApprovalService decisions', () => {
       status: UserStatus.ACTIVE,
     });
     expect(logger.error).toHaveBeenCalled();
+    const logged = JSON.stringify([...logger.error.mock.calls, ...logger.warn.mock.calls]);
+    expect(logged).not.toContain('jane@acme.io');
+    expect(logged).toContain(userId.toString());
   });
 
   it('rejects an inactive pending user without sending email', async () => {

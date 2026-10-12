@@ -75,6 +75,12 @@ export class ConversationController {
     return this.streamService.getActiveStreamSnapshot(id);
   }
 
+  @Get(':id/active-streams')
+  @UseGuards(ConversationOwnerGuard)
+  getActiveStreams(@Param('id') id: string) {
+    return this.streamService.getActiveStreamSnapshots(id);
+  }
+
   @Post(':id/branches')
   @UseGuards(ConversationOwnerGuard)
   async branch(

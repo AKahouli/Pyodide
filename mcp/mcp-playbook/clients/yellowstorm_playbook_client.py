@@ -106,12 +106,12 @@ class YellowStormPlaybookClient:
     @staticmethod
     def _actor_headers() -> dict[str, str]:
         context = require_actor_context()
-        return {
+        return {key: value for key, value in {
             "X-YellowStorm-User-Id": context.user_id,
             "X-YellowStorm-Agent-Id": context.agent_id,
             "X-YellowStorm-Conversation-Id": context.conversation_id,
             "X-Correlation-Id": context.correlation_id,
-        }
+        }.items() if value}
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> Any:

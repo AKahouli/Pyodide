@@ -10,7 +10,8 @@
  * `data:` lines per frame are joined with `\n` (canonical SSE).
  */
 import type { WorkyEvent, WorkyEventType } from '../types';
-import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
+import { API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/access-token-store';
 
 export type WorkyEventHandler = (event: WorkyEvent) => void;
 export type WorkyEventUnsubscribe = () => void;
@@ -28,7 +29,7 @@ const defaultConfig: SseConfig = {
   baseURL: API_CONFIG.baseURL,
   getAccessToken: () => {
     try {
-      return window.localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+      return getAccessToken();
     } catch {
       return null;
     }

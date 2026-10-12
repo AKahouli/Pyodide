@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ChevronDown,
@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth';
 import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
@@ -169,7 +170,7 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
   );
 });
 
-export const ProjectsSection = memo(function ProjectsSection({ label }: { label?: string }) {
+export const ProjectsSection = memo(function ProjectsSection({ label, flyout = false }: { label?: string; flyout?: boolean }) {
   const { t } = useModuleTranslation('sidebar');
   const { user } = useAuth();
   const pendingApproval = isPendingAdminApproval(user);
@@ -181,11 +182,17 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
   const renameProject = useProjectStore((s) => s.renameProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const active = /^\/projet(?:\/|$)/.test(pathname);
 
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  useEffect(() => {
+    if (flyout) setOpen(false);
+    else if (active) setOpen(true);
+  }, [pathname, active, flyout]);
 
   useEffect(() => {
     if (pendingApproval) return;
@@ -218,13 +225,12 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
   const visibleProjects = projects.slice(0, MAX_VISIBLE_PROJECTS);
   const remainingProjects = projects.slice(MAX_VISIBLE_PROJECTS);
 
-  return (
-    <>
+  const list = (
       <Collapsible open={open} onOpenChange={setOpen}>
-        <SidebarMenu>
+        {!flyout && <SidebarMenu>
           <SidebarMenuItem>
             <CollapsibleTrigger asChild>
-              <SidebarMenuButton tooltip={label ?? t('actions.projects.label')}>
+              <SidebarMenuButton tooltip={label ?? t('actions.projects.label')} isActive={active}>
                 <Folder />
                 <span>{label ?? t('actions.projects.label')}</span>
                 <ChevronDown
@@ -233,9 +239,9 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
               </SidebarMenuButton>
             </CollapsibleTrigger>
           </SidebarMenuItem>
-        </SidebarMenu>
+        </SidebarMenu>}
         <CollapsibleContent>
-          <SidebarMenu className='pl-3'>
+          <SidebarMenu className={flyout ? undefined : 'pl-3'}>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={t('projects.create.title')}
@@ -309,6 +315,17 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
           </SidebarMenu>
         </CollapsibleContent>
       </Collapsible>
+  );
+
+  return (
+    <>
+      {flyout ? <SidebarMenuItem><Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild><SidebarMenuButton tooltip={label ?? t('actions.projects.label')} isActive={active}><Folder /><span>{label ?? t('actions.projects.label')}</span></SidebarMenuButton></PopoverTrigger>
+        <PopoverContent side='right' align='start' sideOffset={8} aria-label={label ?? t('actions.projects.label')} className='max-h-[calc(100dvh-2rem)] w-64 overflow-y-auto p-2' onClick={(event) => { if ((event.target as HTMLElement).closest('a[href]')) setOpen(false); }}>
+          <h2 className='mb-2 px-2 text-sm font-semibold'>{label ?? t('actions.projects.label')}</h2>
+          {list}
+        </PopoverContent>
+      </Popover></SidebarMenuItem> : list}
 
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={handleCreate} />
       {renameTarget && (

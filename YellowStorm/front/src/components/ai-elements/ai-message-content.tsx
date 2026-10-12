@@ -83,6 +83,8 @@ export interface TextPart {
   content: string;
   showCursor?: boolean;
   citations?: CitationData[];
+  /** Id of the stored message component this text was built from, when it has one. */
+  componentId?: string;
 }
 
 export interface CodePart {
@@ -301,6 +303,10 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       )}
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
+        if (part.type === 'citation' && citationScope && part.evidenceId && part.executionId
+          && visibleParts.some((candidate) => candidate.type === 'text')
+          && !visibleParts.some((candidate) => candidate.type === 'text'
+            && candidate.content.includes(`[${normalizeCitationReference(part.reference)}]`))) return null;
         return (
           <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} onTaskAgentClick={onTaskAgentClick} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
         );
@@ -467,6 +473,7 @@ function normalizeCitationReference(reference?: string): string | undefined {
 
 function getCitationDisplayName(citation: CitationData, fallback: string): string {
   if (citation.record) return citation.record.name || fallback;
+  if ((citation.sourceType === 'web' || citation.sourceKind === 'web') && citation.title) return citation.title;
   const source = citation.fileName ||
     (citation.sourceType === 'image' ? citation.path || citation.source : citation.source || citation.path);
   return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
@@ -494,6 +501,11 @@ export async function openCitationSource(
     const { fetchRootEvidence } = await import('@/modules/conversation/api');
     const load = () => fetchRootEvidence(citationScope.conversationId, citation.executionId!, citation.evidenceId!);
     const location = await load();
+    if (location.kind === 'citation' && (location.sourceKind === 'web' || citation.sourceType === 'web' || citation.sourceKind === 'web')) {
+      const target = buildTextFragmentUrl(location.url, { exact: citation.exactText ?? '', prefix: citation.prefix, suffix: citation.suffix });
+      window.open(target, '_blank', 'noopener,noreferrer');
+      return;
+    }
     let initial: typeof location | undefined = location;
     const key = JSON.stringify([citationScope.conversationId, citation.executionId, citation.evidenceId]);
     await openFileViewerFromUrlLoader(key, location.fileName || defaultLabel,
@@ -721,7 +733,8 @@ const MarkdownSegment = memo(
 const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
-  // This ensures citations with a reference but no matching marker are not silently lost.
+  // Owned unused evidence stays in the conversation's Sources menu rather than
+  // adding every research result to the answer as an unrelated trailing badge.
   const { citationMap, trailingCitations } = useMemo(() => {
     if (!citations || citations.length === 0) {
       return { citationMap: new Map<string, CitationData>(), trailingCitations: [] as CitationData[] };
@@ -733,12 +746,12 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
       const ref = normalizeCitationReference(c.reference);
       if (ref && content.includes(`[${ref}]`)) {
         map.set(ref, c);
-      } else {
+      } else if (!citationScope || !c.evidenceId || !c.executionId) {
         trailing.push(c);
       }
     }
     return { citationMap: map, trailingCitations: trailing };
-  }, [citations, content]);
+  }, [citations, content, citationScope]);
 
   const hasInline = citationMap.size > 0;
   const hasTrailing = trailingCitations.length > 0;
@@ -804,7 +817,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
   );
 };
 
-const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
+export const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
@@ -859,7 +872,7 @@ const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
 };
 
 // Citations Inline - renders citation badges after text content
-const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
+export const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 

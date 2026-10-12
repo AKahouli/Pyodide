@@ -157,6 +157,7 @@ def prepare_email_tables(data: Any, mime: str, output_dir: Path) -> dict[str, di
     import pyarrow as pa
     import pyarrow.parquet as pq
 
+    from .archive_reading import ReadingTally
     from .email_archive import COLUMNS, SHEET_ATTACHMENTS, SHEET_MESSAGES, SHEET_PARTICIPANTS, SHEETS, read_messages
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +169,7 @@ def prepare_email_tables(data: Any, mime: str, output_dir: Path) -> dict[str, di
     counts = {sheet: 0 for sheet in SHEETS}
     # Row numbers as a one-table read gives them: the first data row is 2.
     numbers = {sheet: 2 for sheet in SHEETS}
+    tally = ReadingTally()
 
     def add(sheet: str, row: dict[str, Any]) -> None:
         batches[sheet].append((numbers[sheet], [row.get(name) for name in COLUMNS[sheet]]))
@@ -178,6 +180,7 @@ def prepare_email_tables(data: Any, mime: str, output_dir: Path) -> dict[str, di
 
     try:
         for message in read_messages(data, mime, with_text=True):
+            tally.add(message)
             add(SHEET_MESSAGES, message.row)
             for participant in message.participants:
                 add(SHEET_PARTICIPANTS, participant)
@@ -189,5 +192,7 @@ def prepare_email_tables(data: Any, mime: str, output_dir: Path) -> dict[str, di
     finally:
         for writer in writers.values():
             writer.close()
-    return {sheet: {"file": f"{sheet}.parquet", **_written(output_dir / f"{sheet}.parquet", COLUMNS[sheet], counts[sheet])}
+    # What the reading left out or cut, for the model health report.
+    return {sheet: {"file": f"{sheet}.parquet", **_written(output_dir / f"{sheet}.parquet", COLUMNS[sheet], counts[sheet]),
+                    **({"reading": tally.summary(sheet)} if tally.summary(sheet) else {})}
             for sheet in SHEETS}

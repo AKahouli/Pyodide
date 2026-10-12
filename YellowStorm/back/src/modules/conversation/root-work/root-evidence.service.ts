@@ -77,6 +77,8 @@ export class RootEvidenceService {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
     }
     return { evidenceId, kind: registered.kind, producerAgentId: registered.producerAgentId, url, fileName,
+      ...(registered.kind === 'citation' && source.type === 'web' && !workspaceId && !documentId && !storagePath
+        ? { sourceKind: 'web' as const } : {}),
       ...(registeredPage ? { page: registeredPage } : {}),
       ...(mimeType ? { mimeType } : {}) };
   }

@@ -80,6 +80,10 @@ export default defineConfig(({ mode }) => {
   const crossOriginIsolationHeaders = {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Embedder-Policy': 'credentialless',
+    // Allows local HTTP API images in dev/preview; nginx serves production
+    // with its own CSP. API/socket origins remain runtime configuration.
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' http: https: wss:; media-src 'self' blob: data: https:; frame-src 'self' blob: data: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   };
 
   // Dev/preview port configurable through `.env` via `VITE_PORT` (default 5173).

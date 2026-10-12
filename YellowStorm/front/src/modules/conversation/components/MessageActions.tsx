@@ -9,6 +9,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { showSuccess, showError } from '@/lib/notifications';
 import { useConversationStore } from '../store';
 import { componentsToMarkdown } from '../utils';
+import { createOpenUiTextProjector } from './openui/plain-text';
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
 import { buildExportFilename } from '../utils/document-export';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
@@ -108,8 +109,14 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     updateFeedback(conversationId, message.id, 'dislike');
   };
 
+  // OpenUI answers are stored as programs; copy and export their rendered text instead.
+  const toMarkdown = useCallback(
+    () => componentsToMarkdown(message.components || [], createOpenUiTextProjector(message.id, message.components || [])),
+    [message.components, message.id],
+  );
+
   const handleCopy = async () => {
-    const markdown = componentsToMarkdown(message.components || []);
+    const markdown = toMarkdown();
     try {
       await navigator.clipboard.writeText(markdown);
       toast.success(t('toasts.message.copied'));
@@ -137,7 +144,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   };
 
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
-  const exportMarkdown = useMemo(() => componentsToMarkdown(message.components || []), [message.components]);
+  // Read while the PDF export runs: the rendered OpenUI text is only known from the DOM.
+  const exportMarkdown = useMemo(() => (isExportingPdf ? toMarkdown() : ''), [isExportingPdf, toMarkdown]);
 
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
@@ -163,7 +171,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             dateStyle: 'medium',
             timeStyle: 'medium',
           }).format(new Date(message.createdAt));
-      const markdown = componentsToMarkdown(message.components || []);
+      const markdown = toMarkdown();
       const blob = await exportBlocksToDocx(
         [
           {
@@ -186,7 +194,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
   const handleExportHtml = () => {
     try {
-      const markdown = componentsToMarkdown(message.components || []);
+      const markdown = toMarkdown();
       const timestamp = Number.isNaN(new Date(message.createdAt).getTime()) ? undefined : formattedCreatedAt;
       const blob = exportBlocksToHtml([{ label: t('export.assistantLabel'), timestamp, markdown }], exportTitle);
       downloadBlob(blob, buildExportFilename(exportTitle, 'html'));

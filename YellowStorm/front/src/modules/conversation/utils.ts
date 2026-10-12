@@ -395,7 +395,10 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     if ((comp as any).id) {
       idToIndex.set((comp as any).id, idx);
     }
-    return mapSingleComponent(comp);
+    const part = mapSingleComponent(comp);
+    // Lets a rendered text be matched back to its stored component (copy/export of OpenUI answers).
+    if (part.type === 'text' && typeof (comp as any).id === 'string') part.componentId = (comp as any).id;
+    return part;
   });
 
   // Pass 2: Attach citations to parent text parts
@@ -679,13 +682,17 @@ export function componentToMarkdown(comp: MessageComponent): string {
   }
 }
 
-export function componentsToMarkdown(components: MessageComponent[]): string {
+/**
+ * `projectText` lets a caller supply a readable text for a text component (an
+ * OpenUI answer, whose stored content is a program) in place of its stored content.
+ */
+export function componentsToMarkdown(components: MessageComponent[], projectText?: (component: MessageComponent) => string | undefined): string {
   if (!components || !Array.isArray(components)) {
     return '';
   }
   return components
     .filter((comp) => isVisibleConversationComponent(comp))
-    .map((comp) => componentToMarkdown(comp))
+    .map((comp) => (comp.type === 'text' ? projectText?.(comp) : undefined) ?? componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');
 }

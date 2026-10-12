@@ -290,13 +290,15 @@ def build_worker_dispatcher(
                             # Preserve native interruption; a resumed bridge retries
                             # admission instead of manufacturing a completed result.
                             logger.warning("[DELEGATE] could not persist child waiting lifecycle")
-            text = result if isinstance(result, str) else ("" if result is None else str(result))
+            from src.root_runtime.evidence_capture import collect_evidence
+            from src.root_runtime.worker_result import validate_worker_result
+            evidence = collect_evidence(ctx.state.to_dict(), execution_id)
+            text = validate_worker_result(result, evidence, execution_id)
             settled = {}
             if lazy:
                 from src.root_runtime.delegate_resolver import settle_delegate
-                from src.root_runtime.evidence_capture import collect_evidence
                 settled = await settle_child(execution_id, "completed", text,
-                    collect_evidence(ctx.state.to_dict(), execution_id))
+                    evidence)
             _emit_lifecycle(InvocationLifecycleState.COMPLETED, child_scope, producer_id)
             logger.info("[DELEGATE] completed agent_id=%s execution_id=%s text_len=%s", agent_id, execution_id, len(text))
             return {
@@ -312,7 +314,8 @@ def build_worker_dispatcher(
         except Exception as exc:  # noqa: BLE001 — a child failure is a typed result, not a root crash
             logger.exception("[DELEGATE] failed agent_id=%s execution_id=%s", agent_id, execution_id)
             _emit_lifecycle(InvocationLifecycleState.FAILED, child_scope, producer_id)
-            status = "outcome_unknown" if child_started else "failed"
+            from src.root_runtime.worker_execution import WorkerExecutionRejected
+            status = "outcome_unknown" if child_started and not isinstance(exc, WorkerExecutionRejected) else "failed"
             if lazy:
                 from src.root_runtime.delegate_resolver import settle_delegate
                 try:

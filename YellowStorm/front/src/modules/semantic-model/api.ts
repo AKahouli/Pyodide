@@ -2,9 +2,9 @@ import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
 import type { ArchiveReadLimits, DataConnection, DataConnectionDraft, SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, GraphOutline, GraphRecordValues, CitedRecordView, GraphExportChoice, GraphExportContent, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, PopulationReprojectResponse, GraphStatus, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
-SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
+SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, ModelCheck, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult, ModelHealth } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -70,8 +70,9 @@ export const semanticModelApi = {
       API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },
     ));
   },
-  async getGraphOutline(id: string, dataRevisionId?: string): Promise<GraphOutline> {
-    return unwrap(await apiClient.get<ApiResponse<GraphOutline>>(API_ENDPOINTS.semanticModels.graphOutline(id), { params: { dataRevisionId } }));
+  /** A bounded part of the data graph: the first records shared among the concepts, the records of one concept, or one record with its neighbours. */
+  async getGraphOutline(id: string, dataRevisionId?: string, query?: { limit?: number; conceptId?: string; focus?: string; depth?: number }): Promise<GraphOutline> {
+    return unwrap(await apiClient.get<ApiResponse<GraphOutline>>(API_ENDPOINTS.semanticModels.graphOutline(id), { params: { dataRevisionId, ...query } }));
   },
   async getGraphRecord(id: string, recordId: string, dataRevisionId?: string): Promise<GraphRecordValues> {
     return unwrap(await apiClient.get<ApiResponse<GraphRecordValues>>(API_ENDPOINTS.semanticModels.graphRecord(id, recordId), { params: { dataRevisionId } }));
@@ -255,6 +256,18 @@ export const semanticModelApi = {
   async searchIndexStatus(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
     return unwrap(await apiClient.get<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { params: { environment } }));
   },
+  /** Build (or build again, after a stop) the search index of the model's data, in the background. */
+  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment }));
+  },
+  /** Stop the build of the search index. A running build ends at its next batch; what it embedded is kept. */
+  async stopSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus & { stopped: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus & { stopped: boolean }>>(API_ENDPOINTS.semanticModels.searchIndexStop(id), { environment }));
+  },
+  /** Stop a stalled build (it ends at once) and start a new one: what was embedded is reused. `restarted` is false while a live worker is still stopping. */
+  async restartSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus & { restarted: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus & { restarted: boolean }>>(API_ENDPOINTS.semanticModels.searchIndexRestart(id), { environment }));
+  },
   async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number; filters?: Record<string, string> } = {}): Promise<ConceptRecordsPage> {
     return unwrap(await apiClient.get<ApiResponse<ConceptRecordsPage>>(API_ENDPOINTS.semanticModels.conceptRecords(id, conceptId), {
       params: {
@@ -401,6 +414,10 @@ export const semanticModelApi = {
   async populationFreshness(id: string): Promise<PopulationFreshness> {
     return unwrap(await apiClient.get<ApiResponse<PopulationFreshness>>(API_ENDPOINTS.semanticModels.populationFreshness(id)));
   },
+  /** Every inconsistency in the model as it is now, found without running anything. */
+  async check(id: string): Promise<ModelCheck> {
+    return unwrap(await apiClient.get<ApiResponse<ModelCheck>>(API_ENDPOINTS.semanticModels.check(id)));
+  },
   async canvasPositions(id: string): Promise<DesignerBoxPosition[]> {
     return unwrap(await apiClient.get<ApiResponse<{ positions: DesignerBoxPosition[] }>>(API_ENDPOINTS.semanticModels.canvasPositions(id))).positions;
   },
@@ -409,6 +426,9 @@ export const semanticModelApi = {
   },
   async readiness(id: string): Promise<SemanticReadiness> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));
+  },
+  async modelHealth(id: string): Promise<ModelHealth> {
+    return unwrap(await apiClient.get<ApiResponse<ModelHealth>>(API_ENDPOINTS.semanticModels.health(id)));
   },
   async reviewQueue(id: string): Promise<ReviewQueue> {
     return unwrap(await apiClient.get<ApiResponse<ReviewQueue>>(API_ENDPOINTS.semanticModels.reviewQueue(id)));

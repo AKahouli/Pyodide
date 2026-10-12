@@ -136,7 +136,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       semanticModelService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
-      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true) } as any,
+      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true), isAttachmentIntelligenceEnabledCached: jest.fn().mockReturnValue(true) } as any,
     );
   });
 
@@ -151,6 +151,19 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
       conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' }, 'user-1',
     );
+  });
+
+  it('preserves governed root authority for an exact bound-root mention', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ createdBy: userId.toString(),
+      runtimeMode: 'governed', runtimePurpose: 'chat', rootAgentId: stickyAgentId,
+      isFirstMessage: false, isGroup: false, taggedAgentIds: [] });
+    const runtime = { rootWork: {}, primaryAgentId: stickyAgentId, allowedAgentIds: [stickyAgentId],
+      workspaceIds: [], revisionId: 'revision', scopeId: 'scope' };
+    (controller as any).governedRuntimeService.resolveRuntime.mockResolvedValue(runtime);
+    (controller as any).governedRuntimeService.resolveEffectiveAgents.mockReturnValue([stickyAgentId]);
+    await controller.sendMessage(user, conversationId, { content: 'Answer', agentIds: [stickyAgentId] });
+    expect(streamService.startStream.mock.calls[0][7]).toEqual(expect.objectContaining({ rootBound: true, primaryAgentId: stickyAgentId }));
+    expect(messageService.createUserMessageWithAiPlaceholder.mock.calls[0][0].replayContext.governanceOverride.rootBound).toBe(true);
   });
 
   it('forwards on-demand tool result lookups with route identifiers', async () => {
@@ -206,6 +219,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       }),
       'turn-1', undefined, 'Ada Lovelace', undefined,
       expect.objectContaining({ schemaVersion: 1 }),
+      expect.any(Object),
     );
   });
 
@@ -337,6 +351,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ schemaVersion: 1 }),
+      expect.any(Object),
     );
   });
 
@@ -364,7 +379,21 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ schemaVersion: 1 }),
+      expect.any(Object),
     );
+  });
+
+  it.each([
+    { label: 'plain turns', dto: { content: 'hello' }, reused: true },
+    { label: 'turns with attachments (system workspace may change)', dto: { content: 'hello', attachedFileIds: ['file-1'] }, reused: false },
+    { label: 'native continuations (epoch is validated against a fresh read)', dto: { content: 'hello', rootContinuation: { inputResponses: [] } }, reused: false },
+  ])('hands the loaded conversation to the stream only for $label', async ({ dto, reused }) => {
+    const conversation = { isFirstMessage: false, taggedAgentIds: [] };
+    conversationService.getConversationDocument.mockResolvedValue(conversation);
+    await controller.sendMessage(user, conversationId, dto as any);
+    const preloaded = streamService.startStream.mock.calls[0][9];
+    if (reused) expect(preloaded).toBe(conversation);
+    else expect(preloaded).toBeUndefined();
   });
 
   it('preserves one team without expanding or reusing sticky agents', async () => {
@@ -381,7 +410,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(streamService.startStream).toHaveBeenCalledWith(
       userId.toString(), conversationId, expect.any(String),
       expect.objectContaining({ teamId, agentIds: [] }),
-      'req-1', undefined, 'Ada Lovelace', undefined, expect.any(Object),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.any(Object), expect.any(Object),
     );
     expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
       replayContext: expect.objectContaining({ teamId, agentIds: [] }),
@@ -479,6 +508,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ schemaVersion: 1 }),
+      expect.any(Object),
     );
   });
 
@@ -527,6 +557,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ schemaVersion: 1 }),
+      expect.any(Object),
     );
   });
 
@@ -563,6 +594,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ requestId: 'req-1' }),
+      expect.any(Object),
     );
   });
 
@@ -579,7 +611,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(streamService.startStream).toHaveBeenCalledWith(
       userId.toString(), conversationId, expect.any(String),
       expect.objectContaining({ semanticModelId, agentIds: ['yellowmind-agent'] }),
-      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }), expect.any(Object),
     );
     const request = streamService.startStream.mock.calls[0][3];
     expect(request.reasoningEffort).toBeUndefined();
@@ -596,7 +628,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(streamService.startStream).toHaveBeenCalledWith(
       userId.toString(), conversationId, expect.any(String),
       expect.objectContaining({ semanticModelId, agentIds: undefined }),
-      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }), expect.any(Object),
     );
   });
 

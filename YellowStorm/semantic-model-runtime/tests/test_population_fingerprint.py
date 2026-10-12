@@ -19,6 +19,39 @@ def test_admin_limits_are_part_of_the_fingerprint_like_in_the_core() -> None:
     assert population_execution_fingerprint("h", [SOURCE], [], None, None, None) == plain
 
 
+def test_save_limits_do_not_change_the_fingerprint() -> None:
+    plain = population_execution_fingerprint("h", [SOURCE], [], None, None, LIMITS)
+    saved = {**LIMITS, "saveBatchRows": 5000, "saveStatementSeconds": 120}
+    assert population_execution_fingerprint("h", [SOURCE], [], None, None, saved) == plain
+    only_save = {"saveBatchRows": 5000}
+    assert population_execution_fingerprint("h", [SOURCE], [], None, None, only_save) ==         population_execution_fingerprint("h", [SOURCE], [])
+
+
+def test_save_limits_are_read_in_range_and_default_to_the_pool_behaviour() -> None:
+    from app.population.run_limits import run_limits
+
+    assert run_limits({})["saveBatchRows"] == 2000 and run_limits({})["saveStatementSeconds"] == 10
+    chosen = run_limits({"limits": {"saveBatchRows": 20000, "saveStatementSeconds": 120}})
+    assert (chosen["saveBatchRows"], chosen["saveStatementSeconds"]) == (20000, 120)
+    for given in ({"saveBatchRows": 99, "saveStatementSeconds": 4}, {"saveBatchRows": 50001, "saveStatementSeconds": 601},
+                  {"saveBatchRows": True, "saveStatementSeconds": "30"}):
+        kept = run_limits({"limits": given})
+        assert (kept["saveBatchRows"], kept["saveStatementSeconds"]) == (2000, 10)
+
+
+def test_save_limits_do_not_change_the_admission_hash_of_a_run() -> None:
+    from app.jobs.service import _identity_command
+
+    base = {"actorUserId": "u", "payload": {"specHash": "h", "limits": {"maxRunSources": 6000}}}
+    saved = {"actorUserId": "u", "payload": {"specHash": "h", "limits": {
+        "maxRunSources": 6000, "saveBatchRows": 5000, "saveStatementSeconds": 90}}}
+    assert _identity_command(saved) == base
+    only_save = {"actorUserId": "u", "payload": {"specHash": "h", "limits": {"saveBatchRows": 5000}}}
+    assert _identity_command(only_save) == {"actorUserId": "u", "payload": {"specHash": "h"}}
+    assert _identity_command(base) is base
+    assert saved["payload"]["limits"]["saveBatchRows"] == 5000  # the command itself is untouched
+
+
 def test_corrections_are_read_page_by_page_up_to_the_watermark() -> None:
     import asyncio
     from datetime import datetime, timezone

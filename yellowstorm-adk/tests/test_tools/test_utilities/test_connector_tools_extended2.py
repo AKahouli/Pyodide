@@ -151,7 +151,7 @@ class TestConnectorMcpAndImport:
 
 class TestSaveFileToWorkspace:
     @pytest.mark.asyncio
-    async def test_posts_ingest_request_and_propagates_brain_doc(self):
+    async def test_posts_ingest_request_without_touching_session_state(self):
         response = MagicMock(status_code=200)
         response.json.return_value = {
             "document": {
@@ -202,13 +202,7 @@ class TestSaveFileToWorkspace:
                 "Content-Type": "application/json",
             },
         )
-        assert tool_context.state["_code_interpreter_brain_docs"] == [
-            {
-                "filename": "report.xlsx",
-                "filepath": "workspace/report.xlsx",
-                "workspace_id": "workspace-1",
-            }
-        ]
+        assert tool_context.state == {}
 
     def test_requires_platform_credentials(self):
         assert create_save_file_to_workspace({}) is None

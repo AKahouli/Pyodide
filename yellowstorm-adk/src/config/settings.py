@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # Cap the LLM response length. Prevents runaway 10k+ token generations that
     # eat wall-clock time without adding value. Set to 0 to disable the cap.
     SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
+    # MCP toolset reuse across turns (per user + conversation + server identity).
+    # Set MCP_TOOLSET_CACHE_MAX_ENTRIES=0 to disable and rebuild per turn.
+    MCP_TOOLSET_CACHE_MAX_ENTRIES: int = 64
+    MCP_TOOLSET_CACHE_IDLE_SECONDS: float = 600.0
+    # How long a cached tools/list answer is trusted; tool changes on the MCP
+    # server become visible after at most this long.
+    MCP_TOOL_LIST_CACHE_TTL_SECONDS: float = 60.0
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None
@@ -137,8 +144,6 @@ class Settings(BaseSettings):
 
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
-    # Code Interpreter Backend
-    CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
 
     # Lightweight isolated JavaScript runtime
     RUN_CODE_ENABLED: bool = False
@@ -358,27 +363,6 @@ class Settings(BaseSettings):
     def validate_microsandbox_docker_image(cls, v):
         if not v or v.strip() == "":
             return None
-
-        return v
-
-    @field_validator("CODE_INTERPRETER_BACKEND_URL", mode="before")
-    @classmethod
-    def validate_code_interpreter_backend_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "CODE_INTERPRETER_BACKEND_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError(
-                    "CODE_INTERPRETER_BACKEND_URL must use http or https scheme"
-                )
-        except Exception:
-            raise ValueError("CODE_INTERPRETER_BACKEND_URL must be a valid URL")
 
         return v
 

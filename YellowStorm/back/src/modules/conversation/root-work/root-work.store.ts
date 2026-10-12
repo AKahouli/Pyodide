@@ -4,6 +4,7 @@
  */
 
 import { RootExecutionRecord, RootEvidenceRecord, RootNativeState, RootBackgroundJobOwnerV1 } from './root-work.types';
+import type { RootEvidenceManifest } from './root-evidence-manifest';
 
 /** DI token for the durable root-work store. */
 export const ROOT_WORK_STORE = Symbol('ROOT_WORK_STORE');
@@ -47,6 +48,7 @@ export interface StopRootWorkResult {
   applied: boolean;
   markedCount: number;
   foregroundMessageId?: string;
+  foregroundMessageIds?: string[];
 }
 
 export interface RootWorkStore {
@@ -54,6 +56,7 @@ export interface RootWorkStore {
   registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord>;
 
   getExecution(executionId: string): Promise<RootExecutionRecord | null>;
+  listWorkerExecutions(conversationId: string, epoch: number): Promise<RootExecutionRecord[]>;
   listWaitingRoots(conversationId: string, epoch: number): Promise<RootExecutionRecord[]>;
 
   /** Record the typed result + terminal state; no-op when already terminal. */
@@ -63,7 +66,9 @@ export interface RootWorkStore {
     result: RootExecutionRecord['resultPayload'],
     evidence?: RegisterEvidenceInput[],
     backgroundOwner?: RootBackgroundJobOwnerV1,
+    evidenceManifest?: RootEvidenceManifest,
   ): Promise<RootExecutionRecord | null>;
+  stageEvidence?(executionId: string, evidence: RegisterEvidenceInput[], backgroundOwner?: RootBackgroundJobOwnerV1): Promise<void>;
 
   /** Mark waiting (e.g. approval or HITL park). */
   markWaiting(executionId: string): Promise<void>;

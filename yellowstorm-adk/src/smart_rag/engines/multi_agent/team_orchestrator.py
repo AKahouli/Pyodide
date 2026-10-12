@@ -11,6 +11,7 @@ Classes:
 import asyncio
 from typing import Dict, Any, Optional, List, Union, Tuple
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import prewarm_mcp_toolsets
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
 )
@@ -173,14 +174,6 @@ Do not render charts for single values or non-numeric content.
             bool: True if any agent in the team has search capabilities, False otherwise.
         """
         return self.agent_repository.has_search_agents()
-
-    def has_code_interpreter(self) -> bool:
-        """Check if any of the current agents have search tools.
-
-        Returns:
-            bool: True if any agent in the team has search capabilities, False otherwise.
-        """
-        return self.agent_repository.has_code_interpreter()
 
     def get_document_tree_info(self, doc_tree, brain_tree) -> str:
         """Get formatted document tree information for inclusion in prompts.
@@ -724,7 +717,7 @@ Do not render charts for single values or non-numeric content.
                                 abort_signal: Optional[asyncio.Event] = None,
                                 native_input_responses=None,
                                 temporary_worker_tool=None, fanout_tool=None, session_service=None,
-                                background_task_tool=None) -> Optional[str]:
+                                background_task_tool=None, conversation_reply_tool=None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -828,6 +821,8 @@ Do not render charts for single values or non-numeric content.
             # same way the temporary-child callable attaches here.
             from src.root_runtime.compiler import attach_root_input_control
             attach_root_input_control(agent, execution_scope, agent_config.get("_root_input_control_version", 0))
+            if conversation_reply_tool is not None and execution_scope is not None and execution_scope.role is ExecutionRole.ROOT:
+                agent.tools = [*(agent.tools or []), conversation_reply_tool]
             if temporary_worker_tool is not None:
                 agent.tools = [*(agent.tools or []), temporary_worker_tool]
                 agent_config['_delegation_root'] = True
@@ -837,19 +832,23 @@ Do not render charts for single values or non-numeric content.
             if background_task_tool is not None:
                 from src.root_runtime.background_dispatcher import BACKGROUND_INSTRUCTION
                 agent.tools = [*(agent.tools or []), background_task_tool]
-                from src.root_runtime.background_dispatcher import build_background_status_tool
-                status_tool = build_background_status_tool({'background_enabled': True}, execution_scope)
-                agent.tools.append(status_tool)
+                from src.root_runtime.background_controls import build_background_control_tools
+                agent.tools.extend(build_background_control_tools({'background_enabled': True}, execution_scope))
                 agent.instruction += '\n' + BACKGROUND_INSTRUCTION
                 agent_config['_delegation_root'] = True
             if delegation_tool is not None:
                 agent.tools = [*(agent.tools or []), delegation_tool]
-                agent.instruction = agent.instruction + chr(10) + delegation_instruction
                 agent_config["_delegation_root"] = True
                 logger.info(
                     "[DELEGATE] dispatcher attached session_id=%s agent=%s",
                     session_id, agent_name,
                 )
+            if delegation_instruction:
+                agent.instruction += '\n' + delegation_instruction
+
+            # Start MCP connect + tools/list now so it overlaps session and runner
+            # setup instead of running lazily at the first model request.
+            prewarm_mcp_toolsets(agent.tools or [])
 
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.

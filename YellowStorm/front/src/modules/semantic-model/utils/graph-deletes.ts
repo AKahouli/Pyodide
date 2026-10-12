@@ -5,7 +5,7 @@ export interface GraphDeletion {
   update: (graph: SemanticGraph) => SemanticGraph;
 }
 
-/** Delete a concept with everything that hangs off it: its relationships, typed records and their links. */
+/** Delete a concept with everything that hangs off it: its relationships, manual table rows and their links. */
 export function conceptDeletion(graph: SemanticGraph, conceptId: string): GraphDeletion {
   const relationIds = new Set(graph.relations.filter((relation) => relation.sourceNodeTypeId === conceptId || relation.targetNodeTypeId === conceptId).map((relation) => relation.id));
   const recordIds = new Set(graph.records.filter((record) => record.nodeTypeId === conceptId).map((record) => record.id));
@@ -43,9 +43,9 @@ export function relationDeletion(graph: SemanticGraph, relationId: string): Grap
   };
 }
 
-/** Delete the records typed by hand for a concept, and the links made with them. */
-export function typedRecordsDeletion(graph: SemanticGraph, conceptId: string): GraphDeletion & { count: number } {
-  const recordIds = new Set(graph.records.filter((record) => record.nodeTypeId === conceptId).map((record) => record.id));
+/** Delete some records and the links made with them. */
+export function recordsDeletion(graph: SemanticGraph, ids: Iterable<string>): GraphDeletion & { count: number } {
+  const recordIds = new Set(ids);
   const recordRelationIds = new Set(graph.recordRelations.filter((link) => recordIds.has(link.sourceRecordId) || recordIds.has(link.targetRecordId)).map((link) => link.id));
   return {
     count: recordIds.size,
@@ -59,4 +59,9 @@ export function typedRecordsDeletion(graph: SemanticGraph, conceptId: string): G
       recordRelations: current.recordRelations.filter((link) => !recordRelationIds.has(link.id)),
     }),
   };
+}
+
+/** Delete every row of a concept's manual table (all its records), and the links made with them. */
+export function manualTableDeletion(graph: SemanticGraph, conceptId: string): GraphDeletion & { count: number } {
+  return recordsDeletion(graph, graph.records.filter((record) => record.nodeTypeId === conceptId).map((record) => record.id));
 }

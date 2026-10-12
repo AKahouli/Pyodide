@@ -20,6 +20,7 @@ from fastapi import FastAPI
 
 import app.api.graph_search_routes as routes
 from app.graph_search.record_query import compile_query, diagnose, run_query
+from app.persistence.partitions import ensure_revision_partitions
 from app.graph_search.typed_values import typed_value_sql
 
 DSN = os.environ.get("SEMANTIC_RUNTIME_TEST_DATABASE_URL")
@@ -93,6 +94,7 @@ async def pool():
         await connection.execute(
             "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash) "
             "VALUES ($1, $2, $3, $4)", REVISION, MODEL, VERSION, SPEC_HASH)
+        await ensure_revision_partitions(connection, REVISION)
         await connection.execute(
             "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, "
             "data_revision_id, projection_ref) VALUES ($1, 'production', $2, $3, 'age:v1:pop_dr_recordquery')",

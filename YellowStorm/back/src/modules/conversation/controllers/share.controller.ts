@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -12,12 +13,23 @@ import { ShareService } from '../services/share.service';
 import { CreateShareDto } from '../dto/create-share.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { SearchUsersDto } from '../../user/dto/search-users.dto';
 
 @ApiTags('Conversation Sharing')
 @Controller('conversations')
 @ApiBearerAuth()
 export class ShareController {
   constructor(private readonly shareService: ShareService) {}
+
+  @Get(':conversationId/share/users')
+  @UseGuards(ConversationOwnerGuard)
+  async searchRecipients(
+    @CurrentUser() user: { _id: string },
+    @Param('conversationId') conversationId: string,
+    @Query() query: SearchUsersDto,
+  ): Promise<{ id: string; email: string; firstName?: string; lastName?: string }[]> {
+    return this.shareService.searchRecipients(conversationId, user._id.toString(), query.q);
+  }
 
   @Post(':conversationId/share')
   @UseGuards(ConversationOwnerGuard)
@@ -52,6 +64,17 @@ export class ShareController {
     @Param('shareId') shareId: string,
   ) {
     await this.shareService.revokeShare(shareId, user._id.toString());
+    return { revoked: true };
+  }
+
+  @Delete(':conversationId/share/:shareId/recipients/:recipientId')
+  @UseGuards(ConversationOwnerGuard)
+  async revokeRecipient(
+    @CurrentUser() user: { _id: string },
+    @Param('shareId') shareId: string,
+    @Param('recipientId') recipientId: string,
+  ) {
+    await this.shareService.revokeRecipient(shareId, recipientId, user._id.toString());
     return { revoked: true };
   }
 

@@ -11,6 +11,8 @@ import {
   Query,
   Req,
   UseGuards,
+  Optional,
+  Header,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -37,6 +39,7 @@ import { ConnectedAppOAuthService } from '../connected-app/services/connected-ap
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
 
 @ApiTags('Connectors')
 @ApiBearerAuth()
@@ -49,6 +52,7 @@ export class ConnectorController {
     private readonly transferService: ConnectorTransferService,
     private readonly oauthService: ConnectedAppOAuthService,
     private readonly connectorUserService: ConnectorUserService,
+    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
   ) {}
 
   @Get()
@@ -81,6 +85,18 @@ export class ConnectorController {
   }
 
   // --- Credentials ---
+
+  @Post('mcp-token/:connectorId')
+  @Header('Cache-Control', 'no-store')
+  @RateLimit({ limit: 30, windowMs: 60000, keyPrefix: 'connector:mcp-token' })
+  @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for the authenticated user' })
+  async issueMcpToken(@Param('connectorId') connectorId: string, @CurrentUser() user: AuthUser) {
+    const connector = await this.connectorService.findById(connectorId);
+    if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
+    }
+    return this.mcpJwt!.issue(connector.mcpServerUrl, user._id.toString());
+  }
 
   @Get(':connectorId/credentials')
   @ApiOperation({ summary: 'List credentials for a connector owned by the current user' })
@@ -196,7 +212,7 @@ export class ConnectorController {
       connector.mcpTransportType,
       connector.mcpServerUrl,
       connector.mcpServerConfig,
-      dto.useOAuth ? user._id.toString() : undefined,
+      user._id.toString(),
       dto.useOAuth ? connector.connectedAppKey : undefined,
     );
   }

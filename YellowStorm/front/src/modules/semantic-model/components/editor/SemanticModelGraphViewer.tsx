@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Download, Loader2, Maximize, RefreshCw, Search, Tags, X } from 'lucide-react';
+import { BarChart3, ChevronDown, Download, FileCode2, Loader2, Maximize, Network, RefreshCw, Search, Tags, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { parseApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import type { GraphOutline, SemanticGraph } from '../../types';
-import { buildGraphIndex, neighbourhood, searchRecords, shownRecords, withValues, type GraphIndex, type SearchHit } from '../graph/graph-analytics';
+import { buildGraphIndex, mergeOutlines, neighbourhood, searchRecords, shownRecords, unreadLinks, withValues, type GraphIndex, type SearchHit } from '../graph/graph-analytics';
 import { GraphRecordPanel } from '../graph/GraphRecordPanel';
 import { GraphOverviewPanel, type GraphHighlight, type GraphPeriod } from '../graph/GraphOverviewPanel';
 import { GraphCanvas, type CanvasEdge, type CanvasLayout, type CanvasNode, type GraphCanvasHandle } from '../graph/GraphCanvas';
 import { GraphExportDialog } from '../graph/GraphExportDialog';
+import { GraphViewExportDialog } from '../graph/GraphViewExportDialog';
 
 
 const PALETTE = [
@@ -34,6 +36,12 @@ function storedLimit() {
   } catch { return DEFAULT_DRAW_LIMIT; }
 }
 const CONCEPT_PREFIX = 'concept:';
+/** How many links away the Focus select reaches at most, and where a double-click goes when no depth was chosen. */
+export const MAX_FOCUS_DEPTH = 8;
+export const DEFAULT_EXPLORE_DEPTH = 2;
+const FOCUS_DEPTHS = Array.from({ length: MAX_FOCUS_DEPTH }, (_, position) => position + 1);
+/** A record explored by double-click: how far from it the view reaches. */
+interface Expansion { id: string; depth: number }
 
 interface Props {
   open: boolean;
@@ -82,7 +90,14 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const [focusDepth, setFocusDepth] = useState<0 | 1 | 2>(0);
+  const [focusDepth, setFocusDepth] = useState(0);
+  // The depth the person last chose in the Focus select (or the default): what a double-click explores to.
+  const [depthChoice, setDepthChoice] = useState(DEFAULT_EXPLORE_DEPTH);
+  // Records opened by double-click, in order: the view shows the neighbourhood of each. Double-clicking one again closes it.
+  const [expansions, setExpansions] = useState<Expansion[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // The record panel is closed until someone asks for it (the "i" badge); selecting a record leaves it as it is.
+  const [panelOpen, setPanelOpen] = useState(false);
   const [layout, setLayout] = useState<CanvasLayout>('force');
   const [drawLimit, setDrawLimitState] = useState(storedLimit);
   const [limitDraft, setLimitDraft] = useState(String(drawLimit));
@@ -91,10 +106,23 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const [period, setPeriod] = useState<GraphPeriod | null>(null);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [viewExportOpen, setViewExportOpen] = useState(false);
   const [drawAll, setDrawAll] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  // A large graph is read in part: the concept whose records are read ('' for a share of every concept), and a read around one record.
+  const [serverConcept, setServerConcept] = useState('');
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState<string | null>(null);
+  // Whether the server left records out of what it read around the record last explored.
+  const [explored, setExplored] = useState<{ id: string; capped: boolean; count: number } | null>(null);
+  const exploring = useRef<string | null>(null);
+  const tRef = useRef(t);
+  tRef.current = t;
   const revision = outline?.dataRevisionId ?? dataRevisionId;
+  const windowed = Boolean(outline?.truncated);
+  const totals = outline?.totals ?? null;
 
   /** Keeps a new drawing limit for this browser; a value out of range is brought back into it. */
   const setDrawLimit = (value: number) => {
@@ -109,9 +137,10 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     setError(null);
     setSelectedId(null);
     setHighlight(null);
+    setExpandError(null);
     try {
       const [loaded, structure] = await Promise.all([
-        semanticModelApi.getGraphOutline(modelId, dataRevisionId),
+        semanticModelApi.getGraphOutline(modelId, dataRevisionId, serverConcept ? { conceptId: serverConcept } : undefined),
         semanticModelApi.graph(modelId),
       ]);
       setOutline(loaded);
@@ -123,13 +152,39 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     } finally {
       setLoading(false);
     }
-  }, [dataRevisionId, modelId, onDataRevision]);
+  }, [dataRevisionId, modelId, onDataRevision, serverConcept]);
 
   useEffect(() => {
     if (open && modelId) void load();
   }, [open, modelId, load]);
+  // The concept read belongs to the model and the visit: a closed viewer starts again from a share of every concept.
+  useEffect(() => { if (!open) setServerConcept(''); }, [open]);
+
+  const readTicket = useRef(0);
+  /** Reads the records within `depth` links of one record and adds them to those shown; false when the record is not found. */
+  const expand = useCallback(async (recordId: string, depth?: number) => {
+    // Reads may overlap: only the latest one asked for drives the spinner and the explored chip.
+    const ticket = ++readTicket.current;
+    setExpanding(true);
+    setBusyId(recordId);
+    setExpandError(null);
+    try {
+      // Without a depth: the record's neighbours, within the server's default read. With one: as far as asked, up to the draw maximum.
+      const query = depth === undefined ? { focus: recordId } : { focus: recordId, ...(depth > 1 ? { depth } : {}), limit: MAX_DRAW_LIMIT };
+      const more = await semanticModelApi.getGraphOutline(modelId, revision, query);
+      setOutline((current) => (current ? mergeOutlines(current, more) : more));
+      if (depth !== undefined && ticket === readTicket.current) setExplored({ id: recordId, capped: Boolean(more.truncated), count: more.records.length });
+      return more.records.some((record) => record.id === recordId);
+    } catch (err: unknown) {
+      if (ticket === readTicket.current) setExpandError(parseApiError(err).message);
+      return false;
+    } finally {
+      if (ticket === readTicket.current) { setExpanding(false); setBusyId(null); }
+    }
+  }, [modelId, revision]);
 
   const index = useMemo(() => buildGraphIndex(outline, modelGraph), [outline, modelGraph]);
+  const conceptName = useCallback((conceptId: string) => modelGraph?.nodes.find((concept) => concept.id === conceptId)?.label ?? conceptId.replaceAll('_', ' '), [modelGraph]);
   const labels = useMemo(() => displayLabels(index), [index]);
   const conceptOrder = useMemo(() => index.concepts.map((concept) => concept.key), [index]);
   const colorOf = useCallback((concept: string) => {
@@ -137,37 +192,55 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     return PALETTE[position >= 0 ? position % PALETTE.length : 0];
   }, [conceptOrder]);
   const baseRecord = selectedId ? index.byId.get(selectedId) ?? null : null;
+  // Records the server holds beyond those read: a record's neighbours may be among them.
+  const partial = totals ? index.records.length < totals.records : windowed;
 
   // The selected record's values are read when it is opened.
   const values = useQuery({
     queryKey: ['semantic-model', modelId, 'graph-record', revision, selectedId],
     queryFn: () => semanticModelApi.getGraphRecord(modelId, selectedId!, revision),
-    enabled: open && Boolean(baseRecord),
+    enabled: open && panelOpen && Boolean(baseRecord),
     staleTime: 60_000,
   });
   const selected = baseRecord && values.data?.id === baseRecord.id ? withValues(baseRecord, values.data.values) : baseRecord;
 
   // What is shown: concepts shown, inside the period kept, near the focused record — the selection always.
+  // Near the records opened by double-click, or else near the selected one.
   const focusOn = focusDepth ? selectedId : null;
-  const near = useMemo(() => (focusOn && index.byId.has(focusOn) ? neighbourhood(index, focusOn, focusDepth) : null), [index, focusOn, focusDepth]);
+  const near = useMemo(() => {
+    if (expansions.length) {
+      const reach = new Map<string, number>();
+      for (const open of expansions) {
+        if (!index.byId.has(open.id)) continue;
+        for (const [id, steps] of neighbourhood(index, open.id, open.depth)) reach.set(id, Math.min(steps, reach.get(id) ?? steps));
+      }
+      return reach;
+    }
+    return focusOn && index.byId.has(focusOn) ? neighbourhood(index, focusOn, focusDepth) : null;
+  }, [index, expansions, focusOn, focusDepth]);
   const shown = useMemo(() => shownRecords(index, { hidden, near, period }), [index, hidden, near, period]);
+  // A neighbourhood explored by double-click is drawn up to the draw maximum, whatever the drawing limit.
+  const exploringFocus = near !== null && expansions.length > 0;
   const missingSelection = selectedId && !shown.has(selectedId) && index.byId.has(selectedId) ? selectedId : null;
   const visible = useMemo(() => (missingSelection ? new Set([...shown, missingSelection]) : shown), [shown, missingSelection]);
 
   // Too many records to read as a drawing: one bubble per concept, unless asked, or unless what is singled out is small.
   const drawn = useMemo(() => {
-    if (visible.size <= drawLimit || (drawAll && visible.size <= MAX_DRAW_LIMIT)) return visible;
+    if (visible.size <= drawLimit || ((drawAll || exploringFocus) && visible.size <= MAX_DRAW_LIMIT)) return visible;
     if (highlight && highlight.ids.size <= drawLimit) return new Set([...highlight.ids].filter((id) => index.byId.has(id)));
     return null;
-  }, [visible, drawAll, highlight, index, drawLimit]);
+  }, [visible, drawAll, exploringFocus, highlight, index, drawLimit]);
   useEffect(() => { if (visible.size <= drawLimit) setDrawAll(false); }, [visible.size, drawLimit]);
 
   const { nodes, edges } = useMemo((): { nodes: CanvasNode[]; edges: CanvasEdge[] } => {
     if (drawn) {
+      const openIds = new Set(expansions.map((item) => item.id));
       const nodes = [...drawn].map((id) => {
         const record = index.byId.get(id)!;
         const degree = index.degree.get(id) ?? 0;
-        return { id, label: labels.get(id) ?? record.label, sub: record.conceptLabel, color: colorOf(record.concept), size: 24 + Math.min(26, Math.sqrt(degree) * 5), concept: record.concept, ring: record.missing > 0, degree };
+        const more = unreadLinks(index, record, drawn);
+        return { info: true, ...(openIds.has(id) ? { open: true } : {}), id, label: labels.get(id) ?? record.label, sub: record.conceptLabel, color: colorOf(record.concept), size: 24 + Math.min(26, Math.sqrt(degree) * 5), concept: record.concept, ring: record.missing > 0, degree,
+          ...(more > 0 ? { more, moreLabel: tRef.current('graphViewer.moreLinks', { count: more }) } : {}) };
       });
       const edges = index.links.filter((link) => drawn.has(link.source) && drawn.has(link.target))
         .map((link) => ({ id: link.id, source: link.source, target: link.target, label: link.label }));
@@ -193,7 +266,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
       })),
       edges: [...pairs.values()].map(({ count, ...pair }) => ({ ...pair, label: `${pair.label} · ${count.toLocaleString(language)}` })),
     };
-  }, [drawn, visible, index, labels, colorOf, language]);
+  }, [drawn, visible, index, labels, colorOf, language, expansions]);
 
   /** Selects a record, shows its concept again if it was hidden, and brings it to the middle. */
   const goTo = useCallback((id: string) => {
@@ -212,20 +285,114 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     if (!open || loading || !outline || !initialRecordId || openedInitial.current === initialRecordId) return;
     openedInitial.current = initialRecordId;
     const found = index.byId.has(initialRecordId);
-    if (found) goTo(initialRecordId);
-    onInitialRecord?.(found);
-  }, [open, loading, outline, initialRecordId, index, goTo, onInitialRecord]);
+    if (found) { goTo(initialRecordId); setPanelOpen(true); }
+    if (found || !windowed) { onInitialRecord?.(found); return; }
+    // The record may be among those not read yet: read it with its neighbours, then open it.
+    void expand(initialRecordId).then((read) => {
+      if (read) setPendingOpen(initialRecordId);
+      onInitialRecord?.(read);
+    });
+  }, [open, loading, outline, initialRecordId, index, goTo, onInitialRecord, windowed, expand]);
+  useEffect(() => {
+    if (!pendingOpen || !index.byId.has(pendingOpen)) return;
+    goTo(pendingOpen);
+    setPanelOpen(true);
+    setPendingOpen(null);
+  }, [pendingOpen, index, goTo]);
 
   const onlyConcept = useCallback((concept: string) => setHidden(new Set(index.concepts.filter((item) => item.key !== concept).map((item) => item.key))), [index]);
   const onCanvasSelect = useCallback((id: string | null) => {
     if (id?.startsWith(CONCEPT_PREFIX)) { onlyConcept(id.slice(CONCEPT_PREFIX.length)); return; }
     setSelectedId(id);
   }, [onlyConcept]);
-  const onCanvasOpen = useCallback((id: string) => {
-    if (id.startsWith(CONCEPT_PREFIX)) { onlyConcept(id.slice(CONCEPT_PREFIX.length)); return; }
+  /** Keeps one concept and every concept linked to it, directly or through others. */
+  const conceptWithNeighbours = useCallback((concept: string) => {
+    const linked = new Map<string, Set<string>>();
+    for (const link of index.links) {
+      const from = index.byId.get(link.source)?.concept;
+      const to = index.byId.get(link.target)?.concept;
+      if (!from || !to) continue;
+      if (!linked.has(from)) linked.set(from, new Set());
+      if (!linked.has(to)) linked.set(to, new Set());
+      linked.get(from)!.add(to);
+      linked.get(to)!.add(from);
+    }
+    const reached = new Set([concept]);
+    let frontier = [concept];
+    while (frontier.length) {
+      frontier = frontier.flatMap((key) => [...(linked.get(key) ?? [])].filter((other) => !reached.has(other)));
+      for (const key of frontier) reached.add(key);
+    }
+    setHidden(new Set(index.concepts.filter((item) => !reached.has(item.key)).map((item) => item.key)));
+    setTimeout(() => canvas.current?.fit(), 150);
+  }, [index]);
+  /**
+   * Closes a record opened by double-click: what only it revealed is hidden again (the data stays read), together with the
+   * records opened from inside it. What another open record still reaches, and the records opened before it, stay.
+   */
+  const collapse = useCallback((id: string) => {
+    const reach = expansions.map((open) => new Set(neighbourhood(index, open.id, open.depth).keys()));
+    const revealedBy = (position: number) => [...reach[position]].filter((record) => !reach.slice(0, position).some((earlier) => earlier.has(record)));
+    const first = expansions.findIndex((open) => open.id === id);
+    const closed = new Set([first]);
+    for (let position = first + 1; position < expansions.length; position++) {
+      if ([...closed].some((from) => revealedBy(from).includes(expansions[position].id))) closed.add(position);
+    }
+    const left = expansions.filter((_, position) => !closed.has(position));
+    setExpansions(left);
+    // The first record opened folds back to its direct links, as before it was opened, not to the whole graph.
+    if (!left.length) setFocusDepth(1);
+  }, [expansions, index]);
+
+  /**
+   * Opens a record by double-click: it is selected, its neighbourhood as far as the Focus select says (2 links by default) is
+   * read from the server when the graph is read in part, and shown with those opened before. On an open record it closes it.
+   */
+  const explore = useCallback(async (id: string) => {
+    exploring.current = id;
     setSelectedId(id);
-    setFocusDepth((depth) => depth || 1);
-  }, [onlyConcept]);
+    if (expansions.some((open) => open.id === id)) { collapse(id); return; }
+    // A failure is shown by `expandError`; what is already read still gets focused.
+    if (partial) await expand(id, depthChoice);
+    if (exploring.current !== id) return;
+    setExpansions((current) => [...current.filter((open) => open.id !== id), { id, depth: depthChoice }]);
+    setFocusDepth(depthChoice);
+    setTimeout(() => canvas.current?.centerOn(id), 150);
+  }, [partial, expand, expansions, collapse, depthChoice]);
+  /**
+   * The "+" badge: shows one more level around a record, as far as 1 link from a record not open and one link further from one
+   * that is. Reads it from the server when the graph is read in part. The depth a double-click goes to is left as chosen.
+   */
+  const growOne = useCallback(async (id: string) => {
+    const current = expansions.find((open) => open.id === id);
+    const depth = Math.min(MAX_FOCUS_DEPTH, (current?.depth ?? 0) + 1);
+    // Opening a record while the view is the neighbourhood of the selected one keeps that neighbourhood in view.
+    const kept = !expansions.length && focusDepth > 0 && selectedId && selectedId !== id && index.byId.has(selectedId) ? { id: selectedId, depth: focusDepth } : null;
+    exploring.current = id;
+    setSelectedId(id);
+    if (partial) await expand(id, depth);
+    if (exploring.current !== id) return;
+    setExpansions((open) => [...(kept && !open.length ? [kept] : []), ...(open.some((item) => item.id === id) ? open.map((item) => (item.id === id ? { ...item, depth } : item)) : [...open, { id, depth }])]);
+    setFocusDepth(depth);
+  }, [partial, expand, expansions, focusDepth, selectedId, index]);
+  /** The "i" badge: selects the record and opens its details. */
+  const openInfo = useCallback((id: string) => { setSelectedId(id); setPanelOpen(true); }, []);
+  const badgeLabels = useMemo(() => ({ less: tRef.current('graphViewer.collapseRecord'), info: tRef.current('graphViewer.recordInfo') }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [language]);
+  /** The Focus select: how far from the selected record to show. Where the graph is read in part, it reads that far. */
+  const chooseFocus = (depth: number) => {
+    setFocusDepth(depth);
+    if (!depth) { setExpansions([]); return; }
+    setDepthChoice(depth);
+    if (!selectedId) return;
+    setExpansions((current) => current.map((open) => (open.id === selectedId ? { ...open, depth } : open)));
+    if (partial) void expand(selectedId, depth);
+  };
+  const onCanvasOpen = useCallback((id: string) => {
+    if (id.startsWith(CONCEPT_PREFIX)) { conceptWithNeighbours(id.slice(CONCEPT_PREFIX.length)); return; }
+    void explore(id);
+  }, [conceptWithNeighbours, explore]);
 
   // What the overview singles out is brought into view once drawn.
   useEffect(() => {
@@ -239,15 +406,15 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     const onKey = (event: KeyboardEvent) => {
       const typing = event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
       if (event.key === '/' && !typing) { event.preventDefault(); searchRef.current?.focus(); return; }
-      if (event.key !== 'Escape' || typing || exportOpen) return;
-      // Escape steps back one thing at a time: the selection, then the view.
-      if (selectedId) setSelectedId(null); else onClose();
+      if (event.key !== 'Escape' || typing || exportOpen || viewExportOpen) return;
+      // Escape steps back one thing at a time: the details, the selection, then the view.
+      if (panelOpen) setPanelOpen(false); else if (selectedId) setSelectedId(null); else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, selectedId, exportOpen]);
+  }, [open, onClose, selectedId, exportOpen, viewExportOpen, panelOpen]);
 
-  useEffect(() => { if (!selectedId) setFocusDepth(0); }, [selectedId]);
+  useEffect(() => { if (!selectedId) { setFocusDepth(0); setExpansions([]); setPanelOpen(false); } }, [selectedId]);
 
   // Search: names here at once, values on the server once typing pauses.
   const nameHits = useMemo(() => searchRecords(index, query), [index, query]);
@@ -255,7 +422,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
   const valueSearch = useQuery({
     queryKey: ['semantic-model', modelId, 'graph-search', revision, settledQuery],
     queryFn: () => semanticModelApi.searchGraph(modelId, settledQuery, revision),
-    enabled: open && settledQuery.length >= 2 && nameHits.length < 8,
+    // Values are searched in the whole graph, which a graph read in part is too large for: names only.
+    enabled: open && settledQuery.length >= 2 && nameHits.length < 8 && !windowed,
     staleTime: 60_000,
   });
   const results = useMemo((): SearchHit[] => {
@@ -277,7 +445,11 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
     return next;
   });
   const filtered = hidden.size > 0 || Boolean(period) || focusDepth > 0;
-  const clearFilters = () => { setHidden(new Set()); setPeriod(null); setFocusDepth(0); };
+  // Back to the view as first opened: every concept, no period, nothing selected or singled out, all in frame.
+  const clearFilters = () => {
+    setHidden(new Set()); setPeriod(null); setFocusDepth(0); setSelectedId(null); setHighlight(null);
+    setTimeout(() => canvas.current?.fit(), 150);
+  };
   const summary = !drawn && index.records.length > 0;
 
   if (!open) return null;
@@ -317,9 +489,17 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           </ul>}
         </div>
         <div className="flex-1" />
-        {canExport && index.records.length > 0 && <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => setExportOpen(true)} title={t('graphViewer.exportHelpShort')}>
-          <Download className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t('graphViewer.export')}</span>
-        </Button>}
+        {canExport && index.records.length > 0 && <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" aria-label={t('graphViewer.export')} title={t('graphViewer.exportHelpShort')}>
+              <Download className="h-3.5 w-3.5" /><span className="hidden sm:inline">{t('graphViewer.export')}</span><ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-[60]">
+            <DropdownMenuItem onSelect={() => setViewExportOpen(true)} title={t('graphViewer.exportViewHelp')}><FileCode2 className="mr-2 h-4 w-4" />{t('graphViewer.exportView')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={windowed} onSelect={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}><Download className="mr-2 h-4 w-4" />{t('graphViewer.exportWhole')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>}
         <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => void load()} disabled={loading} aria-label={t('graphViewer.refresh')} title={t('graphViewer.refresh')}>
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </Button>
@@ -335,10 +515,16 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
               title={isShown ? t('graphViewer.hideConcept', { concept: concept.label }) : t('graphViewer.showConcept', { concept: concept.label })}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-xs hover:bg-white/10 ${isShown ? 'text-white/75' : 'text-white/30 line-through'}`}>
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorOf(concept.key), opacity: isShown ? 1 : 0.3 }} />
-              {concept.label}<span className="tabular-nums text-white/40">{concept.count.toLocaleString(language)}</span>
+              {concept.label}<span className="tabular-nums text-white/40">{concept.count.toLocaleString(language)}{windowed && totals?.concepts[concept.conceptId] !== undefined && totals.concepts[concept.conceptId] !== concept.count ? ` / ${totals.concepts[concept.conceptId].toLocaleString(language)}` : ''}</span>
             </button>;
           })}
           {hidden.size > 0 && <button type="button" onClick={() => setHidden(new Set())} className="px-2 text-xs text-sky-300 hover:underline">{t('graphViewer.showAll')}</button>}
+          {totals && (windowed || serverConcept) && <label className="ml-auto flex items-center gap-1.5 text-xs text-white/50" title={t('graphViewer.loadConceptHelp')}>{t('graphViewer.loadConcept')}
+            <select value={serverConcept} disabled={loading} onChange={(event) => setServerConcept(event.target.value)} className="h-7 max-w-[16rem] rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
+              <option value="">{t('graphViewer.allConcepts')}</option>
+              {Object.entries(totals.concepts).map(([conceptId, count]) => <option key={conceptId} value={conceptId}>{t('graphViewer.conceptOption', { concept: conceptName(conceptId), records: count.toLocaleString(language) })}</option>)}
+            </select>
+          </label>}
         </div>
       </div>
 
@@ -352,6 +538,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           {index.records.length > 0 && <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-[#15152a]/90 p-1 backdrop-blur" role="toolbar" aria-label={t('graphViewer.tools')}>
             <Button variant="ghost" size="sm" className={`${tool} ${overviewOpen ? pressed : ''}`} aria-pressed={overviewOpen} aria-label={t('graphViewer.overview')} title={t('graphViewer.overview')} onClick={() => setOverviewOpen(!overviewOpen)}><BarChart3 className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.overview')}</span></Button>
             <Button variant="ghost" size="sm" className={tool} onClick={() => canvas.current?.fit()} title={t('graphViewer.fit')} aria-label={t('graphViewer.fit')}><Maximize className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.fit')}</span></Button>
+            {windowed && <Button variant="ghost" size="sm" className={tool} disabled={!selectedId || expanding} onClick={() => { if (selectedId) void expand(selectedId).then((read) => { if (read) setFocusDepth((depth) => depth || 1); }); }} aria-label={t('graphViewer.loadNeighbours')} title={t('graphViewer.loadNeighboursHelp')}>
+              {expanding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}<span className="hidden lg:inline">{t('graphViewer.loadNeighbours')}</span></Button>}
             <Button variant="ghost" size="sm" className={`${tool} ${linkNames ? pressed : ''}`} aria-pressed={linkNames} aria-label={t('graphViewer.linkNames')} onClick={() => setLinkNames(!linkNames)} title={t('graphViewer.linkNamesHelp')}><Tags className="h-3.5 w-3.5" /><span className="hidden lg:inline">{t('graphViewer.linkNames')}</span></Button>
             <label className="flex items-center gap-1 px-1 text-xs text-white/50">{t('graphViewer.layout')}
               <select value={layout} disabled={summary} onChange={(event) => setLayout(event.target.value as CanvasLayout)} className="h-7 rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
@@ -361,10 +549,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
               </select>
             </label>
             <label className="flex items-center gap-1 px-1 text-xs text-white/50" title={t('graphViewer.focusHelp')}>{t('graphViewer.focus')}
-              <select value={focusDepth} disabled={!selectedId} onChange={(event) => setFocusDepth(Number(event.target.value) as 0 | 1 | 2)} className="h-7 rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
+              <select value={focusDepth} disabled={!selectedId} onChange={(event) => chooseFocus(Number(event.target.value))} className="h-7 rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
                 <option value={0}>{t('graphViewer.focusOff')}</option>
-                <option value={1}>{t('graphViewer.focusSteps', { count: 1 })}</option>
-                <option value={2}>{t('graphViewer.focusSteps', { count: 2 })}</option>
+                {FOCUS_DEPTHS.map((count) => <option key={count} value={count}>{t('graphViewer.focusSteps', { count })}</option>)}
               </select>
             </label>
             <label className="flex items-center gap-1 px-1 text-xs text-white/50" title={t('graphViewer.drawLimitHelp', { min: MIN_DRAW_LIMIT, max: MAX_DRAW_LIMIT })}>{t('graphViewer.drawLimit')}
@@ -387,6 +574,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           {/* What is shown, and what narrows it */}
           {index.records.length > 0 && <div className="absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-2 text-xs text-white/55" role="status">
             <span>{t('graphViewer.showing', { shown: (drawn?.size ?? visible.size).toLocaleString(language), total: index.records.length.toLocaleString(language) })}</span>
+            {windowed && totals && <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-sky-200" title={t('graphViewer.windowHelp')}>{t('graphViewer.windowShowing', { shown: index.records.length.toLocaleString(language), total: (serverConcept ? totals.concepts[serverConcept] ?? index.records.length : totals.records).toLocaleString(language) })}</span>}
+            {explored?.capped && expansions.some((open) => open.id === explored.id) && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200" title={t('graphViewer.exploreCappedHelp')}>{t('graphViewer.exploreCapped', { count: explored.count })}</span>}
+            {expandError && <span className="rounded-full bg-red-400/15 px-2 py-0.5 text-red-200" role="alert">{t('graphViewer.loadNeighboursFailed', { message: expandError })}</span>}
             {focusDepth > 0 && selected && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.focusOn', { record: selected.label, count: focusDepth })}</span>}
             {period && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.periodActive', { from: period.from, to: period.to })}</span>}
             {highlight && !overviewOpen && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">{highlight.reason} <button type="button" className="ml-1 underline" onClick={() => setHighlight(null)}>{t('graphViewer.clearHighlight')}</button></span>}
@@ -394,6 +584,14 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             {!summary && <span className="flex items-center gap-1 text-white/40"><span className="inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: MISSING_RING }} />{t('graphViewer.missingLegend')}</span>}
           </div>}
 
+          {/* Reading around a record: unmissable, and the canvas stays usable under it. */}
+          {expanding && !loading && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center" role="status" aria-live="polite">
+              <div className="flex items-center gap-3 rounded-xl border border-sky-400/30 bg-[#15152a]/90 px-5 py-3 text-sm text-sky-100 shadow-2xl backdrop-blur">
+                <Loader2 className="h-6 w-6 animate-spin text-sky-300" /><span>{t('graphViewer.exploring')}</span>
+              </div>
+            </div>
+          )}
           {loading && (
             <div className="absolute inset-0 z-20 flex items-center justify-center gap-2 text-white/50">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -415,16 +613,17 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
           )}
           <GraphCanvas ref={canvas} nodes={nodes} edges={edges} dataKey={`${modelId}:${loadCount}:${summary ? 'summary' : 'records'}`}
             layout={summary ? 'force' : layout} radialCenter={layout === 'radial' ? selectedId : null} conceptOrder={conceptOrder}
-            selectedId={selectedId} highlight={highlight} linkNames={linkNames || summary}
+            selectedId={selectedId} highlight={highlight} linkNames={linkNames || summary} busyId={busyId}
             label={t('graphViewer.canvasLabel', { shown: nodes.length })}
-            onSelect={onCanvasSelect} onOpen={onCanvasOpen} />
+            badgeLabels={badgeLabels} onSelect={onCanvasSelect} onOpen={onCanvasOpen} onExpand={growOne} onCollapse={collapse} onInfo={openInfo} />
         </div>
 
-        {selected && <GraphRecordPanel key={selected.id} index={index} record={selected} valuesLoading={values.isLoading}
+        {selected && panelOpen && <GraphRecordPanel key={selected.id} index={index} record={selected} valuesLoading={values.isLoading}
           valuesError={values.error ? parseApiError(values.error).message : null} sourceFileName={values.data?.id === selected.id ? values.data.sourceFileName : null}
           color={colorOf(selected.concept)} modelId={modelId} canEdit={canEdit}
-          onRebuildStarted={onRebuildStarted} onSelect={goTo} onCenter={(id) => canvas.current?.centerOn(id)} onClose={() => setSelectedId(null)} />}
+          onRebuildStarted={onRebuildStarted} onSelect={goTo} onCenter={(id) => canvas.current?.centerOn(id)} onClose={() => setPanelOpen(false)} />}
       </div>
+      {canExport && viewExportOpen && <GraphViewExportDialog open={viewExportOpen} onOpenChange={setViewExportOpen} index={index} ids={drawn ?? visible} labels={labels} modelId={modelId} dataRevisionId={revision} colorOf={colorOf} getPositions={() => canvas.current?.positions()} />}
       {canExport && exportOpen && <GraphExportDialog open={exportOpen} onOpenChange={setExportOpen} index={index} modelId={modelId} dataRevisionId={revision} colorOf={colorOf} drawLimit={drawLimit} maxDraw={MAX_DRAW_LIMIT} />}
     </div>
     </div>

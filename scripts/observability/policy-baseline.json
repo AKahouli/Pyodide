@@ -146,7 +146,6 @@
     "YellowStorm/back/src/modules/worky/services/worky-tts.service.ts:unknown-event-name",
     "YellowStorm/back/src/modules/worky/services/worky-turn-context.service.ts:unknown-event-name",
     "YellowStorm/back/src/modules/worky/services/worky-turn-kickoff.service.ts:unknown-event-name",
-    "yellowstorm-adk/src/logger/elastic_search.py:print-diagnostic",
     "yellowstorm-adk/src/modules/document_status_redis.py:print-diagnostic",
     "yellowstorm-adk/src/modules/redis_connection.py:print-diagnostic",
     "yellowstorm-adk/src/smart_rag/infrastructure/processing/callback_helper.py:print-diagnostic",

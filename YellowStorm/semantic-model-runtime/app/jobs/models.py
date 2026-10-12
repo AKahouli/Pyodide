@@ -7,6 +7,8 @@ from typing import Any, Literal
 from pydantic import (BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler,
                       model_serializer, model_validator)
 
+from app.population.run_limits import MAX_SOURCES_PER_TASK, max_run_sources
+
 JobState = Literal[
     "queued",
     "waiting_dependencies",
@@ -194,7 +196,8 @@ class PopulationPayload(BaseModel):
     scope: PopulationScope
     specification: dict[str, Any]
     # Empty only for a concept refresh of a concept made from another one alone (see check_sources).
-    sources: list[PopulationSource] = Field(max_length=25)
+    # Bounded by the run's admin limit ``maxRunSources`` (see ``check_sources``), never above the hard ceiling.
+    sources: list[PopulationSource] = Field(max_length=MAX_SOURCES_PER_TASK)
     relation_bindings: list[RelationBinding] = Field(
         default_factory=list, alias="relationBindings", max_length=50)
     # Concepts made from another concept's records, after every source is read.
@@ -211,11 +214,28 @@ class PopulationPayload(BaseModel):
         default="default", alias="budgetProfileId", max_length=200)
     # Run size limits set by an admin (app.population.run_limits); absent means the built-in ones.
     limits: dict[str, int] | None = Field(default=None)
+    # The fields each concept shows in the graph (app.population.age_projection.normalize_graph_exposure).
+    # It shapes the graph only: it is no part of the specification or the execution fingerprint.
+    graph_exposure: dict[str, dict[str, Any]] | None = Field(default=None, alias="graphExposure")
+
+    @model_validator(mode="after")
+    def check_graph_exposure(self) -> "PopulationPayload":
+        from app.population.age_projection import normalize_graph_exposure
+        from app.population.compiler import PopulationError
+
+        try:
+            normalize_graph_exposure(self.graph_exposure)
+        except PopulationError as exc:
+            raise ValueError("the graph exposure is not valid") from exc
+        return self
 
     @model_validator(mode="after")
     def check_sources(self) -> "PopulationPayload":
         if not self.sources and not (self.scope.kind == "concept" and self.derivations):
             raise ValueError("a run reads at least one source, unless it refreshes a concept made from another one")
+        allowed = max_run_sources({"limits": self.limits})
+        if len(self.sources) > allowed:
+            raise ValueError(f"a run reads at most {allowed} sources")
         return self
 
     @model_serializer(mode="wrap")
@@ -227,6 +247,9 @@ class PopulationPayload(BaseModel):
             data.pop("derivations", None)
         if self.limits is None:
             data.pop("limits", None)
+        if self.graph_exposure is None:
+            data.pop("graphExposure", None)
+            data.pop("graph_exposure", None)
         return data
 
 

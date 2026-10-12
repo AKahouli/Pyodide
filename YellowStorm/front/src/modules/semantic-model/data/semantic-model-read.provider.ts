@@ -42,6 +42,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   readiness: 'curated-read',
   reviewItems: 'curated-read',
   reviewQueue: 'curated-read',
+  modelHealth: 'curated-read',
   create: 'command',
   update: 'command',
   archive: 'command',
@@ -105,6 +106,9 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   dataPreview: 'evidence-read',
   conceptRecords: 'evidence-read',
   searchIndexStatus: 'evidence-read',
+  ensureSearchIndex: 'command',
+  stopSearchIndex: 'command',
+  restartSearchIndex: 'command',
   assistantChanges: 'curated-read',
   undoAssistantChange: 'command',
   redoAssistantChange: 'command',
@@ -112,6 +116,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   recordCorrection: 'command',
   undoCorrection: 'command',
   mappingHealth: 'evidence-read',
+  check: 'evidence-read',
 };
 
 // Fail-closed: unknown calls are never treated as curated reads or commands.

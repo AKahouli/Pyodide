@@ -33,6 +33,16 @@ Import-DotEnv (Join-Path $runtimeRoot '.env')
 if (-not $env:YELLOWSTORM_INTERNAL_SERVICE_TOKEN) { throw 'YELLOWSTORM_INTERNAL_SERVICE_TOKEN is missing or empty in semantic-model-runtime/.env' }
 if (-not $env:YELLOWSTORM_BACKEND_URL) { throw 'YELLOWSTORM_BACKEND_URL is missing or empty in semantic-model-runtime/.env' }
 
+# Workers outlive a Ctrl-C when the finally block below does not run, and a
+# leftover worker on the same queues runs old code and takes jobs from the new
+# ones. Stop every worker of this runtime before starting fresh ones.
+$stale = Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
+  Where-Object { $_.CommandLine -match '-m celery -A app\.workers\.\w+:celery_app worker' }
+foreach ($process in $stale) {
+  Write-Host "Stopping leftover worker $($process.ProcessId)"
+  & taskkill /PID $process.ProcessId /T /F *> $null
+}
+
 $workers = @()
 Push-Location $runtimeRoot
 try {

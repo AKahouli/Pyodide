@@ -27,6 +27,7 @@ interface UseConversationFileUploadReturn {
   completedFileIds: string[];
   isUploading: boolean;
   clearAll: () => void;
+  clearSubmitted: (localIds: string[]) => void;
   conversationId: string | null;
 }
 
@@ -269,6 +270,10 @@ export function useConversationFileUpload({ conversationId: externalConvId, crea
     xhrMapRef.current.clear();
     setFiles([]);
   }, []);
+  const clearSubmitted = useCallback((localIds: string[]) => {
+    // Submission releases composer ownership without deleting attached documents.
+    setFiles((current) => current.filter((file) => !localIds.includes(file.localId)));
+  }, []);
 
   const completedFileIds = files.filter((f) => f.status === 'completed' && f.documentId).map((f) => f.documentId!);
 
@@ -281,6 +286,7 @@ export function useConversationFileUpload({ conversationId: externalConvId, crea
     completedFileIds,
     isUploading,
     clearAll,
+    clearSubmitted,
     conversationId: effectiveConvId,
   };
 }

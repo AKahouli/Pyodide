@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
@@ -34,6 +34,7 @@ import {
   ResolveReviewItemDto,
   RequestPopulationRefreshDto, RebuildPopulationDto,
   RecordCorrectionDto,
+  GraphOutlineQueryDto,
   GraphSearchQueryDto,
   GraphExportDto,
 } from '../dto';
@@ -48,6 +49,9 @@ import { SemanticSourceMappingService } from '../services/semantic-source-mappin
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
+import { SemanticModelCheckService } from '../services/semantic-model-check.service';
+import { ModelCheckDto } from '../dto/semantic-model-check.dto';
+import { SemanticModelHealthService } from '../services/semantic-model-health.service';
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
@@ -75,6 +79,8 @@ export class SemanticModelController {
     private readonly assistant: SemanticModelAssistantService,
     private readonly graphSearch: SemanticGraphSearchService,
     private readonly recordCitations: SemanticRecordCitationService,
+    private readonly modelCheck: SemanticModelCheckService,
+    private readonly modelHealth: SemanticModelHealthService,
   ) {}
 
   @Get()
@@ -162,10 +168,10 @@ export class SemanticModelController {
   }
 
   @Get(':modelId/age-graph/outline')
-  @ApiOperation({ summary: 'Every record and link of the data graph, without values' })
+  @ApiOperation({ summary: 'A bounded part of the data graph, without values, with the totals the person may see' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
-  graphOutline(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('dataRevisionId') dataRevisionId?: string) {
-    return this.populationRefresh.graphOutline(user._id.toString(), modelId, dataRevisionId);
+  graphOutline(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: GraphOutlineQueryDto) {
+    return this.populationRefresh.graphOutline(user._id.toString(), modelId, query);
   }
 
   @Get(':modelId/age-graph/search')
@@ -242,6 +248,24 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   ensureSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
     return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment);
+  }
+
+  @Post(':modelId/search-index/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Stop the build of the search index of the data in use; it is built again on the next explicit request' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index-stop' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  stopSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.stopIndex(user._id.toString(),modelId,dto.environment);
+  }
+
+  @Post(':modelId/search-index/restart')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Stop the build of the search index (a stalled one ends at once) and build it again, reusing what is already embedded' })
+  @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index-restart' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  restartSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.restartIndex(user._id.toString(),modelId,dto.environment);
   }
 
   @Get(':modelId/workspaces')
@@ -445,6 +469,14 @@ export class SemanticModelController {
     return this.populationRefresh.reprojectGraphs(user._id.toString(),modelId);
   }
 
+  @Get(':modelId/check')
+  @ApiOperation({ summary: 'Every inconsistency a preview, build or publish of the draft would hit, checked live and cached by what it covers' })
+  @ApiOkResponse({ type: ModelCheckDto })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  check(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.modelCheck.check(user._id.toString(),modelId);
+  }
+
   @Get(':modelId/population/freshness')
   @ApiOperation({ summary: 'Whether the records in use were built from the model as it is now' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
@@ -582,6 +614,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   reviewQueueList(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.reviewQueue.reviewQueue(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/health')
+  @ApiOperation({ summary: 'How the last run turned rows into records, concept by concept: what went wrong, why, and the fix to try' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  health(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.modelHealth.health(user._id.toString(), modelId);
   }
 
   @Get(':modelId/review-items')

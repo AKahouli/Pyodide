@@ -26,7 +26,7 @@ class BackgroundRpc:
         settings = get_settings()
         sdk = importlib.metadata.version('google-adk')
         response = chatbot_pb2.RootWorkCapabilitiesResponse(background_protocol_version=1, background_fanout_protocol_version=1,
-            background_followup_protocol_version=1,
+            background_followup_protocol_version=2,
             native_sdk_version=sdk, python_version=platform.python_version())
         if not (settings.ROOT_WORK_BACKGROUND_ENABLED and settings.ROOT_WORK_DATABASE_URL
             and getattr(settings, 'ROOT_WORK_LLM_CAPACITY_ENABLED', False)

@@ -255,12 +255,61 @@ async def test_unconfirmed_external_action_blocks_replay_and_stale_owner_cannot_
     with pytest.raises(BackgroundActionUnknown, match='reconciliation'):
         await ledger.execute('send', 'call', {}, lost_receipt)
     assert calls == ['written']
+
     async with engine.begin() as connection:
         await connection.execute(text("UPDATE conversation.root_background_jobs SET owner='successor',fence=fence+1 WHERE execution_id=:id"),
             {'id': grant.execution_id})
     with pytest.raises(BackgroundOwnershipError):
         await ledger.execute('send', 'new-call', {}, lost_receipt)
     assert calls == ['written']
+
+
+@pytest.mark.asyncio
+async def test_oversized_receipt_logs_the_origin_without_output_and_blocks_replay(guarded_native, monkeypatch):
+    from unittest.mock import Mock, AsyncMock
+    from src.root_runtime import background_actions
+    service, _session, grant, engine = guarded_native
+    logger = Mock()
+    monkeypatch.setattr(background_actions, 'logger', logger)
+    invoke = AsyncMock(return_value={'text': 'private-output' * 24000})
+    ledger = background_actions.BackgroundActionLedger(service)
+    with pytest.raises(background_actions.BackgroundActionUnknown):
+        await ledger.execute('fetch', 'oversized', {}, invoke)
+    logger.error.assert_called_once()
+    name, = logger.error.call_args.args
+    fields = logger.error.call_args.kwargs
+    assert name == 'tool.call.failed' and fields['operation'] == 'serialize_receipt'
+    assert fields['job_id'] == grant.execution_id and 'private-output' not in str(fields)
+    with pytest.raises(background_actions.BackgroundActionUnknown):
+        await ledger.execute('fetch', 'oversized', {}, invoke)
+    invoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bounded_web_receipt_replays_same_preview_and_evidence_once(guarded_native):
+    from unittest.mock import AsyncMock
+    from google.adk.sessions.state import State
+    from src.root_runtime.background_actions import BackgroundActionLedger
+    from src.web_citations import normalize_web_connector_response
+    from src.web_citations.bounded_response import bound_web_response
+    service, _session, grant, engine = guarded_native
+    response = bound_web_response(normalize_web_connector_response(
+        {'url': 'https://example.com/page', 'content': 'évidence 🌍' * 60000},
+        'web_fetch', 'text_fragment', {}))
+    invoke = AsyncMock(return_value=response)
+    key = '_root_evidence:' + hashlib.sha256(f'{grant.execution_id}:bounded-call'.encode()).hexdigest()
+    state = State({key: [{'executionId': grant.execution_id, 'nativeIdentity': 'bounded-call',
+        'kind': 'citation', 'identity': 'source', 'payload': {'source': 'https://example.com/page'}}]}, {})
+    ledger = BackgroundActionLedger(service)
+    assert await ledger.execute('trusted-fetch', 'bounded-call', {}, invoke, state) == response
+    restored = State({}, {})
+    assert await ledger.execute('trusted-fetch', 'bounded-call', {}, invoke, restored) == response
+    assert restored.to_dict() == state.to_dict()
+    invoke.assert_awaited_once()
+    async with engine.begin() as connection:
+        length = (await connection.execute(text('SELECT octet_length(receipt::text) FROM conversation.root_background_actions WHERE execution_id=:id'),
+            {'id': grant.execution_id})).scalar_one()
+    assert length < 262144
 
 
 @pytest.mark.asyncio

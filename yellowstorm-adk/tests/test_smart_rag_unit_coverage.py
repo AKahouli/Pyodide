@@ -255,3 +255,20 @@ class TestToolDescriptions:
 
         report_req = ToolDescriptionProvider.get_source_reference_requirements_for_reports()
         assert "Citation and Source References" in report_req
+
+
+def test_get_tools_description_skips_declared_configured_tools():
+    from src.smart_rag.tools.infrastructure.tool_descriptions import ToolDescriptionProvider
+
+    tools = [
+        {"name": "present_choices", "description": "ask the user", "prompt": "use sparingly"},
+        {"name": "search_web", "prompt": "cite urls"},
+    ]
+
+    text = ToolDescriptionProvider.get_tools_description(tools, configured_tools_are_declared=True)
+
+    assert "present_choices" not in text
+    assert "ask the user" not in text
+    assert "use sparingly" not in text and "cite urls" not in text
+    full = ToolDescriptionProvider.get_tools_description(tools)
+    assert "ask the user" in full and "use sparingly" in full

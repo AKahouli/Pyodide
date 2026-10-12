@@ -13,3 +13,11 @@ export class RootWorkCursorDto {
   @ApiProperty() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) epoch!: number;
   @ApiProperty() @Matches(/^[0-9]{1,20}$/) after = '0';
 }
+
+export class RootJobCancelDto {
+  @ApiProperty() @IsInt() @Min(0) @Max(2147483647) expectedEpoch!: number;
+}
+
+export class RootJobResultDto {
+  @IsOptional() @IsInt() @Min(0) @Max(262144) offset = 0;
+}

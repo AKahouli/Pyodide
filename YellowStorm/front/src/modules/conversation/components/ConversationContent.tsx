@@ -6,6 +6,14 @@ import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useA
 import { useConversationUiStore } from '../uiStore';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
+import { BackgroundResultContext } from './BackgroundResultContext';
+import { LiveAnswerBubble } from './LiveAnswerBubble';
+import { liveAnswerTimestamp } from '../live-streams';
+import { BackgroundResultNotice } from './BackgroundResultNotice';
+import { RequestWorkStatus, useRequestWorkGroups } from './RequestWorkStatus';
+import { groupHeaderState } from './root-work-groups';
+import { RootInputPanel } from './RootInputPanel';
+import { useRequestInputState } from './useRequestInputState';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
@@ -27,6 +35,7 @@ import type { ChoiceComponentAction } from '@/components/ai-elements/choice/Choi
 
 const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled, justCompleted }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean; justCompleted?: boolean }) {
   const { t } = useModuleTranslation('conversation');
+  const allMessages = useDisplayMessages();
   const policyDefaultVersion = getDefaultAnswerVersion(message);
   const [displayedVersion, setDisplayedVersion] = useState<DisplayedAnswerVersion>(() => policyDefaultVersion);
   useEffect(() => {
@@ -46,6 +55,10 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
 
   const isEditing = editingMessageId === message.id;
   const isUser = message.conversationType === 'user';
+  const creatorId = useConversationStore((state) => state.currentConversation?.createdBy);
+  const requestInputState = useRequestInputState(conversationId, message.id);
+  const workGroup = useRequestWorkGroups(conversationId, message.id).find((group) => group.attention || group.active);
+  const workState = groupHeaderState(workGroup);
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
@@ -146,17 +159,20 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
     return () => clearTimeout(timer);
   }, [justCompleted, isUser, autoReliabilityEnabled, hasRerunnableAnswer, conversationId, message.id, t]);
 
-  if (!isUser && !hasPersistedContent) return null;
+  if (!isUser && !hasPersistedContent && !requestInputState) return null;
 
   return (
     <div className='group/msg' id={`message-${message.id}`}>
+      {!isUser && <BackgroundResultContext message={message} messages={allMessages} />}
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false}>
         {isUser && isEditing
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} requestInputState={requestInputState} workState={workState} workActivity={<RequestWorkStatus conversationId={conversationId} messageId={message.id} />} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets>
+              {creatorId && <RootInputPanel conversationId={conversationId} creatorId={creatorId} messageId={message.id} variant='inline' />}
+            </ConversationAssistantBubble>}
       </MessageProvider>
       {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
@@ -171,6 +187,8 @@ export function ConversationContent() {
   const settings = useConversationSettings();
   const latencyInstrumentationEnabled = settings?.latencyInstrumentationEnabled;
   const messages = useDisplayMessages();
+  const liveAnswers = useConversationStore((state) => state.liveAnswers);
+  const canonicalMessages = useConversationStore((state) => state.messages);
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
   const streamingConversationId = useConversationStore((s) => s.streamingConversationId);
@@ -186,8 +204,10 @@ export function ConversationContent() {
   const branchCache = useConversationStore((s) => s.branchCache);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
+  const activeAnswers = Object.values(liveAnswers ?? {}).filter((answer) => answer.conversationId === currentConversationId);
+  const timeline = [...messages.map((message) => ({ id: message.id, createdAt: message.createdAt, message })), ...activeAnswers.map((answer) => ({ id: answer.messageId, createdAt: liveAnswerTimestamp(answer, canonicalMessages ?? messages), answer }))].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
-  const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
+  const showStreamingActivity = activeAnswers.length > 0 || (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
 
   // Remember which message the live stream just completed so its bubble can
   // mount with the activity pane open and animate it closed. The flag is
@@ -304,9 +324,9 @@ export function ConversationContent() {
             </div>
           )}
 
-          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} justCompleted={message.id === justCompletedMessageId} />)}
+          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : timeline.map((entry) => 'answer' in entry ? <LiveAnswerBubble key={entry.id} answer={entry.answer} choiceInteractions={choiceInteractions} /> : <MemoizedMessageBubble key={entry.id} message={entry.message} isLastAiMessage={entry.id === lastAiMessageId} isLastUserMessage={entry.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} justCompleted={entry.id === justCompletedMessageId} />)}
 
-          {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
+          {activeAnswers.length === 0 && (showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
                 <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
@@ -316,6 +336,7 @@ export function ConversationContent() {
           </div>
         </ChatConversationContent>
         <OutlineAnchorScroller />
+        {currentConversationId && <BackgroundResultNotice conversationId={currentConversationId} />}
         <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>
     </>

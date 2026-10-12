@@ -100,6 +100,7 @@ export function collectMessageCitations(components: MessageComponent[] | undefin
 /** Display label for the sources list: file name, else the path/URL tail. */
 export function getCitationEntryLabel(citation: CitationData, fallback: string): string {
   if (citation.record) return [citation.record.concept, citation.record.name].filter(Boolean).join(' · ') || fallback;
+  if ((citation.sourceType === 'web' || citation.sourceKind === 'web') && citation.title) return citation.title;
   const source = citation.fileName || citation.path || citation.source;
   return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
 }

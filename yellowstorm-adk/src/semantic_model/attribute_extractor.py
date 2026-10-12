@@ -9,6 +9,9 @@ did not send so an invented locator can never reach storage.
 
 from __future__ import annotations
 
+import json
+import re
+import unicodedata
 from typing import Any
 
 from src.config.settings import get_settings
@@ -123,9 +126,47 @@ class AttributeExtractionAgent:
 
     @staticmethod
     def _dependencies() -> tuple[Any, Any]:
-        try:
-            from semantica.llms import LiteLLM
-            from semantica.normalize import normalize_text
-        except ImportError as error:
-            raise RuntimeError("Semantica is required for attribute extraction") from error
         return normalize_text, LiteLLM
+
+
+def normalize_text(text: str) -> str:
+    """Lightly normalize evidence text for prompts and dedup (NFC + punctuation
+    folding + whitespace), matching what the removed semantica default did."""
+    text = unicodedata.normalize("NFC", text)
+    text = (text.replace("\u2018", "'").replace("\u2019", "'")
+                .replace("\u201c", '"').replace("\u201d", '"')
+                .replace("\u2013", "-").replace("\u2014", "--")
+                .replace("\u2026", "..."))
+    text = text.replace("\t", " ").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r" +", " ", text)
+    text = re.sub(r"\n\s*\n", "\n\n", text)
+    return text.strip()
+
+
+class LiteLLM:
+    """Structured-JSON completion client with the `generate_structured` contract
+    NodeExtractor expects, backed by the litellm dependency directly."""
+
+    def __init__(self, model: str, api_key: str | None = None, **config: Any):
+        self.model = model
+        self.api_key = api_key
+        self.config = config
+
+    def generate_structured(self, prompt: str) -> dict[str, Any]:
+        from litellm import completion
+
+        response = completion(
+            model=self.model,
+            messages=[{"role": "user",
+                       "content": f"{prompt}\n\nReturn the response as valid JSON only."}],
+            api_key=self.api_key,
+            **self.config,
+        )
+        text = response.choices[0].message.content
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            raise

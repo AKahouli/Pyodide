@@ -20,6 +20,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
   }) => {
     const leaseIdRef = { current: '' };
     const messageService = {
+      findById: jest.fn().mockResolvedValue({ conversationId, conversationType: 'ai', createdAt: '2026-10-10T10:00:00.000Z' }),
       claimStreamExecution: jest.fn(async (_m: string, leaseId: string) => {
         leaseIdRef.current = leaseId;
         return overrides.claimResult ?? true;
@@ -40,13 +41,15 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
       sendToUser: jest.fn(),
     };
     const configService = { get: jest.fn((_k: string, def: unknown) => def) };
-    const conversationSettings = { isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(false) };
+    const conversationSettings = {
+      isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(false),
+      // First awaited step of the agent-request build: surfaces the injected failure.
+      getSettings: jest.fn().mockRejectedValue(new Error('request build failed')),
+    };
     const conversationService = {
-      // resolveMemberIds tolerates lookup failures; the first awaited step
-      // after local registration that surfaces the injected failure is the
-      // agent-request build's conversation document lookup.
+      // resolveMemberIds tolerates lookup failures.
       findById: jest.fn().mockResolvedValue({ createdBy: 'owner-1' }),
-      getConversationDocument: jest.fn().mockRejectedValue(new Error('conversation lookup failed')),
+      getConversationDocument: jest.fn().mockResolvedValue({}),
     };
     const executionStore = {
       admit: jest.fn().mockResolvedValue({ admitted: true }),
@@ -82,7 +85,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
     );
     // Bypass gRPC client init; the lease claim happens after this check.
     (service as unknown as { isGrpcAvailable: boolean }).isGrpcAvailable = true;
-    return { service, messageService, streamGateway, leaseIdRef, logger, executionStore };
+    return { service, messageService, streamGateway, leaseIdRef, logger, executionStore, conversationService };
   };
 
   const request = { content: 'hello', modelId: 'model-1' } as never;
@@ -95,7 +98,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
 
     await expect(
       service.startStream(userId, conversationId, messageId, request),
-    ).rejects.toThrow('conversation lookup failed');
+    ).rejects.toThrow('request build failed');
 
     // Durable best-effort calls were attempted exactly once with ownership.
     expect(messageService.markStreamFailed).toHaveBeenCalledWith(expect.any(String), expect.any(String));
@@ -123,7 +126,20 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
 
     await expect(
       service.startStream(userId, conversationId, messageId, request),
-    ).rejects.toThrow('conversation lookup failed');
+    ).rejects.toThrow('request build failed');
+  });
+
+  it('reuses a preloaded conversation and reads members and the assistant message alongside it', async () => {
+    const { service, conversationService, messageService } = buildService({});
+    const preloaded = {} as never;
+
+    await expect(
+      service.startStream(userId, conversationId, messageId, request, undefined, '', undefined, undefined, undefined, preloaded),
+    ).rejects.toThrow('request build failed');
+
+    expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
+    expect(conversationService.findById).toHaveBeenCalledWith(conversationId);
+    expect(messageService.findById).toHaveBeenCalledWith(messageId);
   });
 
   it('rejects a concurrent start from another member of the same conversation', async () => {
@@ -175,7 +191,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
 
     await expect(
       service.startStream(userId, conversationId, messageId, request),
-    ).rejects.toThrow('conversation lookup failed');
+    ).rejects.toThrow('request build failed');
 
     expect(executionStore.finalizeByMessage).toHaveBeenCalledWith(messageId);
   });

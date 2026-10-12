@@ -2,6 +2,9 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useAllMessages, useConversationStore, useDisplayMessages } from './store';
 import { useModelsStore } from '@/modules/models';
+import { toast } from 'sonner';
+import { useRootInputUiStore, initialRootInputUiState } from './rootInputUiStore';
+import { initialRootWorkState, useRootWorkStore } from './rootWorkStore';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -9,8 +12,89 @@ const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
+const fetchActiveStreamsMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const ensureConnectedMock = vi.hoisted(() => vi.fn());
+const stopStreamMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+it('invalidates active conversation work immediately on terminal events, without refreshing unrelated work', async () => {
+  useRootWorkStore.setState(initialRootWorkState);
+  useConversationStore.setState({ currentConversationId: 'conv-1' });
+  await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'none' });
+  expect(useRootWorkStore.getState().revision).toBe(1);
+  useConversationStore.getState().onStreamError({ conversationId: 'conv-1', messageId: 'none', errorCode: 'CHAT_STREAM_FAILED', message: 'Failed' });
+  expect(useRootWorkStore.getState().revision).toBe(2);
+  useConversationStore.getState().onStreamError({ conversationId: 'other', messageId: 'none', errorCode: 'CHAT_STREAM_FAILED', message: 'Failed' });
+  expect(useRootWorkStore.getState().revision).toBe(2);
+});
+
+it('restores only the bound clarification draft when a stream error beats HTTP acceptance', async () => {
+  const key = 'execution:2:ask:1';
+  useRootInputUiStore.setState({ ...initialRootInputUiState, scope: 'owner:conv-1', drafts: { [key]: 'Weekly' } });
+  useConversationStore.setState({ currentConversationId: 'conv-1' });
+  let resolve!: (result: unknown) => void;
+  sendMessageMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'Weekly' }, (id) =>
+    useRootInputUiStore.getState().bindContinuation('owner:conv-1', key, id));
+  await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalled());
+  useConversationStore.getState().onStreamError({ conversationId: 'conv-1', messageId: 'failed-ai',
+    errorCode: 'ERR_1417', message: 'Request failed' });
+  resolve({ aiMessageId: 'failed-ai', userMessage: { id: 'user-answer', conversationId: 'conv-1',
+    conversationType: 'user', content: 'Weekly', createdAt: '2026-10-10T18:00:00Z' } });
+  await pending;
+  useRootInputUiStore.getState().markSubmitted('owner:conv-1', key);
+  expect(useRootInputUiStore.getState().submitted).not.toContain(key);
+  expect(useRootInputUiStore.getState().failures).toContain(key);
+  expect(useRootInputUiStore.getState().drafts[key]).toBe('Weekly');
+  useRootInputUiStore.setState(initialRootInputUiState);
+});
+
+it('refreshes background results without dropping loaded history, pagination, or the selected draft model', async () => {
+  const old = { id: 'old', conversationId: 'conv-1', conversationType: 'user' as const, createdAt: '2026-01-01T00:00:00Z', components: [] };
+  const latest = { ...old, id: 'latest', createdAt: '2026-01-02T00:00:00Z', modelId: 'old-model' };
+  let resolve!: (value: unknown) => void;
+  fetchMessagesMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  useConversationStore.setState({ currentConversationId: 'conv-1', messages: [old], messagesCursor: 'older-cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
+  const refresh = useConversationStore.getState().fetchMessages('conv-1');
+  expect(useConversationStore.getState().messages).toEqual([old]);
+  expect(useConversationStore.getState().messagesLoading).toBe(false);
+  resolve({ items: [latest], total: 2, hasMore: false, nextCursor: null });
+  await refresh;
+  expect(useConversationStore.getState().messages.map((message) => message.id)).toEqual(['old', 'latest']);
+  expect(useConversationStore.getState()).toMatchObject({ messagesCursor: 'older-cursor', messagesHasMore: true, selectedModelId: 'draft-model' });
+});
+
+it('changes transcript ownership before navigation hydration without losing pending sends', async () => {
+  const old = { id: 'rainbow', conversationId: 'old', conversationType: 'ai' as const,
+    createdAt: '2026-01-01T00:00:00Z', components: [], isComplete: true };
+  const current = { ...old, id: 'databases', conversationId: 'new' };
+  let resolve!: (value: unknown) => void;
+  fetchConversationMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  fetchMessagesMock.mockResolvedValue({ items: [current], total: 1, hasMore: false });
+  useConversationStore.setState({ currentConversationId: 'old', messages: [old], optimisticMessages: [old],
+    replyingToMessage: old, editingMessageId: old.id,
+    inFlightSendConversations: new Set(['old']) });
+  const navigation = useConversationStore.getState().setCurrentConversation('new');
+  expect(useConversationStore.getState().messages).toEqual([]);
+  expect(useConversationStore.getState().optimisticMessages).toEqual([]);
+  expect(useConversationStore.getState().replyingToMessage).toBeNull();
+  expect(useConversationStore.getState().editingMessageId).toBeNull();
+  expect(useConversationStore.getState().inFlightSendConversations.has('old')).toBe(true);
+  resolve({ id: 'new' }); await navigation;
+  await useConversationStore.getState().fetchMessages('new');
+  expect(useConversationStore.getState().messages).toEqual([current]);
+  useConversationStore.getState().claimCurrentConversation('third');
+  expect(useConversationStore.getState().messages).toEqual([]);
+});
+
+it('never renders foreign persisted or optimistic messages under the current conversation', () => {
+  const foreign = { id: 'foreign', conversationId: 'old', conversationType: 'user' as const,
+    createdAt: '2026-01-01T00:00:00Z', components: [] };
+  const owned = { ...foreign, id: 'owned', conversationId: 'new' };
+  useConversationStore.setState({ currentConversationId: 'new', messages: [foreign, owned], optimisticMessages: [foreign] });
+  expect(renderHook(() => useAllMessages()).result.current.map((message) => message.id)).toEqual(['owned']);
+  expect(renderHook(() => useDisplayMessages()).result.current.map((message) => message.id)).toEqual(['owned']);
+});
 
 vi.mock('./stream', () => ({
   conversationStreamService: { ensureConnected: ensureConnectedMock },
@@ -24,10 +108,14 @@ vi.mock('./api', async (importOriginal) => ({
   fetchMessage: fetchMessageMock,
   fetchMessages: fetchMessagesMock,
   fetchActiveStream: fetchActiveStreamMock,
+  fetchActiveStreams: fetchActiveStreamsMock,
   fetchBranches: fetchBranchesMock,
+  stopStream: stopStreamMock,
 }));
 
 beforeEach(() => {
+  useConversationStore.getState().clearAll();
+  fetchActiveStreamsMock.mockReset().mockResolvedValue([]);
   fetchConversationMock.mockReset();
   fetchConversationsMock.mockReset();
   sendMessageMock.mockReset();
@@ -79,6 +167,7 @@ beforeEach(() => {
 describe('conversation optimistic messages', () => {
   it('keeps a pending user prompt before an assistant answer that arrived first', () => {
     useConversationStore.setState({
+      currentConversationId: 'conv-1',
       messages: [{
         id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
         createdAt: '2026-09-07T13:13:31.000Z', components: [{ type: 'text', data: { content: 'Answer' } }],
@@ -97,6 +186,7 @@ describe('conversation optimistic messages', () => {
   });
 
   it('sends the POST immediately while nudging the shared SSE pipe without awaiting it', async () => {
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
     sendMessageMock.mockResolvedValue({
       userMessage: {
         id: 'message-1',
@@ -110,7 +200,7 @@ describe('conversation optimistic messages', () => {
     await useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
 
     expect(ensureConnectedMock).toHaveBeenCalledTimes(1);
-    expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello' });
+    expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello', requestId: expect.any(String) });
     // Optimistic message replaced by the persisted user message.
     expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
     expect(useConversationStore.getState().messages).toEqual([
@@ -293,6 +383,18 @@ describe('conversation live activity', () => {
       typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => resolve()) : setTimeout(resolve, 0),
     );
 
+  it('adds the agent named by stream start to an answer the send already installed', () => {
+    const key = 'conv-1:message-1';
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      liveAnswers: { [key]: { conversationId: 'conv-1', messageId: 'message-1', revision: 0, components: [], createdAt: 'sent' } },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1', agentId: 'agent-1', agentName: 'Smart Agent' });
+
+    expect(useConversationStore.getState().liveAnswers[key]).toMatchObject({ agentId: 'agent-1', agentName: 'Smart Agent', createdAt: 'sent' });
+  });
+
   it('applies activity and answer text in one frame commit', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',
@@ -434,8 +536,8 @@ describe('new conversation selections', () => {
   it('hydrates the last persisted user model from message history', async () => {
     fetchMessagesMock.mockResolvedValue({
       items: [
-        { id: 'message-1', conversationType: 'user', modelId: 'model-2' },
-        { id: 'message-2', conversationType: 'ai' },
+        { id: 'message-1', conversationId: 'conv-1', conversationType: 'user', modelId: 'model-2' },
+        { id: 'message-2', conversationId: 'conv-1', conversationType: 'ai' },
       ],
       total: 2,
       totalPages: 1,
@@ -1636,5 +1738,64 @@ describe('conversation streaming component updates', () => {
     expect(components).toHaveLength(2);
     expect(components[0].data).toMatchObject({ status: 'completed', paramsJson: '{"q":"one"}', resultJson: '{"matches":1}' });
     expect(components[1].data).toMatchObject({ status: 'running', paramsJson: '{"q":"two"}' });
+  });
+});
+
+describe('concurrent reply lifecycle', () => {
+  it.each(['navigate', 'logout'])('ignores a completion recovery after %s', async (action) => {
+    let resolve!: (message: unknown) => void;
+    fetchMessageMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    useConversationStore.setState({ currentConversationId: 'a' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'a', messageId: 'old' });
+    const pending = useConversationStore.getState().onStreamComplete({ conversationId: 'a', messageId: 'old' });
+    if (action === 'logout') useConversationStore.getState().clearAll();
+    else useConversationStore.setState({ currentConversationId: 'b', messages: [] });
+    resolve({ id: 'old', conversationId: 'a', conversationType: 'ai', isComplete: true, createdAt: '2026-01-01' });
+    await pending;
+    expect(useConversationStore.getState().messages).toEqual([]);
+  });
+
+  it('reports a failed per-reply stop and preserves both live replies', async () => {
+    const errorToast = vi.spyOn(toast, 'error');
+    stopStreamMock.mockRejectedValueOnce(new Error('offline'));
+    for (const messageId of ['a', 'b']) useConversationStore.getState().onStreamStart({ conversationId: 'c', messageId });
+    await useConversationStore.getState().stopStream('a', 'c');
+    expect(errorToast).toHaveBeenCalled();
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a', 'c:b']);
+    errorToast.mockRestore();
+  });
+
+  it('keeps conversation B awaiting when an old A submission fails after navigation', async () => {
+    let reject!: (error: Error) => void;
+    sendMessageMock.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    useConversationStore.setState({ currentConversationId: 'a' });
+    const pending = useConversationStore.getState().sendMessage('a', { content: 'old' });
+    useConversationStore.setState({ currentConversationId: 'b', awaitingConversationId: 'b', isAwaitingFirstChunk: true });
+    reject(new Error('offline'));
+    await expect(pending).rejects.toThrow('offline');
+    expect(useConversationStore.getState()).toMatchObject({ awaitingConversationId: 'b', isAwaitingFirstChunk: true });
+  });
+
+  it('finishes the second reply first without deleting the first live answer', async () => {
+    useConversationStore.setState({ currentConversationId: 'c' });
+    for (const messageId of ['a', 'b']) useConversationStore.getState().onStreamStart({ conversationId: 'c', messageId });
+    useConversationStore.getState().onStreamChunk({ conversationId: 'c', messageId: 'a', revision: 1, action: 'add', component: { id: 'text', type: 'text', data: { content: 'first' } } });
+    useConversationStore.getState().onStreamChunk({ conversationId: 'c', messageId: 'b', revision: 1, action: 'add', component: { id: 'text', type: 'text', data: { content: 'second' } } });
+    fetchMessageMock.mockResolvedValue({ id: 'b', conversationId: 'c', conversationType: 'ai', createdAt: '2026-01-01', isComplete: true });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'c', messageId: 'b' });
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a']);
+    await useConversationStore.getState().stopStream('a', 'c');
+    expect(stopStreamMock).toHaveBeenCalledWith('c', 'a');
+    expect(useConversationStore.getState().messages.some((message) => message.id === 'b')).toBe(true);
+  });
+
+  it('recovers every active reply after navigation and clears private state on account reset', async () => {
+    fetchActiveStreamsMock.mockResolvedValue(['a', 'b'].map((messageId) => ({ conversationId: 'c', messageId, revision: 2, components: [{ id: 'text', type: 'text', data: { content: messageId } }] })));
+    await useConversationStore.getState().recoverLiveAnswers('c');
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toEqual(['c:a', 'c:b']);
+    useConversationStore.getState().clearMessages();
+    expect(Object.keys(useConversationStore.getState().liveAnswers)).toHaveLength(2);
+    useConversationStore.getState().clearAll();
+    expect(useConversationStore.getState().liveAnswers).toEqual({});
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2 } from 'lucide-react';
+import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, Clock, Download, Eye, FileText, Loader2, MessageCircle } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { useAgentStore } from '@/modules/agent/store';
 import type { Agent } from '@/modules/agent/types';
@@ -15,9 +15,13 @@ import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { useConversationUiStore } from '../../uiStore';
+import { useElapsedSeconds } from '../../hooks/useElapsedSeconds';
 import { ResizableActivityPane } from './ResizableActivityPane';
 import { statusIcon, ToolRow } from './ToolActivityDetails';
 import { ConversationUiTargets, collectUiTargets } from '@/modules/platform-copilot/UiTargetActions';
+import { OpenUiAnswer } from '../openui/OpenUiAnswer';
+import { preloadOpenUiForAgent } from '../openui/preload';
+import { isOpenUiRenderEnabled, resolveAnswerRenderMode, segmentAnswerParts, type AnswerSegment } from '../openui/render-mode';
 
 interface NarrativeProps {
   conversationId: string;
@@ -28,6 +32,10 @@ interface NarrativeProps {
   showWorking?: boolean;
   /** True right after this message's stream completed: the pane starts open, then animates closed. */
   justCompleted?: boolean;
+  requestInputState?: 'waiting' | 'sending' | 'continuing';
+  workActivity?: ReactNode;
+  workState?: 'queued' | 'running' | 'waiting' | 'preparing' | 'failed' | 'outcome_unknown' | 'cancellation_requested';
+  children?: ReactNode;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
@@ -36,6 +44,8 @@ interface NarrativeProps {
   restrictActivityDetails?: boolean;
   /** Agent that produced this message; when set with `onOpenAgentEditor`, the header bot icon opens the agent editor. */
   agentId?: string | null;
+  /** Name sent with the stream start for agentId, before the agent list has it. */
+  agentName?: string;
   onOpenAgentEditor?: (agentId: string) => void;
   /** Show the buttons the tools asked for ("Open Billing & Contract Management") under the answer. */
   showUiTargets?: boolean;
@@ -141,11 +151,28 @@ function resolveActivityDuration(components: readonly MessageComponent[]): strin
   return durations.length ? formatActivityDuration(Math.max(...durations)) : undefined;
 }
 
-function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; redactSensitiveText: boolean }>) {
+// The ADK opens a streaming message with an empty placeholder that is already
+// "completed", so the latest empty agent row counts as awaiting output while streaming.
+function isAwaitingAgentOutput(data: AgentActivityData, isStreaming: boolean, isLatest: boolean): boolean {
+  return isStreaming && (data.status === 'running' || (isLatest && data.status === 'completed'));
+}
+
+// Label key for an agent row with no summary of its own once it is not
+// thinking: "preparing" while it runs, "prepared" once done (it used to say
+// "preparing" forever after the reply arrived).
+function agentFallbackLabelKey(status: AgentActivityData['status']) {
+  return status === 'running' ? 'stream.activity.agentPlanning' as const : 'stream.activity.agentPrepared' as const;
+}
+
+function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; isLatest: boolean; redactSensitiveText: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const duration = formatActivityDuration(data.durationMs);
-  const summary = resolveAgentActivityPreview(data, redactSensitiveText, t('stream.activity.agentPlanning'));
+  const preview = resolveAgentActivityPreview(data, redactSensitiveText, '');
+  const awaiting = isAwaitingAgentOutput(data, isStreaming, isLatest);
   const active = isStreaming && data.status === 'running';
+  const thinking = awaiting && !preview;
+  const thinkingSeconds = useElapsedSeconds(thinking);
+  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
   const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || summary;
   return (
@@ -191,10 +218,13 @@ function safeRestrictedActivitySummary(value: unknown): string | undefined {
   return sanitizeActivitySummary(summary);
 }
 
-function RestrictedAgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityData; isStreaming: boolean }>) {
+function RestrictedAgentActivityRow({ data, isStreaming, isLatest }: Readonly<{ data: AgentActivityData; isStreaming: boolean; isLatest: boolean }>) {
   const { t } = useModuleTranslation('conversation');
-  const summary = safeRestrictedActivitySummary(data.summary) || t('stream.activity.agentPlanning');
+  const safeSummary = safeRestrictedActivitySummary(data.summary);
   const active = isStreaming && data.status === 'running';
+  const thinking = isAwaitingAgentOutput(data, isStreaming, isLatest) && !safeSummary;
+  const thinkingSeconds = useElapsedSeconds(thinking);
+  const summary = safeSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   return (
     <div className='flex min-h-7 items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground'>
       <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
@@ -281,6 +311,11 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
   const runningIndex = components.findIndex((component) => component.data.status === 'running' || component.data.availability === 'pending');
   const currentIndex = runningIndex >= 0 ? runningIndex : components.length - 1;
   const current = components[currentIndex];
+  const currentAgentSummary = current?.type === 'agentActivity'
+    ? restrictActivityDetails ? safeRestrictedActivitySummary(current.data.summary) : sanitizeActivitySummary(current.data.summary)
+    : undefined;
+  const thinking = current?.type === 'agentActivity' && isAwaitingAgentOutput(current.data as AgentActivityData, isStreaming, currentIndex === components.length - 1) && !currentAgentSummary;
+  const thinkingSeconds = useElapsedSeconds(thinking);
   if (!current) return null;
 
   const status = current.type === 'artifact'
@@ -292,9 +327,7 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
       : resolveToolSummary(current.data) || resolveToolFallbackName(current.data) || t('stream.activity.toolFallback')
     : current.type === 'artifact'
       ? sanitizeActivityFilename(current.data.filename) || t('stream.activity.generated')
-      : restrictActivityDetails
-        ? safeRestrictedActivitySummary(current.data.summary) || t('stream.activity.agentPlanning')
-        : sanitizeActivitySummary(current.data.summary) || t('stream.activity.agentPlanning');
+      : currentAgentSummary || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey((current.data as AgentActivityData).status)));
   const statusLabel = t(`stream.activity.toolStatus.${status}`);
 
   return (
@@ -374,6 +407,9 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   // messages, which render collapsed from the start.
   const [paneCollapsed, setPaneCollapsed] = useState(!props.isStreaming && props.justCompleted !== true);
   useEffect(() => {
+    if (props.requestInputState === 'waiting') setPaneCollapsed(true);
+  }, [props.requestInputState]);
+  useEffect(() => {
     if (props.justCompleted !== true) return;
     const timer = setTimeout(() => setPaneCollapsed(true), PANE_COLLAPSE_DELAY_MS);
     return () => clearTimeout(timer);
@@ -413,6 +449,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const textProducerId = source.filter((component) => component.type === 'text'
     && typeof component.data.actorId === 'string').at(-1)?.data.actorId as string | undefined;
   const producerId = textProducerId || (producerActivity?.data.actorId as string | undefined) || props.agentId;
+  const producerAgent = agents.find((agent) => agent.id === producerId);
+  const renderMode = resolveAnswerRenderMode(producerAgent);
+  // The stream start names the agent before any text arrives: warm the lazy OpenUI chunk then.
+  useEffect(() => preloadOpenUiForAgent(producerAgent), [producerAgent]);
   const producerName = (!textProducerId || textProducerId === producerActivity?.data.actorId)
     ? sanitizeActivityActorName(producerActivity?.data.actorName) : undefined;
   useEffect(() => {
@@ -477,11 +517,20 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     });
     partsCacheRef.current = nextCache;
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
-    if (parts.length) {
+    // Generative-UI agents answer in OpenUI Lang: their text parts go to the OpenUI
+    // renderer (markdown fallback inside); so do stored programs of an agent since switched
+    // off. Every other part renders as usual.
+    const segments: AnswerSegment[] = isOpenUiRenderEnabled() ? segmentAnswerParts(parts, renderMode) : [{ kind: 'parts', parts }];
+    segments.forEach((segment) => {
+      if (segment.kind === 'openui') {
+        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} partId={segment.componentId} />);
+        return;
+      }
+      if (!segment.parts.length) return;
       const outlinePartKey = answerNodes.length;
       liveOutlineKeysRef.current.add(outlinePartKey);
-      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' onTaskAgentClick={handleOpenAgentEditor} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
-    }
+      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={segment.parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' onTaskAgentClick={handleOpenAgentEditor} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
+    });
     answerBatch = [];
   };
   source.forEach((component) => {
@@ -498,18 +547,22 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   }, [liveOutlineSignature, publishOutline]);
   activityComponents.forEach((component, index) => {
     if (component.type === 'agentActivity') activityNodes.push(props.restrictActivityDetails
-      ? <RestrictedAgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />
-      : <AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
+      ? <RestrictedAgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} isLatest={index === activityComponents.length - 1} />
+      : <AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} isLatest={index === activityComponents.length - 1} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
       activityNodes.push(props.restrictActivityDetails
         ? <RestrictedToolRow key={component.id || index} data={component.data as ToolActivityData} />
-        : <ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
+        : <ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} isStreaming={props.isStreaming} />);
     }
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   const uiTargets = props.showUiTargets ? collectUiTargets(source) : [];
-  if (!activityNodes.length && !artifactNodes.length && !answerNodes.length && !uiTargets.length) return null;
-  const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name || t('stream.activity.agentNameUnavailable');
+  if (!activityNodes.length && !artifactNodes.length && !answerNodes.length && !uiTargets.length && !props.requestInputState) return null;
+  // A live reply names its agent once its first activity arrives; until then
+  // the name is pending, not missing.
+  const actorName = producerName || agents.find((agent) => agent.id === producerId)?.name
+    || (producerId === props.agentId ? props.agentName : undefined)
+    || t(props.isStreaming ? 'stream.activity.assistant' : 'stream.activity.agentNameUnavailable');
   const openAgentEditor = props.agentId && props.onOpenAgentEditor
     ? () => props.onOpenAgentEditor!(props.agentId!)
     : null;
@@ -580,8 +633,17 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
               {runningStatus}
               <span className='h-0.5 min-w-8 flex-1 bg-border' aria-hidden='true' />
-              <Check className='size-4 shrink-0 text-green-500' aria-hidden='true' />
-              <span className='shrink-0 text-xs'>{activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
+              {props.requestInputState === 'waiting' || props.workState === 'waiting' ? <MessageCircle className='size-4 shrink-0 text-primary' aria-hidden='true' />
+                : props.workState === 'queued' || props.workState === 'cancellation_requested' ? <Clock className='size-4 shrink-0' aria-hidden='true' />
+                : props.workState === 'failed' || props.workState === 'outcome_unknown' ? <AlertCircle className='size-4 shrink-0 text-destructive' aria-hidden='true' />
+                : props.workState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />
+                : props.requestInputState ? <Loader2 className='size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary' aria-hidden='true' />
+                : answerNodes.length > 0 ? <Check className='size-4 shrink-0 text-green-500' aria-hidden='true' /> : null}
+              <span className='shrink-0 text-xs' role={props.requestInputState || props.workState ? 'status' : undefined}>{props.requestInputState
+                ? t(`rootInput.${props.requestInputState}`)
+                : props.workState ? t(props.workState === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${props.workState}`)
+                : !answerNodes.length ? t('rootInput.requestActivity')
+                : activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
               <span aria-hidden='true'>·</span>
               <span className='shrink-0 text-xs tabular-nums'>{t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount })}</span>
               <span className='shrink-0 text-xs font-medium text-foreground'>{t('stream.activity.viewProcess')}</span>
@@ -592,6 +654,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           {agentIcon}
           <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
               {runningStatus}
+          {props.requestInputState && <span className='text-xs text-primary' role='status'>{t(`rootInput.${props.requestInputState}`)}</span>}
+          {!props.requestInputState && props.workState && <span className='text-xs text-primary' role='status'>{t(props.workState === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${props.workState}`)}</span>}
           <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
             {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
           </span>
@@ -601,6 +665,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
             {agentIcon}
             <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
               {runningStatus}
+            {props.requestInputState && <span className='text-xs text-primary' role='status'>{t(`rootInput.${props.requestInputState}`)}</span>}
             <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
               {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
             </span>
@@ -625,8 +690,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           </div>
         </div>
       )}
+      {props.workActivity}
       {artifactNodes.length > 0 && <div data-artifacts className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{artifactNodes}</div>}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
+      {props.children}
       {uiTargets.length > 0 && <div className={cn((activityNodes.length > 0 || answerNodes.length > 0) && 'mt-4')}><ConversationUiTargets targets={uiTargets} /></div>}
     </div>
   );

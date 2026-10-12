@@ -4,7 +4,34 @@ import hashlib
 import json
 from typing import Protocol
 
+from app.population.run_limits import NON_IDENTITY_LIMIT_KEYS, identity_limits
+
 from .models import Admission, JobCommand
+
+
+# Search index jobs carry how to build (embedding batch size, parallel calls…) under this payload key.
+INDEX_BUILD_PAYLOAD_KEY = "indexBuild"
+
+
+def _identity_command(dump: dict) -> dict:
+    """The command without what only decides how a job is performed (the save and index build
+    limits of a run, the build settings of an index job): changing them must not make the same
+    job, under the same idempotency key, a different payload."""
+    payload = dump.get("payload")
+    if not isinstance(payload, dict):
+        return dump
+    limits = payload.get("limits")
+    has_limits = isinstance(limits, dict) and any(key in limits for key in NON_IDENTITY_LIMIT_KEYS)
+    if not has_limits and INDEX_BUILD_PAYLOAD_KEY not in payload:
+        return dump
+    kept = {k: v for k, v in payload.items() if k not in ("limits", INDEX_BUILD_PAYLOAD_KEY)}
+    if has_limits:
+        remaining = identity_limits(limits)
+        if remaining:
+            kept["limits"] = remaining
+    elif "limits" in payload:
+        kept["limits"] = payload["limits"]
+    return {**dump, "payload": kept}
 
 
 class JobRepository(Protocol):
@@ -41,7 +68,7 @@ class JobService:
     ) -> Admission:
         canonical = {
             "jobType": job_type,
-            "command": command.model_dump(by_alias=True, mode="json"),
+            "command": _identity_command(command.model_dump(by_alias=True, mode="json")),
         }
         encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
         command_hash = f"sha256:{hashlib.sha256(encoded).hexdigest()}"

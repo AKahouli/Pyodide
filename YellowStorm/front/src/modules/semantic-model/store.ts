@@ -31,6 +31,8 @@ interface SemanticModelEditorState {
   /** Last request to bring an element into view; `at` makes repeat requests for the same id distinct. */
   /** The part of the details to bring into view: where a review item is fixed. */
   focusRequest: { id: string; at: number; section?: FocusSection } | null;
+  /** The unique fields the model health screen suggests for a concept; the identity editor offers them, it never applies them. */
+  identitySuggestion: { conceptId: string; fields: string[] } | null;
   /** Counts every selection, even of what is already selected, so panels can follow each click. */
   selectionTick: number;
   saveStatus: SaveStatus;
@@ -43,6 +45,9 @@ interface SemanticModelEditorState {
   openDetails: (open: boolean) => void;
   /** Select an element and bring it into view on the canvas. */
   focus: (id: string, section?: FocusSection) => void;
+  /** Open a concept's unique-field editor with fields to offer. */
+  suggestIdentity: (conceptId: string, fields: string[]) => void;
+  clearIdentitySuggestion: () => void;
   commit: (operation: SemanticGraphOperation, update: (graph: SemanticGraph) => SemanticGraph) => void;
   commitBatch: (operations: SemanticOperationGroup, update: (graph: SemanticGraph) => SemanticGraph) => void;
   replaceGraph: (graph: SemanticGraph) => void;
@@ -100,6 +105,7 @@ export const semanticModelEditorInitialState = {
   historyBusy: false,
   validation: [] as ValidationIssue[],
   focusRequest: null as { id: string; at: number; section?: FocusSection } | null,
+  identitySuggestion: null as { conceptId: string; fields: string[] } | null,
   selectionTick: 0,
   saveStatus: 'saved' as SaveStatus,
   saveInFlight: false,
@@ -177,6 +183,11 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
   openDetails: (detailsOpen) => set({ detailsOpen }),
   // Focusing is a request to look at something in full (a finding, a new element), so it opens its details.
   focus: (id, section) => set((state) => ({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now(), section }, selectionTick: state.selectionTick + 1 })),
+  suggestIdentity: (conceptId, fields) => set((state) => ({
+    identitySuggestion: { conceptId, fields }, selectedId: conceptId, detailsOpen: true,
+    focusRequest: { id: conceptId, at: Date.now(), section: 'identity' }, selectionTick: state.selectionTick + 1,
+  })),
+  clearIdentitySuggestion: () => set({ identitySuggestion: null }),
   commit: (operation, update) => get().commitBatch([operation], update),
   commitBatch: (operations, update) => set((state) => {
     if (!state.graph || !operations.length) return state;

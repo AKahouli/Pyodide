@@ -43,10 +43,6 @@ async def owned_synthesis(guarded_native):
                 {'id': execution_id, 'payload': json.dumps({'nativeState': state})})
         await connection.execute(text("UPDATE conversation.root_executions SET role='followup',depth=0 WHERE id=:id"),
             {'id': grant.execution_id})
-        await connection.execute(text('''INSERT INTO conversation.conversation_executions
-            (id,conversation_id,user_id,message_id,status,expires_at) VALUES(:id,:conversation,:actor,:message,
-            'running',clock_timestamp()+interval '120 seconds')'''),
-            {'id': grant.execution_id, 'conversation': grant.conversation_id, 'actor': grant.actor_id, 'message': message_id})
     scope = ExecutionScopeV1(role=ExecutionRole.FOLLOWUP, execution_id=grant.execution_id,
         parent_execution_id=root_id, depth=0, expected_fence=str(grant.fence), native_session_id=grant.session_id)
     yield service, scope
@@ -54,9 +50,18 @@ async def owned_synthesis(guarded_native):
 
 @pytest.mark.asyncio
 async def test_actual_adk_synthesis_checkpoint_recovers_without_another_model_call(owned_synthesis, monkeypatch):
+    from google.genai import types
     service, scope = owned_synthesis
     producer_id = 'b' * 24
-    model = _Scripted('synthesis', [_fc('get_synthesis_result', {'execution_id': producer_id, 'offset': 0}),
+    class UsageScripted(_Scripted):
+        async def generate_content_async(self, request, stream=False):
+            async for response in super().generate_content_async(request, stream):
+                response.usage_metadata = types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=3, candidates_token_count=2)
+                response.model_version = 'actual-synthesis-model'
+                yield response
+    model = UsageScripted('synthesis', [_fc('get_synthesis_result', {'execution_id': producer_id, 'offset': 8000}),
+        _fc('get_synthesis_result', {'execution_id': producer_id, 'offset': 16000}),
         _text('Truthful partial synthesis [1]')])
     reads = []
     async def post(scope, path, payload):
@@ -64,8 +69,10 @@ async def test_actual_adk_synthesis_checkpoint_recovers_without_another_model_ca
         assert path == f'background-synthesis-results/{producer_id}'
         assert payload['nativeOwner'] == service.grant.native_owner
         reads.append(payload['offset'])
-        return {'executionId': producer_id, 'status': 'completed', 'text': 'Original result',
-            'nextOffset': None, 'evidence': [{'evidenceId': 'original-evidence-id', 'displayReference': '1'}]}
+        return {'executionId': producer_id, 'status': 'completed',
+            'text': 'More result' if payload['offset'] == 8000 else 'Final conclusion',
+            'nextOffset': 16000 if payload['offset'] == 8000 else None,
+            'evidence': [{'evidenceId': 'original-evidence-id', 'displayReference': '1'}]}
     monkeypatch.setattr('src.root_runtime.delegate_resolver._post', post)
     agent = LlmAgent(name='synthesis', model=model)
     factory = AsyncMock(return_value=(agent, None))
@@ -79,26 +86,39 @@ async def test_actual_adk_synthesis_checkpoint_recovers_without_another_model_ca
     monkeypatch.setattr('src.smart_rag.agents.core.document_helpers.DocumentHelpers.agent_to_dict',
         lambda candidate: {'name': 'synthesis', 'prompt': 'Pinned profile', 'tools': ['forbidden']})
     monkeypatch.setattr('src.smart_rag.infrastructure.session.citation_manager.get_citation_manager', AsyncMock(return_value=None))
-    request = SimpleNamespace(execution_scope=scope, agents=[SimpleNamespace(id=service.grant.actor_id)],
+    request = SimpleNamespace(execution_scope=scope, agents=[SimpleNamespace(id=service.grant.actor_id,
+        chatbot=SimpleNamespace(model='configured-fallback-model'))],
         message='Immutable terminal results with original evidence IDs', native_input_responses=None)
-    output = await run_owned_synthesis(service, request, asyncio.Queue(), asyncio.Event())
+    queue = asyncio.Queue()
+    output = await run_owned_synthesis(service, request, queue, asyncio.Event())
     assert output == 'Truthful partial synthesis [1]'
-    assert len(model.requests) == 2 and reads == [0]
+    assert len(model.requests) == 3 and reads == [8000, 16000]
+    assert 'for every truncated result' in factory.call_args.args[0]['prompt']
+    assert 'until it is null' in factory.call_args.args[0]['prompt']
     assert factory.call_args.args[0]['tools'] == []
     assert [tool.name for tool in agent.tools] == ['get_synthesis_result']
+    usage = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if 'usage' in event:
+            usage.append(event)
+    assert len(usage) == 3
+    assert all(event['usage'] == {'input_tokens': 3, 'output_tokens': 2,
+        'model': 'actual-synthesis-model'} for event in usage)
+    assert all(event['metadata']['native_event_id'] and event['metadata']['native_invocation_id'] for event in usage)
     fresh = FencedBackgroundSessionService(replace(service.grant, resume_intent='resume'), db_engine=service.db_engine)
     control = await fresh.control_state()
     session = await fresh.get_session(app_name=fresh.grant.app_name, user_id=fresh.grant.actor_id, session_id=fresh.grant.session_id)
     recovered = classify_native_history(session, control['native_invocation_id'], control['initial_input_event_id'], 'synthesis')
     assert recovered.status == 'completed' and recovered.text == output
-    assert len(model.requests) == 2 and reads == [0]
+    assert len(model.requests) == 3 and reads == [8000, 16000]
 
 
 @pytest.mark.asyncio
-async def test_synthesis_native_writes_fail_closed_after_writer_revocation(owned_synthesis):
+async def test_synthesis_native_writes_fail_closed_after_job_revocation(owned_synthesis):
     service, _scope = owned_synthesis
     async with service.db_engine.begin() as connection:
-        await connection.execute(text("UPDATE conversation.conversation_executions SET status='cancelled' WHERE id=:id"),
+        await connection.execute(text("UPDATE conversation.root_background_jobs SET status='cancelled',fence=fence+1 WHERE execution_id=:id"),
             {'id': service.grant.execution_id})
-    with pytest.raises(BackgroundOwnershipError, match='Synthesis writer'):
+    with pytest.raises(BackgroundOwnershipError):
         await service.validate_owner()

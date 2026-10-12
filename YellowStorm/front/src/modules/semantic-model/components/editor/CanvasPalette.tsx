@@ -12,7 +12,7 @@ export interface PaletteItem {
 }
 
 const TOOLTIP = 'max-w-[15rem] border bg-popover px-2.5 py-1.5 text-popover-foreground shadow-md';
-/** Sources and typed records bring data in; the rest shape the model. */
+/** Sources and manual tables bring data in; the rest shape the model. */
 const DATA_ITEMS = new Set(['source', 'typed']);
 
 /**

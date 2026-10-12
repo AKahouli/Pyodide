@@ -23,6 +23,11 @@ describe('Pinned governed runtime authority', () => {
       workspaceIds: ['approved'] });
     expect(h.bindings.listEnabled).toHaveBeenCalledWith('program', ['scope']);
   });
+  it('allows a shared member who remains in the governed audience', async () => {
+    const h = fixture();
+    await expect(h.service.resolveRuntime('recipient', { ...h.conversation, memberIds: ['recipient'] })).resolves.toMatchObject({ scopeId: 'scope' });
+    expect(h.audience.assertUserAuthorized).toHaveBeenCalledWith('recipient', 'scope');
+  });
   it.each(['scope-program', 'deployment-program', 'deployment-scope', 'revision-deployment', 'revision-status',
     'revision-number', 'primary', 'roster', 'current-agent'])('rejects a mismatched %s binding', async (field) => {
     const h = fixture();

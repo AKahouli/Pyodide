@@ -11,6 +11,7 @@ export interface ShareSourceConversationRecord {
   memberIds: string[];
   messageCount: number;
   runtimeMode?: string;
+  governanceScopeId?: string;
   lastMessageAt?: Date;
 }
 
@@ -34,6 +35,7 @@ export interface SharedConversationRecord {
 
 export interface ShareStore {
   findSourceConversation(id: string): Promise<ShareSourceConversationRecord | null>;
+  searchAudienceUsers(query: string, ownerId: string, scopeId: string): Promise<{ id: string; email: string; firstName?: string; lastName?: string }[]>;
   listSnapshotMessages(conversationId: string, limit: number): Promise<EmbeddedMessage[]>;
   createPublic(input: {
     originalConversationId: string;
@@ -63,6 +65,7 @@ export interface ShareStore {
   listForConversation(conversationId: string): Promise<SharedConversationRecord[]>;
   findById(shareId: string): Promise<SharedConversationRecord | null>;
   markRevoked(shareId: string): Promise<void>;
+  removePrivateRecipient(shareId: string, conversationId: string, recipientId: string, email: string): Promise<void>;
   findPublicByToken(accessToken: string): Promise<SharedConversationRecord | null>;
   incrementViewCount(shareId: string): Promise<number>;
 }

@@ -306,7 +306,7 @@ class TestAgentRunner:
         with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=adk_runner), \
              patch('src.smart_rag.agents.core.runner.MessageTransformer.simple_tag_transformer', side_effect=lambda tempmsg, **_kwargs: (tempmsg, "", [])), \
              patch.object(agent_runner, '_replace_diagram_references_during_streaming', new_callable=AsyncMock, side_effect=lambda text, _session: text), \
-             patch.object(agent_runner, '_extract_generated_files', new_callable=AsyncMock, return_value=[]):
+             AsyncMock() as _unused_patch:
             result = await agent_runner._run_standard_agent(
                 agent=agent, agent_name="GuardedAgent", agent_type="agent",
                 session_helper=session_helper, user_id="user", session_id="session",

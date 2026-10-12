@@ -58,11 +58,15 @@ describe('SemanticReviewQueueService', () => {
         },
       })),
     };
-    return new SemanticReviewQueueService(database as never, models as never, trust as never, runtime as never);
+    const graphSearch = { allowedWorkspaceIds: jest.fn(async () => ['ws-1']) };
+    const service = new SemanticReviewQueueService(database as never, models as never, trust as never,
+      runtime as never, undefined, graphSearch as never);
+    return { service, runtime, graphSearch };
   };
 
   it('combines every kind of item, blocking ones first, each with one action', async () => {
-    const queue = await setup().reviewQueue('user', 'model');
+    const { service } = setup();
+    const queue = await service.reviewQueue('user', 'model');
     expect(queue.count).toBe(14);
     expect(queue.items.map((item) => item.kind)).toEqual([
       'fields_not_read', 'derived_source_broken', 'source_broken', 'source_workspace_off', 'concept_without_source', 'rows_not_read', 'missing_unique_field',
@@ -173,8 +177,35 @@ describe('SemanticReviewQueueService', () => {
   });
 
   it('still lists the model decisions when no data has been prepared', async () => {
-    const queue = await setup({ runtimeDown: true }).reviewQueue('user', 'model');
+    const { service } = setup({ runtimeDown: true });
+    const queue = await service.reviewQueue('user', 'model');
     expect(queue.items.some((item) => item.kind === 'missing_values')).toBe(false);
     expect(queue.count).toBe(10);
+  });
+
+  it('reads the prepared data only through the workspaces the person may access', async () => {
+    const { service, runtime, graphSearch } = setup();
+    await service.reviewQueue('user', 'model');
+    expect(graphSearch.allowedWorkspaceIds).toHaveBeenCalledWith('user', 'model');
+    const [calledModelId, calledUser, limit, scope] = (runtime.getBoundRecords as jest.Mock).mock.calls[0] as unknown as [string, string, number, string[]];
+    expect({ calledModelId, calledUser, limit, scope }).toEqual({ calledModelId: 'model', calledUser: 'user', limit: 1, scope: ['ws-1'] });
+  });
+
+  it('leaves the last run\'s data gaps to the model health screen when asked', async () => {
+    const { service, runtime } = setup();
+    const queue = await service.reviewQueue('user', 'model', { dataGaps: false });
+    expect(runtime.getBoundRecords).not.toHaveBeenCalled();
+    expect(queue.items.some((item) => item.group === 'data' || item.kind === 'rows_not_read')).toBe(false);
+    expect(queue.items.some((item) => item.kind === 'concept_without_source')).toBe(true);
+  });
+
+  it('lists no data gaps without source authorization wired', async () => {
+    const database = { query: jest.fn(async () => ({ rows: [] })) };
+    const models = { requireRole: jest.fn(async () => ({ id: 'model', currentDraftVersionId: 'v-1' })) };
+    const runtime = { getBoundRecords: jest.fn(async () => { throw new Error('must not be read'); }) };
+    const queue = await new SemanticReviewQueueService(database as never, models as never,
+      { mappingHealth: jest.fn(async () => null) } as never, runtime as never).reviewQueue('user', 'model');
+    expect(runtime.getBoundRecords).not.toHaveBeenCalled();
+    expect(queue.items.some((item) => item.group === 'data')).toBe(false);
   });
 });

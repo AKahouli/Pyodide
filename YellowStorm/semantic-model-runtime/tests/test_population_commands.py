@@ -204,11 +204,13 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     gaps = {"missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1,
                                "total": 1}], "unresolvedLinks": [], "other": []}
     revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps}), "execution_fingerprint": "sha256:run"}
-    _inject(client, ScriptedPool([binding, counts, [{"concept_id": "c1", "entities": 1}],
-                                  [entity], origins, revision,
-                                  [relationship], {"specification": specification}]))
-    records = client.get("/v1/semantic-model-population/models/m1/records?limit=25",
-                         headers=AUTH)
+    scope = {"actorUserId": "u1", "allowedWorkspaceIds": ["ws-1"]}
+    # binding, hidden ids, counts per concept (the page's shares), page, origins, counts, links, revision,
+    # specification
+    _inject(client, ScriptedPool([binding, [], [{"concept_id": "c1", "entities": 1}], [entity], origins, counts,
+                                  [relationship], revision, {"specification": specification}]))
+    records = client.post("/v1/semantic-model-population/models/m1/records/read",
+                          headers=AUTH, json={**scope, "limit": 25})
     assert records.status_code == 200
     assert records.json()["dataRevisionId"] == "dr_1"
     assert records.json()["entities"][0]["entityId"] == "crm::1"
@@ -224,18 +226,29 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
         [{"relation_id": '"r1"', "source_id": '"crm::1"', "target_id": '"crm::1"',
           "properties": '{"relation_id":"r1"}'}],
     ]
-    _inject(client, ScriptedPool([binding, {"specification": specification}]),
+    _inject(client, ScriptedPool([binding, [{"id": "crm::1", "hidden": False}], {"specification": specification}]),
             FakeAgePool(graph_rows=graph_rows))
-    graph = client.get("/v1/semantic-model-population/models/m1/graph", headers=AUTH)
+    graph = client.post("/v1/semantic-model-population/models/m1/graph/read",
+                        headers=AUTH, json=scope)
     assert graph.status_code == 200
     assert graph.json()["dataRevisionId"] == "dr_1"
     assert graph.json()["nodes"][0]["id"] == "crm::1"
     assert graph.json()["nodes"][0]["properties"]["record_label"] == "Acme"
+    assert graph.json()["edges"][0]["label"] == "r1"
+
+    # A record whose source the actor may not read disappears and takes its links with it.
+    _inject(client, ScriptedPool([binding, [{"id": "crm::1", "hidden": True}], {"specification": specification}]),
+            FakeAgePool(graph_rows=graph_rows))
+    hidden = client.post("/v1/semantic-model-population/models/m1/graph/read",
+                         headers=AUTH, json=scope)
+    assert hidden.status_code == 200
+    assert hidden.json()["nodes"] == []
+    assert hidden.json()["edges"] == []
 
     _inject(client, ScriptedPool([binding]))
-    stale = client.get(
-        "/v1/semantic-model-population/models/m1/records?dataRevisionId=dr_old",
-        headers=AUTH,
+    stale = client.post(
+        "/v1/semantic-model-population/models/m1/records/read",
+        headers=AUTH, json={**scope, "limit": 25, "dataRevisionId": "dr_old"},
     )
     assert stale.status_code == 409
     assert stale.json()["detail"] == "active_binding_changed"
@@ -261,38 +274,55 @@ def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
               "attributes": {"name": "Acme"}, "provenance": {}}
     origins = [{"entity_id": "crm::1", "attribute": "name", "origin": "source",
                 "evidence": {"assetRef": {"assetId": "a1"}, "rowNumber": 4}}]
+    scope = ["ws-1"]
     pool = RecordingPool([binding, 120, [entity], origins])
     _inject(client, pool)
-    response = client.get(
-        "/v1/semantic-model-population/models/m1/concepts/c1/records?q=50%25&limit=20&offset=40",
-        headers=AUTH)
+    response = client.post(
+        "/v1/semantic-model-population/models/m1/concepts/c1/records/read",
+        headers=AUTH,
+        json={"actorUserId": "u1", "allowedWorkspaceIds": scope, "q": "50%", "limit": 20, "offset": 40},
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 120 and body["offset"] == 40 and body["limit"] == 20
     assert body["entities"][0]["origins"]["name"]["rowNumber"] == 4
+    # The scope travels into the count and the page query, so totals count visible records only.
     count_params = next(params for sql, params in pool.calls if "count(*)" in sql)
-    assert count_params == ("dr_1", "c1", r"%50\%%")
+    assert count_params == ("dr_1", "c1", r"%50\%%", scope)
     page_params = next(params for sql, params in pool.calls if "OFFSET" in sql)
     assert page_params[-2:] == (20, 40)
-    assert client.get("/v1/semantic-model-population/models/m1/concepts/c1/records?limit=500",
-                      headers=AUTH).status_code == 422
+    assert any("'workspaceId'" in sql and "ANY($4::text[])" in sql for sql, params in pool.calls)
+    too_many = client.post(
+        "/v1/semantic-model-population/models/m1/concepts/c1/records/read",
+        headers=AUTH,
+        json={"actorUserId": "u1", "allowedWorkspaceIds": scope, "limit": 500},
+    )
+    assert too_many.status_code == 422
+    unscoped = client.post(
+        "/v1/semantic-model-population/models/m1/concepts/c1/records/read",
+        headers=AUTH, json={"actorUserId": "u1", "limit": 20},
+    )
+    assert unscoped.status_code == 422
 
 
 def test_concept_records_are_filtered_per_field(client: TestClient):
     binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    scope = ["ws-1"]
     pool = RecordingPool([binding, 0, [], []])
     _inject(client, pool)
-    filters = '{"__label__": "acme", "city": "Par", "empty": " "}'
-    response = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
-                          params={"filters": filters}, headers=AUTH)
+    filters = {"__label__": "acme", "city": "Par", "empty": " "}
+    response = client.post("/v1/semantic-model-population/models/m1/concepts/c1/records/read",
+                           headers=AUTH,
+                           json={"actorUserId": "u1", "allowedWorkspaceIds": scope, "filters": filters})
     assert response.status_code == 200
     sql, params = next((sql, params) for sql, params in pool.calls if "count(*)" in sql)
     # Blank filters are ignored; the name filters the label, a field its value or its key part.
-    assert params == ("dr_1", "c1", None, "%acme%", "%Par%", "city")
+    assert params == ("dr_1", "c1", None, "%acme%", "%Par%", "city", scope)
     assert "label ILIKE $4" in sql and "attributes->>$6 ILIKE $5" in sql
-    for bad in ('["city"]', '{"city": 3}', "not json"):
-        rejected = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
-                              params={"filters": bad}, headers=AUTH)
+    for bad in (["city"], {"city": 3}, {"x" * 201: "y"}):
+        rejected = client.post("/v1/semantic-model-population/models/m1/concepts/c1/records/read",
+                               headers=AUTH,
+                               json={"actorUserId": "u1", "allowedWorkspaceIds": scope, "filters": bad})
         assert rejected.status_code == 422
 
 

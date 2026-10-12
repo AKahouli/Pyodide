@@ -9,6 +9,9 @@ class MockSettings(BaseModel):
     LOG_CONFIG_PATH: str = "./src/logger/mock_uvicorn_disable_logging.json"
     TIMEOUT_KEEP_ALIVE: int = 5
     UVICORN_WORKERS: int = 1
+    MCP_TOOLSET_CACHE_MAX_ENTRIES: int = 64
+    MCP_TOOLSET_CACHE_IDLE_SECONDS: float = 600.0
+    MCP_TOOL_LIST_CACHE_TTL_SECONDS: float = 60.0
 
     # Azure Storage
     AZURE_DATALAKE_CONNECTION_STRING: str = "DefaultEndpointsProtocol=https;AccountName=mock_account;AccountKey=mock_key;EndpointSuffix=core.windows.net"

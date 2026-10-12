@@ -15,6 +15,7 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAdminAccess } from '../hooks';
 
@@ -25,7 +26,10 @@ export function AdminSidebar() {
 
   return (
     <Sidebar collapsible="icon"  >
-      <SidebarHeader className="pt-8 gap-4">
+      <SidebarHeader className="gap-4 p-2 pt-4">
+        <NavLink to="/" aria-label={t('sidebar.back')} className="flex h-9 items-center overflow-hidden group-data-[collapsible=icon]:hidden">
+          <AppBrandLogo className="h-7 w-full max-w-44 object-contain object-left" />
+        </NavLink>
         <NavLink to="/">
           <Button
             variant="outline"

@@ -575,6 +575,8 @@
   "defaultAgents.form.instruction.label": "Instruction complémentaire",
   "defaultAgents.form.instruction.placeholder": "Instructions supplémentaires (facultatif)",
   "defaultAgents.form.ignorePreprompt": "Ignorer le pré-prompt du type d'agent",
+  "defaultAgents.form.genUiEnabled": "Interface générative",
+  "defaultAgents.form.genUiEnabledHint": "Ajoute le format de réponse interactif (cartes, graphiques, tableaux, pastilles de sources) aux instructions de cet agent et affiche ses réponses avec ce format.",
   "defaultAgents.form.active.label": "Actif",
   "defaultAgents.form.active.description": "Les agents inactifs ne seront pas disponibles.",
   "defaultAgents.form.defaultForType.label": "Par défaut pour ce type",

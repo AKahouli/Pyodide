@@ -68,9 +68,7 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
       // Handle API error format
       const apiError = err as ApiError;
 
-      if (apiError.code === 'ERR_1101') {
-        setError(t('register.error.emailExists'));
-      } else if (apiError.details && apiError.details.length > 0) {
+      if (apiError.details && apiError.details.length > 0) {
         setError(apiError.details.map((d) => d.message).join('. '));
       } else if (apiError.message) {
         setError(apiError.message);

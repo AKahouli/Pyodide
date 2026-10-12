@@ -77,16 +77,6 @@ def test_legacy_display_purpose_remains_supported() -> None:
     assert presentation.summary == "Inspect the available records"
 
 
-def test_code_interpreter_file_tools_use_stable_labels_and_dynamic_purposes() -> None:
-    presentation = present_tool_call(
-        "code-interpreter_file_list",
-        {"path": "/workspace", "display_purpose": "Inspect the available source files"},
-    )
-
-    assert (presentation.display_key, presentation.render_kind, presentation.summary) == (
-        "findFiles", "file", "Inspect the available source files"
-    )
-
 
 def test_unsafe_display_purpose_falls_back_without_blocking_presentation() -> None:
     search = present_tool_call(

@@ -17,6 +17,10 @@ vi.mock('../hooks', () => ({
   useAdminAccess: () => ({ accessibleMenuItems: menuItems }),
 }));
 
+vi.mock('@/components/AppBrandLogo', () => ({
+  AppBrandLogo: () => <img alt="Selected logo" />,
+}));
+
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children }: { children: ReactNode }) => <button type='button'>{children}</button>,
 }));
@@ -48,5 +52,6 @@ describe('AdminSidebar', () => {
     expect(screen.getAllByText('sidebar.dashboard').length).toBeGreaterThan(0);
     expect(screen.getByText('menu.users.label')).toBeInTheDocument();
     expect(screen.getByText('sidebar.back')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Selected logo' })).toBeInTheDocument();
   });
 });

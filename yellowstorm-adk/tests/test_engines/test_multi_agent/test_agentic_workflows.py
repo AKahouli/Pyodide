@@ -253,11 +253,20 @@ class TestSingleAgentWorkflow:
         service.validate_owner.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_handle_single_agent_workflow_runs_agent(self):
+    @pytest.mark.parametrize('role', [None, 'root', 'root_fanout', 'temporary_worker'])
+    async def test_handle_single_agent_workflow_runs_agent(self, role):
+        from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+        from src.root_runtime.ongoing_requests import with_ongoing_requests
         team = _mock_team()
         worker = _worker_agent()
         request = _team_request("mono", agents=[worker])
         request.task_summary = "Profitability"
+        request.root_context = {'ongoing_requests': [{'request_excerpt': 'Compare databases'}]}
+        if role:
+            request.execution_scope = ExecutionScopeV1(role=ExecutionRole('root' if role == 'root_fanout' else role), execution_id='a' * 24)
+        if role == 'root_fanout':
+            request.root_context.update({'fanout_enabled': True, 'worker_permit_version': 1,
+                'max_parallel_workers': 2, 'max_fanout_items': 3, 'background_fanout_enabled': False, 'catalog': []})
 
         with patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.single_agent.DocumentHelpers"
@@ -271,19 +280,25 @@ class TestSingleAgentWorkflow:
             await handle_single_agent_workflow(team, request, AsyncMock())
 
         mock_run.assert_awaited_once_with(
-            user_prompt=request.message,
+            user_prompt=with_ongoing_requests(request.message, request.root_context) if role in ('root', 'root_fanout') else request.message,
             session_id=request.session_id,
             q=ANY,
             image_input=request.image_input,
             task_summary="Profitability",
             delegation_tool=None,
             temporary_worker_tool=None,
-            fanout_tool=None,
-            delegation_instruction="",
-            execution_scope=None,
+            fanout_tool=ANY if role == 'root_fanout' else None,
+            delegation_instruction=ANY if role == 'root_fanout' else "",
+            execution_scope=request.execution_scope,
             abort_signal=None,
             native_input_responses=None,
+            conversation_reply_tool=None,
         )
+        if role == 'root_fanout':
+            args = mock_run.call_args.kwargs
+            assert 'only mode="foreground"' in args['fanout_tool'].description
+            assert args['fanout_tool'].description in args['delegation_instruction']
+            assert args['delegation_tool'] is None
         team._message_helper._send_error_message.assert_not_awaited()
 
     @pytest.mark.asyncio

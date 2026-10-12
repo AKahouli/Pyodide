@@ -26,6 +26,7 @@ import { ConnectorPlaybookBindingSyncService } from './services/connector-playbo
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
 import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { PgConnectorStore } from './persistence/pg-connector.store';
+import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
 
 /**
  * What an MCP tool may do, from its annotations: read-only, destructive or another change. A server that
@@ -53,6 +54,7 @@ export class ConnectorService {
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly playbookBindingSyncService: ConnectorPlaybookBindingSyncService,
     @Optional() private readonly configService?: ConfigService,
+    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -212,6 +214,12 @@ export class ConnectorService {
         authHeaders = { ...authHeaders, ...buildSandboxScopeHeaders(ctx) };
       }
 
+      if (userId && this.mcpJwt) {
+        const auth = await this.mcpJwt.bindingAuth(connector.mcpServerUrl, userId,
+          connector.id, authHeaders, authEnv);
+        authHeaders = auth.headers;
+        authEnv = auth.env;
+      }
       bindings.push({
         connector_id: connector.id,
         connector_name: connector.name,
@@ -326,7 +334,7 @@ export class ConnectorService {
   }
 
   async importFromMcp(createdBy: string, transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
-    const inspectResult = await this.inspectMcp(transportType, serverUrl, serverConfig);
+    const inspectResult = await this.inspectMcp(transportType, serverUrl, serverConfig, createdBy);
     if (inspectResult.error) {
       return inspectResult;
     }
@@ -456,7 +464,10 @@ export class ConnectorService {
         };
       }
 
-      const requestInit = this.buildMcpRequestInit(finalServerConfig);
+      let requestInit = this.buildMcpRequestInit(finalServerConfig);
+      if (userId && this.mcpJwt?.isJwtServer(serverUrl)) {
+        requestInit = { headers: await this.mcpJwt.headers(serverUrl, userId, this.buildMcpHeaders(finalServerConfig)), redirect: 'error' };
+      }
 
       if (transportType === 'sse') {
          

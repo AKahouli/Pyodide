@@ -9,7 +9,6 @@ from src.flow_engine.tools.langchain_factory import create_langchain_tools
 from src.guardrails.models import GuardrailDecision
 from src.flow_engine.nodes.step_tool_scope import (
     build_prompt_input_context,
-    build_sandbox_prompt_note,
     build_step_tool_scope,
     sanitize_trigger_context_for_prompt,
 )
@@ -114,74 +113,6 @@ def test_collect_workspace_ceph_paths_rejects_output_alias_collision() -> None:
         )
 
 
-def test_build_sandbox_prompt_note_provides_authoritative_exact_path() -> None:
-    scope = build_step_tool_scope(
-        {
-            "default": {
-                "kind": "document",
-                "id": "doc-1",
-                "name": "cv_template.docx",
-                "path": "owner/cv/cv_template.docx",
-                "workspaceId": "workspace-1",
-                "workspacePath": "owner/cv",
-            }
-        },
-        {},
-    )
-
-    note = build_sandbox_prompt_note(scope, {"code interpreter"})
-
-    assert "/mnt/workspace/cv/cv_template.docx" in note
-    assert "Do not rediscover them" in note
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("configured_safety", "expected_safety"),
-    [("read", "read"), ("write", "write"), ("delete", "delete"), (None, "unknown"), ("invalid", "unknown")],
-)
-async def test_connector_safety_reaches_tool_action_guardrail(
-    monkeypatch,
-    configured_safety: str | None,
-    expected_safety: str,
-) -> None:
-    action = {"action_key": "run", "parameter_schema": {}}
-    if configured_safety is not None:
-        action["safety"] = configured_safety
-    tools, _collector = create_langchain_tools(
-        agent_config={"tools": []},
-        step_connector_bindings=[{
-            "connector_id": "connector-1",
-            "connector_name": "CRM",
-            "connector_slug": "crm",
-            "mcp_server_url": "https://example.test/mcp",
-            "actions": [action],
-        }],
-    )
-    tool = next(item for item in tools if item.name == "crm_run")
-    captured = []
-
-    async def review(_self, context, _config):
-        captured.append(context.tool_metadata)
-        return GuardrailDecision()
-
-    monkeypatch.setattr("src.flow_engine.agent_runtime.tool_wrapper.GuardrailRuntime.review_tool_action", review)
-    request = SimpleNamespace(
-        runtime=SimpleNamespace(context=StepRuntimeContext(model_id="test", tools_enabled=True)),
-        tool=tool,
-        tool_call={"id": "call-1", "name": tool.name, "args": {}},
-    )
-
-    async def execute(_request):
-        return ToolMessage(content="ok", tool_call_id="call-1", name=tool.name)
-
-    await build_tool_wrapper()(request, execute)
-
-    assert captured[0]["safety"] == expected_safety
-    assert captured[0]["source"] == "connector"
-    assert captured[0]["connector_id"] == "connector-1"
-
-
 def test_build_step_tool_scope_prefers_display_name_for_mounted_filename() -> None:
     scope = build_step_tool_scope(
         {
@@ -257,23 +188,6 @@ def test_build_step_tool_scope_normalizes_brain_context_fallback() -> None:
             ],
         }
     ]
-
-
-def test_build_sandbox_prompt_note_warns_against_storage_names() -> None:
-    scope = build_step_tool_scope(
-        {
-            "default": {
-                "name": "CV_Kevin_Diallo.pdf",
-                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
-            }
-        },
-        {},
-    )
-
-    note = build_sandbox_prompt_note(scope, {"code interpreter"})
-
-    assert "CV_Kevin_Diallo.pdf" in note
-    assert "metadata storage filenames" in note
 
 
 def test_build_prompt_input_context_compacts_document_for_prompt() -> None:

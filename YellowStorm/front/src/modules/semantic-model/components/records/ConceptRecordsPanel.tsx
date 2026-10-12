@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, FileText, FilterX, FolderOpen, GitBranch, Keyboard, Loader2, RefreshCw, Search, Sheet, Table2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, FilterX, FolderOpen, GitBranch, Loader2, RefreshCw, Search, Sheet, Table2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -214,7 +214,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
           </button>;
         })}
         {typedCount > 0 && <span className='flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground'>
-          <Keyboard className='h-3 w-3' />{t('records.table.typedSource', { count: typedCount })}
+          <Table2 className='h-3 w-3' />{t('records.table.typedSource', { count: typedCount })}
         </span>}
         {madeFrom.map((name) => <span key={name} className='flex items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/5 px-2 py-0.5 text-[11px] text-violet-800 dark:text-violet-300'>
           <GitBranch className='h-3 w-3' />{t('records.table.madeFrom', { name })}

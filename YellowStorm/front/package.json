@@ -11,6 +11,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "preview": "vite preview",
+    "openui:prompt": "node scripts/generate-openui-prompt.mjs",
     "emit:widget-embed": "vite-node scripts/emit-widget-embed.mjs",
     "release": "commit-and-tag-version",
     "release:minor": "commit-and-tag-version --release-as minor",
@@ -24,6 +25,11 @@
     "@embedpdf/react-pdf-viewer": "^2.15.0",
     "@hookform/resolvers": "^3.3.2",
     "@novnc/novnc": "^1.7.0",
+    "@openuidev/lang-core": "0.4.1",
+    "@openuidev/react-headless": "0.17.1",
+    "@openuidev/react-lang": "0.4.1",
+    "@openuidev/react-ui": "0.17.1",
+    "@openuidev/thesys": "0.14.0",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.0.4",
@@ -68,6 +74,7 @@
     "embla-carousel-react": "^8.6.0",
     "exceljs": "^4.4.0",
     "fflate": "^0.8.2",
+    "graphology": "0.26.0",
     "html2canvas": "^1.4.1",
     "i18next": "^25.8.6",
     "katex": "^0.18.7",
@@ -88,6 +95,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "shiki": "^3.21.0",
+    "sigma": "3.0.3",
     "socket.io-client": "^4.8.3",
     "sonner": "^2.0.7",
     "streamdown": "^2.0.1",
@@ -122,5 +130,20 @@
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "@openuidev/react-headless": {
+      "zustand": "$zustand"
+    },
+    "@openuidev/react-ui": {
+      "zustand": "$zustand"
+    },
+    "@openuidev/thesys": {
+      "@openuidev/react-lang": "$@openuidev/react-lang",
+      "@openuidev/lang-core": "$@openuidev/lang-core",
+      "@openuidev/react-ui": "$@openuidev/react-ui",
+      "@openuidev/react-headless": "$@openuidev/react-headless",
+      "zustand": "$zustand"
+    }
   }
 }

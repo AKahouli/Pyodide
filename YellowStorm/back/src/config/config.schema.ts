@@ -180,7 +180,7 @@ export const configValidationSchema = Joi.object({
   // key is absent, receipts are disabled and replayed rotations conflict.
   AUTH_ROTATION_RECEIPT_KEY: Joi.string()
     .optional()
-    .custom((value, helpers) => {
+    .custom((value: string, helpers) => {
       try {
         const decoded = Buffer.from(value, 'base64');
         if (decoded.length !== 32) {
@@ -192,6 +192,7 @@ export const configValidationSchema = Joi.object({
       return value;
     }),
   AUTH_ROTATION_RECEIPT_KEY_ID: Joi.string().default('receipt-v1'),
+  AUTH_REGISTER_MIN_DURATION_MS: Joi.number().integer().min(0).max(10000).default(1000),
   AUTH_ROTATION_RECEIPT_WINDOW_SECONDS: Joi.number().integer().min(30).max(600).default(120),
 
   // Third-party API key (static key for the public /agents endpoint, X-API-Key header)
@@ -390,7 +391,18 @@ export const configValidationSchema = Joi.object({
   // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
+  PLAYBOOK_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  AGENT_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  PLAYBOOK_MCP_JWT_AUDIENCE: Joi.string().default('mcp-playbook'),
+  AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
+  MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
+  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
+  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
+  SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
@@ -467,4 +479,6 @@ export const configValidationSchema = Joi.object({
   WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
   WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
   WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
-});
+})
+  // Auth throttling/lockout overrides (see auth.config.ts): AUTH_RATE_LIMIT_<KEY>_LIMIT|_WINDOW_SECONDS, AUTH_LOCKOUT_*
+  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1));

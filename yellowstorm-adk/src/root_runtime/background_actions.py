@@ -14,9 +14,12 @@ from functools import wraps
 from google.adk.tools import FunctionTool
 from google.adk.sessions.state import State
 from sqlalchemy import text
+from yellowmind_observability import get_logger
 
 from src.root_runtime.background_sessions import FencedBackgroundSessionService, _guard
 from src.root_runtime.leaf_tools import is_leaf_tool
+
+logger = get_logger(__name__)
 
 
 class BackgroundActionUnknown(BaseException):
@@ -77,10 +80,13 @@ class BackgroundActionLedger:
                 {'execution': grant.execution_id, 'call': ledger_call, 'tool': tool_name,
                     'digest': digest, 'owner': grant.owner, 'fence': grant.fence})
             await connection.run_sync(self.guard)
+        phase = 'invoke'
         try:
             result = await invoke()
+            phase = 'authorize_receipt'
             if self.authorize is not None:
                 await self.authorize()
+            phase = 'serialize_receipt'
             state_snapshot = native_state.to_dict() if isinstance(native_state, State) else native_state or {}
             evidence_state = {key: value for key, value in state_snapshot.items() if key == evidence_key
                 and isinstance(value, list) and all(isinstance(item, dict) and item.get('executionId') == producer_id
@@ -89,6 +95,7 @@ class BackgroundActionLedger:
                 separators=(',', ':'), allow_nan=False)
             if len(receipt.encode()) > 262144:
                 raise ValueError('Background action receipt exceeds durable limit')
+            phase = 'commit_receipt'
             async with self.service.db_engine.begin() as connection:
                 await connection.run_sync(self.guard)
                 changed = await connection.execute(text('''UPDATE conversation.root_background_actions
@@ -104,6 +111,9 @@ class BackgroundActionLedger:
         except BaseException as error:
             # A lost receipt or tool exception can follow a successful external
             # write. The committed intent remains unresolved and blocks replay.
+            logger.error('tool.call.failed', run_id=producer_id, job_id=grant.execution_id,
+                conversation_id=grant.conversation_id, tool_name=tool_name,
+                operation=phase, dependency='background_action_ledger', error=error)
             if isinstance(error, BackgroundActionUnknown):
                 raise
             raise BackgroundActionUnknown('External action outcome could not be confirmed') from error

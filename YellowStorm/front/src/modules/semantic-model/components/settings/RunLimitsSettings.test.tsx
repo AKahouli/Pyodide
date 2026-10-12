@@ -5,6 +5,9 @@ import { OPEN_KEY } from './SettingsPane';
 
 const api = vi.hoisted(() => ({ getAdminRunLimits: vi.fn(), updateAdminRunLimits: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
+// The reading pane's search hint reads the index settings; these tests do not look at it.
+vi.mock('../../searchSettings', async (importOriginal) => ({
+  ...(await importOriginal<object>()), searchSettingsApi: { getAdminIndex: vi.fn().mockRejectedValue(new Error('not under test')) } }));
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -54,6 +57,30 @@ describe('RunLimitsSettings AI calls pane', () => {
   });
 });
 
+describe('RunLimitsSettings saving pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'save-data': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { purgeTimeoutSeconds: 600 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the batch size and the time per batch with the other limits, and refuses values out of range', async () => {
+    render(<RunLimitsSettings group='save' />);
+    const rows = await screen.findByLabelText('settings.runLimits.saveBatchRows');
+    const seconds = screen.getByLabelText('settings.runLimits.saveStatementSeconds');
+    expect(screen.queryByLabelText('settings.runLimits.purgeTimeoutSeconds')).not.toBeInTheDocument();
+
+    fireEvent.change(rows, { target: { value: '99' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(seconds, { target: { value: '601' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '10000' } });
+    fireEvent.change(seconds, { target: { value: '120' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ purgeTimeoutSeconds: 600, saveBatchRows: 10000, saveStatementSeconds: 120 }));
+  });
+});
+
 describe('RunLimitsSettings start-over pane', () => {
   beforeEach(() => {
     localStorage.setItem(OPEN_KEY, JSON.stringify({ rebuild: true }));
@@ -71,5 +98,99 @@ describe('RunLimitsSettings start-over pane', () => {
     fireEvent.change(time, { target: { value: '900' } });
     fireEvent.click(screen.getByText('settings.save'));
     await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxAiParallelCalls: 12, purgeTimeoutSeconds: 900 }));
+  });
+});
+
+describe('RunLimitsSettings graph pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'graph-build': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { saveBatchRows: 5000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the graph batch size between 100 and 20000 with the other limits', async () => {
+    render(<RunLimitsSettings group='graph' />);
+    const rows = await screen.findByLabelText('settings.runLimits.projectionBatchRows');
+    expect(screen.queryByLabelText('settings.runLimits.saveBatchRows')).not.toBeInTheDocument();
+    expect(rows).toHaveAttribute('placeholder', '5000');
+
+    fireEvent.change(rows, { target: { value: '99' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20001' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20000' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ saveBatchRows: 5000, projectionBatchRows: 20000 }));
+  });
+});
+
+describe('RunLimitsSettings search index pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'index-build': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { saveBatchRows: 5000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('saves the embedding batch, parallel calls, call time and records per step with the other limits', async () => {
+    render(<RunLimitsSettings group='index' />);
+    const batch = await screen.findByLabelText('settings.runLimits.embeddingBatchSize');
+    const calls = screen.getByLabelText('settings.runLimits.embeddingParallelCalls');
+    const seconds = screen.getByLabelText('settings.runLimits.embeddingTimeoutSeconds');
+    const rows = screen.getByLabelText('settings.runLimits.indexReadPageRows');
+    expect(screen.queryByLabelText('settings.runLimits.saveBatchRows')).not.toBeInTheDocument();
+    // The built-in values are the placeholders; nothing is saved for a field left empty.
+    expect(batch).toHaveAttribute('placeholder', '32');
+    expect(calls).toHaveAttribute('placeholder', '4');
+
+    fireEvent.change(batch, { target: { value: '257' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(batch, { target: { value: '64' } });
+    fireEvent.change(calls, { target: { value: '17' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(calls, { target: { value: '8' } });
+    fireEvent.change(seconds, { target: { value: '4' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(seconds, { target: { value: '120' } });
+    fireEvent.change(rows, { target: { value: '499' } });
+    expect(screen.getByText('settings.save').closest('button')).toBeDisabled();
+    fireEvent.change(rows, { target: { value: '20000' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({
+      saveBatchRows: 5000, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 120, indexReadPageRows: 20000 }));
+  });
+});
+
+describe('RunLimitsSettings mail and attachment reading pane', () => {
+  beforeEach(() => {
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'email-extraction': true }));
+    api.getAdminRunLimits.mockResolvedValue({ configured: { maxRecordsPerRun: 20000 }, runLimits: {} });
+    api.updateAdminRunLimits.mockImplementation(async (limits) => ({ configured: limits, runLimits: {} }));
+  });
+
+  it('shows only the reading limits with their built-in values, and saves them with the other limits', async () => {
+    render(<RunLimitsSettings group='extraction' />);
+    const attachmentChars = await screen.findByLabelText('settings.runLimits.maxAttachmentChars');
+    expect(attachmentChars).toHaveAttribute('placeholder', '100000');
+    expect(screen.getByLabelText('settings.runLimits.maxEmlMb')).toHaveAttribute('placeholder', '100');
+    expect(screen.queryByLabelText('settings.runLimits.maxRecordsPerRun')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('settings.runLimits.parserMemoryMb')).not.toBeInTheDocument();
+
+    fireEvent.change(attachmentChars, { target: { value: '40000' } });
+    fireEvent.change(screen.getByLabelText('settings.runLimits.maxNesting'), { target: { value: '0' } });
+    fireEvent.click(screen.getByText('settings.save'));
+    // Zero nesting is a choice (attached e-mails are listed, not opened), not an empty field.
+    await waitFor(() => expect(api.updateAdminRunLimits).toHaveBeenCalledWith({ maxRecordsPerRun: 20000, maxAttachmentChars: 40000, maxNesting: 0 }));
+  });
+
+  it('refuses values outside the ranges the runtime accepts', async () => {
+    render(<RunLimitsSettings group='extraction' />);
+    const save = (await screen.findByText('settings.save')).closest('button')!;
+    for (const [key, value] of [['maxNesting', '6'], ['maxPdfPages', '0'], ['maxSheetCells', '999'], ['maxAttachmentChars', '4999'], ['maxInflatedMb', '1025']]) {
+      const field = screen.getByLabelText(`settings.runLimits.${key}`);
+      fireEvent.change(field, { target: { value } });
+      expect(save).toBeDisabled();
+      fireEvent.change(field, { target: { value: '' } });
+      expect(save).not.toBeDisabled();
+    }
   });
 });

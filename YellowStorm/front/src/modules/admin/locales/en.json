@@ -577,6 +577,8 @@
   "defaultAgents.form.instruction.label": "Additional Instruction",
   "defaultAgents.form.instruction.placeholder": "Additional instructions (optional)",
   "defaultAgents.form.ignorePreprompt": "Ignore agent type pre-prompt",
+  "defaultAgents.form.genUiEnabled": "Generative UI",
+  "defaultAgents.form.genUiEnabledHint": "Adds the interactive answer format (cards, charts, tables, source chips) to this agent's instructions and shows its answers with it.",
   "defaultAgents.form.active.label": "Active",
   "defaultAgents.form.active.description": "Inactive agents will not be available.",
   "defaultAgents.form.defaultForType.label": "Default for this type",

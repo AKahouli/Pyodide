@@ -4,8 +4,9 @@ import { Loader2, CheckCircle2, AlertCircle, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
-import { exchangeOAuthToken } from '../api';
+import { exchangeOAuthLogin } from '../api';
 import { AUTH_STORAGE_KEYS } from '@/lib/api/config';
+import { setAccessToken } from '@/lib/api/access-token-store';
 import { scheduleProactiveRefresh } from '@/lib/api/client';
 
 export function OAuthCallbackPage() {
@@ -16,7 +17,7 @@ export function OAuthCallbackPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'link_required' | 'linked' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
-  // Guard against StrictMode double-mount consuming the single-use token twice
+  // Guard against StrictMode double-mount consuming the single-use exchange cookie twice
   const exchangeStartedRef = useRef(false);
 
   // Resolve error message: try specific key, fall back to default
@@ -30,7 +31,7 @@ export function OAuthCallbackPage() {
   }, [errorMessage, t]);
 
   useEffect(() => {
-    const token = searchParams.get('token');
+    const loginSuccess = searchParams.get('login') === 'success';
     const error = searchParams.get('error');
     const linkRequired = searchParams.get('link_required');
     const linked = searchParams.get('linked');
@@ -53,10 +54,10 @@ export function OAuthCallbackPage() {
       return;
     }
 
-    if (token) {
+    if (loginSuccess) {
       if (exchangeStartedRef.current) return;
       exchangeStartedRef.current = true;
-      handleTokenExchange(token);
+      void handleLoginExchange();
       return;
     }
 
@@ -64,11 +65,11 @@ export function OAuthCallbackPage() {
     setErrorMessage('missing_params');
   }, [searchParams]);
 
-  async function handleTokenExchange(token: string) {
+  async function handleLoginExchange() {
     try {
-      const response = await exchangeOAuthToken(token);
-      // Store access token
-      localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
+      const response = await exchangeOAuthLogin();
+      // Access token stays in memory only
+      setAccessToken(response.accessToken);
       scheduleProactiveRefresh(response.accessToken);
       if (response.user) {
         localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));

@@ -1,5 +1,5 @@
 import { Inject } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { isObjectId, newObjectId, normalizeObjectId, stripNul } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
@@ -54,20 +54,22 @@ export class PgEvaluationDatasetStore implements EvaluationDatasetStore {
     return rows.map(toRecord);
   }
 
-  async findById(id: string): Promise<DatasetRecord | null> {
-    if (!isObjectId(id)) return null;
+  async findByIdForCreator(id: string, userId: string): Promise<DatasetRecord | null> {
+    if (!isObjectId(id) || !isObjectId(userId)) return null;
     const [row] = await this.q
       .select()
       .from(schema.agentEvaluationDatasets)
-      .where(eq(schema.agentEvaluationDatasets.id, normalizeObjectId(id)))
+      .where(and(eq(schema.agentEvaluationDatasets.id, normalizeObjectId(id)),
+        eq(schema.agentEvaluationDatasets.createdBy, normalizeObjectId(userId))))
       .limit(1);
     return row ? toRecord(row) : null;
   }
 
-  async deleteById(id: string): Promise<void> {
-    if (!isObjectId(id)) return;
+  async deleteByIdForCreator(id: string, userId: string): Promise<void> {
+    if (!isObjectId(id) || !isObjectId(userId)) return;
     await this.q
       .delete(schema.agentEvaluationDatasets)
-      .where(eq(schema.agentEvaluationDatasets.id, normalizeObjectId(id)));
+      .where(and(eq(schema.agentEvaluationDatasets.id, normalizeObjectId(id)),
+        eq(schema.agentEvaluationDatasets.createdBy, normalizeObjectId(userId))));
   }
 }

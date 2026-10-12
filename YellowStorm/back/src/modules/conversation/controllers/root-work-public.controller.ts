@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
-import { RootStopDto, RootWorkCursorDto } from '../dto/root-work-public.dto';
+import { RootStopDto, RootWorkCursorDto, RootJobCancelDto } from '../dto/root-work-public.dto';
 import { RootWorkPublicService } from '../root-work/root-work-public.service';
 
 @ApiTags('Conversations')
@@ -25,5 +25,11 @@ export class RootWorkPublicController {
   @Post('stop')
   stop(@Param('id') id: string, @CurrentUser() user: { _id: string }, @Body() request: RootStopDto) {
     return this.work.stop(id, user._id.toString(), request);
+  }
+
+  @Post('jobs/:executionId/cancel')
+  cancel(@Param('id') id: string, @Param('executionId') executionId: string,
+    @CurrentUser() user: { _id: string }, @Body() request: RootJobCancelDto) {
+    return this.work.cancel(id, user._id.toString(), executionId, request);
   }
 }

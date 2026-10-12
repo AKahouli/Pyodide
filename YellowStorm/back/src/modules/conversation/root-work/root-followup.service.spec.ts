@@ -14,7 +14,7 @@ describe('Current-authority synthesis-only follow-up', () => {
       resultPayload: { nativeState: childState } };
     const job = { actorId: 'owner', requestDigest: 'request', nativeSessionId: 'session', fence: 2,
       nativeInvocationId: 'native', initialInputEventId: 'initial', deadline: new Date(Date.now() + 60000) };
-    const store = { candidates: jest.fn().mockResolvedValue([]), completed: jest.fn().mockResolvedValue([]),
+    const store = { releaseLegacyWriters: jest.fn(), candidates: jest.fn().mockResolvedValue([]), completed: jest.fn().mockResolvedValue([]),
       reserve: jest.fn(), publish: jest.fn(), readResult: jest.fn().mockResolvedValue({ text: 'Bounded result' }),
       owned: jest.fn().mockResolvedValue({ root, state: childState, execution: followup, job }) };
     const work = { getExecution: jest.fn(async (id: string) => id === 'root' ? root : followup),

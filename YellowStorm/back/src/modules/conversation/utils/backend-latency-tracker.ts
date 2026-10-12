@@ -13,7 +13,12 @@ export type BackendPreAdkStage =
   | 'streamBootstrapMs'
   | 'conversationContextLoadMs'
   | 'workspaceAgentResolutionMs'
+  | 'rootDelegationResolutionMs'
+  | 'rootBackgroundReadinessMs'
+  | 'rootExecutionAdmissionMs'
   | 'supplementalContextAssemblyMs'
+  | 'rootNativeStateRecordMs'
+  | 'rootSessionSeedMs'
   | 'grpcPayloadPreparationMs';
 
 const BACKEND_PRE_ADK_STAGES: readonly BackendPreAdkStage[] = [
@@ -23,7 +28,12 @@ const BACKEND_PRE_ADK_STAGES: readonly BackendPreAdkStage[] = [
   'streamBootstrapMs',
   'conversationContextLoadMs',
   'workspaceAgentResolutionMs',
+  'rootDelegationResolutionMs',
+  'rootBackgroundReadinessMs',
+  'rootExecutionAdmissionMs',
   'supplementalContextAssemblyMs',
+  'rootNativeStateRecordMs',
+  'rootSessionSeedMs',
   'grpcPayloadPreparationMs',
 ];
 

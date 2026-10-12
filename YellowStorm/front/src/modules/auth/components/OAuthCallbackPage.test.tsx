@@ -42,9 +42,9 @@ describe('OAuthCallbackPage', () => {
     mockNavigate.mockReset();
   });
 
-  describe('token exchange flow', () => {
-    it('should show loading state while exchanging token', () => {
-      mockSearchParams = new URLSearchParams({ token: 'temp-token-123' });
+  describe('login exchange flow', () => {
+    it('should show loading state while exchanging the login', () => {
+      mockSearchParams = new URLSearchParams({ login: 'success' });
       // Don't resolve the API call yet
       mockApiClient.post.mockReturnValue(new Promise(() => {}));
 
@@ -53,8 +53,8 @@ describe('OAuthCallbackPage', () => {
       expect(screen.getByText('oauthCallback.loading')).toBeInTheDocument();
     });
 
-    it('should exchange token and redirect on success', async () => {
-      mockSearchParams = new URLSearchParams({ token: 'temp-token-123' });
+    it('should exchange the login and redirect on success', async () => {
+      mockSearchParams = new URLSearchParams({ login: 'success' });
       mockApiClient.post.mockResolvedValue({
         data: {
           data: {
@@ -69,10 +69,7 @@ describe('OAuthCallbackPage', () => {
       renderWithProviders(<OAuthCallbackPage />);
 
       await waitFor(() => {
-        expect(mockApiClient.post).toHaveBeenCalledWith(
-          '/auth/providers/exchange',
-          { token: 'temp-token-123' },
-        );
+        expect(mockApiClient.post).toHaveBeenCalledWith('/auth/providers/exchange');
       });
 
       await waitFor(() => {
@@ -80,8 +77,19 @@ describe('OAuthCallbackPage', () => {
       });
     });
 
+    it('should ignore a token query param and never call the exchange endpoint', async () => {
+      mockSearchParams = new URLSearchParams({ token: 'leaked-in-url' });
+
+      renderWithProviders(<OAuthCallbackPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('oauthCallback.error.title')).toBeInTheDocument();
+      });
+      expect(mockApiClient.post).not.toHaveBeenCalled();
+    });
+
     it('should show error when exchange fails', async () => {
-      mockSearchParams = new URLSearchParams({ token: 'bad-token' });
+      mockSearchParams = new URLSearchParams({ login: 'success' });
       mockApiClient.post.mockRejectedValue(new Error('Failed'));
 
       renderWithProviders(<OAuthCallbackPage />);
@@ -142,8 +150,8 @@ describe('OAuthCallbackPage', () => {
   });
 
   describe('StrictMode protection', () => {
-    it('should not call exchange twice for the same token', async () => {
-      mockSearchParams = new URLSearchParams({ token: 'single-use-token' });
+    it('should not call exchange twice for the same login', async () => {
+      mockSearchParams = new URLSearchParams({ login: 'success' });
       mockApiClient.post.mockResolvedValue({
         data: {
           data: {

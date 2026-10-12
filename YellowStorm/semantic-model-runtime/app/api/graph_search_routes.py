@@ -27,11 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.connect import MAX_LINKS, MAX_PATHS, connect
 from app.graph_search.embeddings import profile_from_env
-from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
-                                      settings_for_revision)
+from app.graph_search.indexer import (CANCELLED_CODE, IndexUnavailable, SYSTEM_ACTOR, request_index,
+                                      request_index_quietly, settings_for_revision)
 from app.graph_search.record_query import compile_query, diagnose, field_keys_by_concept, overview, run_query
 from app.graph_search.retrieval import describe_entity, find_seeds, is_visible, resolve_concepts, resolve_relations
-from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
+from app.graph_search.settings import IndexBuildSettings, IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
 from app.persistence import population_store as store
@@ -49,10 +49,19 @@ class _Pinned(BaseModel):
     actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
     model_id: str = Field(alias="modelId", min_length=1, max_length=200)
     environment: Environment = "production"
-    allowed_workspace_ids: list[str] | None = Field(default=None, alias="allowedWorkspaceIds",
-                                                    max_length=2000)
+    # The caller computes this from the actor's current workspace access. Required: a missing
+    # or null scope is a validation failure, never "every workspace". An empty list is honest —
+    # only records read from no workspace at all (typed by hand) show.
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=2000)
     expected_data_revision_id: str | None = Field(default=None, alias="expectedDataRevisionId",
                                                   max_length=200)
+
+    @field_validator("allowed_workspace_ids")
+    @classmethod
+    def _bounded_workspaces(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 200 for item in value):
+            raise ValueError("workspace id must be 1..200 characters")
+        return value
 
 
 class RequestSettings(BaseModel):
@@ -62,6 +71,8 @@ class RequestSettings(BaseModel):
 
     index: IndexSettings | None = None
     search: SearchSettings | None = None
+    # How an index is built (performance only; never part of an index's identity).
+    build: IndexBuildSettings | None = None
 
 
 class SearchQuery(_Pinned):
@@ -310,8 +321,9 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         index_settings = await settings_for_revision(pool, revision_id, profile, settings.index)
         fingerprint = index_fingerprint(profile.fingerprint, index_settings)
         generation = await search_store.get_generation(pool, revision_id, fingerprint)
-        if generation is None or generation["state"] == "failed":
-            await request_index_quietly(pool, _admit(request), revision_id, index_settings)
+        if generation is None or (generation["state"] == "failed"
+                                  and generation.get("last_error_code") != CANCELLED_CODE):
+            await request_index_quietly(pool, _admit(request), revision_id, index_settings, settings.build)
             generation = await search_store.get_generation(pool, revision_id, fingerprint)
     index = search_store.public_generation(generation)
     if profile is None:
@@ -323,8 +335,9 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         if fallback is not None:
             searched = fallback
             index["fallback"] = {"indexId": fallback["index_id"], "sameData": fallback["data_revision_id"] == revision_id}
+            # The records searched are the fallback's; how the new build is going stays the new build's.
             index.update({key: value for key, value in search_store.public_generation(fallback).items()
-                          if key.endswith("Count")})
+                          if key.endswith("Count") and key not in search_store.BUILD_COUNT_KEYS})
     base = {**_pinned(binding, command.environment), "index": index, "concepts": concepts,
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),
@@ -617,12 +630,90 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
     binding = await _pin(pool, command.model_id, command.environment, None)
     try:
         requested = await request_index(pool, admit, revision_id=binding["data_revision_id"],
-                                        settings=command.settings.index if command.settings else None)
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
     except IndexUnavailable as exc:
         raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
                             detail=exc.code) from exc
     return {"modelId": command.model_id, "environment": command.environment,
             "dataRevisionId": binding["data_revision_id"],
+            "index": search_store.public_generation(requested["generation"]),
+            "jobId": requested["jobId"]}
+
+
+class IndexStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    model_id: str = Field(alias="modelId", min_length=1, max_length=200)
+    environment: Environment = "draft"
+
+
+def _writer(request: Request):  # type: ignore[no-untyped-def]
+    service = getattr(request.app.state, "job_service", None)
+    if service is None or os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") != "true":
+        raise HTTPException(status_code=503, detail="runtime_writes_disabled")
+    return service
+
+
+async def _stop_generation(pool, service, generation: dict) -> tuple[dict | None, dict | None]:  # type: ignore[no-untyped-def]
+    """Stop a queued or indexing generation: its job is asked to stop, and the generation ends here
+    (``failed`` / ``cancelled``, keeping what is embedded) unless a worker answering live holds it,
+    which then ends it itself at its next batch. A worker whose lease ran out (gone, or stuck) is not
+    waited for. Returns the generation as it is now and the job."""
+    job = (await service.repository.request_cancel(generation["job_id"], SYSTEM_ACTOR)
+           if generation.get("job_id") else None)
+    if job is None or job["state"] != "cancel_requested":
+        await search_store.fail_generation(pool, generation["index_id"], CANCELLED_CODE)
+    return await search_store.get_generation_by_id(pool, generation["index_id"]), job
+
+
+@router.post("/indexes/stop", status_code=status.HTTP_200_OK)
+async def stop_search_index(command: IndexStop, request: Request) -> dict[str, object]:
+    """Stop the build of the search index of the bound data (queued or indexing). A build not yet
+    picked up, or whose worker no longer answers (its lease ran out), ends at once; a running one ends
+    at its next batch. The generation then fails with the code ``cancelled``, keeping what is embedded:
+    only an explicit index request builds it again."""
+    pool = _pool(request)
+    service = _writer(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    base = {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"]}
+    if generation is None or generation["state"] not in ("queued", "indexing"):
+        return {**base, "stopped": False, "index": search_store.public_generation(generation)}
+    generation, job = await _stop_generation(pool, service, generation)
+    return {**base, "stopped": True, "index": search_store.public_generation(generation),
+            "jobId": job["jobId"] if job else None}
+
+
+@router.post("/indexes/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_search_index(command: IndexCommand, request: Request) -> dict[str, object]:
+    """Stop a build and start a new one: what is already embedded is reused. A build whose worker still
+    answers is only asked to stop (``restarted`` false): restarting it would wait for that worker."""
+    pool = _pool(request)
+    service = _writer(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    if generation is not None and generation["state"] in ("queued", "indexing"):
+        generation, _ = await _stop_generation(pool, service, generation)
+        if generation is not None and generation["state"] in ("queued", "indexing"):
+            return {"modelId": command.model_id, "environment": command.environment,
+                    "dataRevisionId": binding["data_revision_id"], "restarted": False,
+                    "index": search_store.public_generation(generation), "jobId": generation.get("job_id")}
+    try:
+        requested = await request_index(pool, service.admit, revision_id=binding["data_revision_id"],
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
+    except IndexUnavailable as exc:
+        raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
+                            detail=exc.code) from exc
+    return {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"], "restarted": True,
             "index": search_store.public_generation(requested["generation"]),
             "jobId": requested["jobId"]}
 
