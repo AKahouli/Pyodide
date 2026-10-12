@@ -6,17 +6,19 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 | --- | --- | --- |
 | Agent harness and knowledge workflow | [ADR-0001](decisions/ADR-0001-agent-knowledge.md), [ADR-0002](decisions/ADR-0002-fast-validation-and-parallel-work.md), [ADR-0003](decisions/ADR-0003-autonomy-and-qa-sign-in.md), [ADR-0004](decisions/ADR-0004-private-qa-and-regression-fixtures.md) (current browser policy) | `AGENTS.md`, OpenCode user settings |
 | Task checkpoints, interruption/resume, and reuse before edits | [ADR-0005](decisions/ADR-0005-task-checkpoints-and-reuse-gates.md), [Harness guide](../../tools/opencode-harness/README.md) | native plugin hooks, SQLite ownership, scoped diffs, and harness tests |
-| Frontend (`YellowStorm/front/**`) | [Frontend guidelines](../../YellowStorm/front/FRONTEND_GUIDELINES.md) (matching sections) | frontend source and tests |
+| Frontend (`YellowStorm/front/**`) | [Scoped instructions and topic links](../../YellowStorm/front/AGENTS.md); read only matching references | frontend source and tests |
 | Browser QA accounts/data and user-reported regressions | [QA fixtures](testing/qa-fixtures.md), [E2E README](../../YellowStorm/front/tests/e2e/README.md) | run context, auth setup, fixture teardown, and regression tests |
-| Backend (`YellowStorm/back/**`) | [Backend guidelines](../../YellowStorm/back/BACKEND_GUIDELINES.md) (matching sections) | backend source and tests |
+| Backend (`YellowStorm/back/**`) | [Scoped instructions and topic links](../../YellowStorm/back/AGENTS.md); read only matching references | backend source and tests |
 | Agent runtime (`yellowstorm-adk/**`) | [ADK README](../../yellowstorm-adk/README.md), [gRPC README](../../yellowstorm-adk/grpc/README.md) | Python source, tests, and protos |
 | Playbook MCP (`mcp/mcp-playbook/**`) | [Playbook MCP README](../../mcp/mcp-playbook/README.md) | MCP source, ADK flow proto, and callers |
 | Conversation (`YellowStorm/front/src/modules/conversation/**`, matching backend routes) | [Conversation README](../../YellowStorm/front/src/modules/conversation/README.md), [Postgres migration](../../YellowStorm/back/docs/migrations/conversation-postgres-phase-1.md) | frontend and backend tests |
 | Authorization (`YellowStorm/back/src/modules/authorization/**`) | [Authorization README](../../YellowStorm/back/src/modules/authorization/README.md) | guards, callers, and permission tests |
-| Cross-service REST, gRPC, and proto | Both guideline files (contract sections) | sender, receiver, schemas, and protos |
+| Cross-service REST, gRPC, and proto | Matching API/contract references linked by both scoped instruction files | sender, receiver, schemas, and protos |
 | Observability (`contracts/observability/**`, logging changes) | [Logging contract](../observability/logging-contract.md), [event registry README](../../contracts/observability/README.md) | `node scripts/observability/check-policy.mjs` |
 
 ## Record rules
+
+Documentation layout and scoped edit evidence: [ADR-0006](decisions/ADR-0006-scoped-instructions-and-topic-references.md).
 
 - Put a durable choice in `decisions/ADR-NNNN-topic.md` with status, scope, source paths, decision, rationale, and verification. Supersede a decision with a new record; preserve the old one.
 - Link a contract to its executable schema, proto, test, or owning source. Do not duplicate field definitions that code already owns.

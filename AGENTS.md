@@ -17,7 +17,7 @@
 | Agent runtime | `yellowstorm-adk` (Python) | `conda run -n meta pytest <path> -q` |
 
 Python always uses conda `meta` non-interactively. There is no Poetry project.
-Read only relevant sections of `YellowStorm/front/FRONTEND_GUIDELINES.md` or `YellowStorm/back/BACKEND_GUIDELINES.md`; find headings first. Cross-boundary changes require the backend contract/gRPC and frontend API sections.
+Read the short scoped `YellowStorm/front/AGENTS.md` or `YellowStorm/back/AGENTS.md`, then only the linked reference needed for the task. Cross-boundary changes require the backend contract/gRPC and frontend API references; verify both implementations.
 
 ## Context and Token Budget
 

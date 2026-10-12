@@ -1,0 +1,41 @@
+# UI, forms and internationalisation
+
+Read only the sections relevant to the task. Paths such as `src/` are relative to `YellowStorm/front/`; verify descriptive module examples and recorded debt against current source. Essential edit rules are in [frontend AGENTS.md](../../../YellowStorm/front/AGENTS.md).
+
+## Forms
+
+`react-hook-form` + `zod` + shadcn `<Form>` primitives. Zod schema first, type with `z.infer`. Use `<FormField>` / `<FormMessage>` — don't render errors manually. Use `scrollToFirstError` from `@/lib/form-utils` for long forms on submit failure. Validation messages map to translation keys where user-facing.
+
+**Autosaved editors:** keep editable form data in a single draft object (or a form library state object), not scattered independent `useState` fields. Autosave effects should depend on that single draft object so adding a field cannot be missed in a dependency list. Standalone state is acceptable only for UI-only concerns such as dialog open state, loading flags, selected tabs, or transient search input.
+
+**Delta patch saves (playbook):** when `PLAYBOOK_DELTA_AUTOSAVE_ENABLED` is on, autosave sends `PATCH /playbooks/:id/delta` with only changed fields instead of the full object. Fall back to full save on 4xx/5xx. The autosave XState machine manages the retry/fallback logic.
+
+When adding a new editable field to an autosaved editor, update all layers in one change: frontend type, draft initialization, change handler/draft patch, save payload, backend DTO/schema/serializer when persisted, and tests where the editor has coverage.
+
+## UI & Styling
+
+- Use primitives in `src/components/ui/` first. New primitives go there, not into a module.
+- Merge classNames with `cn()` from `@/lib/utils` (runs `clsx` then `tailwind-merge`).
+- Variants via CVA (`class-variance-authority`), expose `VariantProps<typeof …>` on props.
+- `asChild` (Radix Slot) preferred over wrapping.
+- Theming: light/dark via class on `<html>`. Color themes: `default | yellowsys | claude | kpmg` in `COLOR_THEMES`. Use Tailwind semantic tokens (`bg-primary`, `text-muted-foreground`), never hardcode brand colors.
+- Icons: default to `lucide-react`; brand/custom SVGs in `src/components/icons.tsx` under `<Icons.*>`. `<AppLogo />` is theme-aware.
+
+## Internationalisation (i18n)
+
+**No hardcoded user-facing string. Ever.** Every label, placeholder, tooltip, toast, validation message, and aria-label goes through i18n.
+
+```ts
+const { t } = useModuleTranslation('playbook');
+return <Button>{t('list.createButton')}</Button>;
+```
+
+Namespaces: `common`, `errors`, `auth` always loaded; module namespaces lazy-loaded on first use. Keys are **flat with dot-notation** (`"store.errors.notFound"`). Adding strings: add to both `en.json` and `fr.json`. Shared strings from `common`; error codes resolved automatically by `getErrorMessage(code)`.
+
+## Notifications (Toasts)
+
+Always go through `@/lib/notifications`: `showSuccess`, `showError`, `showWarning`, `showInfo`, `showLoading`, `showPromise`. **Do not** import `toast` from `sonner` directly. The global `<Toaster />` is in `App.tsx` — don't add another.
+
+## Performance
+
+Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise expensive child props with `useMemo`; use `memo` only when a profiler shows hot re-renders. Virtualise long lists with `virtua`. Debounce/throttle high-frequency updates (SSE chunks, resize, search). Avoid large Markdown/code in the critical path.

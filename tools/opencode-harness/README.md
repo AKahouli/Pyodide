@@ -23,7 +23,7 @@ at `docs/agent-context/README.md`.
 
 1. `sdlc_checkpoint`: save goal, 2-5 acceptance criteria, execution choice,
    decisions, completed work, blockers, pending task IDs, and exact next action.
-2. Read current relevant sections of the context index, routed guidelines,
+2. Read the context index, short routed scoped instructions,
    existing targets, and the closest existing implementation/record. Successful
    native `Read` calls establish hash-bound receipts; shell reads do not.
 3. `sdlc_prepare`: name exact owned targets, documents, sources, and a reuse

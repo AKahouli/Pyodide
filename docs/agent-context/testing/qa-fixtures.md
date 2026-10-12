@@ -8,7 +8,7 @@ acceptance criteria to the required role and smallest observable dataset.
 | Browser smoke tests | [E2E README](../../../YellowStorm/front/tests/e2e/README.md) | one unique run ID per CLI run |
 | Browser auth/artifacts | [Run context](../../../YellowStorm/front/tests/e2e/run-context.ts), [auth setup](../../../YellowStorm/front/tests/e2e/auth.setup.ts) | independent state/report paths per run; credentials supplied externally |
 | Worky records | [Fixtures](../../../YellowStorm/front/tests/e2e/fixtures.ts) | fresh stream per spec, scoped teardown |
-| Frontend behavioral tests | [Testing guidelines](../../../YellowStorm/front/FRONTEND_GUIDELINES.md) section 14 | colocated tests; module `test-utils.ts` where present |
+| Frontend behavioral tests | [Verification reference](../frontend/verification.md) | colocated tests; module `test-utils.ts` where present |
 
 ## Browser QA handoff
 

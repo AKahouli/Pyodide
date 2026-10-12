@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fork, execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { once } from 'node:events';
 import { openHarness, editTargets } from '../runtime/lib/sdlc-core.mjs';
@@ -10,6 +10,30 @@ import { fixture } from './fixture.mjs';
 function start(harness, id) { harness.checkpoint(id, { goal: 'Improve existing behavior', acceptance: ['Required behavior passes'], nextAction: 'Extend existing function', status: 'active' }); }
 function reads(harness, id, files = ['docs/agent-context/README.md', 'guidelines.md', 'src/a.js']) { for (const file of files) harness.noteRead(id, file, harness.fingerprint(file)); }
 function prepare(harness, id, target = 'src/a.js') { return harness.prepare(id, { targets: [target], documents: ['docs/agent-context/README.md', 'guidelines.md'], sources: [target], reuseDecision: 'Extend the current implementation.' }); }
+
+test('repository policy requires short scoped instructions for frontend and backend edits', async () => {
+  const f = fixture(); let h;
+  try {
+    const policy = JSON.parse(readFileSync(new URL('../policy.json', import.meta.url), 'utf8'));
+    writeFileSync(path.join(f.root, 'tools/opencode-harness/policy.json'), JSON.stringify(policy));
+    for (const area of ['front', 'back']) {
+      mkdirSync(path.join(f.root, `YellowStorm/${area}/src`), { recursive: true });
+      writeFileSync(path.join(f.root, `YellowStorm/${area}/AGENTS.md`), '# Scoped instructions\nRead relevant linked topics.\n');
+      writeFileSync(path.join(f.root, `YellowStorm/${area}/src/existing.js`), 'export const value = 1;\n');
+    }
+    h = await openHarness(f.root);
+    for (const area of ['front', 'back']) {
+      const target = `YellowStorm/${area}/src/existing.js`, scoped = `YellowStorm/${area}/AGENTS.md`;
+      start(h, area); reads(h, area, ['docs/agent-context/README.md', target]);
+      const input = { targets: [target], documents: ['docs/agent-context/README.md'], sources: [target], reuseDecision: 'Extend existing behavior.' };
+      assert.throws(() => h.prepare(area, input), /required documentation: YellowStorm\/.*\/AGENTS.md/i);
+      reads(h, area, [scoped]); input.documents.push(scoped); h.prepare(area, input);
+      h.beforeEdit(area, [target], area); h.afterEdit(area, area);
+      writeFileSync(path.join(f.root, scoped), '# Updated scoped rules\n');
+      assert.throws(() => h.beforeEdit(area, [target], 'stale'), /Context .* changed/);
+    }
+  } finally { h?.close(); f.cleanup(); }
+});
 
 test('edits need current documentation, source reuse, target reads and ownership', async () => {
   const f = fixture(); const h = await openHarness(f.root);

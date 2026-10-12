@@ -420,7 +420,7 @@ Session create accepts `templateId` → seeds `starter_revision_id = template_<i
 (resolved by RuntimeRevisionService from the system manifest in Ceph).
 
 Public catalog (non-admin): `GET /conversation-v2/template-catalog/…`.
-Errors: `ERR_3800`–`ERR_3807` (see `BACKEND_GUIDELINES.md` + frontend `errors.json`).
+Errors: `ERR_3800`–`ERR_3807` (see [backend scoped instructions](../../../AGENTS.md) and frontend `errors.json`).
 
 ## Deploy
 
