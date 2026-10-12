@@ -855,6 +855,7 @@ export interface ShareResponse {
   title: string;
   accessToken?: string; // For public shares
   recipientEmails?: string[]; // For private shares
+  recipientUserIds?: string[];
   forkedConversationIds?: string[];
   notFound?: string[];
   invalid?: string[];

@@ -4,7 +4,7 @@ import { ConversationService } from './conversation.service';
 describe('ConversationService neutral persistence', () => {
   let conversationStore: Record<string, jest.Mock>;
   let agentRepository: Record<string, jest.Mock>;
-  let featureVisibility: { getVisibility: jest.Mock };
+  let featureVisibility: { getVisibility: jest.Mock; isEnabled: jest.Mock };
   let userLookup: { byId: jest.Mock; byIds: jest.Mock; byEmails: jest.Mock };
   let emailService: { sendBulk: jest.Mock };
   let service: ConversationService;
@@ -65,7 +65,7 @@ describe('ConversationService neutral persistence', () => {
       findByIds: jest.fn(),
       findById: jest.fn().mockResolvedValue(null),
     };
-    featureVisibility = { getVisibility: jest.fn().mockResolvedValue({ platformCopilot: true }) };
+    featureVisibility = { getVisibility: jest.fn().mockResolvedValue({ platformCopilot: true }), isEnabled: jest.fn().mockReturnValue(true) };
     userLookup = {
       byId: jest.fn(async (id: string) => ({ id, email: 'owner@example.com', firstName: '', lastName: '', status: 'active' })),
       byIds: jest.fn(async (ids: string[]) =>
@@ -402,6 +402,16 @@ describe('ConversationService neutral persistence', () => {
       await service.findAllByUser(ownerId, {});
       expect(userLookup.byIds).toHaveBeenCalledTimes(1);
       expect(userLookup.byIds).toHaveBeenCalledWith([ownerId]);
+    });
+
+    it('does not return a governed conversation after audience access is revoked', async () => {
+      const ownerId = new Types.ObjectId().toString();
+      conversationStore.list.mockResolvedValue({ records: [record({ createdBy: ownerId, runtimeMode: 'governed', governanceContext: { scopeId: 'scope-1' } })], total: 1 });
+      (service as any).audienceAuthorization = { isUserAuthorized: jest.fn().mockResolvedValue(false) };
+      const result = await service.findAllByUser(ownerId, {});
+      expect(result.conversations).toEqual([]);
+      expect(result.pagination).toMatchObject({ total: 0 });
+      expect(conversationStore.list).toHaveBeenCalledWith(expect.objectContaining({ governedAudienceEnabled: true }));
     });
   });
 

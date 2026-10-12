@@ -20,12 +20,14 @@ import { ShareDialog } from './ShareDialog';
 import { PdfExportPortal } from './PdfExportPortal';
 import { CreateGroupConversationDialog } from './CreateGroupConversationDialog';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAuth } from '@/modules/auth';
 
 export function ConversationHeader() {
   const navigate = useNavigate();
   const contextPanel = useConversationUiStore((s) => s.contextPanel);
   const setContextPanel = useConversationUiStore((s) => s.setContextPanel);
   const conversation = useCurrentConversation();
+  const { user } = useAuth();
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const typewriterConversationId = useConversationStore((s) => s.typewriterConversationId);
@@ -203,7 +205,7 @@ export function ConversationHeader() {
               </Tooltip>
             </TooltipProvider>
           ) : null}
-          {!isGoverned && (
+          {(
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -214,11 +216,11 @@ export function ConversationHeader() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
-                      <DropdownMenuItem onClick={handleShare}>
+                      {conversation.createdBy === user?.id && <><DropdownMenuItem onClick={handleShare}>
                         <Share2 className='h-3.5 w-3.5 mr-2' />
                         {t('header.tooltips.share')}
                       </DropdownMenuItem>
-                      <DropdownMenuSeparator />
+                      <DropdownMenuSeparator /></>}
                       <DropdownMenuItem onClick={() => void handleExportDocx()}>
                         <FileText className='h-3.5 w-3.5 mr-2' />
                         {t('messageActions.exportDocx')}
@@ -257,7 +259,7 @@ export function ConversationHeader() {
 
       <DeleteConversationDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} title={conversation.title} isShared={conversation.isShared} />
 
-      {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
+      {conversation.createdBy === user?.id && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} governed={isGoverned} />}
 
       {pdfBlocks && (
         <PdfExportPortal

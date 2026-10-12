@@ -6,6 +6,8 @@ export interface ConversationAccessRecord {
   memberIds: string[];
   invitedEmails: string[];
   projectId?: string | null;
+  governanceScopeId?: string;
+  runtimeMode?: 'standard' | 'governed';
 }
 
 export interface ConversationMemberRecord {
@@ -104,6 +106,7 @@ export interface CreateConversationRecord {
 
 export interface ConversationListInput {
   userId: string;
+  governedAudienceEnabled?: boolean;
   page: number;
   limit: number;
   search?: string;
@@ -133,6 +136,7 @@ export interface ConversationSummaryRecord {
   unseenMentionCount: number;
   projectId?: string | null;
   runtimeMode: ConversationRecord['runtimeMode'];
+  governanceScopeId?: string;
   runtimePurpose: ConversationRecord['runtimePurpose'];
   pinnedAgentId?: string | null;
   createdAt: Date;

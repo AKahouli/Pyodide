@@ -4,10 +4,20 @@ import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ConversationOwnerGuard } from './conversation-owner.guard';
 
 function makeGuard(conversationStore: Record<string, jest.Mock>, hasAccess = jest.fn().mockResolvedValue(false)) {
-  return new ConversationOwnerGuard(conversationStore as never, { hasAccess } as never);
+  return new ConversationOwnerGuard(conversationStore as never, { hasAccess } as never, { assertUserAuthorized: jest.fn() } as never);
 }
 
 describe('ConversationOwnerGuard', () => {
+  it('checks current governed audience even for an existing member', async () => {
+    const userId = new Types.ObjectId().toString();
+    const conversationId = new Types.ObjectId().toString();
+    const store = { findActiveAccessById: jest.fn().mockResolvedValue({ id: conversationId, createdBy: new Types.ObjectId().toString(), memberIds: [userId], invitedEmails: [], runtimeMode: 'governed', governanceScopeId: 'scope-1' }) };
+    const audience = { assertUserAuthorized: jest.fn().mockRejectedValue(new Error('revoked')) };
+    const guard = new ConversationOwnerGuard(store as never, { hasAccess: jest.fn() } as never, audience as never);
+    const context = { switchToHttp: () => ({ getRequest: () => ({ user: { _id: userId, email: 'member@example.com' }, params: { id: conversationId }, method: 'GET', url: `/conversations/${conversationId}` }) }) } as ExecutionContext;
+    await expect(guard.canActivate(context)).rejects.toBeDefined();
+    expect(audience.assertUserAuthorized).toHaveBeenCalledWith(userId, 'scope-1');
+  });
   it('allows the creator through the neutral access record', async () => {
     const userId = new Types.ObjectId().toString();
     const conversationId = new Types.ObjectId().toString();

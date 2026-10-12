@@ -43,6 +43,7 @@ import { newOwnedId } from '../persistence/owned-id';
 import { ProjectShareService } from '../../project/project-share.service';
 import { PG_POOL } from '../../postgres/postgres.constants';
 import type { Pool, PoolClient } from 'pg';
+import { GovernanceAudienceAuthorizationService } from '../../governance/services/governance-audience-authorization.service';
 
 @Injectable()
 export class ConversationService {
@@ -64,6 +65,7 @@ export class ConversationService {
     private readonly projectShareService: ProjectShareService,
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
     @Optional() private readonly workspaceShareService?: WorkspaceShareService,
+    @Optional() private readonly audienceAuthorization?: GovernanceAudienceAuthorizationService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -277,6 +279,7 @@ export class ConversationService {
       const result = await this.conversationStore.listCursor({
         userId,
         limit,
+        governedAudienceEnabled: this.featureVisibility.isEnabled('governanceScopeAudience'),
         cursor: params.cursor,
         search: params.search,
         sortBy: params.sortBy ?? 'lastMessageAt',
@@ -287,16 +290,19 @@ export class ConversationService {
         searchScope: params.searchScope,
         runtimePurpose: params.runtimePurpose,
       });
-      const users = await this.usersById(result.records.map((record) => record.createdBy));
+      const visible = (await Promise.all(result.records.map(async (record) =>
+        record.runtimeMode !== 'governed' || (record.governanceScopeId && await this.audienceAuthorization?.isUserAuthorized(userId, record.governanceScopeId)) ? record : null,
+      ))).filter((record): record is NonNullable<typeof record> => record !== null);
+      const users = await this.usersById(visible.map((record) => record.createdBy));
       return {
-        conversations: result.records.map((record) => ({
+        conversations: visible.map((record) => ({
           ...record,
           ownerName: this.userName(users.get(record.createdBy)),
           lastMessageAt: record.lastMessageAt?.toISOString(),
           createdAt: record.createdAt.toISOString(),
           updatedAt: record.updatedAt.toISOString(),
         })),
-        pagination: { mode: 'cursor', limit, hasMore: result.hasMore, nextCursor: result.nextCursor },
+        pagination: { mode: 'cursor', limit, hasMore: visible.length === result.records.length && result.hasMore, nextCursor: visible.length === result.records.length ? result.nextCursor : null },
       };
     }
     if (params.cursor !== undefined) {
@@ -308,6 +314,7 @@ export class ConversationService {
       userId,
       page,
       limit,
+      governedAudienceEnabled: this.featureVisibility.isEnabled('governanceScopeAudience'),
       search: params.search,
       sortBy: params.sortBy ?? 'lastMessageAt',
       sortOrder: params.sortOrder ?? 'desc',
@@ -317,20 +324,23 @@ export class ConversationService {
       searchScope: params.searchScope,
       runtimePurpose: params.runtimePurpose,
     });
+    const visible = (await Promise.all(result.records.map(async (record) =>
+      record.runtimeMode !== 'governed' || (record.governanceContext?.scopeId && await this.audienceAuthorization?.isUserAuthorized(userId, record.governanceContext.scopeId)) ? record : null,
+    ))).filter((record): record is NonNullable<typeof record> => record !== null);
     const users = await this.usersById(
-      result.records.flatMap((record) => [
+      visible.flatMap((record) => [
         record.createdBy,
         ...record.members.map((member) => member.userId),
       ]),
     );
-    const rootIds = [...new Set(result.records.flatMap((record) => record.rootAgentId ? [record.rootAgentId] : []))];
+    const rootIds = [...new Set(visible.flatMap((record) => record.rootAgentId ? [record.rootAgentId] : []))];
     const enrolledRoots = new Map((rootIds.length ? await this.agentRepository.findByIds(rootIds) : [])
       .map((agent) => [agent._id, Boolean(agent.rootExecutionPolicy)]));
     return {
       conversations: await Promise.all(
-        result.records.map((record) => this.mapToResponse(record, users, enrolledRoots)),
+        visible.map((record) => this.mapToResponse(record, users, enrolledRoots)),
       ),
-      pagination: { page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) },
+      pagination: { page, limit, total: visible.length === result.records.length ? result.total : visible.length, totalPages: Math.ceil((visible.length === result.records.length ? result.total : visible.length) / limit) },
     };
   }
 

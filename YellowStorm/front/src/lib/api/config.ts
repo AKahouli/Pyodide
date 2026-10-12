@@ -332,7 +332,9 @@ export const API_ENDPOINTS = {
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,
+    shareUsers: (id: string) => `/conversations/${id}/share/users`,
     revokeShare: (convId: string, shareId: string) => `/conversations/${convId}/share/${shareId}`,
+    revokeShareRecipient: (convId: string, shareId: string, recipientId: string) => `/conversations/${convId}/share/${shareId}/recipients/${recipientId}`,
     publicShare: (accessToken: string) => `/conversations/shared/${accessToken}`,
   },
   analytics: {

@@ -351,6 +351,13 @@ export async function createShare(conversationId: string, payload: CreateSharePa
   return response.data.data;
 }
 
+export async function searchShareRecipients(conversationId: string, query: string): Promise<{ id: string; email: string; firstName?: string; lastName?: string }[]> {
+  const response = await apiClient.get<ApiResponse<{ id: string; email: string; firstName?: string; lastName?: string }[]>>(
+    API_ENDPOINTS.conversations.shareUsers(conversationId), { params: { q: query } },
+  );
+  return response.data.data;
+}
+
 export async function getShares(conversationId: string): Promise<ShareResponse[]> {
   const response = await apiClient.get<ApiResponse<ShareResponse[]>>(API_ENDPOINTS.conversations.shares(conversationId));
   return response.data.data;
@@ -358,6 +365,10 @@ export async function getShares(conversationId: string): Promise<ShareResponse[]
 
 export async function revokeShare(conversationId: string, shareId: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.conversations.revokeShare(conversationId, shareId));
+}
+
+export async function revokeShareRecipient(conversationId: string, shareId: string, recipientId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.conversations.revokeShareRecipient(conversationId, shareId, recipientId));
 }
 
 export async function viewPublicShare(accessToken: string): Promise<PublicShareViewResponse> {

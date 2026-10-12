@@ -4,6 +4,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { CONVERSATION_STORE, type ConversationStore } from '../persistence/conversation-store';
 import { ProjectShareService } from '../../project/project-share.service';
 import { isOwnedId } from '../persistence/owned-id';
+import { GovernanceAudienceAuthorizationService } from '../../governance/services/governance-audience-authorization.service';
 
 interface RequestWithConversation extends Request {
   user: { _id: { toString(): string } | string; email: string };
@@ -16,6 +17,7 @@ export class ConversationOwnerGuard implements CanActivate {
     @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
     @Inject(forwardRef(() => ProjectShareService))
     private readonly projectShareService: ProjectShareService,
+    private readonly audienceAuthorization: GovernanceAudienceAuthorizationService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -66,6 +68,12 @@ export class ConversationOwnerGuard implements CanActivate {
         ErrorCode.CHAT_FORBIDDEN,
         'You do not have access to this conversation',
       );
+    }
+    if (conversation.runtimeMode === 'governed' && !conversation.governanceScopeId) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Governed scope is unavailable');
+    }
+    if (conversation.governanceScopeId) {
+      await this.audienceAuthorization.assertUserAuthorized(userId, conversation.governanceScopeId);
     }
 
     return true;
