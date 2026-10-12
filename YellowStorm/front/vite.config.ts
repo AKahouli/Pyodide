@@ -1,8 +1,23 @@
 import path from 'path';
+import fs from 'fs';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import nodepod from '@scelar/nodepod/vite';
 import { defineConfig, loadEnv } from 'vite';
+
+/**
+ * `@openuidev/react-ui` imports `lucide-react/dynamicIconImports.mjs`, a path
+ * lucide-react no longer ships (it now exposes `dist/esm/dynamicIconImports.js`).
+ * Resolve the specifier to the real ESM file so Rollup/Vitest can bundle it.
+ */
+function resolveDynamicIconImports(): string {
+  const candidates = [
+    path.resolve(__dirname, 'node_modules/@openuidev/react-ui/node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dynamicIconImports.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1];
+}
 
 function getManualChunk(id: string): string | undefined {
   if (!id.includes('node_modules')) {
@@ -114,6 +129,7 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        'lucide-react/dynamicIconImports.mjs': resolveDynamicIconImports(),
       },
       dedupe: ['react', 'react-dom'],
     },
