@@ -81,7 +81,8 @@ export function issueTexts(issue: HealthIssue, translate: Translate, concepts: H
   const params = readable(issue.params);
   const base = `health.issue.${issue.kind}`;
   const whyKey = issue.kind === 'rows_without_key' ? `${base}.${issue.params.ai === 1 ? 'whyAi' : 'whyMapping'}`
-    : issue.kind === 'missing_values' ? `${base}.${issue.params.required === 1 ? 'whyRequired' : 'whyOptional'}` : `${base}.why`;
+    : issue.kind === 'missing_values' ? `${base}.${issue.params.required === 1 ? 'whyRequired' : 'whyOptional'}`
+      : issue.kind === 'archive_reading' ? `${base}.${Number(issue.params.limited) > 0 ? 'whyLimit' : 'whyFiles'}` : `${base}.why`;
   const suggested = Boolean(issue.fix?.kind === 'choose_unique_field' && issue.fix.suggestedFields?.length);
   const upstream = issue.upstreamConceptId ? concepts.find((concept) => concept.conceptId === issue.upstreamConceptId)?.label ?? '' : '';
   const fixParams = { ...params, concept: upstream || params.concept };

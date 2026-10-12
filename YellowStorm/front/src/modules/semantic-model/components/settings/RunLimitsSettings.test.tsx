@@ -5,6 +5,9 @@ import { OPEN_KEY } from './SettingsPane';
 
 const api = vi.hoisted(() => ({ getAdminRunLimits: vi.fn(), updateAdminRunLimits: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
+// The reading pane's search hint reads the index settings; these tests do not look at it.
+vi.mock('../../searchSettings', async (importOriginal) => ({
+  ...(await importOriginal<object>()), searchSettingsApi: { getAdminIndex: vi.fn().mockRejectedValue(new Error('not under test')) } }));
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 

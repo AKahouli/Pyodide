@@ -31,8 +31,9 @@ export function HealthIssueCard({ issue, concepts, canEdit, onAction }: Readonly
       <p className='mb-2.5 text-xs text-muted-foreground'>{text.breakdownTitle}</p>
       <ul className='space-y-2'>
         {issue.breakdown.items.map((item) => <li key={`${item.label}:${item.value}`} className='grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)_6rem] items-center gap-2.5'>
-          <span className='truncate font-mono text-sm' title={item.label}>
-            {issue.breakdown?.kind === 'ai_cost' ? formatNumber(Number(item.label)) : item.label}
+          <span className='truncate font-mono text-sm' title={issue.breakdown?.kind === 'reading' ? translate(`health.issue.archive_reading.category.${item.label}`) : item.label}>
+            {issue.breakdown?.kind === 'ai_cost' ? formatNumber(Number(item.label))
+              : issue.breakdown?.kind === 'reading' ? translate(`health.issue.archive_reading.category.${item.label}`) : item.label}
             {item.current && <span className='ml-1 text-xs text-muted-foreground'>({translate('health.issue.ai_row_limit.now')})</span>}
           </span>
           <span className='h-3.5 overflow-hidden rounded bg-muted' aria-hidden>

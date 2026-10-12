@@ -9,6 +9,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { FormField, INPUT } from '../form/FormParts';
 import type { RunLimits } from '../../types';
+import { SearchableCharsHint } from './SearchableCharsHint';
 import { SettingsPane } from './SettingsPane';
 
 type RunLimitGroup = 'size' | 'ai' | 'archive' | 'extraction' | 'rebuild' | 'save' | 'graph' | 'index';
@@ -126,6 +127,7 @@ export function RunLimitsSettings({ group = 'size' }: Readonly<{ group?: RunLimi
         </FormField>;
       })}
     </div>
+    {group === 'extraction' && <SearchableCharsHint reading={configured} />}
     <p className='text-xs text-muted-foreground'>{t(NOTES[group])}</p>
     <div className='flex flex-wrap items-center gap-2'>
       <Button className='bg-foreground text-background hover:bg-foreground/90' onClick={() => void save()} disabled={saving || hasProblem}>

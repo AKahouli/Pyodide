@@ -151,3 +151,36 @@ describe('ModelHealthView', () => {
     expect(refetch).toHaveBeenCalled();
   });
 });
+
+describe('ModelHealthView mail archive reading', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const pieces = (counts: Record<string, number>, limited: number): HealthConcept => ({
+    conceptId: 'c-pj', label: 'Pièce jointe', status: 'info',
+    origin: { kind: 'sheet', sources: ['email.zip › attachments'] }, keyFields: [{ key: 'cle_piece_jointe', label: 'Clé' }],
+    journey: { unit: 'rows', rowsAvailable: 1000, rowsRead: 1000, recordsMade: 1000, dropped: [] }, keepRatio: 1,
+    issues: [{
+      id: 'c-pj:archive_reading:attachments', conceptId: 'c-pj', kind: 'archive_reading', cause: limited > 0 ? 'limit' : 'values', severity: 'info',
+      params: { concept: 'Pièce jointe', sheet: 'attachments', total: 1000, affected: 100, limited },
+      impact: { rows: 100, of: 1000 },
+      breakdown: { kind: 'reading', items: Object.entries(counts).map(([label, value]) => ({ label, value })) },
+      examples: [], ...(limited > 0 ? { fix: { kind: 'open_run_limits' as const } } : {}),
+    }],
+  });
+
+  it('names each outcome of the reading, and points to the run limits only when a limit cut something', () => {
+    show(health({ verdict: null, concepts: [pieces({ extracted: 900, truncated: 60, scanned: 40 }, 60)] }));
+    expect(screen.getByRole('heading', { name: 'health.issue.archive_reading.title' })).toBeInTheDocument();
+    expect(screen.getByText('health.issue.archive_reading.whyLimit')).toBeInTheDocument();
+    for (const outcome of ['extracted', 'truncated', 'scanned']) {
+      expect(screen.getByText(`health.issue.archive_reading.category.${outcome}`)).toBeInTheDocument();
+    }
+    expect(screen.getByText('health.fix.open_run_limits')).toBeInTheDocument();
+  });
+
+  it('says no limit explains a reading that only has scans and unknown formats', () => {
+    show(health({ verdict: null, concepts: [pieces({ extracted: 960, scanned: 30, unsupported: 10 }, 0)] }));
+    expect(screen.getByText('health.issue.archive_reading.whyFiles')).toBeInTheDocument();
+    expect(screen.queryByText('health.fix.open_run_limits')).not.toBeInTheDocument();
+  });
+});

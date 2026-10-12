@@ -1264,7 +1264,7 @@ export type HealthSeverity = Exclude<HealthStatus, 'healthy'>;
 /** Who can change what is wrong: the model's design, a limit an admin set, the source or its mapping, or the values read. */
 export type HealthCause = 'design' | 'limit' | 'mapping' | 'values';
 export type HealthIssueKind = 'identity_too_coarse' | 'rows_without_key' | 'ai_row_limit' | 'values_disagree' | 'missing_values'
-  | 'links_unmatched' | 'documents_not_read' | 'extraction_failed' | 'reading_limit' | 'inherited' | 'other_gap';
+  | 'links_unmatched' | 'documents_not_read' | 'extraction_failed' | 'reading_limit' | 'archive_reading' | 'inherited' | 'other_gap';
 
 export type HealthAction =
   | { kind: 'choose_unique_field'; conceptId: string; suggestedFields?: string[] }
@@ -1293,7 +1293,7 @@ export interface HealthIssue {
   severity: HealthSeverity;
   params: Record<string, string | number>;
   impact: { rows?: number; of?: number; values?: number };
-  breakdown?: { kind: 'key_values' | 'ai_cost'; items: Array<{ label: string; value: number; current?: boolean }> };
+  breakdown?: { kind: 'key_values' | 'ai_cost' | 'reading'; items: Array<{ label: string; value: number; current?: boolean }> };
   examples: HealthExample[];
   forecast?: { records: number; estimated: boolean };
   upstreamConceptId?: string;
