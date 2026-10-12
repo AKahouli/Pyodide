@@ -893,3 +893,20 @@ async def test_progress_names_the_concept_a_concept_refresh_makes_again():
     whole = PopulationProgress(report, min_interval=0)
     await whole.begin(3)
     assert "scopeConceptId" not in reports[-1]
+
+
+@pytest.mark.parametrize("source_field", ["document_name", "workspace_id", "document_id"])
+def test_document_command_accepts_each_document_property_as_metadata(source_field):
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"},
+        {"sourceField": source_field, "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["ok"] is True
+    assert validated["sources"][0]["fieldMappings"][1]["sourceField"] == source_field
+
+
+def test_document_command_rejects_a_metadata_mapping_reading_another_property():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "owner_id", "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"

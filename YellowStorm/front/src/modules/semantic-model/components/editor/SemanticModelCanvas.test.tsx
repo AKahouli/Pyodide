@@ -104,11 +104,16 @@ describe('SemanticModelCanvas', () => {
     expect(screen.queryByRole('status', { name: /editor.refreshing/ })).not.toBeInTheDocument();
   });
 
-  it('brings data into a concept from the + on its left', () => {
+  it('brings data into a concept from the + on its left: manual input or data sources', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onOpenKnowledge = vi.fn();
-    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={onOpenKnowledge} onConnectRequest={vi.fn()} />);
+    const onOpenManualTable = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={onOpenKnowledge} onOpenManualTable={onOpenManualTable} onConnectRequest={vi.fn()} />);
     fireEvent.click(screen.getByRole('button',{name:'designer.plus.source'}));
+    expect(onOpenKnowledge).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('menuitem',{name:'designer.plus.manual'}));
+    expect(onOpenManualTable).toHaveBeenCalledWith('contract');
+    fireEvent.click(screen.getByRole('menuitem',{name:'designer.plus.connect'}));
     expect(onOpenKnowledge).toHaveBeenCalledWith('contract');
   });
 

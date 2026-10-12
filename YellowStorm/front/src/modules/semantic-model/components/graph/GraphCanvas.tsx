@@ -41,6 +41,17 @@ const LESS_BADGE = '#b45309';
 const INFO_BADGE = '#475569';
 /** Radius of a badge in pixels at zoom 1: large enough to hit. */
 const BADGE_R = 10;
+/** The "i" badge is drawn a third smaller; its click target stays as large as the other badges. */
+const INFO_BADGE_R = BADGE_R * (2 / 3);
+/**
+ * Link colors on the always-dark canvas (its background is fixed, whatever the app theme): a link at rest is
+ * clearly readable, one touching the hovered or selected record is brighter and thicker.
+ */
+const LINK_REST = 'rgba(255,255,255,0.55)';
+const LINK_ACTIVE = 'rgba(255,255,255,0.95)';
+const LINK_HIGHLIGHT = '#fbbf24';
+const LINK_REST_WIDTH = 1.75;
+const LINK_ACTIVE_WIDTH = 3;
 /** How long the layout may be worked out before the first drawing, in milliseconds. */
 const PRESETTLE_MS = 300;
 
@@ -176,8 +187,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
     node.select<SVGCircleElement>('circle.body')
       .attr('stroke', (item) => (item.id === selectedId ? '#ffffff' : 'rgba(255,255,255,0.18)'))
       .attr('stroke-width', (item) => (item.id === selectedId ? 4 : 2.5));
-    link.attr('stroke', (item) => (lit(item) ? (highlight ? '#fbbf24' : 'rgba(255,255,255,0.7)') : 'rgba(255,255,255,0.15)'))
-      .attr('stroke-width', (item) => (lit(item) ? 2.5 : 1.25))
+    link.attr('stroke', (item) => (lit(item) ? (highlight ? LINK_HIGHLIGHT : LINK_ACTIVE) : LINK_REST))
+      .attr('stroke-width', (item) => (lit(item) ? LINK_ACTIVE_WIDTH : LINK_REST_WIDTH))
       .attr('opacity', (item) => (highlight ? (lit(item) ? 1 : 0.2) : near ? (touches(item) ? 1 : 0.25) : 1));
     linkLabel.attr('display', (item) => (linkNames || lit(item) ? null : 'none'));
   };
@@ -225,7 +236,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
       if (defs.select(`#${id}`).empty()) {
         defs.append('marker').attr('id', id).attr('viewBox', '0 -5 10 10').attr('refX', r + 11).attr('refY', 0)
           .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-          .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', 'rgba(255,255,255,0.35)');
+          .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', LINK_REST);
       }
       return `url(#${id})`;
     };
@@ -324,11 +335,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
 
     // Badges on a bubble are buttons of their own: a click on one never selects, drags or deselects.
     const addBadge = (which: d3Selection.Selection<SVGGElement, SimNode, SVGGElement, unknown>, name: string, dx: number, dy: number,
-      glyph: string, fill: string, label: (d: SimNode) => string, act: (id: string) => void) => {
+      glyph: string, fill: string, label: (d: SimNode) => string, act: (id: string) => void, radius = BADGE_R) => {
       const badge = which.append('g').attr('class', `badge-${name}`).attr('role', 'button').attr('tabindex', 0)
         .attr('aria-label', label).style('cursor', 'pointer')
         // Sat just outside the rim, so a badge never covers the name inside the bubble.
-        .attr('transform', (d) => { const out = (d.r + BADGE_R * 0.7) / Math.hypot(dx, dy); return `translate(${out * dx},${out * dy})`; })
+        .attr('transform', (d) => { const out = (d.r + radius * 0.7) / Math.hypot(dx, dy); return `translate(${out * dx},${out * dy})`; })
         .on('mousedown', (event) => event.stopPropagation())
         .on('touchstart', (event) => event.stopPropagation())
         .on('dblclick', (event) => event.stopPropagation())
@@ -338,13 +349,15 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Readonly<{
           if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); act(d.id); }
         });
       badge.append('title').text(label);
-      badge.append('circle').attr('r', BADGE_R).attr('fill', fill).attr('stroke', '#ffffff').attr('stroke-width', 1.5);
-      badge.append('text').attr('text-anchor', 'middle').attr('dy', 4).attr('fill', 'white').attr('font-size', 13).attr('font-weight', 700)
+      // A smaller badge keeps the full-size click target around it.
+      if (radius < BADGE_R) badge.append('circle').attr('class', 'hit').attr('r', BADGE_R).attr('fill', 'transparent');
+      badge.append('circle').attr('class', 'dot').attr('r', radius).attr('fill', fill).attr('stroke', '#ffffff').attr('stroke-width', 1.5 * radius / BADGE_R);
+      badge.append('text').attr('text-anchor', 'middle').attr('dy', 0.4 * radius).attr('fill', 'white').attr('font-size', 1.3 * radius).attr('font-weight', 700)
         .attr('font-family', 'system-ui, sans-serif').attr('pointer-events', 'none').text(glyph);
     };
     addBadge(node.filter((d) => (d.node.more ?? 0) > 0), 'more', 0.72, -0.72, '+', MORE_BADGE, (d) => d.node.moreLabel ?? '+', (id) => live.current.onExpand(id));
     addBadge(node.filter((d) => Boolean(d.node.open)), 'less', -0.72, -0.72, '−', LESS_BADGE, (d) => `${live.current.badgeLabels.less} · ${d.node.label}`, (id) => live.current.onCollapse(id));
-    addBadge(node.filter((d) => Boolean(d.node.info)), 'info', 0.72, 0.72, 'i', INFO_BADGE, (d) => `${live.current.badgeLabels.info} · ${d.node.label}`, (id) => live.current.onInfo(id));
+    addBadge(node.filter((d) => Boolean(d.node.info)), 'info', 0.72, 0.72, 'i', INFO_BADGE, (d) => `${live.current.badgeLabels.info} · ${d.node.label}`, (id) => live.current.onInfo(id), INFO_BADGE_R);
 
     const draw = () => {
       link.attr('x1', (d) => (d.source as SimNode).x ?? 0).attr('y1', (d) => (d.source as SimNode).y ?? 0)

@@ -60,6 +60,9 @@ from src.smart_rag.infrastructure.monitoring.conversation_latency import (
 logger = get_logger(__name__)
 app_settings = get_settings()
 
+# Headroom for reasoning models' hidden reasoning tokens on top of the 3-6 word name.
+CONVERSATION_NAME_MAX_COMPLETION_TOKENS = 1024
+
 STREAM_HEARTBEAT_INTERVAL_SECONDS = 2.0
 
 _MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
@@ -2521,12 +2524,19 @@ class ChatbotServicer(
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 temperature=1,
-                max_tokens=50,
+                # Reasoning models spend completion tokens on hidden reasoning;
+                # a tight cap (was 50) leaves the visible content empty
+                # (finish_reason=length). The prompt keeps the name short.
+                max_tokens=CONVERSATION_NAME_MAX_COMPLETION_TOKENS,
             )
 
             # Extract the generated name
             raw_content = response.choices[0].message.content if response.choices else None
             conversation_name = (raw_content or "").strip().strip('"').strip("'")
+            if not conversation_name:
+                # Fail instead of returning "" so the caller keeps the default
+                # title rather than persisting an empty/placeholder name.
+                raise ValueError("model returned an empty conversation name")
 
             logger.info(
                 f"[gRPC] Generated conversation name: '{conversation_name}' for query: '{request.query[:100]}...'"

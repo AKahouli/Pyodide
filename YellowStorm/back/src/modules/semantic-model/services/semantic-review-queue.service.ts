@@ -103,6 +103,7 @@ export class SemanticReviewQueueService {
              JOIN semantic_model.workspace_links w ON w.model_id=sm.model_id AND w.workspace_id=sm.workspace_id AND w.enabled
              WHERE sm.model_id=$1 AND sm.concept_id=n.id AND sm.status='ready')
            AND NOT EXISTS (SELECT 1 FROM semantic_model.derived_sources d WHERE d.model_id=$1 AND d.concept_id=n.id)
+           AND NOT EXISTS (SELECT 1 FROM semantic_model.records r WHERE r.model_id=$1 AND r.version_id=$2 AND r.node_type_id=n.id AND r.status='active')
          ORDER BY n.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),

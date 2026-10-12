@@ -73,6 +73,25 @@ async def test_extracts_mapped_fields_with_ocr_provenance(monkeypatch: pytest.Mo
     assert assertion["evidence"]["rawEvidenceHash"].startswith("sha256:")
 
 
+@pytest.mark.asyncio
+async def test_metadata_fields_take_the_name_workspace_id_and_document_id_of_the_source(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [], "coverage": {"directBlocksComplete": True}}
+
+    concept = {**CONCEPT, "allowedFields": ["contract_number", "customer_reference", "file_name"]}
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "document_id", "targetAttribute": "contract_number", "mode": "metadata"},
+        {"sourceField": "workspace_id", "targetAttribute": "customer_reference", "mode": "metadata"},
+        {"sourceField": "document_name", "targetAttribute": "file_name", "mode": "metadata"},
+    ), concept, "u1", metadata_fetch=metadata)
+    assert result["entities"][0]["identity"] == {"contract_number": SOURCE["assetId"].lower()}
+    values = {item["attribute"]: item["value"] for item in result["assertions"]}
+    assert values["customer_reference"] == SOURCE["workspaceId"]
+    assert values["file_name"] == "agreement.pdf"
+    assert {item["evidence"]["origin"] for item in result["assertions"]} == {"metadata"}
+
+
 AMENDMENT_CONCEPT = {
     "conceptId": "amendment", "namespace": "amendment",
     "keyComponents": ["contract_number", "amendment_number"],

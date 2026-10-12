@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useConversationStore } from './store';
 import { ConversationHeader } from './components/ConversationHeader';
+import { ConversationContextPanel } from './components/ConversationContextPanel';
 import { GroupConversationContent } from './components/GroupConversationContent';
 import { ConversationInput } from './components/ConversationInput';
 import { StreamErrorDialog } from './components/StreamErrorDialog';
@@ -84,11 +85,14 @@ export function GroupConversationPage({ id, conversation }: GroupConversationPag
  
   return (
     <div className='relative flex flex-1 min-h-0 w-full'>
-      <div className='flex flex-col flex-1 min-w-0 max-w-4xl mx-auto'>
-        <ConversationHeader />
-        <GroupConversationContent />
-        <ConversationInput conversationId={id} />
-        <StreamErrorDialog />
+      <div className='mx-auto flex min-h-0 min-w-0 w-full max-w-[100rem] items-stretch overflow-hidden'>
+        <div className='flex flex-col flex-1 min-h-0 min-w-0'>
+          <ConversationHeader />
+          <GroupConversationContent />
+          <ConversationInput conversationId={id} />
+          <StreamErrorDialog />
+        </div>
+        <ConversationContextPanel conversationId={id} creatorId={conversation.createdBy} />
       </div>
       <FileViewerSidebar />
       <ReportPanelSidebar resetKey={id} />

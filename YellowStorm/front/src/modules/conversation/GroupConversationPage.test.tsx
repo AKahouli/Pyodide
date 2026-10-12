@@ -24,6 +24,7 @@ vi.mock('./store', () => ({
 vi.mock('./api', () => ({ joinConversation }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock('./components/ConversationHeader', () => ({ ConversationHeader: () => null }));
+vi.mock('./components/ConversationContextPanel', () => ({ ConversationContextPanel: () => <div>conversation-outline-panel</div> }));
 vi.mock('./components/GroupConversationContent', () => ({ GroupConversationContent: () => null }));
 vi.mock('./components/ConversationInput', () => ({ ConversationInput: () => null }));
 vi.mock('./components/StreamErrorDialog', () => ({ StreamErrorDialog: () => null }));
@@ -69,6 +70,7 @@ describe('GroupConversationPage', () => {
     );
 
     expect(screen.queryByText('join-landing')).not.toBeInTheDocument();
+    expect(screen.getByText('conversation-outline-panel')).toBeInTheDocument();
     await waitFor(() => expect(fetchMessages).toHaveBeenCalledWith('conv-1'));
   });
 
