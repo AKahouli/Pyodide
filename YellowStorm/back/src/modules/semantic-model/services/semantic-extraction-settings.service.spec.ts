@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { DEFAULT_RUN_LIMITS, RUN_LIMIT_RANGES } from '../domain/semantic-source-mapping.types';
 import { effectiveAiSettings, pickAiSettings, pickRunLimits, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 
 describe('AI reading limits', () => {
@@ -65,6 +68,27 @@ describe('run limits', () => {
     expect(pickRunLimits({ embeddingParallelCalls: 2.5 })).toEqual({});
   });
 
+  it('keeps the e-mail reading limits only inside their ranges, nesting included at zero', () => {
+    const inRange = { maxEmlMb: 1024, maxAttachmentMb: 1, maxNesting: 0, maxPdfPages: 2000, maxSheetCells: 1000, maxSlides: 2000,
+      maxAttachmentChars: 500000, maxBodyChars: 5000, maxInflatedMb: 1 };
+    expect(pickRunLimits(inRange)).toEqual(inRange);
+    expect(pickRunLimits({ maxEmlMb: 0, maxAttachmentMb: 501, maxNesting: 6, maxPdfPages: 0, maxSheetCells: 999, maxSlides: 2001,
+      maxAttachmentChars: 4999, maxBodyChars: 500001, maxInflatedMb: 1025 })).toEqual({});
+    expect(pickRunLimits({ maxNesting: 1.5, maxPdfPages: '300' })).toEqual({});
+  });
+
+  it('has the same built-in values and ranges as the runtime that reads the archives', () => {
+    // The runtime owns the table; a limit changed on one side only would be accepted here and ignored there.
+    const source = readFileSync(join(__dirname, '../../../../../semantic-model-runtime/app/datasource/extraction_limits.py'), 'utf8');
+    const runtime = [...source.matchAll(/"(max\w+)": LimitSpec\("SEMANTIC_EMAIL_\w+", ([\d_]+), ([\d_]+), ([\d_]+)\)/g)]
+      .map(([, key, builtIn, low, high]) => [key, Number(builtIn.replace(/_/g, '')), Number(low.replace(/_/g, '')), Number(high.replace(/_/g, ''))]);
+    expect(runtime.map(([key]) => key)).toEqual(['maxEmlMb', 'maxAttachmentMb', 'maxNesting', 'maxPdfPages', 'maxSheetCells', 'maxSlides',
+      'maxAttachmentChars', 'maxBodyChars', 'maxInflatedMb']);
+    for (const [key, builtIn, low, high] of runtime as [keyof typeof DEFAULT_RUN_LIMITS, number, number, number][]) {
+      expect([key, DEFAULT_RUN_LIMITS[key], ...RUN_LIMIT_RANGES[key]]).toEqual([key, builtIn, low, high]);
+    }
+  });
+
   it('saves what the admin set and fills the rest with the built-in limits', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [] })
@@ -75,7 +99,9 @@ describe('run limits', () => {
     expect(saved).toEqual({ configured: { maxRecordsPerRun: 50000 }, runLimits: {
       maxRunSources: 5000, maxRecordsPerSource: 5000, maxRecordsPerRun: 50000, maxValuesPerRun: 50000,
       maxAiRowsPerSource: 500, maxAiParallelCalls: 8,
-      parserMemoryMb: 512, archiveTimeoutSeconds: 900, purgeTimeoutSeconds: 300,
+      parserMemoryMb: 512, archiveTimeoutSeconds: 900,
+      maxEmlMb: 100, maxAttachmentMb: 50, maxNesting: 3, maxPdfPages: 300, maxSheetCells: 50000, maxSlides: 500,
+      maxAttachmentChars: 100000, maxBodyChars: 100000, maxInflatedMb: 50, purgeTimeoutSeconds: 300,
       saveBatchRows: 2000, saveStatementSeconds: 10, projectionBatchRows: 5000,
       embeddingBatchSize: 32, embeddingParallelCalls: 4, embeddingTimeoutSeconds: 30, indexReadPageRows: 5000 } });
   });

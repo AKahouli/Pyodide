@@ -145,6 +145,24 @@ export interface RunLimits {
   parserMemoryMb: number;
   /** Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose. */
   archiveTimeoutSeconds: number;
+  /** Largest single e-mail read, in MB; a bigger one is kept as an unread row. */
+  maxEmlMb: number;
+  /** Largest single attachment read, in MB; a bigger one is listed but its text is not read. */
+  maxAttachmentMb: number;
+  /** How deep attached e-mails are opened as e-mails of their own (0: not opened). */
+  maxNesting: number;
+  /** Most pages read of one PDF. */
+  maxPdfPages: number;
+  /** Most cells read of one workbook. */
+  maxSheetCells: number;
+  /** Most slides read of one presentation. */
+  maxSlides: number;
+  /** Most characters of an attachment's text kept in its record. */
+  maxAttachmentChars: number;
+  /** Most characters of an e-mail's body kept in its record. */
+  maxBodyChars: number;
+  /** Most a zipped office file (Word, Excel, PowerPoint) may hold once decompressed, in MB. */
+  maxInflatedMb: number;
   /** Time "Start over from scratch" may take to clear a model's data, in seconds. Not part of a run. */
   purgeTimeoutSeconds: number;
   /** Rows the "saving" step writes per batch. Travels with the run but is not part of its identity. */
@@ -182,6 +200,15 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxAiParallelCalls: 8,
   parserMemoryMb: 512,
   archiveTimeoutSeconds: 900,
+  maxEmlMb: 100,
+  maxAttachmentMb: 50,
+  maxNesting: 3,
+  maxPdfPages: 300,
+  maxSheetCells: 50000,
+  maxSlides: 500,
+  maxAttachmentChars: 100000,
+  maxBodyChars: 100000,
+  maxInflatedMb: 50,
   purgeTimeoutSeconds: 300,
   saveBatchRows: 2000,
   saveStatementSeconds: 10,
@@ -201,6 +228,15 @@ export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]
   maxAiParallelCalls: [1, 32],
   parserMemoryMb: [256, 16384],
   archiveTimeoutSeconds: [60, 7200],
+  maxEmlMb: [1, 1024],
+  maxAttachmentMb: [1, 500],
+  maxNesting: [0, 5],
+  maxPdfPages: [1, 2000],
+  maxSheetCells: [1000, 1000000],
+  maxSlides: [1, 2000],
+  maxAttachmentChars: [5000, 500000],
+  maxBodyChars: [5000, 500000],
+  maxInflatedMb: [1, 1024],
   purgeTimeoutSeconds: [30, 3600],
   saveBatchRows: [100, 50000],
   saveStatementSeconds: [5, 600],

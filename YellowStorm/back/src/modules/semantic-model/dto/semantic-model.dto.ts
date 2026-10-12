@@ -674,6 +674,42 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
   archiveTimeoutSeconds?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 1024, description: 'Largest single e-mail read, in MB; a bigger one is kept as an unread row' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1024)
+  maxEmlMb?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500, description: 'Largest single attachment read, in MB; a bigger one is listed but its text is not read' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxAttachmentMb?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 5, description: 'How deep attached e-mails are opened as e-mails of their own (0: not opened)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(5)
+  maxNesting?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2000, description: 'Most pages read of one PDF' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(2000)
+  maxPdfPages?: number;
+
+  @ApiPropertyOptional({ minimum: 1000, maximum: 1000000, description: 'Most cells read of one workbook' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(1000000)
+  maxSheetCells?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2000, description: 'Most slides read of one presentation' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(2000)
+  maxSlides?: number;
+
+  @ApiPropertyOptional({ minimum: 5000, maximum: 500000, description: 'Most characters of an attachment text kept in its record' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5000) @Max(500000)
+  maxAttachmentChars?: number;
+
+  @ApiPropertyOptional({ minimum: 5000, maximum: 500000, description: 'Most characters of an e-mail body kept in its record' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(5000) @Max(500000)
+  maxBodyChars?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1024, description: 'Most a zipped office file may hold once decompressed, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1024)
+  maxInflatedMb?: number;
+
   @ApiPropertyOptional({ minimum: 30, maximum: 3600, description: 'Time "Start over from scratch" may take to clear the data of a model, in seconds' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(30) @Max(3600)
   purgeTimeoutSeconds?: number;

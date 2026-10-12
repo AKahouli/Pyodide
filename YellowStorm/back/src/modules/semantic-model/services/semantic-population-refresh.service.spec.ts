@@ -484,6 +484,25 @@ describe('SemanticPopulationRefreshService', () => {
     expect(onlySave.payload.populationExecutionFingerprint).toBe((await runWith({})).payload.populationExecutionFingerprint);
   });
 
+  it('sends the e-mail reading limits with the run, and they change its fingerprint: they decide what a run builds', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({});
+    const reading = await runWith({ maxAttachmentChars: 20000, maxNesting: 0, maxPdfPages: 50 });
+    expect(reading.payload.limits).toEqual({ maxAttachmentChars: 20000, maxNesting: 0, maxPdfPages: 50 });
+    expect(reading.payload.populationExecutionFingerprint).not.toBe(plain.payload.populationExecutionFingerprint);
+    expect(reading.key).not.toBe(plain.key);
+  });
+
   it('sends the fields a concept shows in the graph with the run and the rebuild, outside its specification and fingerprint', async () => {
     const plain = setup();
     await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
