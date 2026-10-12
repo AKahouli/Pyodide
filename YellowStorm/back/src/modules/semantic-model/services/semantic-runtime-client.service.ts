@@ -151,7 +151,10 @@ export type RuntimeHealthFinding =
   | { kind: 'missing_identity'; field: string; rows: number; aiRead?: boolean; examples: RuntimeHealthExample[] }
   | { kind: 'conflicting_values'; field: string; rows: number; distinctValues: number; values: string[]; examples: RuntimeHealthExample[] }
   | { kind: 'ai_row_limit' | 'ai_read'; limit: number; rowsRead: number; rowsLimited: number; rowsFailed: number;
-      fields?: string[]; examples: RuntimeHealthExample[] };
+      fields?: string[]; examples: RuntimeHealthExample[] }
+  /** A mail table read with something left out or cut: counts by outcome, and the limits it was read with. */
+  | { kind: 'archive_reading'; sheet: string; total: number; counts: Record<string, number>; limits: Record<string, number>;
+      examples: RuntimeHealthExample[] };
 
 /** How one concept's rows became records. */
 export interface RuntimeConceptHealth {

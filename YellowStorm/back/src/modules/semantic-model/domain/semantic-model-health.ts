@@ -34,6 +34,10 @@ const RANK: Record<HealthStatus, number> = { blocked: 0, warning: 1, info: 2, he
 const BLOCKING_KEEP_RATIO = 0.01;
 const BLOCKING_MISSING_SHARE = 0.5;
 const MAX_VALUES_SHOWN = 6;
+/** Outcomes of reading a mail table a person may want to know about (the runtime counts them). */
+const READING_OUTCOMES = ['truncated', 'tooLarge', 'inflatedTooLarge', 'scanned', 'unsupported', 'encrypted', 'unreadable', 'readerMissing', 'notRead', 'emlTooLarge', 'bodyTruncated'];
+/** Those a run limit caused: an admin can raise the limit, nothing else changes them. */
+const READING_LIMITED = ['truncated', 'tooLarge', 'inflatedTooLarge', 'emlTooLarge', 'bodyTruncated'];
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -109,6 +113,22 @@ export function buildModelHealth(input: HealthBuildInput): ModelHealth {
           params: { concept: concept.label, field: fieldLabel(conceptId, finding.field), rows: finding.rows, distinct: finding.distinctValues },
           impact: { rows: finding.rows }, examples: examplesOf(conceptId, finding.examples),
           fix: { kind: 'choose_unique_field', conceptId }, secondary: { kind: 'view_records', conceptId },
+        });
+      } else if (finding.kind === 'archive_reading') {
+        const counts = (name: string) => finding.counts[name] ?? 0;
+        const affected = READING_OUTCOMES.reduce((total, name) => total + counts(name), 0);
+        const limited = READING_LIMITED.reduce((total, name) => total + counts(name), 0);
+        add({
+          id: `${conceptId}:archive_reading:${finding.sheet}`, conceptId, kind: 'archive_reading',
+          // A cut made by a limit is a choice an admin can undo; a scan or a format nobody reads is a matter of the files.
+          cause: limited > 0 ? 'limit' : 'values', severity: 'info',
+          params: { concept: concept.label, sheet: finding.sheet, total: finding.total, affected, limited,
+            ...Object.fromEntries(READING_OUTCOMES.map((name) => [name, counts(name)])), extracted: counts('extracted') },
+          impact: { rows: affected, of: finding.total },
+          breakdown: { kind: 'reading', items: [...(counts('extracted') > 0 ? ['extracted'] : []), ...READING_OUTCOMES].filter((name) => counts(name) > 0)
+            .map((name) => ({ label: name, value: counts(name) })) },
+          examples: [],
+          ...(limited > 0 ? { fix: { kind: 'open_run_limits' } as const } : {}), secondary: { kind: 'view_records', conceptId },
         });
       } else if (finding.kind === 'ai_row_limit') {
         const eligible = finding.rowsRead + finding.rowsLimited;

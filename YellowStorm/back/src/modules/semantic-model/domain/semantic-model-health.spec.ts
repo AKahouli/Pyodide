@@ -166,6 +166,36 @@ describe('buildModelHealth', () => {
     expect(clean.summary).toMatchObject({ healthy: 4, fixesNeeded: 0, limits: 0 });
   });
 
+  it('tells what a mail archive reading left out, as a limit when a limit cut it', () => {
+    const reading = (counts: Record<string, number>) => buildModelHealth({
+      ...input(), derived: [],
+      records: { ...input().records, gaps: undefined, health: { version: 1, concepts: { [MESSAGE]: sheet(MESSAGE, {
+        sources: [{ name: 'email.zip', sheet: 'attachments', rowsAvailable: 1000, rowsRead: 1000 }], rowsAvailable: 1000, rowsRead: 1000, rowsKeyed: 1000, recordsMade: 1000,
+        findings: [{ kind: 'archive_reading', sheet: 'attachments', total: 1000, counts, limits: { maxAttachmentChars: 20000 }, examples: [] }],
+      }) } } },
+    }).concepts.find((item) => item.conceptId === MESSAGE)!.issues;
+
+    const [cut] = reading({ total: 1000, extracted: 900, truncated: 60, scanned: 40 });
+    expect(cut).toMatchObject({
+      kind: 'archive_reading', cause: 'limit', severity: 'info', impact: { rows: 100, of: 1000 },
+      params: { concept: 'Message e-mail', sheet: 'attachments', total: 1000, affected: 100, limited: 60, truncated: 60, scanned: 40, extracted: 900 },
+      breakdown: { kind: 'reading', items: [{ label: 'extracted', value: 900 }, { label: 'truncated', value: 60 }, { label: 'scanned', value: 40 }] },
+      fix: { kind: 'open_run_limits' }, secondary: { kind: 'view_records', conceptId: MESSAGE },
+    });
+    // Scans and unknown formats are no limit's doing: no run limit to raise.
+    const [scans] = reading({ total: 1000, extracted: 960, scanned: 30, unsupported: 10 });
+    expect(scans).toMatchObject({ cause: 'values', impact: { rows: 40, of: 1000 } });
+    expect(scans.fix).toBeUndefined();
+    // A mail over the size limit is a limit's doing, unlike a damaged one.
+    const [oversize] = reading({ total: 1000, extracted: 990, emlTooLarge: 10 });
+    expect(oversize).toMatchObject({ cause: 'limit', params: { limited: 10, emlTooLarge: 10 }, fix: { kind: 'open_run_limits' } });
+    expect(reading({ total: 1000, extracted: 990, notRead: 10 })[0]).toMatchObject({ cause: 'values' });
+    // An informative card never asks for a fix, and counts as a limit only when a limit caused it.
+    const health = buildModelHealth({ ...input(), derived: [], records: { ...input().records, gaps: undefined, health: { version: 1, concepts: {
+      [MESSAGE]: sheet(MESSAGE, { findings: [{ kind: 'archive_reading', sheet: 'attachments', total: 5, counts: { total: 5, truncated: 1 }, limits: {}, examples: [] }] }) } } } });
+    expect(health.summary).toMatchObject({ fixesNeeded: 0, limits: 1 });
+  });
+
   it('is empty before any data was prepared', () => {
     const setup = [{ key: 'k', group: 'sources' as const, priority: 1 as const, kind: 'concept_without_source', params: {}, action: { kind: 'view_data' as const } }];
     expect(emptyModelHealth(setup)).toMatchObject({ state: 'no_data', concepts: [], setup, summary: { setupItems: 1 } });

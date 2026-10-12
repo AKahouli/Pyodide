@@ -11,6 +11,7 @@ export type HealthIssueKind =
   | 'identity_too_coarse'
   | 'rows_without_key'
   | 'ai_row_limit'
+  | 'archive_reading'
   | 'values_disagree'
   | 'missing_values'
   | 'links_unmatched'
@@ -42,8 +43,9 @@ export interface HealthExample {
 }
 
 export interface HealthBreakdown {
-  /** `key_values`: how many rows each value of the key holds. `ai_cost`: AI calls at each limit. */
-  kind: 'key_values' | 'ai_cost';
+  /** `key_values`: how many rows each value of the key holds. `ai_cost`: AI calls at each limit. `reading`: how many
+   *  files of a mail table ended in each outcome (the label is the outcome's id, worded by the reader of the card). */
+  kind: 'key_values' | 'ai_cost' | 'reading';
   items: { label: string; value: number; current?: boolean }[];
 }
 
