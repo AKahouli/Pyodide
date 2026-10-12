@@ -11,7 +11,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { type SourceMappingTarget, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace } from '../mapping/SourceMappingDrawer';
-import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
+import type { AttributeDefinition, SemanticNodeType, SemanticRelationType } from '../../types';
 import { businessKey, guessAttributeType } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
 import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
@@ -38,20 +38,18 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const select = useSemanticModelEditorStore((state) => state.select);
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
-  const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
   const knowledgePanel = <KnowledgePanel modelId={modelId} switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
-  if (!selectedId||(!node&&!relation&&!record)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
+  if (!selectedId||(!node&&!relation)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
   const content = <>
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
-    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
+    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
     {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
-    {record && <RecordForm record={record} canEdit={canEdit} />}
     </div>
   </>;
   return workspace
@@ -415,18 +413,6 @@ function RelationSentenceEditor({ relation, labels, onChange }: Readonly<{ relat
     </div>
   </section>;
 }
-
-function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {
-  const { t } = useModuleTranslation('semantic-model');
-  const graph = useSemanticModelEditorStore((state) => state.graph);
-  const commit = useSemanticModelEditorStore((state) => state.commit);
-  const select = useSemanticModelEditorStore((state) => state.select);
-  const type = graph?.nodes.find((candidate) => candidate.id === item.nodeTypeId);
-  const update = (changes: Partial<Omit<SemanticRecord,'id'|'nodeTypeId'>>) => commit({type:'record.update',id:item.id,changes},(current) => ({...current,records:current.records.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate)}));
-  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('records.type')} value={type?.label??''} /><ReadOnlyField label={t('field.label')} value={item.label} />{type?.attributes.map((attribute)=><ReadOnlyField key={attribute.key} label={attribute.label} value={String(item.values[attribute.key]??'')} />)}</div>;
-  return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => { commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)})); select(null); }}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
-}
-
 
 function ReadOnlyField({ label,value }: Readonly<{ label: string; value: string }>) { return <div><p className='text-xs font-medium text-muted-foreground'>{label}</p><p className='mt-1 text-sm'>{value}</p></div>; }
 

@@ -162,15 +162,24 @@ describe('SemanticModelCanvas', () => {
     expect(useSemanticModelEditorStore.getState().pending).toEqual([]);
   });
 
-  it('creates a record inline for its concept', () => {
+  it('opens the manual table of a concept from its menu, without creating anything itself', () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null,recordPolicy:'optional'}]});
-    renderCanvas();
+    const onOpenManualTable = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onOpenManualTable={onOpenManualTable} />);
     fireEvent.click(screen.getByRole('button',{name:'designer.plus.next'}));
-    fireEvent.click(screen.getByRole('menuitem',{name:'records.quickAdd'}));
-    const input = screen.getByRole('textbox',{name:'records.quickName'});
-    fireEvent.change(input,{target:{value:'Acme'}});
-    fireEvent.click(screen.getByRole('button',{name:'records.quickCreate'}));
-    expect(useSemanticModelEditorStore.getState().pending[0][0]).toMatchObject({type:'record.create',entity:{nodeTypeId:'customer',label:'Acme'}});
+    fireEvent.click(screen.getByRole('menuitem',{name:'manualTable.title'}));
+    expect(onOpenManualTable).toHaveBeenCalledWith('customer');
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([]);
+  });
+
+  it('warns instead of opening the manual table of a concept that takes no records', () => {
+    useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null,recordPolicy:'none'}]});
+    const onOpenManualTable = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onOpenManualTable={onOpenManualTable} />);
+    fireEvent.click(screen.getByRole('button',{name:'designer.plus.next'}));
+    fireEvent.click(screen.getByRole('menuitem',{name:'manualTable.title'}));
+    expect(onOpenManualTable).not.toHaveBeenCalled();
+    expect(showWarning).toHaveBeenCalledWith('records.disabled');
   });
 
   it('creates a linked optional-record concept as one operation group', async () => {
@@ -403,7 +412,7 @@ describe('SemanticModelCanvas', () => {
     expect(onMoveSource).toHaveBeenCalledWith(source.id,{x:5,y:6});
   });
 
-  it('removes the typed records of a concept from their box, as an edit Undo brings back', () => {
+  it('removes the manual table of a concept from its box, as an edit Undo brings back', () => {
     const record = (id:string) => ({ id, nodeTypeId:'contract', label:id, values:{}, status:'active' as const, position:{x:0,y:0} });
     useSemanticModelEditorStore.getState().hydrate({ ...contractGraph, records:[record('r1'),record('r2')] });
     renderCanvas();

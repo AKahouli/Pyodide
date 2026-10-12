@@ -10,7 +10,7 @@ const source = (overrides: Partial<DesignerSource>): DesignerSource => ({
 });
 
 describe('canvas clipboard', () => {
-  it('copies a source as the file and table it reads, but not typed records or whole workspaces', () => {
+  it('copies a source as the file and table it reads, but not a manual table or whole workspaces', () => {
     expect(copySource(source({}))).toEqual({ kind: 'source', resource: expect.objectContaining({ kind: 'document', workspaceId: 'w', documentId: 'd', sheetName: 'Sheet1', structured: true, mappable: true }) });
     expect(copySource(source({ kind: 'typed', mappings: [] }))).toBeNull();
     expect(copySource(source({ kind: 'workspace' }))).toBeNull();

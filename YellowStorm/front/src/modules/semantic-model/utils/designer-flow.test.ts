@@ -60,7 +60,7 @@ describe('designerFlow', () => {
     expect(designerFlow(graph, [mapping('a', 'supplier')], [health('a', 'changed')]).sources[0].tone).toBe('warn');
   });
 
-  it('shows typed records as their own source, below the files feeding the same concept', () => {
+  it('shows the manual table as its own source, below the files feeding the same concept', () => {
     const { sources, feeds } = designerFlow(graph, [mapping('a', 'supplier', { assetKind: 'document', sheetName: '' })]);
     expect(sources.map((source) => source.kind)).toEqual(['documents', 'typed']);
     const typed = sources.find((source) => source.id === typedSourceId('supplier'))!;
@@ -68,6 +68,13 @@ describe('designerFlow', () => {
     expect(sources.every((source) => source.position.x === 400 - SOURCE_COLUMN_OFFSET)).toBe(true);
     expect(feeds.find((feed) => feed.sourceId === typed.id)).toMatchObject({ step: 'typed', conceptId: 'supplier' });
     expect(feeds[0].step).toBe('extract');
+  });
+
+  it('counts only active rows, and shows no manual table box without one', () => {
+    const row = (id: string, status: 'active' | 'inactive') => ({ id, nodeTypeId: 'supplier', label: id, values: {}, status, position: { x: 0, y: 0 } });
+    const rows = (...records: ReturnType<typeof row>[]) => designerFlow({ ...graph, records }).sources.filter((source) => source.kind === 'typed');
+    expect(rows(row('a', 'active'), row('b', 'inactive'), row('c', 'active'))[0].detail).toBe('2');
+    expect(rows(row('a', 'inactive'))).toEqual([]);
   });
 
   it('never puts a source on top of a concept, even between two concepts in a row', () => {

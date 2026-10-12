@@ -109,7 +109,7 @@ vi.mock("../hooks/use-knowledge-linking", () => ({
 
 vi.mock("../components/editor/EditorDialogs", () => ({
   AddConceptDialog: () => null,
-  AddRecordDialog: () => null,
+  ManualTableDialog: () => null,
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
@@ -119,6 +119,9 @@ vi.mock("../components/editor/SemanticModelCanvas", () => ({
     <button onClick={() => onPaneDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-2', name: 'suppliers.xlsx', structured: true, mappable: true })}>drop-on-pane</button>
     <button onClick={() => onOpenSource?.({ id: 'typed:customer', kind: 'typed', mappings: [] })}>open-typed</button>
   </div>,
+}));
+vi.mock("../components/records/ManualTableEditor", () => ({
+  ManualTableEditor: ({ conceptId }: { conceptId: string | null }) => conceptId ? <div>manual-table:{conceptId}</div> : null,
 }));
 vi.mock("../components/editor/SemanticModelInspector", () => ({
   SemanticModelInspector: () => null,
@@ -228,15 +231,16 @@ describe("SemanticModelEditorPage", () => {
     expect(await screen.findByText('suppliers.xlsx')).toBeInTheDocument();
   });
 
-  it('opens the records for a typed-records source', async () => {
+  it('opens the manual table of a concept from its source box', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
+    expect(screen.queryByText(/manual-table:/)).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'open-typed' }));
 
-    expect(await screen.findByText('revision:none')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
-    expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
+    expect(await screen.findByText('manual-table:customer')).toBeInTheDocument();
+    // The canvas stays in place behind the drawer.
+    expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
   it('opens model health in place of the canvas and goes back to it', async () => {

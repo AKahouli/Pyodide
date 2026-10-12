@@ -3,7 +3,7 @@ import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, SemanticGr
 
 /**
  * A box on the designer canvas that feeds data into concepts: a spreadsheet, a set of documents, every file of
- * a workspace (or folder), or records typed by hand.
+ * a workspace (or folder), or a manual table (rows typed or pasted by hand; its id stays `typed:<concept>`).
  */
 export interface DesignerSource {
   id: string;
@@ -53,7 +53,7 @@ const worst = (tones: DesignerFeed['tone'][]): DesignerFeed['tone'] =>
   tones.includes('warn') ? 'warn' : tones.length && tones.every((tone) => tone === 'ok') ? 'ok' : 'idle';
 
 /**
- * Derive the source boxes and their lines from saved mappings and typed records. Each source is laid out
+ * Derive the source boxes and their lines from saved mappings and manual table rows. Each source is laid out
  * beside the first concept it feeds, so the canvas reads left to right: data in, concepts out.
  */
 export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = [], saved: Record<string, { x: number; y: number }> = {}, derived: DerivedSource[] = []): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
@@ -116,8 +116,9 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
       });
     });
   }
+  // Only active rows count: they are the ones a run reads, and the box appears once the table has one.
   const typedByConcept = new Map<string, number>();
-  for (const record of graph.records) typedByConcept.set(record.nodeTypeId, (typedByConcept.get(record.nodeTypeId) ?? 0) + 1);
+  for (const record of graph.records) if (record.status === 'active') typedByConcept.set(record.nodeTypeId, (typedByConcept.get(record.nodeTypeId) ?? 0) + 1);
   for (const [conceptId, count] of typedByConcept) {
     if (!concepts.has(conceptId)) continue;
     const id = typedSourceId(conceptId);

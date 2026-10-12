@@ -8,7 +8,6 @@ import { ListOrdered,
   Box,
   ChevronDown,
   History,
-  Keyboard,
   LayoutDashboard,
   HeartPulse,
   ListChecks,
@@ -54,12 +53,13 @@ import { announceUndoable, isTextEntry } from '../utils/undo-notice';
 import { semanticModelApi } from "../api";
 import {
   AddConceptDialog,
-  AddRecordDialog,
   AddRelationDialog,
+  ManualTableDialog,
 } from "../components/editor/EditorDialogs";
 import { SemanticModelCanvas } from "../components/editor/SemanticModelCanvas";
 import { SemanticModelInspector } from "../components/editor/SemanticModelInspector";
 import { ConceptRecordsPanel } from "../components/records/ConceptRecordsPanel";
+import { ManualTableEditor } from "../components/records/ManualTableEditor";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
 import { ConceptRefreshDialog } from "../components/records/ConceptRefreshDialog";
@@ -190,7 +190,9 @@ export function SemanticModelEditorPage() {
     sourceId: string;
     targetId: string;
   } | null>(null);
-  const [recordOpen, setRecordOpen] = useState(false);
+  // The manual table: which concept's grid is open, and the dialog that asks which concept when none is selected.
+  const [manualConceptId, setManualConceptId] = useState<string | null>(null);
+  const [manualPickOpen, setManualPickOpen] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
@@ -269,6 +271,8 @@ export function SemanticModelEditorPage() {
   useEffect(() => { if (population) { setLastRun(population); setIndexPanelOpen(false); } }, [population]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
+  // The mapping drawers share the right edge with the manual table: opening one closes the other.
+  useEffect(() => { if (mappingTarget || derivedTarget) setManualConceptId(null); }, [mappingTarget, derivedTarget]);
   const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); if (knowledgeOpen) closeKnowledge(); setDerivedTarget(target); };
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
   const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
@@ -853,13 +857,12 @@ export function SemanticModelEditorPage() {
       default: break;
     }
   };
+  const openManualTable = (conceptId: string) => {
+    closeSidePanels(); setKnowledgeOpen(false); setMappingTarget(null); setDerivedTarget(null);
+    setManualConceptId(conceptId);
+  };
   const openSource = (source: DesignerSource, mapping?: ConceptSourceMapping) => {
-    if (source.kind === 'typed') {
-      // One typed record opens for editing; several open the records list.
-      const typed = graph.records.filter((record) => source.id === `typed:${record.nodeTypeId}`);
-      if (typed.length === 1) select(typed[0].id, { details: true }); else setMode('records');
-      return;
-    }
+    if (source.kind === 'typed') { openManualTable(source.id.slice('typed:'.length)); return; }
     const chosen = mapping ?? source.mappings[0];
     if (chosen) void openMappingTarget(mappingTarget_(chosen));
   };
@@ -870,7 +873,11 @@ export function SemanticModelEditorPage() {
   };
   const palette: Array<{ key: string; icon: typeof Plus; label: string; hint: string; onClick: () => void }> = [
     { key: 'source', icon: Sheet, label: t('designer.palette.source'), hint: t('designer.palette.sourceHint'), onClick: () => { closeSidePanels(); openKnowledge(); } },
-    { key: 'typed', icon: Keyboard, label: t('designer.palette.typed'), hint: t('designer.palette.typedHint'), onClick: () => setRecordOpen(true) },
+    { key: 'typed', icon: Table2, label: t('designer.palette.typed'), hint: t('designer.palette.typedHint'), onClick: () => {
+      // A selected concept that can hold rows is the table to open; otherwise ask which concept.
+      const selectedConcept = graph.nodes.find((node) => node.id === selectedId && !node.systemKey && node.recordPolicy !== 'none');
+      if (selectedConcept) openManualTable(selectedConcept.id); else setManualPickOpen(true);
+    } },
     { key: 'concept', icon: Box, label: t('designer.palette.concept'), hint: t('designer.palette.conceptHint'), onClick: () => setConceptOpen(true) },
     { key: 'relation', icon: Spline, label: t('designer.palette.relation'), hint: t('designer.palette.relationHint'), onClick: () => setRelationOpen(true) },
     { key: 'suggest', icon: Sparkles, label: t('designer.palette.suggest'), hint: t('designer.palette.suggestHint'), onClick: () => setSuggestSource('pick') },
@@ -1032,7 +1039,7 @@ export function SemanticModelEditorPage() {
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
-            onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); }}
+            onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); setManualConceptId(null); }}
             onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
             onSwitchSource={canEdit ? startSwitch : undefined}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
@@ -1040,6 +1047,7 @@ export function SemanticModelEditorPage() {
             sourcePositions={sourcePositions}
             onMoveSource={canEdit ? moveSource : undefined}
             onBrowseRecords={browseRecords}
+            onOpenManualTable={canEdit ? openManualTable : undefined}
             refreshingConcepts={populationJobId ? refreshingConcepts : undefined}
             checkIssues={checkResult?.issues}
             onOpenCheckIssue={openCheckIssue}
@@ -1132,6 +1140,7 @@ export function SemanticModelEditorPage() {
           }}
         />}
         {(knowledgeOpen || (onCanvas && detailsOpen)) && !runPanelOpen && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
+        <ManualTableEditor conceptId={manualConceptId} canEdit={canEdit} onClose={() => setManualConceptId(null)} />
         {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={mappingClosed} onSaved={mappingSaved} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
@@ -1142,7 +1151,7 @@ export function SemanticModelEditorPage() {
         onOpenChange={setRelationOpen}
         initialConnection={relationConnection}
       />
-      <AddRecordDialog open={recordOpen} onOpenChange={setRecordOpen} />
+      <ManualTableDialog open={manualPickOpen} onOpenChange={setManualPickOpen} onPick={openManualTable} />
       <ConceptRefreshDialog
         open={refreshConceptId !== null}
         onOpenChange={(open) => { if (!open) setRefreshConceptId(null); }}
