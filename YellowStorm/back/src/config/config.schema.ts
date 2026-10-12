@@ -391,14 +391,17 @@ export const configValidationSchema = Joi.object({
   // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
+  PLAYBOOK_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  AGENT_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  PLAYBOOK_MCP_JWT_AUDIENCE: Joi.string().default('mcp-playbook'),
+  AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
+  MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
   SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
-  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().when('SEMANTIC_MODEL_MCP_AUTH_MODE', {
-    is: 'JWT', then: Joi.required(), otherwise: Joi.allow(''),
-  }),
-  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().when('SEMANTIC_MODEL_MCP_AUTH_MODE', {
-    is: 'JWT', then: Joi.required(), otherwise: Joi.allow(''),
-  }),
+  // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
+  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),

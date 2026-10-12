@@ -35,6 +35,21 @@ describe('SemanticModelMcpJwtService', () => {
     expect(users.findById).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['PLAYBOOK', 'http://localhost:8025/mcp', 'mcp-playbook'],
+    ['AGENT', 'http://localhost:8026/mcp', 'mcp-agent'],
+  ])('issues a user token scoped to the %s MCP', async (name, serverUrl, audience) => {
+    const service = create({ [`${name}_MCP_AUTH_MODE`]: 'JWT' });
+    const issued = await service.issue(serverUrl, 'user-1');
+    const claims = new JwtService().verify(issued.token, {
+      publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      algorithms: ['RS256'], issuer: 'yellowstorm', audience,
+    });
+    expect(claims.sub).toBe('user-1');
+    expect(claims.exp - claims.iat).toBe(300);
+    await expect(service.issue('https://evil.example/mcp', 'user-1')).rejects.toThrow();
+  });
+
   it.each(['https://evil.example/mcp', `${url}/other`, 'http://localhost:8027/MCP', `${url}?other=1`, `${url}#other`, 'http://user@localhost:8027/mcp'])('refuses tokens for %s', async (target) => {
     await expect(create().issue(target, 'user-1')).rejects.toThrow();
     expect(users.findById).not.toHaveBeenCalled();
@@ -73,5 +88,13 @@ describe('SemanticModelMcpJwtService', () => {
     const ecKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
     (readFileSync as jest.Mock).mockReturnValue(ecKey.export({ type: 'pkcs8', format: 'pem' }));
     expect(() => create()).toThrow('RSA');
+  });
+
+  it('accepts shared MCP signing settings without the legacy semantic names', async () => {
+    const service = create({
+      SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: '', SEMANTIC_MODEL_MCP_JWT_ISSUER: '',
+      MCP_JWT_PRIVATE_KEY_FILE: 'private.pem', MCP_JWT_ISSUER: 'yellowstorm',
+    });
+    await expect(service.issue(url, 'user-1')).resolves.toMatchObject({ serverUrl: url });
   });
 });

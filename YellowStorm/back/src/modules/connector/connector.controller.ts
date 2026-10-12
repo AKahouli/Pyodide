@@ -89,7 +89,7 @@ export class ConnectorController {
   @Post('mcp-token/:connectorId')
   @Header('Cache-Control', 'no-store')
   @RateLimit({ limit: 30, windowMs: 60000, keyPrefix: 'connector:mcp-token' })
-  @ApiOperation({ summary: 'Issue or renew a semantic model MCP JWT for the authenticated user' })
+  @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for the authenticated user' })
   async issueMcpToken(@Param('connectorId') connectorId: string, @CurrentUser() user: AuthUser) {
     const connector = await this.connectorService.findById(connectorId);
     if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {

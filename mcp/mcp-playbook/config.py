@@ -27,6 +27,10 @@ class Settings:
     port: int
     max_response_bytes: int
     search_limit_max: int
+    auth_mode: str = "Bearer"
+    jwt_public_key_file: str = ""
+    jwt_issuer: str = ""
+    jwt_audience: str = "mcp-playbook"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,12 +42,20 @@ class Settings:
             port=int(os.getenv("MCP_PORT", "8025")),
             max_response_bytes=int(os.getenv("PLAYBOOK_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
             search_limit_max=int(os.getenv("PLAYBOOK_MCP_SEARCH_LIMIT_MAX", "25")),
+            auth_mode=os.getenv("PLAYBOOK_MCP_AUTH_MODE", "Bearer"),
+            jwt_public_key_file=os.getenv("PLAYBOOK_MCP_JWT_PUBLIC_KEY_FILE", ""),
+            jwt_issuer=os.getenv("PLAYBOOK_MCP_JWT_ISSUER", ""),
+            jwt_audience=os.getenv("PLAYBOOK_MCP_JWT_AUDIENCE", "mcp-playbook"),
         )
 
     def validate(self) -> None:
         if not self.internal_token:
             raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
-        if not self.ingress_token:
+        if self.auth_mode not in ("JWT", "Bearer"):
+            raise ValueError("PLAYBOOK_MCP_AUTH_MODE must be JWT or Bearer")
+        if self.auth_mode == "JWT" and not (self.jwt_public_key_file and self.jwt_issuer and self.jwt_audience):
+            raise ValueError("JWT mode requires a public key file, issuer and audience")
+        if self.auth_mode == "Bearer" and not self.ingress_token:
             raise ValueError("PLAYBOOK_MCP_INGRESS_TOKEN is required")
         if not self.backend_url.startswith(("http://", "https://")):
             raise ValueError("YELLOWSTORM_BACKEND_URL must be an HTTP(S) URL")

@@ -28,6 +28,11 @@ and a missing acting user raise MCP tool errors.
   the other three are optional traceability aids — missing or malformed values fall back
   to `unknown-*` placeholders instead of rejecting the call. Bearer-only is enough for
   `initialize`/`list_tools`.
+- **JWT mode**: set `AGENT_MCP_AUTH_MODE=JWT`, `AGENT_MCP_JWT_PUBLIC_KEY_FILE`,
+  `AGENT_MCP_JWT_ISSUER`, and `AGENT_MCP_JWT_AUDIENCE=mcp-agent`. The server verifies
+  YellowStorm's five-minute RS256 token and uses signed `sub` as the acting user,
+  ignoring a caller-supplied user header. Connector and ADK calls renew it. Agent
+  ownership and shares are checked by the backend on each operation.
 - **Egress (this server → backend)**: every call to
   `/api/v1/internal/agent-crud/*` carries `X-Internal-Token: $YELLOWSTORM_INTERNAL_SERVICE_TOKEN`
   (same value as the backend `INTERNAL_SERVICE_SECRET`) plus the identity headers above.
@@ -41,7 +46,11 @@ Copy `.env.example` to `.env` (auto-loaded; real environment variables win):
 |---|---|---|
 | `YELLOWSTORM_BACKEND_URL` | `http://localhost:3000` | NestJS backend base URL |
 | `YELLOWSTORM_INTERNAL_SERVICE_TOKEN` | — (required) | Must match backend `INTERNAL_SERVICE_SECRET` |
-| `AGENT_MCP_INGRESS_TOKEN` | — (required) | Must match backend `AGENT_MCP_INGRESS_TOKEN` |
+| `AGENT_MCP_INGRESS_TOKEN` | — (Bearer mode) | Static ingress token when JWT is disabled |
+| `AGENT_MCP_AUTH_MODE` | `Bearer` | Set `JWT` for signed per-user tokens |
+| `AGENT_MCP_JWT_PUBLIC_KEY_FILE` | — | Public PEM path when JWT is enabled |
+| `AGENT_MCP_JWT_ISSUER` | — | Must match the backend signer |
+| `AGENT_MCP_JWT_AUDIENCE` | `mcp-agent` | Dedicated audience for this MCP |
 | `MCP_PORT` | `8026` | HTTP listen port |
 | `AGENT_MCP_TIMEOUT_SECONDS` | `60` | Backend call timeout (1–300) |
 | `AGENT_MCP_MAX_RESPONSE_BYTES` | `2097152` | Response size cap |

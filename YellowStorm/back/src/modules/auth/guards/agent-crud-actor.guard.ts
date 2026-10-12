@@ -2,6 +2,9 @@ import { isObjectId } from '@common/postgres/object-id';
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { UnauthorizedException } from '@modules/exceptions';
+import { UserService } from '@modules/user';
+import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 
 /**
  * Guard for the internal agent-crud surface (`/internal/agent-crud/*`).
@@ -11,16 +14,21 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
  */
 @Injectable()
 export class AgentCrudActorGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  constructor(private readonly users: UserService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const headers = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined> }>().headers;
     const userId = headers['x-yellowstorm-user-id'];
     const correlationId = headers['x-correlation-id'];
     if (typeof userId !== 'string' || !isObjectId(userId)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid trusted agent-crud acting user');
     }
-    if (typeof correlationId !== 'string' || !correlationId.trim() || correlationId.length > 200) {
+    if (correlationId !== undefined && (typeof correlationId !== 'string' || !correlationId.trim() || correlationId.length > 200)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid trusted agent-crud correlation id');
     }
+    const user = await this.users.findById(userId);
+    if (!user) throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND);
+    assertAccountApproved(user);
     return true;
   }
 }

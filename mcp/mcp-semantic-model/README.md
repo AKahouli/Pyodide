@@ -110,6 +110,15 @@ SEMANTIC_MODEL_MCP_JWT_ISSUER=yellowstorm
 SEMANTIC_MODEL_MCP_JWT_AUDIENCE=mcp-semantic-model
 ```
 
+The backend can use the same private key and issuer for semantic-model, Playbook,
+and Agent MCP tokens. Set `PLAYBOOK_MCP_AUTH_MODE=JWT` and/or
+`AGENT_MCP_AUTH_MODE=JWT` on the backend, and configure the matching public key,
+issuer, and distinct audience (`mcp-playbook` or `mcp-agent`) in each MCP.
+For a new deployment, mount the private PEM only in YellowStorm and set
+`MCP_JWT_PRIVATE_KEY_FILE` and `MCP_JWT_ISSUER`; the existing
+`SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE` and `_ISSUER` remain supported.
+Mount the matching public PEM in each MCP container.
+
 The PEM file must contain an RSA public key (absolute path recommended). The issuer
 must sign tokens with RS256 and include `sub` (acting user ID), `iss`, `aud`, `iat`
 and `exp`; future `nbf` values are rejected too. User identity always comes from

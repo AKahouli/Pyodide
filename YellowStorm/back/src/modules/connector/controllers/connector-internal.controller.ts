@@ -22,7 +22,7 @@ export class ConnectorInternalController {
   @Post('mcp-token')
   @Header('Cache-Control', 'no-store')
   @ApiHeader({ name: 'X-Internal-Token', required: true })
-  @ApiOperation({ summary: 'Issue or renew a semantic model MCP JWT for a trusted runtime' })
+  @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for a trusted runtime' })
   async issueMcpToken(@Body() dto: InternalMcpTokenDto) {
     const connector = await this.connectors!.findById(dto.connectorId);
     if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {

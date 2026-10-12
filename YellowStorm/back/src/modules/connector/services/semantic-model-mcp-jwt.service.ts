@@ -15,37 +15,53 @@ export class SemanticModelMcpJwtService {
   private readonly privateKey?: string;
 
   constructor(private readonly config: ConfigService, private readonly users: UserService) {
-    if (config.get<string>('SEMANTIC_MODEL_MCP_AUTH_MODE', 'Bearer') === 'JWT') {
-      const path = config.get<string>('SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE');
-      if (!path || !config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER')
-        || !config.get<string>('SEMANTIC_MODEL_MCP_JWT_AUDIENCE', 'mcp-semantic-model')) {
-        throw new Error('Semantic model MCP JWT mode requires a private key file, issuer and audience');
+    if (['SEMANTIC_MODEL', 'PLAYBOOK', 'AGENT'].some((name) => config.get<string>(`${name}_MCP_AUTH_MODE`, 'Bearer') === 'JWT')) {
+      const path = config.get<string>('MCP_JWT_PRIVATE_KEY_FILE') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE');
+      if (!path || !(config.get<string>('MCP_JWT_ISSUER') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'))) {
+        throw new Error('MCP JWT mode requires a private key file and issuer');
       }
       const key = createPrivateKey(readFileSync(path));
       if (key.asymmetricKeyType !== 'rsa' || (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) {
-        throw new Error('Semantic model MCP JWT signing requires an RSA key of at least 2048 bits');
+        throw new Error('MCP JWT signing requires an RSA key of at least 2048 bits');
       }
       this.privateKey = key.export({ type: 'pkcs8', format: 'pem' }).toString();
     }
   }
 
   isJwtServer(serverUrl: unknown): boolean {
-    if (this.config.get<string>('SEMANTIC_MODEL_MCP_AUTH_MODE', 'Bearer') !== 'JWT') return false;
-    const configured = this.config.get<string>('SEMANTIC_MODEL_MCP_SERVER_URL', 'http://localhost:8027/mcp');
+    return this.serverConfig(serverUrl) !== null;
+  }
+
+  private serverConfig(serverUrl: unknown): { audience: string } | null {
+    const servers = [
+      ['SEMANTIC_MODEL', 'http://localhost:8027/mcp', 'mcp-semantic-model'],
+      ['PLAYBOOK', 'http://localhost:8025/mcp', 'mcp-playbook'],
+      ['AGENT', 'http://localhost:8026/mcp', 'mcp-agent'],
+    ] as const;
     try {
       const normalize = (value: string) => {
+        if (!value) return '';
         const url = new URL(value);
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return '';
         return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
       };
-      const expected = normalize(configured ?? '');
-      return Boolean(expected) && typeof serverUrl === 'string' && normalize(serverUrl) === expected;
-    } catch { return false; }
+      const actual = typeof serverUrl === 'string' ? normalize(serverUrl) : '';
+      if (!actual) return null;
+      for (const [name, defaultUrl, defaultAudience] of servers) {
+        if (this.config.get<string>(`${name}_MCP_AUTH_MODE`, 'Bearer') !== 'JWT') continue;
+        const expected = normalize(this.config.get<string>(`${name}_MCP_SERVER_URL`, defaultUrl) ?? '');
+        if (expected && actual === expected) {
+          return { audience: this.config.get<string>(`${name}_MCP_JWT_AUDIENCE`, defaultAudience) ?? defaultAudience };
+        }
+      }
+      return null;
+    } catch { return null; }
   }
 
   async issue(serverUrl: string, userId: string): Promise<{ token: string; expiresAt: number; serverUrl: string }> {
-    if (!this.isJwtServer(serverUrl) || !this.privateKey) {
-      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'JWT issuance is restricted to the configured semantic model MCP server');
+    const server = this.serverConfig(serverUrl);
+    if (!server || !this.privateKey) {
+      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'JWT issuance is restricted to configured MCP servers');
     }
     if (typeof userId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(userId)) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP actor');
@@ -56,8 +72,8 @@ export class SemanticModelMcpJwtService {
     const now = Math.floor(Date.now() / 1000);
     const token = this.jwt.sign({ sub: userId, iat: now, exp: now + 300, jti: randomUUID() }, {
       privateKey: this.privateKey, algorithm: 'RS256',
-      issuer: this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'),
-      audience: this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_AUDIENCE', 'mcp-semantic-model'),
+      issuer: this.config.get<string>('MCP_JWT_ISSUER') || this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'),
+      audience: server.audience,
     });
     return { token, expiresAt: now + 300, serverUrl };
   }
