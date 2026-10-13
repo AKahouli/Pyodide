@@ -35,6 +35,42 @@ test('repository policy requires short scoped instructions for frontend and back
   } finally { h?.close(); f.cleanup(); }
 });
 
+test('feature routes require current relevant feature documentation before code edits', async () => {
+  const f = fixture(); let h;
+  try {
+    const policy = JSON.parse(readFileSync(new URL('../policy.json', import.meta.url), 'utf8'));
+    writeFileSync(path.join(f.root, 'tools/opencode-harness/policy.json'), JSON.stringify(policy));
+    mkdirSync(path.join(f.root, 'docs/agent-context/features'), { recursive: true });
+    for (const area of ['front', 'back']) {
+      mkdirSync(path.join(f.root, `YellowStorm/${area}`), { recursive: true });
+      writeFileSync(path.join(f.root, `YellowStorm/${area}/AGENTS.md`), '# Scoped instructions\n');
+    }
+    const routes = policy.documentationRoutes.filter(route => route.document.startsWith('docs/agent-context/features/'));
+    assert.equal(routes.length, 5);
+    for (const { prefix, document } of routes) {
+      mkdirSync(path.join(f.root, prefix), { recursive: true });
+      writeFileSync(path.join(f.root, prefix, 'existing.js'), 'export const value = 1;\n');
+      writeFileSync(path.join(f.root, document), '# Existing feature\nSource-based behavior and reuse.\n');
+    }
+    h = await openHarness(f.root);
+    for (const [index, { prefix, document }] of routes.entries()) {
+      const sid = `feature-${index}`, target = prefix + 'existing.js';
+      const documents = ['docs/agent-context/README.md'];
+      if (prefix.startsWith('YellowStorm/front/')) documents.push('YellowStorm/front/AGENTS.md');
+      if (prefix.startsWith('YellowStorm/back/')) documents.push('YellowStorm/back/AGENTS.md');
+      start(h, sid); reads(h, sid, [...documents, target]);
+      const input = { targets: [target], documents, sources: [target], reuseDecision: 'Extend existing feature owner.' };
+      assert.throws(() => h.prepare(sid, input), /required documentation: docs\/agent-context\/features\//);
+      documents.push(document);
+      assert.throws(() => h.prepare(sid, input), /Use Read on current relevant sections/);
+      reads(h, sid, [document]); h.prepare(sid, input);
+      h.beforeEdit(sid, [target], sid); h.afterEdit(sid, sid);
+      writeFileSync(path.join(f.root, document), `# Updated feature behavior ${index}\n`);
+      assert.throws(() => h.beforeEdit(sid, [target], 'stale'), /Context .* changed/);
+    }
+  } finally { h?.close(); f.cleanup(); }
+});
+
 test('edits need current documentation, source reuse, target reads and ownership', async () => {
   const f = fixture(); const h = await openHarness(f.root);
   try {

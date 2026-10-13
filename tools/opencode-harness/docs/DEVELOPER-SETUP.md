@@ -311,8 +311,8 @@ Run the behavioral suite from the repository root:
 node --test tools/opencode-harness/tests/*.test.mjs
 ```
 
-The Windows distribution baseline has **44 passing tests**: 42 runtime tests
-and two installer preservation/failure checks, including 12 simultaneous
+The Windows suite includes runtime behavioral checks and two installer
+preservation/failure checks, including feature-document evidence and 12 simultaneous
 first-time checkpoint initializations, independent process receipts, interrupted
 edits, reuse gates and stale-event recovery. Tests use disposable repositories
 and a mocked memory API; they do not validate your actual sign-in or application.
@@ -391,9 +391,14 @@ must produce `BLOCKED / BROWSER_ISOLATION`.
   approval requests. Hindsight capture is asynchronous; a reply is not proof that
   memory extraction succeeded.
 - Git docs live in `docs/agent-context/`: `architecture/`, `decisions/`,
-  `frontend/`, `backend/`, `testing/`, routed by `README.md`. Code/graph checks
+  `features/`, `frontend/`, `backend/`, `testing/`, routed by `README.md`. Code/graph checks
   establish implementation; reviewed docs establish approved intent; experience
   is fallible background context.
+- Read the matching feature page before implementation. Assign affected pages to
+  `maintainer` once source is stable, with exact owned docs, branch and check evidence.
+  Feature docs travel in the implementation branch/PR; developers receive the reviewed
+  shared baseline by merging/rebasing main. Preserve pending updates in checkpoints;
+  full completion includes doc review. See `docs/agent-context/documentation-workflow.md`.
 - Changed boundaries, runtime, persistence or durable decisions update owning
   architecture references. ADRs use `decisions/ADR-NNNN-topic.md`, status, scope,
   source paths, decision, rationale and verification. Start new decisions as

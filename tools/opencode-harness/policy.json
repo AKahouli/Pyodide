@@ -4,6 +4,11 @@
   "documentationRoutes": [
     { "prefix": "YellowStorm/front/", "document": "YellowStorm/front/AGENTS.md" },
     { "prefix": "YellowStorm/back/", "document": "YellowStorm/back/AGENTS.md" },
+    { "prefix": "YellowStorm/front/src/modules/conversation/", "document": "docs/agent-context/features/conversations.md" },
+    { "prefix": "YellowStorm/back/src/modules/conversation/", "document": "docs/agent-context/features/conversations.md" },
+    { "prefix": "YellowStorm/front/src/modules/semantic-model/", "document": "docs/agent-context/features/semantic-model.md" },
+    { "prefix": "YellowStorm/back/src/modules/semantic-model/", "document": "docs/agent-context/features/semantic-model.md" },
+    { "prefix": "YellowStorm/semantic-model-runtime/", "document": "docs/agent-context/features/semantic-model.md" },
     { "prefix": "yellowstorm-adk/", "document": "yellowstorm-adk/README.md" },
     { "prefix": "tools/opencode-harness/", "document": "tools/opencode-harness/README.md" }
   ]

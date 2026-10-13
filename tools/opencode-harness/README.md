@@ -200,3 +200,18 @@ and expected result. Ready-to-test work includes a concrete route/action/check;
 proposals must not imply implementation. Ongoing authorized work continues without
 routine confirmation. Reusable lessons are optional when useful, not a substitute
 for the next step. Hindsight persistence is separate from the footer.
+
+## Feature context and maintenance
+
+Use `docs/agent-context/features/README.md` to locate only the affected feature.
+Repository policy requires current feature-page reads before conversation and
+semantic-model edits, in addition to scoped instructions and source evidence.
+Keep these pages aligned with their branch; verify code/tests rather than treating
+another branch's unmerged documentation as approved behavior.
+
+`build` assigns affected feature/architecture/contract pages to `maintainer` after
+source stabilizes, with exact documentation ownership and verification evidence.
+Ready-to-test may precede that background work, but full completion requires reviewed
+updates or a specific no-impact reason. Documentation ships in the implementation's
+branch/PR; checkpoints preserve pending maintainer work through interruption.
+See [documentation workflow](../../docs/agent-context/documentation-workflow.md).
