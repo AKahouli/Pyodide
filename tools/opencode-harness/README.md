@@ -7,11 +7,15 @@ The existing Hindsight integration remains independent of task checkpoints.
 
 ## Install
 
-Run `./tools/opencode-harness/install.ps1` from PowerShell, then restart OpenCode.
+Run `./tools/opencode-harness/install.ps1` from PowerShell, then stop and restart
+the entire OpenCode host process. Creating a new chat in a running host does not
+reload plugins. Startup output and `sdlc_health` expose the loaded runtime version;
+use it to identify hosts still running an older installed plugin.
 The installer copies the runtime and approved agent instructions into the user
 configuration. It preserves `opencode.json`, authentication, and provider keys.
 The installed plugin SDK must already exist in that configuration directory.
-This implementation is verified against OpenCode 1.18.34.
+Native parallel-session checks are verified against OpenCode CLI 1.18.34;
+the graph driver is also verified in the desktop's Node 24.15 runtime.
 
 Checkpoint/edit workflow activates in worktrees containing
 `tools/opencode-harness/policy.json`. Startup diagnostics also run elsewhere:
@@ -27,14 +31,25 @@ at `docs/agent-context/README.md`.
 ### Mandatory session startup checks
 
 Each new session, including children and parallel OpenCode processes, receives
-its own startup check in the active root. Checkpoint health is a real local
-SQLite transaction write/read round trip. Graph connection and Hindsight API
-health are checked with bounded requests through the existing services.
-They remain `PENDING` until actual scoped graph statistics and
-`hindsight_diagnose` results verify the graph root and the actual plugin's memory
-workspace/bank. Hindsight also performs an authenticated bank read and checks
-that automatic capture is configured. This verifies availability/configuration,
-not the success of future asynchronous memory extraction or graph freshness.
+automatic native checks in the active root. Checkpoint health is a real local
+SQLite transaction write/read round trip with a session-specific receipt. Graph
+health checks the connected host MCP and reads the current root's index without
+rebuilding it. Hindsight resolves the host configuration, worktree mapping and
+bank before overrides, then checks API readiness, authenticated bank access and
+enabled automatic capture. It does not construct another Hindsight plugin.
+Host API requests use the actual launch directory. Graph ownership and memory
+configuration use the owning worktree, matching the installed Hindsight adapter;
+launching from a frontend subdirectory must not create a second root instance or
+select a different memory bank. Runtime selection uses `process.versions.bun`,
+not a compatibility global. Read-only graph queries tolerate brief writer locks.
+Concurrent first-time checkpoint initialization retries only SQLite busy/locked
+errors within a five-second lock budget; permanent errors remain explicit.
+
+The native startup result is injected into context. No model-driven graph
+statistics, `hindsight_diagnose` or `sdlc_health` round trips are required to
+complete startup. Task-specific graph context and freshness checks still apply
+when investigating code. Availability does not establish complete graph coverage,
+working-tree freshness or future asynchronous memory extraction success.
 Session-tagged asynchronous capture failures are checked in the bounded Hindsight
 diagnostic tail during later health/turn checks; another session's failure cannot
 invalidate this session. A background failure appearing after the final turn is
@@ -45,16 +60,21 @@ embeddings are not a startup dependency: Windows PyTorch DLL failures in the
 embeddings environment must not disable structural graph navigation. Semantic
 search may be unavailable; use structural queries and focused source search.
 
-Use `sdlc_health` to read the actual statuses. The agent reports a short startup
-line; child agents report to their caller. Failures include recovery actions in
+Use the injected native results; `sdlc_health` is optional for inspection and
+recovery. The agent reports failures; child agents report them to their caller.
+Failures include recovery actions in
 system context, stderr and a UI toast when available. Source edits and mutating
 Git/build commands are gated until all three checks pass. Read-only diagnosis and
 checkpoint/blocker recording remain available. After recovery run
-`sdlc_health(refresh: true)`, repeat the pending probes, and read health again.
+`sdlc_health(refresh: true)` to rerun native checks. Do not repeat model tool probes.
 
 Health receipts are isolated by canonical worktree, native session and process
-owner. A restart/resume cannot borrow another session's healthy receipt; same-chat
-task generations preserve the current session's verified startup. There is no
+owner. Concurrent in-flight service probes coalesce only within one process and
+canonical root; completed results are not a persistent cross-session cache.
+Each session writes its own checkpoint receipt, and independent OpenCode processes
+perform their own probes. A restart/resume cannot borrow another session's healthy
+receipt; same-chat task generations preserve the current session's verified startup.
+There is no
 automatic daemon restart, opt-in expansion, graph rebuild or second graph MCP
 process. A missing/unloadable plugin cannot diagnose itself: global instructions
 require reporting a missing `sdlc_health` tool as a setup failure.

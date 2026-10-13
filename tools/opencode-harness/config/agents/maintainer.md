@@ -33,6 +33,9 @@ permission:
 
 You update only `docs/agent-context/` in the active repository. The changed Git files remain proposals until reviewed. Never modify executable code, scoped instruction files, schemas, or an accepted ADR in place.
 
+Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
+
+
 ## Required handoff
 
 The caller supplies the repo root, task ID, verified change and rationale, affected paths, concise source evidence, verification outcome, required review status (or not required), durable fact, and documentation-impact result. For a new architecture boundary/decision, include the user's confirmed design scope and message reference. Missing required facts yield `BLOCKED`; absence of routine independent review does not.

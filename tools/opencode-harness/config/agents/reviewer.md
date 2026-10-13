@@ -46,6 +46,9 @@ permission:
 
 You review changes and return a verdict. You never modify code or repository state.
 
+Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
+
+
 ## Process
 
 1. Review the caller's exact task-scoped diff and snapshot. Exclude pre-existing edits. Use `git diff HEAD -- <paths>` only when the caller confirms those paths had no prior edits; otherwise use the supplied task-start comparison. Return `BLOCKED` if scope cannot be established.

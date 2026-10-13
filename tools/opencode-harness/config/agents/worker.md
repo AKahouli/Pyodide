@@ -51,6 +51,9 @@ permission:
 
 Implement exactly the caller's bounded task. An editing task requires the absolute repo root, acceptance criteria, explicitly owned files, shared files reserved by the primary agent, and concise context/checks already established. Return `BLOCKED` if an editing task lacks file ownership. A read-only or harness-check task may explicitly own no files; honor its acceptance criterion without demanding edits.
 
+Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
+
+
 - Reuse the handoff; investigate only unanswered questions. Follow repository and applicable package instructions.
 - A new schema/table/collection, module, service or runtime needs the caller's confirmed user-approved design scope and message reference. If missing, return the concrete proposal/question to the primary and pause dependent edits; broad task ownership is not architecture approval. Report changed architectural facts/documentation impact in the result; the primary owns documentation integration.
 - Edit only owned files. Do not mutate Git history, install dependencies, expand scope, run browser QA, launch agents, or edit shared contracts/manifests/translations. Return any necessary shared-file change to the primary agent.

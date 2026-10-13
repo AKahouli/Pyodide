@@ -4,7 +4,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 
 | Scope | Reviewed context | Direct checks |
 | --- | --- | --- |
-| Session startup integration readiness | [ADR-0008](decisions/ADR-0008-session-integration-health.md), [Harness guide](../../tools/opencode-harness/README.md) | current-root native graph/memory probes, checkpoint write/read and session/process health receipt |
+| Session startup integration readiness | [ADR-0009](decisions/ADR-0009-native-startup-readiness.md) (current mechanism), [ADR-0008](decisions/ADR-0008-session-integration-health.md) (original decision), [Harness guide](../../tools/opencode-harness/README.md) | automatic current-root graph/bank reads, capture configuration, per-session checkpoint receipt and loaded runtime version |
 | New schema/service/module/runtime or changed architecture | [Architecture change control](architecture/change-control.md), [ADR-0007](decisions/ADR-0007-architecture-approval-and-documentation.md) | confirmed design scope, source/contract verification and documentation-impact checkpoint |
 | System architecture baseline (components, runtimes, flows) | [Overview](architecture/overview.md), [Component map](architecture/component-map.md), [Gaps](architecture/baseline-gaps.md) | source paths + verification date in each record; unresolved items in gaps |
 | Agent harness and knowledge workflow | [ADR-0001](decisions/ADR-0001-agent-knowledge.md), [ADR-0002](decisions/ADR-0002-fast-validation-and-parallel-work.md), [ADR-0003](decisions/ADR-0003-autonomy-and-qa-sign-in.md), [ADR-0004](decisions/ADR-0004-private-qa-and-regression-fixtures.md) (current browser policy) | `AGENTS.md`, OpenCode user settings |
@@ -14,7 +14,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 | Backend (`YellowStorm/back/**`) | [Scoped instructions and topic links](../../YellowStorm/back/AGENTS.md); read only matching references | backend source and tests |
 | Agent runtime (`yellowstorm-adk/**`) | [ADK README](../../yellowstorm-adk/README.md), [gRPC README](../../yellowstorm-adk/grpc/README.md), [ADK runtime](architecture/adk-runtime.md) | Python source, tests, and protos |
 | Playbook MCP (`mcp/mcp-playbook/**`) | [Playbook MCP README](../../mcp/mcp-playbook/README.md) | MCP source, ADK flow proto, and callers |
-| Conversation (`YellowStorm/front/src/modules/conversation/**`, matching backend routes) | [Conversation README](../../YellowStorm/front/src/modules/conversation/README.md), [Persistence](../backend/persistence.md) | frontend and backend tests |
+| Conversation (`YellowStorm/front/src/modules/conversation/**`, matching backend routes) | [Conversation README](../../YellowStorm/front/src/modules/conversation/README.md), [Persistence](backend/persistence.md) | frontend and backend tests |
 | Authorization (`YellowStorm/back/src/modules/authorization/**`) | [Authorization README](../../YellowStorm/back/src/modules/authorization/README.md) | guards, callers, and permission tests |
 | Cross-service REST, gRPC, and proto | [Cross-service contracts](architecture/cross-service-contracts.md); matching API/contract references linked by both scoped instruction files | sender, receiver, schemas, and protos |
 | Observability (`contracts/observability/**`, logging changes) | [Logging contract](../observability/logging-contract.md), [event registry README](../../contracts/observability/README.md) | `node scripts/observability/check-policy.mjs` |

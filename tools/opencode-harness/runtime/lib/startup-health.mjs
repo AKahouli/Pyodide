@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { effectiveMemorySettings as effective } from './memory-settings.mjs';
+import { effectiveMemorySettings as effective, resolveMemoryTarget } from './memory-settings.mjs';
 
 const fail = (reason, action) => ({ status: 'FAIL', reason, action });
 const pending = (reason, action) => ({ status: 'PENDING', reason, action });
@@ -24,40 +24,67 @@ async function json(url, token, request = fetch) {
   return result.json();
 }
 
-// Status requests reuse the host MCP connection; no extra graph process or rebuild.
-export async function probeStartup({ root, client, checkpointError, readConfig = config, request = fetch }) {
-  const result = { root, checkedAt: new Date().toISOString(), checkpoints: checkpointError ? fail('Checkpoint store unavailable.', 'Repair the current root policy/Git/store; retry sdlc_health.') : pending('Verifying local SQLite persistence.', 'Run sdlc_health.'), graph: pending('Scoped graph query not yet verified.', `Call code-review-graph_list_graph_stats_tool with repo_root=${root}.`), hindsight: pending('Current memory workspace/bank not yet verified.', 'Call hindsight_diagnose; the harness will verify its bank API.') };
+export async function probeGraphIndex(root) {
+  const filename = path.join(root, '.code-review-graph/graph.db');
+  let db;
+  try {
+    if (process.versions.bun) {
+      const { Database } = await import('bun:sqlite');
+      db = new Database(filename, { readonly: true });
+    } else {
+      const { DatabaseSync } = await import('node:sqlite');
+      db = new DatabaseSync(filename, { readOnly: true });
+    }
+    const query = sql => (db.prepare ? db.prepare(sql) : db.query(sql));
+    query('PRAGMA busy_timeout = 2000').run();
+    return { repoRoot: query("SELECT value FROM metadata WHERE key = 'repo_root'").get()?.value, hasNodes: Boolean(query('SELECT 1 FROM nodes LIMIT 1').get()) };
+  } finally { db?.close(); }
+}
+
+// Reuse the host connection and read only one graph row; no rebuild or full count.
+export async function probeStartup({ root, hostDirectory = root, memoryDirectory = root, client, checkpointError, readConfig = config, request = fetch, readGraph = probeGraphIndex }) {
+  const result = { root, checkedAt: new Date().toISOString(), checkpoints: checkpointError ? fail('Checkpoint store unavailable.', 'Repair the current root policy/Git/store; retry sdlc_health.') : pending('Verifying local SQLite persistence.', 'Run sdlc_health.'), graph: pending('Checking the current graph index.', 'Retry sdlc_health.'), hindsight: pending('Checking the current memory bank.', 'Retry sdlc_health.') };
+  const registry = async () => {
+    if (!client?.tool?.ids) throw new Error('registry');
+    const ids = await client.tool.ids({ directory: hostDirectory, query: { directory: hostDirectory } }, { signal: AbortSignal.timeout(10000) });
+    if (ids.error || !Array.isArray(ids.data)) throw new Error('registry');
+    return ids.data;
+  };
   await Promise.all([
     (async () => {
-      if (!client?.tool?.ids) return; // Pending native probes still establish actual tool availability.
       try {
-        const ids = await client.tool.ids({ directory: root, query: { directory: root } }, { signal: AbortSignal.timeout(10000) });
-        if (ids.error || !Array.isArray(ids.data)) throw new Error('registry');
-        if (!ids.data.includes('hindsight_diagnose')) result.hindsight = fail('Hindsight native tools are absent in this process/directory.', 'Enable the Hindsight plugin and current-directory opt-in, restart OpenCode, then retry sdlc_health.');
-      } catch { result.hindsight = fail('Native memory tool registry check failed.', 'Inspect plugin loading and restart OpenCode before retrying sdlc_health.'); }
+        const [state, graph] = await Promise.all([
+          client.mcp.status({ directory: hostDirectory, query: { directory: hostDirectory } }, { signal: AbortSignal.timeout(10000) }), readGraph(root).catch(error => { throw new Error(`index read ${String(error.code || error.name || 'error').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50)}`); }),
+        ]);
+        if (state.error || state.data?.['code-review-graph']?.status !== 'connected') throw new Error('connection');
+        if (!graph.repoRoot || canonical(graph.repoRoot) !== canonical(root)) throw new Error('root');
+        if (!graph.hasNodes) throw new Error('index');
+        result.graph = { status: 'PASS', reason: 'Connected graph tool and nonempty current-root index verified.', root };
+      } catch (error) { result.graph = fail(`Graph startup verification failed (${['connection', 'root', 'index'].includes(error.message) || /^index read [a-zA-Z0-9_]+$/.test(error.message) ? error.message : String(error.name || 'connection error').replace(/[^a-zA-Z0-9_ ]/g, '').slice(0, 50)}).`, `Inspect this process's MCP connection and the graph index for ${root}; recover the reported failure, then retry sdlc_health(refresh:true). Rebuild only if the index is missing or empty.`); }
     })(),
     (async () => {
       try {
-        const state = await client.mcp.status({ directory: root, query: { directory: root } }, { signal: AbortSignal.timeout(10000) });
-        if (state.error || state.data?.['code-review-graph']?.status !== 'connected') result.graph = fail('Code Review Graph MCP is not connected.', 'Reconnect the graph MCP in this OpenCode process, then retry sdlc_health.');
-      } catch { result.graph = fail('Graph connection check failed or timed out.', 'Check OpenCode MCP status, then retry sdlc_health.'); }
-    })(),
-    (async () => {
-      try {
-        const cfg = effective(readConfig(), root);
+        const { cfg, bankId } = resolveMemoryTarget(readConfig(), memoryDirectory);
         if (cfg.disabled || cfg.retainSessions === false || process.env.HINDSIGHT_DISABLE_HOOKS) throw new Error('disabled');
+        const ids = await registry();
+        if (!ids.includes('hindsight_diagnose')) throw new Error('tool');
         const url = cfg.apiUrl;
         if (!url) throw new Error('endpoint');
-        const health = await json(new URL('health', url.replace(/\/?$/, '/')), cfg.apiToken, request);
+        const base = url.replace(/\/?$/, '/');
+        const [health, bank] = await Promise.all([
+          json(new URL('health', base), cfg.apiToken, request),
+          json(new URL(`v1/default/banks/${encodeURIComponent(bankId)}/stats`, base), cfg.apiToken, request),
+        ]);
         if (health.status !== 'healthy' || health.database !== 'connected') throw new Error('unhealthy');
-        // Opt-in and bank mapping are established by the actual plugin's diagnose tool.
-      } catch { result.hindsight = fail('Hindsight configuration, capture setting or API health check failed.', 'Check current-directory opt-in and Hindsight daemon/configuration; restart the host after config changes and retry sdlc_health.'); }
+        response(bank);
+        result.hindsight = { status: 'PASS', reason: 'Native memory tool, current-directory configuration and authenticated bank read verified; capture configured.', bank: bankId, root, workspace: memoryDirectory };
+      } catch (error) { result.hindsight = fail(`Hindsight startup verification failed (${['disabled', 'tool', 'endpoint', 'unhealthy', 'registry'].includes(error.message) ? error.message : 'configuration/API unavailable'}).`, 'Check current-directory opt-in, bank access and Hindsight daemon/configuration; restart the host after config changes and retry sdlc_health.'); }
     })(),
   ]);
   return result;
 }
 
-export async function verifyObservation({ root, tool, args, output, readConfig = config, request = fetch }) {
+export async function verifyObservation({ root, memoryDirectory = root, tool, args, output, readConfig = config, request = fetch }) {
   if (/code.review.graph.*list_graph_stats_tool$/.test(tool)) {
     try {
       if (!args?.repo_root || canonical(args.repo_root) !== canonical(root)) throw new Error('root');
@@ -65,15 +92,15 @@ export async function verifyObservation({ root, tool, args, output, readConfig =
       if (!data || data.status !== 'ok' || data.error) throw new Error('response');
       if (/list_graph_stats_tool$/.test(tool) && !(data.total_nodes > 0)) throw new Error('index');
       // An empty/missing index cannot provide code context even if MCP is connected.
-      if (data.total_nodes === 0 || data.node_count === 0 || data.status === 'not_initialized' || /(?:not built|not initialized|no graph|graph.*not found)/i.test(JSON.stringify(data))) throw new Error('index');
+      if (data.total_nodes === 0 || data.node_count === 0 || data.status === 'not_initialized') throw new Error('index');
       return { key: 'graph', value: { status: 'PASS', reason: 'Scoped graph tool completed in the current root.', root } };
-    } catch { return { key: 'graph', value: fail('Graph query failed, returned no usable index, or targeted another root.', `Inspect/build the graph for ${root}, then rerun the scoped graph check.`) }; }
+    } catch (error) { return { key: 'graph', value: fail(`Graph verification failed (${['root', 'response', 'index'].includes(error.message) ? error.message : 'parse/tool error'}).`, `Inspect the scoped graph response for ${root}, recover the integration, then retry sdlc_health(refresh:true).`) }; }
   }
   if (tool === 'hindsight_diagnose') {
     try {
       const data = response(output);
-      if (canonical(data.workspace) !== canonical(root) || data.config?.disabled || data.credential?.api_token_matches_config === false || data.environment?.hooks_disabled || !data.bank_id) throw new Error('workspace');
-      const cfg = effective(readConfig(), root, data.bank_id);
+      if (canonical(data.workspace) !== canonical(memoryDirectory) || data.config?.disabled || data.credential?.api_token_matches_config === false || data.environment?.hooks_disabled || !data.bank_id) throw new Error('workspace');
+      const cfg = effective(readConfig(), memoryDirectory, data.bank_id);
       if (cfg.disabled || cfg.retainSessions === false || process.env.HINDSIGHT_DISABLE_HOOKS) throw new Error('capture disabled');
       response(await json(new URL(`v1/default/banks/${encodeURIComponent(data.bank_id)}/stats`, data.config.api_url.replace(/\/?$/, '/')), cfg.apiToken, request));
       return { key: 'hindsight', value: { status: 'PASS', reason: `Plugin workspace and authenticated bank read verified (${data.bank_id}); capture is configured.`, bank: data.bank_id, root } };
@@ -83,7 +110,7 @@ export async function verifyObservation({ root, tool, args, output, readConfig =
 }
 
 export function healthLine(report) {
-  return `Session checks (${report.root}): graph ${report.graph.status}; Hindsight ${report.hindsight.status}; checkpoints ${report.checkpoints.status}.`;
+  return `Session checks (${report.root}${report.harnessVersion ? `; harness ${report.harnessVersion}` : ''}): graph ${report.graph.status}; Hindsight ${report.hindsight.status}; checkpoints ${report.checkpoints.status}.`;
 }
 
 // Hindsight emits session-tagged write-back failures asynchronously. Never

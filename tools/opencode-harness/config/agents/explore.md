@@ -39,6 +39,9 @@ permission:
 
 You locate code and report evidence. You never edit anything.
 
+Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
+
+
 ## Method
 
 1. Reuse the caller's current scoped graph evidence. For a new investigation start with `get_minimal_context_tool(task=..., repo_root=<caller-supplied absolute worktree path>)`; use that root on every graph call. If missing/stale, use focused source fallback and report it; never rebuild as a read-only locator.

@@ -58,9 +58,14 @@ test('parallel processes preserve independent checkpoints and recover a killed e
   const f = fixture(); let h; let crashed;
   const worker = new URL('./process-worker.mjs', import.meta.url);
   try {
-    const children = ['parallel-a', 'parallel-b'].map(id => fork(worker, [f.root, id], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true }));
+    const children = ['parallel-a', 'parallel-b'].map(id => {
+      const child = fork(worker, [f.root, id], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true });
+      child.diagnostics = '';
+      child.stderr.on('data', chunk => { child.diagnostics = (child.diagnostics + chunk).slice(-4000); });
+      return child;
+    });
     const exits = await Promise.all(children.map(child => once(child, 'exit')));
-    assert.ok(exits.every(([code]) => code === 0));
+    assert.ok(exits.every(([code]) => code === 0), children.map(child => child.diagnostics).join('\n'));
     h = await openHarness(f.root);
     assert.deepEqual(h.state('parallel-a').completed, ['step-39']);
     assert.deepEqual(h.state('parallel-b').completed, ['step-39']);

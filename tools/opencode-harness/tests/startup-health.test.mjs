@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { probeStartup, verifyObservation, canonical, healthLine, captureFailure } from '../runtime/lib/startup-health.mjs';
+import { probeStartup, probeGraphIndex, verifyObservation, canonical, healthLine, captureFailure } from '../runtime/lib/startup-health.mjs';
 
 let directory, root, otherRoot;
 before(() => {
@@ -18,24 +18,25 @@ after(() => {
 
 const readConfig = () => ({ apiUrl: 'http://hindsight.invalid/', apiToken: 'synthetic-test-token', retainSessions: true });
 const request = async () => ({ ok: true, status: 200, json: async () => ({ status: 'healthy', database: 'connected' }) });
-const client = { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) } };
-const probe = overrides => probeStartup({ root, client, readConfig, request, ...overrides });
+const tools = { ids: async () => ({ data: ['hindsight_diagnose'] }) };
+const client = { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: tools };
+const probe = overrides => probeStartup({ root, client, readConfig, request, readGraph: async () => ({ repoRoot: overrides?.root ?? root, hasNodes: true }), ...overrides });
 const graph = overrides => verifyObservation({ root, tool: 'code-review-graph_list_graph_stats_tool', args: { repo_root: root }, output: JSON.stringify({ status: 'ok', total_nodes: 12, total_edges: 9 }), readConfig, request, ...overrides });
 const diagnoseOutput = () => ({ workspace: root, bank_id: 'synthetic-bank', config: { api_url: 'http://hindsight.invalid/', disabled: false }, credential: { api_token_matches_config: true } });
 const hindsight = overrides => verifyObservation({ root, tool: 'hindsight_diagnose', args: {}, output: diagnoseOutput(), readConfig, request, ...overrides });
 
-test('connected MCP and healthy API remain pending until real scoped tool observations', async () => {
+test('automatic connected current-root graph and authenticated memory bank pass without model tools', async () => {
   let observedRoot;
-  const report = await probe({ client: { mcp: { status: async (input, options) => {
+  const report = await probe({ client: { tool: tools, mcp: { status: async (input, options) => {
     observedRoot = input.query.directory;
     assert.ok(options.signal);
     return { data: { 'code-review-graph': { status: 'connected' } } };
   } } } });
   assert.equal(observedRoot, root);
-  assert.equal(report.graph.status, 'PENDING');
-  assert.equal(report.hindsight.status, 'PENDING');
+  assert.equal(report.graph.status, 'PASS');
+  assert.equal(report.hindsight.status, 'PASS');
   assert.equal(report.checkpoints.status, 'PENDING');
-  assert.match(healthLine(report), /graph PENDING; Hindsight PENDING; checkpoints PENDING/);
+  assert.match(healthLine(report), /graph PASS; Hindsight PASS; checkpoints PENDING/);
 });
 
 test('disconnected, missing, errored and timed-out MCP status fails visibly', async () => {
@@ -55,7 +56,7 @@ test('checkpoint initialization error or missing marker is reported without hidi
   for (const checkpointError of ['Missing current-root policy marker', 'SQLite store failed']) {
     const report = await probe({ checkpointError });
     assert.equal(report.checkpoints.status, 'FAIL');
-    assert.equal(report.graph.status, 'PENDING');
+    assert.equal(report.graph.status, 'PASS');
     assert.match(healthLine(report), /checkpoints FAIL/);
   }
 });
@@ -163,7 +164,7 @@ test('effective harness and current-directory capture overrides are honored', as
     assert.equal((await hindsight({ readConfig: () => cfg })).value.status, 'FAIL');
   }
   const cfg = { ...readConfig(), paths: { [otherRoot]: { retainSessions: false } } };
-  assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'PENDING');
+  assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'PASS');
   assert.equal((await hindsight({ readConfig: () => cfg })).value.status, 'PASS');
 });
 
@@ -218,4 +219,59 @@ test('native MCP and custom-tool envelopes preserve verified evidence and errors
   assert.equal((await graph({ output: { isError: true, structuredContent: stats } })).value.status, 'FAIL');
   assert.equal((await hindsight({ output: { output: JSON.stringify(diagnoseOutput()) } })).value.status, 'PASS');
   assert.equal(await graph({ tool: 'code-review-graph_get_minimal_context_tool', output: { status: 'ok' } }), null);
+});
+
+test('automatic probes reject wrong/missing graph identity and empty/corrupt index', async () => {
+  for (const graph of [{ repoRoot: otherRoot, hasNodes: true }, { hasNodes: true }, { repoRoot: root, hasNodes: false }]) {
+    assert.equal((await probe({ readGraph: async () => graph })).graph.status, 'FAIL');
+  }
+  assert.equal((await probe({ readGraph: async () => { throw new Error('private database detail'); } })).graph.status, 'FAIL');
+});
+
+test('automatic memory checks exact mapped bank, opt-in, native registration and bank errors', async () => {
+  const urls = [];
+  const cfg = { ...readConfig(), mapPathToBank: { [root]: 'mapped/bank' } };
+  const report = await probe({ readConfig: () => cfg, request: async url => {
+    urls.push(String(url)); return request();
+  } });
+  assert.equal(report.hindsight.status, 'PASS');
+  assert.equal(report.hindsight.bank, 'mapped/bank');
+  assert.ok(urls.includes('http://hindsight.invalid/v1/default/banks/mapped%2Fbank/stats'));
+  assert.equal((await probe({ readConfig: () => ({ ...cfg, optInOnly: true, mapPathToBank: {}, optInPaths: [otherRoot] }) })).hindsight.status, 'FAIL');
+  assert.equal((await probe({ client: { ...client, tool: { ids: async () => ({ data: [] }) } } })).hindsight.status, 'FAIL');
+  assert.equal((await probe({ request: async url => String(url).endsWith('/stats') ? { ok: true, json: async () => ({ error: 'private failure' }) } : request() })).hindsight.status, 'FAIL');
+});
+
+test('read-only graph index probe checks metadata and one node without writing', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const folder = path.join(root, '.code-review-graph'); mkdirSync(folder);
+  const filename = path.join(folder, 'graph.db');
+  const db = new DatabaseSync(filename);
+  db.exec('CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE nodes(id INTEGER PRIMARY KEY)');
+  db.prepare('INSERT INTO metadata VALUES (?,?)').run('repo_root', root);
+  assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: false });
+  db.exec('INSERT INTO nodes VALUES(1)');
+  assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: true });
+  const oldBun = globalThis.Bun;
+  try {
+    globalThis.Bun = {}; // OpenCode compatibility globals do not change the runtime.
+    assert.deepEqual(await probeGraphIndex(root), { repoRoot: root, hasNodes: true });
+  } finally { if (oldBun === undefined) delete globalThis.Bun; else globalThis.Bun = oldBun; }
+  db.close();
+  await assert.rejects(probeGraphIndex(otherRoot));
+});
+
+test('nested launch directory memory overrides do not change graph worktree scope', async () => {
+  const nested = path.join(root, 'frontend'); mkdirSync(nested);
+  const cfg = { ...readConfig(), paths: { [nested]: { retainSessions: false } } };
+  const report = await probe({ hostDirectory: nested, memoryDirectory: nested, readConfig: () => cfg, client: { ...client, mcp: { status: async input => {
+    assert.equal(input.query.directory, nested); // Host instance is the launch directory.
+    return { data: { 'code-review-graph': { status: 'connected' } } };
+  } } } });
+  assert.equal(report.graph.status, 'PASS'); assert.equal(report.graph.root, root);
+  assert.equal(report.hindsight.status, 'FAIL');
+  const output = { ...diagnoseOutput(), workspace: nested };
+  assert.equal((await hindsight({ memoryDirectory: nested, output })).value.status, 'PASS');
+  assert.equal((await hindsight({ output })).value.status, 'FAIL');
+  assert.equal((await hindsight({ memoryDirectory: nested, output, readConfig: () => cfg })).value.status, 'FAIL');
 });

@@ -8,7 +8,27 @@ import { fixture } from './fixture.mjs';
 const passing = { graph: { status: 'PASS', reason: 'Scoped graph query completed.' }, hindsight: { status: 'PASS', reason: 'Daemon and integration verified.' } };
 const goal = { goal: 'Verify session isolation', acceptance: ['Session owns its receipt'], nextAction: 'Continue', status: 'active' };
 
-if (process.argv[2] === '--health-worker') {
+function workerReceipt(child) {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
+    const finish = (error, message) => {
+      clearTimeout(timer); child.removeListener('message', messageReady); child.removeListener('exit', exited); child.removeListener('error', failed);
+      error ? reject(error) : resolve([message]);
+    };
+    const messageReady = message => finish(null, message);
+    const exited = (code, signal) => finish(new Error(`Health worker exited before its receipt (${code ?? signal}): ${stderr}`));
+    const failed = error => finish(error);
+    const timer = setTimeout(() => finish(new Error(`Health worker receipt timed out: ${stderr}`)), 20000);
+    child.once('message', messageReady); child.once('exit', exited); child.once('error', failed);
+  });
+}
+
+if (process.argv[2] === '--bootstrap-worker') {
+  const start = once(process, 'message'); process.send({ ready: true }); await start;
+  const h = await openHarness(process.argv[3]);
+  h.close(); process.send({ bootstrapped: true });
+} else if (process.argv[2] === '--health-worker') {
   const [root, sessionID] = process.argv.slice(3);
   const h = await openHarness(root, { requireStartupHealth: true });
   for (let index = 0; index < 20; index++) {
@@ -19,6 +39,22 @@ if (process.argv[2] === '--health-worker') {
   process.send({ receipt: h.health(sessionID) });
   process.once('message', () => { h.close(); process.exit(0); });
 } else {
+  test('fresh checkpoint stores initialize under a simultaneous process burst', async () => {
+    const f = fixture(); const children = [];
+    try {
+      await Promise.all(Array.from({ length: 12 }, () => {
+        const child = fork(new URL(import.meta.url), ['--bootstrap-worker', f.root], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true });
+        children.push(child);
+        return workerReceipt(child);
+      }));
+      const initialized = children.map(workerReceipt);
+      for (const child of children) child.send('start');
+      await Promise.all(initialized);
+    } finally {
+      await Promise.all(children.filter(child => child.exitCode === null && child.signalCode === null).map(child => { const exited = once(child, 'exit'); child.kill(); return exited; }));
+      f.cleanup();
+    }
+  });
   test('health verifies actual checkpoint persistence and gates edits without overwriting progress', async () => {
     const f = fixture(); const h = await openHarness(f.root, { requireStartupHealth: true });
     try {
@@ -72,7 +108,7 @@ if (process.argv[2] === '--health-worker') {
       const messages = ['parallel-a', 'parallel-b'].map(id => {
         const child = fork(new URL(import.meta.url), ['--health-worker', f.root, id], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [], windowsHide: true });
         children.push(child);
-        return once(child, 'message');
+        return workerReceipt(child);
       });
       const receipts = (await Promise.all(messages)).map(([message]) => message.receipt);
       assert.notEqual(receipts[0].processID, receipts[1].processID);
@@ -91,7 +127,7 @@ if (process.argv[2] === '--health-worker') {
       h.health('parallel-a', passing);
       assert.equal(h.requireHealthy('parallel-a').sessionID, 'parallel-a');
     } finally {
-      for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+      await Promise.all(children.filter(child => child.exitCode === null && child.signalCode === null).map(child => { const exited = once(child, 'exit'); child.kill(); return exited; }));
       h?.close(); f.cleanup();
     }
   });

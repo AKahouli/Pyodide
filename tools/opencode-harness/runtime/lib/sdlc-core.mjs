@@ -24,19 +24,45 @@ export async function openHarness(directory, options = {}) {
   mkdirSync(store, { recursive: true });
   if (path.relative(root, realpathSync(store)).startsWith('..')) throw new Error('Checkpoint storage must stay inside its worktree, not a shared symlink.');
   const filename = path.join(store, 'checkpoints.sqlite');
-  let db;
+  let db, createDatabase;
   if (process.versions.bun) {
     const { Database } = await import('bun:sqlite');
-    db = new Database(filename, { create: true, strict: true });
+    createDatabase = () => new Database(filename, { create: true, strict: true });
   } else {
     const { DatabaseSync } = await import('node:sqlite');
-    db = new DatabaseSync(filename);
+    createDatabase = () => new DatabaseSync(filename);
   }
-  db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
-  db.exec(`CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, task TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS claims(path TEXT PRIMARY KEY, task TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS baselines(task TEXT NOT NULL, path TEXT NOT NULL, content BLOB, fingerprint TEXT, PRIMARY KEY(task,path));`);
+  // WAL negotiation can return SQLITE_BUSY immediately despite busy_timeout
+  // when several processes create the same database at once. Retry only this
+  // bounded bootstrap; permission/corruption errors remain explicit failures.
+  const startupDeadline = performance.now() + 5000;
+  const lockTimeout = () => {
+    const remaining = Math.floor(startupDeadline - performance.now());
+    if (remaining <= 0) throw new Error('Checkpoint initialization exhausted its 5-second lock budget. Check concurrent checkpoint writers and retry startup health.');
+    db.exec(`PRAGMA busy_timeout=${remaining};`);
+  };
+  for (;;) {
+    try {
+      db = createDatabase();
+      lockTimeout();
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
+      lockTimeout();
+      db.exec(`BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, task TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS claims(path TEXT PRIMARY KEY, task TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS baselines(task TEXT NOT NULL, path TEXT NOT NULL, content BLOB, fingerprint TEXT, PRIMARY KEY(task,path));
+        COMMIT;`);
+      db.exec('PRAGMA busy_timeout=5000;');
+      break;
+    } catch (error) {
+      db?.close(); db = undefined;
+      const busy = [5, 6].includes(Number(error.errcode) & 255) || ['SQLITE_BUSY', 'SQLITE_LOCKED'].includes(error.code);
+      if (!busy) throw error;
+      if (performance.now() >= startupDeadline) throw new Error('Checkpoint initialization exhausted its 5-second lock budget. Check concurrent checkpoint writers and retry startup health.', { cause: error });
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
   const pid = options.pid ?? process.pid;
   const owner = randomUUID();
   const query = sql => db.prepare(sql);
@@ -161,6 +187,7 @@ export async function openHarness(directory, options = {}) {
           return { status: item.status, reason: String(item.reason ?? '').slice(0, 1500), action: String(item.action ?? '').slice(0, 1500) };
         };
         const receipt = { root, sessionID, processID: pid, ownerToken: owner, checkedAt: new Date().toISOString(), probe: randomUUID(), checkpoints: { status: 'PASS', reason: 'Transactional checkpoint write/read verified in this worktree.' }, graph: service('graph'), hindsight: service('hindsight') };
+        if (value.harnessVersion) receipt.harnessVersion = String(value.harnessVersion).slice(0, 100);
         task.startupHealth = { ...(task.startupHealth ?? {}), [sessionID]: receipt };
         save(task);
         const stored = taskById(task.id)?.startupHealth?.[sessionID];

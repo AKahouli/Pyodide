@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,37 +30,45 @@ after(() => {
   rmSync(sandbox, { recursive: true, force: true });
 });
 
-async function create(t, status = async () => ({ data: { 'code-review-graph': { status: 'connected' } } })) {
+async function create(t, status = async () => ({ data: { 'code-review-graph': { status: 'connected' } } }), options = {}) {
   const repo = fixture();
+  mkdirSync(path.join(repo.root, '.code-review-graph'));
+  const graph = new DatabaseSync(path.join(repo.root, '.code-review-graph/graph.db'));
+  graph.exec('CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE nodes(file_path TEXT);');
+  graph.prepare('INSERT INTO metadata VALUES (?,?)').run('repo_root', repo.root);
+  graph.prepare('INSERT INTO nodes VALUES (?)').run(path.join(repo.root, 'src/a.js'));
+  graph.close();
   const toasts = [];
-  const client = { mcp: { status }, tool: { ids: async () => ({ data: ['hindsight_diagnose'] }) }, tui: { showToast: async input => { toasts.push(input.body); } } };
-  const plugin = await SdlcHarness({ worktree: repo.root, directory: repo.root, client });
+  const directory = path.join(repo.root, options.directory || '');
+  mkdirSync(directory, { recursive: true });
+  options.configure?.(repo.root, directory);
+  const client = { mcp: { status }, tool: { ids: options.ids || (async () => ({ data: ['hindsight_diagnose'] })) }, tui: { showToast: async input => { toasts.push(input.body); } } };
+  const plugin = await SdlcHarness({ worktree: repo.root, directory, client });
   t.after(async () => { await plugin.dispose?.(); repo.cleanup(); });
-  return { plugin, root: repo.root, toasts };
+  return { plugin, root: repo.root, directory, toasts };
 }
 const health = async (plugin, sid, refresh = false) => JSON.parse(await plugin.tool.sdlc_health.execute({ refresh }, { sessionID: sid }));
-async function observation(plugin, root, sid, tool, callID) {
+function assertPass(report) {
+  for (const key of ['graph', 'hindsight', 'checkpoints']) assert.equal(report[key].status, 'PASS', `${key}: ${report[key].reason}`);
+}
+async function observation(plugin, root, sid, tool, callID, status = 'completed') {
   const args = tool === 'hindsight_diagnose' ? {} : { repo_root: root };
   await plugin['tool.execute.before']({ sessionID: sid, tool, callID }, { args });
   const output = tool === 'hindsight_diagnose'
-    ? { workspace: root, bank_id: 'synthetic-plugin-bank', config: { api_url: 'http://memory.invalid', disabled: false }, credential: { api_token_matches_config: true } }
+    ? { workspace: root, bank_id: `coding-agent::${path.basename(root)}`, config: { api_url: 'http://memory.invalid', disabled: false }, credential: { api_token_matches_config: true } }
     : { status: 'ok', total_nodes: 5 };
-  await plugin['tool.execute.after']({ sessionID: sid, tool, callID }, { output: JSON.stringify(output) });
-}
-async function pass(plugin, root, sid) {
-  await observation(plugin, root, sid, 'code-review-graph_list_graph_stats_tool', `${sid}-graph`);
-  await observation(plugin, root, sid, 'hindsight_diagnose', `${sid}-memory`);
+  // Raw MCP after-hook payloads are not authoritative persisted observations.
+  await plugin['tool.execute.after']({ sessionID: sid, tool, callID }, { content: [{ type: 'text', text: 'unparseable transport wrapper' }] });
+  await plugin.event({ event: { type: 'message.part.updated', properties: { part: { type: 'tool', sessionID: sid, callID, tool, state: { status, input: args, output: JSON.stringify(output), error: status === 'error' ? 'Synthetic integration failure' : undefined } } } } });
 }
 
-test('native observations establish own PASS receipt and prepare gate; another session stays pending', async t => {
+test('automatic checks create independent receipts and allow prepared edits without diagnostic model calls', async t => {
   const { plugin, root } = await create(t);
-  await health(plugin, 'first');
-  await assert.rejects(plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: [], sources: [], reuseDecision: 'reuse' }, { sessionID: 'first' }), /startup|health|integration/i);
-  await pass(plugin, root, 'first');
-  const report = await health(plugin, 'first');
-  for (const key of ['graph', 'hindsight', 'checkpoints']) assert.equal(report[key].status, 'PASS');
-  const another = await health(plugin, 'second');
-  assert.equal(another.graph.status, 'PENDING'); assert.equal(another.hindsight.status, 'PENDING');
+  const first = await health(plugin, 'first');
+  const second = await health(plugin, 'second');
+  assertPass(first); assertPass(second);
+  assert.equal(first.sessionID, 'first'); assert.equal(second.sessionID, 'second');
+  assert.notEqual(first.probe, second.probe);
   await plugin.tool.sdlc_checkpoint.execute({ goal: 'Test guarded reuse', acceptance: ['Read evidence accepted'], nextAction: 'Edit owned source' }, { sessionID: 'first' });
   for (const file of ['docs/agent-context/README.md', 'guidelines.md', 'src/a.js']) {
     const callID = `read-${file}`;
@@ -69,10 +78,27 @@ test('native observations establish own PASS receipt and prepare gate; another s
   await plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: ['docs/agent-context/README.md', 'guidelines.md'], sources: ['src/a.js'], reuseDecision: 'Reuse existing value export' }, { sessionID: 'first' });
 });
 
+test('concurrent sessions share pending process probes but retain their own cached receipts', async t => {
+  let calls = 0, resolveStatus, entered;
+  const pending = new Promise(resolve => { entered = resolve; });
+  const { plugin } = await create(t, async () => { calls++; entered(); return new Promise(resolve => { resolveStatus = resolve; }); });
+  const first = health(plugin, 'parallel-first');
+  await pending;
+  const second = health(plugin, 'parallel-second');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  resolveStatus({ data: { 'code-review-graph': { status: 'connected' } } });
+  const reports = await Promise.all([first, second]);
+  reports.forEach(assertPass);
+  assert.notEqual(reports[0].probe, reports[1].probe);
+  assert.deepEqual(await health(plugin, 'parallel-first'), reports[0]);
+  assert.equal(calls, 1);
+});
+
 test('missing policy reports failure and blocks every shell command and native edit', async t => {
-  const { plugin, root, toasts } = await create(t);
+  const { root, toasts } = await create(t);
   rmSync(path.join(root, 'tools/opencode-harness/policy.json'));
-  const fallback = await SdlcHarness({ worktree: root, directory: root, client: { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tui: { showToast: async input => { toasts.push(input.body); } } } });
+  const fallback = await SdlcHarness({ worktree: root, directory: root, client: { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: { ids: async () => ({ data: ['hindsight_diagnose'] }) }, tui: { showToast: async input => { toasts.push(input.body); } } } });
   const report = await health(fallback, 'missing-policy');
   assert.equal(report.checkpoints.status, 'FAIL');
   assert.ok(toasts.some(item => item.message.includes('checkpoints FAIL')));
@@ -81,44 +107,71 @@ test('missing policy reports failure and blocks every shell command and native e
   }
 });
 
-test('refresh supersedes delayed startup failures and stale integration tool errors', async t => {
+test('refresh supersedes delayed startup failure and stale integration tool errors', async t => {
   let resolveOld, entered;
   const oldEntered = new Promise(resolve => { entered = resolve; });
   let calls = 0;
-  const { plugin, root } = await create(t, async () => {
+  const { plugin } = await create(t, async () => {
     calls++;
     if (calls === 1) { entered(); return new Promise(resolve => { resolveOld = resolve; }); }
     return { data: { 'code-review-graph': { status: 'connected' } } };
   });
   const old = health(plugin, 'race');
   await oldEntered;
-  await health(plugin, 'race', true);
-  await pass(plugin, root, 'race');
+  assertPass(await health(plugin, 'race', true));
   resolveOld({ data: { 'code-review-graph': { status: 'disconnected' } } });
   await old;
-  assert.equal((await health(plugin, 'race')).graph.status, 'PASS');
+  assertPass(await health(plugin, 'race'));
   await plugin['tool.execute.before']({ sessionID: 'race', tool: 'hindsight_diagnose', callID: 'stale-error' }, { args: {} });
-  await health(plugin, 'race', true);
-  await pass(plugin, root, 'race');
+  assertPass(await health(plugin, 'race', true));
   await plugin.event({ event: { type: 'message.part.updated', properties: { part: { type: 'tool', sessionID: 'race', callID: 'stale-error', tool: 'hindsight_diagnose', state: { status: 'error' } } } } });
-  const final = await health(plugin, 'race');
-  assert.equal(final.graph.status, 'PASS'); assert.equal(final.hindsight.status, 'PASS');
+  assertPass(await health(plugin, 'race'));
 });
 
-test('health waits for same-session in-flight native probes instead of returning stale pending', async t => {
-  const { plugin, root } = await create(t);
-  await health(plugin, 'parallel-probes');
-  const graphTool = 'code-review-graph_list_graph_stats_tool';
-  await plugin['tool.execute.before']({ sessionID: 'parallel-probes', tool: graphTool, callID: 'parallel-graph' }, { args: { repo_root: root } });
-  await plugin['tool.execute.before']({ sessionID: 'parallel-probes', tool: 'hindsight_diagnose', callID: 'parallel-memory' }, { args: {} });
-  let settled = false;
-  const waiting = health(plugin, 'parallel-probes').then(result => { settled = true; return result; });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(settled, false);
-  await plugin['tool.execute.after']({ sessionID: 'parallel-probes', tool: graphTool, callID: 'parallel-graph' }, { output: JSON.stringify({ status: 'ok', total_nodes: 3 }) });
-  await plugin['tool.execute.after']({ sessionID: 'parallel-probes', tool: 'hindsight_diagnose', callID: 'parallel-memory' }, { output: JSON.stringify({ workspace: root, bank_id: 'synthetic-plugin-bank', config: { api_url: 'http://memory.invalid', disabled: false }, credential: { api_token_matches_config: true } }) });
-  const result = await waiting;
-  assert.equal(result.graph.status, 'PASS');
-  assert.equal(result.hindsight.status, 'PASS');
-  assert.equal(result.checkpoints.status, 'PASS');
+test('persisted graph completion tolerates raw transport envelope; tool failure is visible and blocks edits until refresh', async t => {
+  const { plugin, root, toasts } = await create(t);
+  assertPass(await health(plugin, 'runtime'));
+  await observation(plugin, root, 'runtime', 'code-review-graph_list_graph_stats_tool', 'raw-envelope');
+  assertPass(await health(plugin, 'runtime'));
+  await observation(plugin, root, 'runtime', 'code-review-graph_list_graph_stats_tool', 'runtime-error', 'error');
+  assert.equal((await health(plugin, 'runtime')).graph.status, 'FAIL');
+  assert.ok(toasts.some(item => item.message.includes('graph FAIL')));
+  await assert.rejects(plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: [], sources: [], reuseDecision: 'reuse' }, { sessionID: 'runtime' }), /startup|health|integration/i);
+  assertPass(await health(plugin, 'runtime', true));
+});
+
+test('nested host APIs use launch directory while Hindsight and graph resolve the owning worktree', async t => {
+  const previousConfig = readFileSync(process.env.HINDSIGHT_CONFIG, 'utf8');
+  const previousFetch = globalThis.fetch;
+  const urls = [], queries = [];
+  try {
+    globalThis.fetch = async url => {
+      urls.push(String(url));
+      return { ok: true, status: 200, json: async () => ({ status: 'healthy', database: 'connected', total_memories: 1 }) };
+    };
+    const { plugin, root, directory } = await create(t, async input => {
+      queries.push(input.query.directory);
+      return { data: { 'code-review-graph': { status: 'connected' } } };
+    }, {
+      directory: 'YellowStorm/front',
+      ids: async input => { queries.push(input.query.directory); return { data: ['hindsight_diagnose'] }; },
+      configure: (_root, launchDirectory) => writeFileSync(process.env.HINDSIGHT_CONFIG, JSON.stringify({
+        apiUrl: 'http://memory.invalid', retainSessions: true, optInOnly: false,
+        paths: { [launchDirectory]: { retainSessions: false } },
+        mapPathToBank: { [launchDirectory]: 'incorrect-front-bank' },
+      })),
+    });
+    assertPass(await health(plugin, 'nested-host'));
+    assert.deepEqual(queries, [directory, directory]);
+    const bankUrls = urls.filter(url => url.includes('/banks/'));
+    assert.equal(bankUrls.length, 1);
+    assert.ok(bankUrls[0].includes(encodeURIComponent(`coding-agent::${path.basename(root)}`)));
+    assert.ok(!bankUrls[0].includes('incorrect-front-bank'));
+    // The fixture has a graph only at root: PASS proves the launch subdirectory
+    // was not incorrectly used for graph index ownership.
+    assert.equal((await health(plugin, 'nested-host')).root, root);
+  } finally {
+    writeFileSync(process.env.HINDSIGHT_CONFIG, previousConfig);
+    globalThis.fetch = previousFetch;
+  }
 });
