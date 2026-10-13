@@ -2,7 +2,7 @@ import './devtools-off';
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { createLibrary, Renderer, type DefinedComponent, type ParseResult } from '@openuidev/react-lang';
 import { ChatProvider, DetailedViewContext, type ChatLLM } from '@openuidev/react-headless';
-import { reportLibrary } from '@openuidev/thesys';
+import { reportLibrary, presentationLibrary } from '@openuidev/thesys';
 import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useModuleTranslation } from '@/modules/localization';
 import { reportPanelStore } from './report-panel-store';
@@ -40,6 +40,14 @@ const openUiReportLibrary = createLibrary({
     : definition)),
 });
 
+const openUiPresentationLibrary = createLibrary({
+  root: presentationLibrary.root,
+  componentGroups: presentationLibrary.componentGroups,
+  components: Object.values(presentationLibrary.components).map((definition) => (definition.name === 'Presentation'
+    ? ({ ...definition, component: scoped(definition.component as StockComponent) } as DefinedComponent)
+    : definition)),
+});
+
 interface ReportBlockProps {
   program: string;
   isStreaming: boolean;
@@ -52,12 +60,13 @@ interface ReportBlockProps {
 }
 
 /**
- * The report of an OpenUI answer: the thesys chip inline, whose View button opens the full report in
+ * A report or presentation of an OpenUI answer: the stock chip's View button opens the artifact in
  * the conversation's report panel (ReportPanelSidebar). The report text is rendered by editable
  * rich-text blocks that cannot carry our citation chips, so the sources it marks are listed under the chip.
  */
 export function ReportBlock({ program, isStreaming, panelId, citations, citationScope, onParseResult }: Readonly<ReportBlockProps>) {
   const { t } = useModuleTranslation('conversation');
+  const library = /^\s*root\s*=\s*Presentation\s*\(/.test(program) ? openUiPresentationLibrary : openUiReportLibrary;
   // The panel portals the report out of this block's tree: if the block goes away (message unmounted by a
   // reload or list virtualization) while its report is open, the panel would be left empty, so close it.
   useEffect(() => () => {
@@ -69,7 +78,7 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>
-            <Renderer response={program} library={openUiReportLibrary} isStreaming={isStreaming} onParseResult={onParseResult} />
+            <Renderer response={program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
           </ReportScopeContext.Provider>
         </DetailedViewContext.Provider>
       </ChatProvider>

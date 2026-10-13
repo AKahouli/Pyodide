@@ -44,6 +44,25 @@ The conversation module is a self-contained feature module that handles:
 
 ## Architecture
 
+### OpenUI slides
+
+Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
+by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
+`Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,
+comparison, text and chart layouts are included in the generated agent prompt. Image URLs and numerical
+data must come from tool results; optional images are omitted when unavailable.
+
+The View chip opens the existing report panel, now labelled Preview, with stock slide thumbnails,
+navigation and fullscreen controls where the browser supports fullscreen. Presentations and reports
+are parsed separately from chat, including during streaming. Saved presentation-only answers retain
+their renderer if the agent's Generative UI checkbox is later disabled. Panel ownership and cleanup
+remain scoped to the answer; switching conversations or opening the document viewer closes the preview.
+Slide source markers are retained in text and exposed as clickable chips below the artifact.
+This reuses the existing artifact store and installed library, with no new service, schema or dependency.
+
+Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `render-mode.ts` and
+`scripts/generate-openui-prompt.mjs`; focused coverage is in `ReportPanel.test.tsx` and `report-program.test.ts`.
+
 ### OpenUI document images
 
 Agents with Generative UI enabled are instructed to obtain relevant images from their available tools

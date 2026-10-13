@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createParser, generateSystemPrompt } from '@openuidev/lang-core';
-import { chatLibrary, reportLibrary } from '@openuidev/thesys';
+import { chatLibrary, reportLibrary, presentationLibrary } from '@openuidev/thesys';
 
 /** The block is added to every run of an enabled agent: a hard cap keeps its token cost bounded. */
 const MAX_PROMPT_LENGTH = 60000;
@@ -67,6 +67,8 @@ const usageRules = [
 
 /** How to deliver a report next to the chat answer (see ReportBlock.tsx and report-program.ts in the front end). */
 const reportRules = [
+  'Presentations: when the user asks for slides, a slide deck or a presentation, emit a short Card program followed by a blank line and a separate program starting `root = Presentation({title: "Deck title", subtitle: "Short subtitle"}, [s1, s2, s3])`. The interface shows a View chip that opens the slide viewer with thumbnails and fullscreen controls. Use Presentation rather than Report for slides; no generation tool is needed to render this OpenUI program. Define every identifier within its own program. Never mix chat, report and presentation components or emit more than one artifact program in an answer.',
+  'Slide composition: every slide is Slide("unique-id", content). Start with MinimalTitle, StandardTitle or DramaticTitle; use VisualCards for photo spotlights, KeyInfoWithTitle for comparisons, HeroMetric or InsightGrid for key figures, ChartWithContext or ChartWithMetrics for sourced chart data, and HeadlineStatement or ContentClassic for conclusions. Use four to seven slides unless a count is requested. Keep one point per slide, short titles and compact body text. Use only the Presentation Components signatures in the presentation program; obey their length and item constraints. Image sources must be actual URLs returned by tools, not document citation markers or invented paths. Omit optional images when none is available, and choose a layout without required images. Keep exact source [n] markers in slide text; their clickable source chips are listed below the artifact.',
   'Reports: write a report only when the user asks for a report, a document or something to keep. The answer is then two programs: first a short Card program (a CalloutV2 or TextContent that says what the report covers, and a FollowUpBlock), then a blank line, then the report program, which starts with its own `root = Report(` line. The interface shows the report as a chip with a View button that opens it in a side panel.',
   'The report program is parsed on its own: define every identifier it uses inside it, and build it only from the Report components listed above. In it, InlineHeader, TextContent, List, Icon, Image, TagBlock and Table take the report signatures, not the chat ones. Never use Report components in the Card program.',
   'Report structure: an optional front page (MinimalFrontPage or DramaticFrontPage), then ContentPage pages of at most six blocks each. Every Page has a unique id (p1, p2, ...). Never invent image URLs: do not use StandardFrontPage, VisualCards or Image, and leave imageSrc and bgImageSrc out.',
@@ -74,7 +76,7 @@ const reportRules = [
 ];
 
 /** The report program starts at its own root line (same rule as splitReportProgram in the front end). */
-const REPORT_ROOT = /^[ \t]*root[ \t]*=[ \t]*Report[ \t]*\(/m;
+const REPORT_ROOT = /^[ \t]*root[ \t]*=[ \t]*(Report|Presentation)[ \t]*\(/m;
 
 const examples = [
   `Example 1 — Comparison: stat cards, a chart, an icon list of drivers and a table with tags
@@ -139,11 +141,26 @@ head = InlineHeader("Highlights", "Quarter to date")
 metrics = KeyMetrics("row", [{title: "Messages", text: "48,210"}, {title: "Median reply", text: "3.2 h"}])
 prose = TextContent("Message volume grew 12% on the previous quarter [1].")
 table = Table([Column("Region", "text"), Column("Messages", "number")], [["EMEA", 21100], ["Americas", 27110]])`,
+  `Example 4 — A separate four-slide presentation
+root = Card([lead])
+lead = TextContent("The four-slide overview is ready to view.")
+
+root = Presentation({title: "Quarter overview", subtitle: "Volume and priorities"}, [s1, s2, s3, s4])
+s1 = Slide("s1", title)
+title = MinimalTitle("Quarter overview", "Volume and priorities")
+s2 = Slide("s2", highlights)
+highlights = KeyInfoWithTitle("Highlights", [{title: "Volume", description: "48,210 messages"}, {title: "Response", description: "Median reply: 3.2 hours"}], "horizontal-grid")
+s3 = Slide("s3", comparison)
+comparison = ChartWithContext("Messages by region", chart)
+chart = BarChartV2({data: {labels: ["EMEA", "Americas"], series: [{category: "Messages", values: [21100, 27110]}]}}, "Region", "Messages")
+s4 = Slide("s4", takeaway)
+takeaway = HeadlineStatement("Next step", "Prioritize the busiest regions", "title-top")`,
 ];
 
 /** Each example must parse without error against the library it targets, so a library upgrade fails loudly here. */
 const chatParser = createParser(chatLibrary.toJSONSchema());
 const reportParser = createParser(reportLibrary.toJSONSchema());
+const presentationParser = createParser(presentationLibrary.toJSONSchema());
 function assertValid(label, parser, program) {
   const { meta } = parser.parse(program);
   const problems = [...meta.errors.map((error) => error.message), ...meta.unresolved.map((name) => `unresolved ${name}`), ...meta.orphaned.map((name) => `unreferenced ${name}`)];
@@ -152,9 +169,10 @@ function assertValid(label, parser, program) {
 examples.forEach((example) => {
   const [title, ...lines] = example.split('\n');
   const body = lines.join('\n');
-  const reportAt = REPORT_ROOT.exec(body)?.index;
+  const artifact = REPORT_ROOT.exec(body);
+  const reportAt = artifact?.index;
   assertValid(`${title} (chat program)`, chatParser, (reportAt === undefined ? body : body.slice(0, reportAt)).trim());
-  if (reportAt !== undefined) assertValid(`${title} (report program)`, reportParser, body.slice(reportAt).trim());
+  if (reportAt !== undefined) assertValid(`${title} (artifact program)`, artifact?.[1] === 'Presentation' ? presentationParser : reportParser, body.slice(reportAt).trim());
 });
 
 /**
@@ -189,10 +207,19 @@ const reportSection = [
   '',
 ].join('\n');
 
+const presentationSection = [
+  '## Presentation Components',
+  '',
+  'Used only in a separate Presentation program. These replace same-named report and chat components there.',
+  '',
+  ...Object.values(presentationLibrary.toSpec().components).map((component) => component.signature),
+  '',
+].join('\n');
+
 const HOISTING_HEADING = '## Hoisting & Streaming';
 const insertAt = chatPrompt.indexOf(HOISTING_HEADING);
 if (insertAt < 0) throw new Error(`The generated prompt has no "${HOISTING_HEADING}" section to put the report components before: update generate-openui-prompt.mjs.`);
-const prompt = `${chatPrompt.slice(0, insertAt)}${reportSection}\n${chatPrompt.slice(insertAt)}`;
+const prompt = `${chatPrompt.slice(0, insertAt)}${reportSection}\n${presentationSection}\n${chatPrompt.slice(insertAt)}`;
 
 if (prompt.length > MAX_PROMPT_LENGTH) {
   throw new Error(`The OpenUI prompt is ${prompt.length} characters, over the ${MAX_PROMPT_LENGTH} cap: drop examples or rules in generate-openui-prompt.mjs.`);

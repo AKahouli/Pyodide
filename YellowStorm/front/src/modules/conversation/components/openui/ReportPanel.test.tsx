@@ -45,6 +45,19 @@ afterEach(() => {
 });
 
 describe('report in an OpenUI answer', () => {
+  it('opens a stock slide deck, navigates thumbnails, and closes the shared preview', async () => {
+    const slides = 'root = Presentation({title: "Japan slides"}, [s1, s2])\ns1 = Slide("s1", MinimalTitle("Visit Japan"))\ns2 = Slide("s2", ContentClassic("Places to explore", ["Tokyo", "Kyoto"]))';
+    mount(`${CHAT}\n\n${slides}`);
+    await screen.findByText('Short answer.');
+    fireEvent.click(viewButton());
+    const panel = await screen.findByTestId('report-panel');
+    const second = await within(panel).findByRole('button', { name: 'Go to slide 2' });
+    fireEvent.click(second);
+    expect(within(panel).getByLabelText('Slide 2 of 2')).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole('button', { name: 'openui.report.close' }));
+    await waitFor(() => expect(screen.queryByTestId('report-panel')).not.toBeInTheDocument());
+  });
+
   it('renders the chat answer and the report chip inline, with the panel closed', async () => {
     mount(answer('Q3 mail report'));
     expect(await screen.findByText('Short answer.')).toBeInTheDocument();
