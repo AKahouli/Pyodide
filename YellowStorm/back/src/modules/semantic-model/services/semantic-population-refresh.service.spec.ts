@@ -134,6 +134,68 @@ const setup = (
 };
 
 describe('SemanticPopulationRefreshService', () => {
+  const jobsSetup = () => {
+    const fixture = setup();
+    const listJobModels = jest.fn(async () => [
+      { id: 'model-1', name: 'Mail', role: 'owner', conceptLabels: { 'c-fact': 'Fait' } },
+      { id: 'model-2', name: 'Shared', role: 'viewer', conceptLabels: {} },
+    ]);
+    const listMyJobs = jest.fn(async () => ({
+      items: [{ jobId: 'j-1', modelId: 'model-1', state: 'queued', scope: { kind: 'concept', conceptId: 'c-fact' } }],
+      pagination: { page: 1, limit: 20, total: 1, totalPages: 1 }, activeCount: 1, queuedCount: 1,
+    }));
+    const cancelMyQueuedJobs = jest.fn(async () => ({ cancelled: 1, skipped: 0 }));
+    const cancelJob = jest.fn(async () => ({ state: 'cancelled' }));
+    Object.assign(fixture.models, { listJobModels });
+    Object.assign(fixture.runtime, { listMyJobs, cancelMyQueuedJobs, cancelJob });
+    return { ...fixture, listJobModels, listMyJobs, cancelMyQueuedJobs, cancelJob };
+  };
+
+  it('lists only the signed-in actor within the server-derived accessible model scope', async () => {
+    const { service, listJobModels, listMyJobs } = jobsSetup();
+    const result = await service.myJobs('u-1', { view: 'active', page: 1, limit: 20 });
+    expect(listJobModels).toHaveBeenCalledWith('u-1');
+    expect(listMyJobs).toHaveBeenCalledWith('u-1', ['model-1', 'model-2'], { view: 'active', page: 1, limit: 20 });
+    expect(result.items[0]).toMatchObject({ modelName: 'Mail', conceptLabel: 'Fait', canManage: true });
+    expect(result.models[1]).toMatchObject({ id: 'model-2', canManage: false });
+  });
+
+  it('rejects an inaccessible model filter before asking the runtime', async () => {
+    const { service, listMyJobs } = jobsSetup();
+    await expect(service.myJobs('u-1', { modelId: 'private', view: 'active', page: 1, limit: 20 })).rejects.toThrow();
+    expect(listMyJobs).not.toHaveBeenCalled();
+    await service.myJobs('u-1', { modelId: 'model-1', view: 'history', page: 2, limit: 20 });
+    expect(listMyJobs).toHaveBeenCalledWith('u-1', ['model-1'], { view: 'history', page: 2, limit: 20 });
+  });
+
+  it('never treats an empty model scope as all jobs and drops unexpected out-of-scope results', async () => {
+    const { service, listJobModels, listMyJobs } = jobsSetup();
+    listJobModels.mockResolvedValueOnce([]);
+    expect((await service.myJobs('u-1', { view: 'active', page: 1, limit: 20 })).items).toEqual([]);
+    expect(listMyJobs).not.toHaveBeenCalled();
+    listMyJobs.mockResolvedValueOnce({ items: [{ jobId: 'private', modelId: 'private', state: 'queued',
+      scope: { kind: 'model', conceptId: '' } }], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 }, activeCount: 1, queuedCount: 1 });
+    expect((await service.myJobs('u-1', { view: 'active', page: 1, limit: 20 })).items).toEqual([]);
+  });
+
+  it('bulk-removes only own queued jobs in currently editable models', async () => {
+    const { service, cancelMyQueuedJobs } = jobsSetup();
+    await service.removeMyQueuedJobs('u-1');
+    expect(cancelMyQueuedJobs).toHaveBeenCalledWith('u-1', ['model-1']);
+  });
+
+  it('checks current model edit access before cancelling and preserves queue-only intent', async () => {
+    const { service, models, runtime, cancelJob } = jobsSetup();
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'queued' });
+    await service.stopMyJob('u-1', 'j-1', true);
+    expect(runtime.getJob).toHaveBeenCalledWith('j-1', 'u-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor']);
+    expect(cancelJob).toHaveBeenCalledWith('j-1', 'u-1', true);
+    models.requireRole.mockRejectedValueOnce(new Error('access revoked'));
+    await expect(service.stopMyJob('u-1', 'j-1', false)).rejects.toThrow('access revoked');
+    expect(cancelJob).toHaveBeenCalledTimes(1);
+  });
+
   it('finds a field in the graph under the name the runtime stores it with', () => {
     expect(graphPropertyKey('customer_id')).toBe('customer_id');
     expect(graphPropertyKey('customer-id')).toBe('customer_id');

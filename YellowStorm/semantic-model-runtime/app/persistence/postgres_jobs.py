@@ -384,7 +384,7 @@ class PostgresJobRepository:
         row = await self.pool.fetchrow(
             """
             SELECT id::text, job_type, model_id, workspace_id, state, progress,
-                   result, error_code, created_at, started_at, completed_at, updated_at
+                   result, error_code, created_at, started_at, completed_at, updated_at, command
             FROM semantic_jobs.jobs
             WHERE id = $1::uuid AND actor_user_id = $2
             """,
@@ -407,6 +407,12 @@ class PostgresJobRepository:
             "completedAt": row["completed_at"],
             "updatedAt": row["updated_at"],
         }
+        payload = _object(_object(row["command"]).get("payload"))
+        scope = _object(payload.get("scope"))
+        job["scope"] = ({"kind": "concept", "conceptId": scope["conceptId"]}
+                        if scope.get("kind") == "concept" and isinstance(scope.get("conceptId"), str)
+                        else {"kind": "model"})
+        job["purpose"] = payload.get("purpose") if isinstance(payload.get("purpose"), str) else None
         if row["state"] == "queued":
             queue = await self.queue_position(job_id)
             if queue is not None:
@@ -490,7 +496,43 @@ class PostgresJobRepository:
         )
         return await self.get_job(job_id, actor_user_id) if job_id else None
 
-    async def request_cancel(self, job_id: str, actor_user_id: str) -> dict[str, Any] | None:
+    async def list_my_jobs(self, *, actor_user_id: str, model_ids: list[str],
+                           view: str, page: int, limit: int) -> dict[str, Any]:
+        """Own jobs within an explicit model allow-list, with complete paginated history."""
+        active = ["queued", "waiting_dependencies", "running", "cancel_requested"]
+        summary = await self.pool.fetchrow(
+            """SELECT count(*) FILTER (WHERE state = ANY($3::text[]))::int AS active,
+                      count(*) FILTER (WHERE state NOT IN ('queued','waiting_dependencies','running','cancel_requested'))::int AS history,
+                      count(*) FILTER (WHERE state IN ('queued','waiting_dependencies'))::int AS queued
+               FROM semantic_jobs.jobs WHERE actor_user_id = $1 AND model_id = ANY($2::text[])""",
+            actor_user_id, model_ids, active)
+        total = int(summary[view])
+        rows = await self.pool.fetch(
+            """SELECT id::text FROM semantic_jobs.jobs
+               WHERE actor_user_id = $1 AND model_id = ANY($2::text[])
+                 AND (state = ANY($3::text[])) = $4
+               ORDER BY created_at DESC, id DESC LIMIT $5 OFFSET $6""",
+            actor_user_id, model_ids, active, view == "active", limit, (page - 1) * limit)
+        jobs = [await self.get_job(row["id"], actor_user_id) for row in rows]
+        return {"items": [job for job in jobs if job is not None],
+                "pagination": {"page": page, "limit": limit, "total": total,
+                               "totalPages": (total + limit - 1) // limit},
+                "activeCount": int(summary["active"]), "queuedCount": int(summary["queued"])}
+
+    async def cancel_queued_jobs(self, *, actor_user_id: str, model_ids: list[str]) -> dict[str, int]:
+        """Cancel the queue snapshot, never a job that a worker claimed meanwhile."""
+        rows = await self.pool.fetch(
+            """SELECT id::text FROM semantic_jobs.jobs
+               WHERE actor_user_id = $1 AND model_id = ANY($2::text[])
+                 AND state IN ('queued','waiting_dependencies') ORDER BY created_at, id""",
+            actor_user_id, model_ids)
+        cancelled = 0
+        for row in rows:
+            job = await self.request_cancel(row["id"], actor_user_id, only_queued=True)
+            cancelled += int(job is not None and job["state"] == "cancelled")
+        return {"cancelled": cancelled, "skipped": len(rows) - cancelled}
+
+    async def request_cancel(self, job_id: str, actor_user_id: str, *, only_queued: bool = False) -> dict[str, Any] | None:
         """Stop a job. One nobody is working on ends at once: not started, or whose worker's lease
         has run out (it is gone, and could not be asked). One a worker holds is asked to stop and the
         worker ends it at its next progress report, keeping nothing it read. Asking again after the
@@ -500,6 +542,18 @@ class PostgresJobRepository:
         saved) is left as it is; it finishes, or recovery runs it again if its worker died."""
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                tasks_ready = True
+                if only_queued:
+                    # Claims lock task -> job. Match that order and skip a task already held by a
+                    # claimant rather than waiting on it while holding its job (a deadlock).
+                    locked = await connection.fetch(
+                        """SELECT t.id FROM semantic_jobs.tasks t JOIN semantic_jobs.jobs j ON j.id = t.job_id
+                           WHERE t.job_id = $1::uuid AND j.actor_user_id = $2 ORDER BY t.id
+                           FOR UPDATE OF t SKIP LOCKED""", job_id, actor_user_id)
+                    count = await connection.fetchval(
+                        """SELECT count(*) FROM semantic_jobs.tasks t JOIN semantic_jobs.jobs j ON j.id = t.job_id
+                           WHERE t.job_id = $1::uuid AND j.actor_user_id = $2""", job_id, actor_user_id)
+                    tasks_ready = len(locked) == count
                 job = await connection.fetchrow(
                     """
                     SELECT id::text, state, progress, job_type FROM semantic_jobs.jobs
@@ -511,11 +565,12 @@ class PostgresJobRepository:
                 )
                 if job is None:
                     return None
-                if job["job_type"].startswith("graph_search."):
+                eligible = tasks_ready and (not only_queued or job["state"] in ("queued", "waiting_dependencies"))
+                if eligible and job["job_type"].startswith("graph_search."):
                     # A search build whose generation lease ran out has no worker answering, whatever
                     # its task lease says: stopping it must not wait for that one.
                     await self._expire_stalled_search_leases(connection, job_id)
-                if job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
+                if eligible and job["state"] not in TERMINAL_JOB_STATES and _object(job["progress"]).get("cancellable") is not False:
                     live = await connection.fetchval(
                         """
                         SELECT count(*) FROM semantic_jobs.tasks
@@ -523,7 +578,7 @@ class PostgresJobRepository:
                         """,
                         job_id,
                     )
-                    if live:
+                    if live and not only_queued:
                         if job["state"] != "cancel_requested":
                             await connection.execute(
                                 """
@@ -539,7 +594,7 @@ class PostgresJobRepository:
                                 """,
                                 job_id,
                             )
-                    else:
+                    elif not live:
                         await connection.execute(
                             """
                             UPDATE semantic_jobs.tasks

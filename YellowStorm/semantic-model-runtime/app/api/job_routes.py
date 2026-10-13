@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated, Literal
 
 router = APIRouter(prefix="/v1/semantic-model-jobs", tags=["jobs"])
 
@@ -12,6 +14,36 @@ def _service(request: Request):  # type: ignore[no-untyped-def]
     if service is None:
         raise HTTPException(status_code=503, detail="jobs_unavailable")
     return service
+
+
+class ScopedJobs(BaseModel):
+    # The authenticated backend computes this allow-list; absent scope is never all models.
+    model_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=200)]] = Field(alias="modelIds", max_length=10000)
+
+
+class JobsRead(ScopedJobs):
+    view: Literal["active", "history"] = "active"
+    page: int = Field(default=1, ge=1)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+@router.post("/read")
+async def read_my_jobs(
+    body: JobsRead, request: Request,
+    actor_user_id: str = Header(alias="X-Actor-User-Id", min_length=1, max_length=200),
+) -> dict[str, object]:
+    return await _service(request).repository.list_my_jobs(
+        actor_user_id=actor_user_id, model_ids=body.model_ids,
+        view=body.view, page=body.page, limit=body.limit)
+
+
+@router.post("/cancel-queued")
+async def cancel_my_queued_jobs(
+    body: ScopedJobs, request: Request,
+    actor_user_id: str = Header(alias="X-Actor-User-Id", min_length=1, max_length=200),
+) -> dict[str, int]:
+    return await _service(request).repository.cancel_queued_jobs(
+        actor_user_id=actor_user_id, model_ids=body.model_ids)
 
 
 @router.get("/events")
@@ -71,9 +103,11 @@ async def get_job(
 async def cancel_job(
     job_id: str,
     request: Request,
+    only_queued: bool = Query(default=False, alias="onlyQueued"),
     actor_user_id: str = Header(alias="X-Actor-User-Id", min_length=1, max_length=200),
 ) -> dict[str, object]:
-    job = await _service(request).repository.request_cancel(job_id, actor_user_id)
+    repository = _service(request).repository
+    job = await repository.request_cancel(job_id, actor_user_id, only_queued=True) if only_queued else await repository.request_cancel(job_id, actor_user_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job_not_found")
     return job

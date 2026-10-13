@@ -851,6 +851,30 @@ export interface PopulationJob {
   startedAt?: string | null;
   completedAt?: string | null;
   queue?: PopulationJobQueue;
+  scope?: { kind: 'model' | 'concept'; conceptId?: string };
+  purpose?: string | null;
+}
+
+export interface MySemanticJob extends PopulationJob {
+  modelId: string;
+  modelName: string;
+  conceptLabel: string | null;
+  canManage: boolean;
+}
+
+export interface MyJobsQuery {
+  modelId?: string;
+  view?: 'active' | 'history';
+  page?: number;
+  limit?: number;
+}
+
+export interface MyJobsPage {
+  items: MySemanticJob[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+  activeCount: number;
+  queuedCount: number;
+  models: Array<{ id: string; name: string; canManage: boolean }>;
 }
 
 export interface PopulationProgress {

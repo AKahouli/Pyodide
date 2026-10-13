@@ -77,6 +77,7 @@ import { ModelSetupChecks } from '../components/health/ModelSetupChecks';
 import { conceptsRefreshedWith } from '../components/population/runScope';
 import { PopulationStartedPanel, populationServing, runCanStop, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
+import { MyJobsButton } from '../components/population/MyJobsDrawer';
 import { SearchIndexPanel } from '../components/population/SearchIndexPanel';
 import { useAfterDelay } from '../hooks/use-after-delay';
 import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip';
@@ -223,7 +224,7 @@ export function SemanticModelEditorPage() {
   const closeRunPanel = () => { setPopulation(null); setIndexPanelOpen(false); };
   const [stoppingRun, setStoppingRun] = useState(false);
   // What the person is asked to confirm stopping: the data update, or the build of the search index.
-  const [confirmStop, setConfirmStop] = useState<'run' | 'index' | null>(null);
+  const [confirmStop, setConfirmStop] = useState<'run' | 'queued' | 'index' | null>(null);
   const [stoppingIndex, setStoppingIndex] = useState(false);
   const [restartingIndex, setRestartingIndex] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -573,11 +574,12 @@ export function SemanticModelEditorPage() {
     setKnowledgeOpen(false);
     setKnowledgeTargetId(null);
   };
-  const stopRun = async () => {
+  const stopRun = async (onlyQueued = false) => {
     if (!modelId || !population) return;
     setStoppingRun(true);
     try {
-      const job = await semanticModelApi.stopPopulationJob(modelId, population.jobId);
+      const job = onlyQueued ? await semanticModelApi.stopMyJob(population.jobId, true)
+        : await semanticModelApi.stopPopulationJob(modelId, population.jobId);
       setPopulation((current) => current && current.jobId === job.jobId ? { ...current, status: job.state } : current);
       void populationJob.refetch();
     } catch (error) {
@@ -615,6 +617,7 @@ export function SemanticModelEditorPage() {
     const kind = confirmStop;
     setConfirmStop(null);
     if (kind === 'run') void stopRun();
+    else if (kind === 'queued') void stopRun(true);
     else if (kind === 'index') void stopIndex();
   };
   const openSuggestions = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(true); };
@@ -965,6 +968,7 @@ export function SemanticModelEditorPage() {
           </Button>
           <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
           <Button variant='ghost' size='sm' className={runHistoryOpen ? 'bg-muted' : undefined} aria-pressed={runHistoryOpen} onClick={() => (runHistoryOpen ? setRunHistoryOpen(false) : openRunHistory())} aria-label={t('runHistory.title')} title={t('runHistory.title')}><ListOrdered className='h-4 w-4' /></Button>
+          <MyJobsButton modelId={modelId} />
           {model.data && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-primary' onClick={() => setCloneModelOpen(true)} aria-label={t('clone.button')} title={t('clone.button')}><Copy className='h-4 w-4' /></Button>}
           {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
           {/* Always the way back to the run's side panel: while an update or the search index build runs, and after the last update ended. */}
@@ -1098,7 +1102,8 @@ export function SemanticModelEditorPage() {
           conceptLabels={conceptLabels}
           onClose={() => closeRunPanel()}
           onOpenHealth={() => { closeRunPanel(); setMode('health'); }}
-          onStop={canEdit ? () => setConfirmStop('run') : undefined}
+          onStop={canEdit ? () => setConfirmStop(['queued', 'waiting_dependencies'].includes(population.status) ? 'queued' : 'run') : undefined}
+          jobsAction={<MyJobsButton modelId={modelId} queueLabel />}
           stopping={runStopRequested}
           stoppingSlow={stopSlow}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
@@ -1252,13 +1257,13 @@ export function SemanticModelEditorPage() {
       <AlertDialog open={confirmStop !== null} onOpenChange={(open) => { if (!open) setConfirmStop(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirmStop === 'index' ? t('runStop.indexConfirmTitle') : t('runStop.confirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmStop === 'index' ? t('runStop.indexConfirmDescription') : t('runStop.confirmDescription')}</AlertDialogDescription>
+            <AlertDialogTitle>{confirmStop === 'index' ? t('runStop.indexConfirmTitle') : confirmStop === 'queued' ? t('myJobs.queuedRemoveTitle') : t('runStop.confirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmStop === 'index' ? t('runStop.indexConfirmDescription') : confirmStop === 'queued' ? t('myJobs.queuedRemoveHint') : t('runStop.confirmDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('runStop.keepGoing')}</AlertDialogCancel>
             <AlertDialogAction className='bg-destructive text-destructive-foreground hover:bg-destructive/90' onClick={confirmedStop}>
-              {confirmStop === 'index' ? t('runStop.indexConfirmAction') : t('runStop.confirmAction')}
+              {confirmStop === 'index' ? t('runStop.indexConfirmAction') : confirmStop === 'queued' ? t('myJobs.removeQueued') : t('runStop.confirmAction')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

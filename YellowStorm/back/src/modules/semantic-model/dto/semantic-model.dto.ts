@@ -83,6 +83,43 @@ export class UpdateSemanticModelDto {
   description?: string;
 }
 
+export class MyJobsQueryDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  modelId?: string;
+
+  @ApiPropertyOptional({ enum: ['active', 'history'], default: 'active' })
+  @IsIn(['active', 'history'])
+  view: 'active' | 'history' = 'active';
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 20;
+}
+
+export class RemoveMyQueuedJobsDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  modelId?: string;
+}
+
+export class StopMyJobDto {
+  @ApiPropertyOptional({ default: false, description: 'Remove from queue without stopping a job claimed meanwhile' })
+  @IsBoolean()
+  onlyQueued = false;
+}
+
 export class SemanticModelQueryDto {
   @ApiPropertyOptional()
   @IsOptional()

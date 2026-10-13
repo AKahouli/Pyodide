@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Loader2, X, XCircle } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Hourglass, Loader2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
@@ -83,7 +84,7 @@ export function runSourceCount(outcome: Pick<PopulationOutcome, 'sourceCount' | 
 
 const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
 
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId, queue, queuedSince }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId, queue, queuedSince, jobsAction }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -105,6 +106,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   queue?: PopulationJobQueue;
   /** When the queued job was created (ISO). */
   queuedSince?: string;
+  jobsAction?: ReactNode;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
@@ -112,15 +114,16 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   const readCount = runSourceCount(outcome, shownProgress, sourceMappings);
   const tone = toneOf(outcome.status);
   const canStop = runCanStop(shownProgress);
+  const queued = outcome.status === 'queued' || outcome.status === 'waiting_dependencies';
 
-  const title = tone === 'stopped' ? t('runStop.stopped')
+  const title = queued ? t('myJobs.queuedTitle') : tone === 'stopped' ? t('runStop.stopped')
     : tone === 'stopping' ? t('runStop.stopping')
     : tone === 'failed' ? t('population.failed')
     : tone === 'gaps' ? t('population.finishedWithGaps')
     : tone === 'done' ? t(outcome.reused ? 'population.finished' : 'population.done')
     : outcome.reused ? t('population.alreadyRunning') : t('population.started');
 
-  const detail = tone === 'stopped' ? t('runStop.stoppedHint')
+  const detail = queued ? t('myJobs.queuedSources', { count: readCount }) : tone === 'stopped' ? t('runStop.stoppedHint')
     : tone === 'stopping' ? t(stoppingSlow ? 'runStatus.stoppingSlowHint' : 'runStop.stoppingHint')
     : tone === 'failed' ? (outcome.errorCode ? errorText(outcome.errorCode, t as Parameters<typeof errorText>[1]) : t('population.failedHint'))
     : tone === 'gaps' ? t('population.gapsHint')
@@ -129,7 +132,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
 
   return <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl'>
     <header className='flex items-start gap-3 border-b px-4 py-3'>
-      {tone === 'running' || tone === 'stopping' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
+      {queued ? <Hourglass className='mt-0.5 h-5 w-5 shrink-0 text-muted-foreground' /> : tone === 'running' || tone === 'stopping' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
         : tone === 'stopped' ? <StopCircle className='mt-0.5 h-5 w-5 shrink-0 text-muted-foreground' />
         : tone === 'failed' ? <XCircle className='mt-0.5 h-5 w-5 shrink-0 text-destructive' />
         : tone === 'gaps' ? <AlertTriangle className='mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400' />
@@ -147,7 +150,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
       {tone === 'running' && onStop && (canStop
         ? <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
           {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
-          {stopping ? t('runStop.stopping') : t('runStop.stop')}
+           {stopping ? t('runStop.stopping') : t(queued ? 'myJobs.removeQueued' : 'runStop.stop')}
         </Button>
         // Saving cannot be undone half way: the button stays, disabled, and says why.
         : <TooltipProvider><Tooltip>
@@ -157,8 +160,9 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
           <TooltipContent>{t('runStop.notNow')}</TooltipContent>
         </Tooltip></TooltipProvider>)}
       {tone === 'running' && queue && <QueuedRunNotice queue={queue} queuedSince={queuedSince} />}
+      {jobsAction}
       {/* A refresh of a concept made from another one reads no file, yet reports its steps, AI calls and records. */}
-      {shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {!queued && shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
       {/* The new data becomes searchable once its index is built, after the run. */}
       {modelId && (tone === 'done' || tone === 'gaps') && serving?.decision !== 'keep_previous' && <SearchIndexProgress modelId={modelId} dataRevisionId={dataRevisionId} />}
       {/* A result missing data never replaces the graph in use; the first graph of a model is shown anyway. */}

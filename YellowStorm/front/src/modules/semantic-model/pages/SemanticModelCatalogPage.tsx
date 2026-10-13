@@ -10,6 +10,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { CreateSemanticModelDialog } from '../components/catalog/CreateSemanticModelDialog';
 import { SemanticModelRow } from '../components/catalog/SemanticModelRow';
 import { useSemanticModels } from '../query/hooks';
+import { MyJobsButton } from '../components/population/MyJobsDrawer';
 
 export function SemanticModelCatalogPage() {
   const { t } = useModuleTranslation('semantic-model');
@@ -45,7 +46,9 @@ export function SemanticModelCatalogPage() {
     <div className='mx-auto max-w-7xl space-y-6'>
       <header className='flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
         <div className='max-w-2xl space-y-2'><h1 className='text-2xl font-semibold tracking-tight sm:text-3xl'>{t('catalog.title')}</h1><p className='text-sm leading-6 text-muted-foreground'>{t('catalog.description')}</p></div>
-        <Button className='self-start shrink-0' onClick={() => setCreateOpen(true)}><Plus className='mr-2 h-4 w-4' />{t('catalog.create')}</Button>
+        <div className='flex flex-wrap items-center gap-2 self-start'><MyJobsButton />
+          <Button onClick={() => setCreateOpen(true)}><Plus className='mr-2 h-4 w-4' />{t('catalog.create')}</Button>
+        </div>
       </header>
       <section className='space-y-4'>
         <div className='flex flex-wrap items-center justify-between gap-3'>

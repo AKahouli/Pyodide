@@ -71,6 +71,40 @@ async def admit(repository: PostgresJobRepository, key: str = "idem-1", purpose:
 
 
 @pytest.mark.asyncio
+async def test_my_jobs_filters_actor_models_and_keeps_bulk_cancelled_history(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    own = await admit(repository, "mine")
+    other = await JobService(repository).admit(
+        job_type="population.run",
+        command=JobCommand.model_validate({"actorUserId": "user-2", "modelId": command().model_id,
+                                          "payload": {"purpose": "build"}}),
+        idempotency_key="other", task_name="semantic-model-population.run", queue_name="semantic-model-population.batch")
+    elsewhere = await JobService(repository).admit(
+        job_type="population.run",
+        command=JobCommand.model_validate({"actorUserId": "user-1", "modelId": "another-model",
+                                          "payload": {"purpose": "build"}}),
+        idempotency_key="elsewhere", task_name="semantic-model-population.run", queue_name="semantic-model-population.batch")
+    page = await repository.list_my_jobs(actor_user_id="user-1", model_ids=[command().model_id], view="active", page=1, limit=20)
+    assert [job["jobId"] for job in page["items"]] == [own.job_id]
+    assert page["queuedCount"] == 1
+    assert await repository.cancel_queued_jobs(actor_user_id="user-1", model_ids=[command().model_id]) == {"cancelled": 1, "skipped": 0}
+    history = await repository.list_my_jobs(actor_user_id="user-1", model_ids=[command().model_id], view="history", page=1, limit=20)
+    assert history["items"][0]["state"] == "cancelled" and history["items"][0]["jobId"] == own.job_id
+    assert (await repository.get_job(other.job_id, "user-2"))["state"] == "queued"
+    assert (await repository.get_job(elsewhere.job_id, "user-1"))["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_queued_only_cancellation_preserves_a_claimed_job(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    own = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks WHERE job_id = $1::uuid", own.job_id)
+    assert await repository.claim_task(task_id=task_id, queue_name="semantic-model-population.batch", lease_owner="worker", lease_seconds=30)
+    job = await repository.request_cancel(own.job_id, "user-1", only_queued=True)
+    assert job["state"] == "running" and not await repository.cancel_requested(own.job_id)
+
+
+@pytest.mark.asyncio
 async def test_migration_and_concurrent_idempotent_admission(pool: asyncpg.Pool):
     repository = PostgresJobRepository(pool)
     first, second = await asyncio.gather(admit(repository), admit(repository))

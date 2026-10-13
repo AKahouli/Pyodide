@@ -23,9 +23,10 @@ describe('QueuedRunNotice', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('says it is next when nothing is ahead', () => {
+  it('says it is waiting for a worker without promising it will be next', () => {
     render(<QueuedRunNotice queue={queue({ position: 1, ahead: { running: 0, queued: 0 } })} queuedSince={ago(2)} />);
-    expect(screen.getByRole('status')).toHaveTextContent('population.queued.next');
+    expect(screen.getByRole('status')).toHaveTextContent('myJobs.waitingWorker');
+    expect(screen.queryByText('population.queued.next')).not.toBeInTheDocument();
   });
 
   it('warns that no worker is available once the job has waited past the grace period', () => {

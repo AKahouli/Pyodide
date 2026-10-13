@@ -1,7 +1,8 @@
 # Cross-service contracts and flows
 
 Inspection date: 2026-10-13. Both sides checked where stated; executable
-schemas/protos/tests linked instead of copied. No behavior changed.
+schemas/protos/tests linked instead of copied. Implemented additions identify
+their owning source and verification below.
 
 ## REST (browser ↔ NestJS ↔ MCP)
 
@@ -22,6 +23,51 @@ schemas/protos/tests linked instead of copied. No behavior changed.
   (`X-YellowStorm-User-Id`, optional tenant/agent/conversation/correlation).
   JWT mode: 5-min RS256, `sub` is the actor, headers cannot override
   (`mcp/mcp-playbook/README.md:7-19`). Health: `GET /health/live`, `/health/ready`.
+
+### Semantic-model My jobs (browser ↔ NestJS ↔ semantic runtime)
+
+- The semantic-model catalog, editor and run panel expose **My jobs**. The list
+  contains only jobs submitted by the authenticated user, across models the user
+  currently owns or belongs to. Active and History views are paginated; the model
+  filter is optional. Cancelled jobs remain in History, including queued jobs
+  cancelled before starting.
+- NestJS routes under the configured API prefix:
+  - `GET /semantic-models/population/jobs`: validated `modelId?`, `view`
+    (`active` by default), `page` (1 by default) and `limit` (20 by default, at
+    most 100). The response contains `items`, `pagination`, `activeCount`,
+    `queuedCount` and accessible model options. Items include model names,
+    concept labels and whether the current model role permits management.
+  - `POST /semantic-models/population/jobs/:jobId/stop`: body `onlyQueued`
+    defaults to false. The current user must own the job and have an editor or
+    owner role on its model, as well as the endpoint's update permission.
+  - `POST /semantic-models/population/jobs/queued/remove`: optional body
+    `modelId` filters bulk removal. Without it, only the user's queued jobs in
+    currently editable accessible models are cancelled. The response counts
+    cancelled and skipped jobs. Running jobs are preserved.
+- The browser never supplies actor identity or a model allow-list. NestJS derives
+  both and sends `X-Actor-User-Id` plus the existing service credential to the
+  runtime. Runtime `POST /v1/semantic-model-jobs/read` requires an explicit
+  `modelIds` list; empty means none. Runtime `POST .../cancel-queued` uses the
+  same scope. Existing `POST .../:jobId/cancel` accepts `onlyQueued=true` for
+  race-safe single queued removal. Job commands are not exposed: only their
+  sanitized target scope and purpose are added to job metadata.
+- Queue-only cancellation locks actor-scoped tasks before the job, matching
+  claim ordering. A task already locked by a claimant is skipped. Eligibility
+  is checked before graph-search lease side effects. A job that starts while
+  removal is pending is left unchanged. Normal running-stop semantics and the
+  non-cancellable saving boundary remain intact.
+- Owners: backend `semantic-model.controller.ts`, DTOs,
+  `semantic-population-refresh.service.ts`, `semantic-model.repository.ts` and
+  `semantic-runtime-client.service.ts` under
+  `YellowStorm/back/src/modules/semantic-model/`; runtime `app/api/job_routes.py`
+  and `app/persistence/postgres_jobs.py`; frontend module `api.ts`, `types.ts`
+  and `components/population/MyJobsDrawer.tsx`.
+- Verification: backend population-refresh service tests; frontend My jobs,
+  population-status and queued-notice tests; runtime `tests/test_my_jobs.py` and
+  `tests/test_my_jobs_live.py`. The live tests admit jobs with unique test
+  actor/model/queue identifiers into existing schemas, exercise real concurrent
+  claim/cancellation, and clean up only their own rows. They never reset shared
+  schemas or cancel existing user jobs. Browser verification is a separate gate.
 
 ## gRPC (NestJS ↔ ADK)
 

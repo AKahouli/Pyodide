@@ -6,6 +6,7 @@ SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationF
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult, ModelHealth } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
+import type { MyJobsPage, MyJobsQuery } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -391,6 +392,15 @@ export const semanticModelApi = {
   /** This person's latest data updates of the model, newest first. */
   async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {
     return unwrap(await apiClient.get<ApiResponse<{ items: PopulationJob[] }>>(API_ENDPOINTS.semanticModels.populationJobs(id), { params: { limit } })).items;
+  },
+  async myJobs(params: MyJobsQuery = {}): Promise<MyJobsPage> {
+    return unwrap(await apiClient.get<ApiResponse<MyJobsPage>>(API_ENDPOINTS.semanticModels.myJobs, { params }));
+  },
+  async stopMyJob(jobId: string, onlyQueued = false): Promise<PopulationJob> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.myJobStop(jobId), { onlyQueued }));
+  },
+  async removeMyQueuedJobs(modelId?: string): Promise<{ cancelled: number; skipped: number }> {
+    return unwrap(await apiClient.post<ApiResponse<{ cancelled: number; skipped: number }>>(API_ENDPOINTS.semanticModels.myQueuedJobsRemove, { modelId }));
   },
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));

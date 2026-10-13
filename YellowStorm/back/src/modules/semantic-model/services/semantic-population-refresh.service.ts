@@ -246,6 +246,44 @@ export class SemanticPopulationRefreshService {
     return Promise.all(jobs.map((job) => this.nameRemovedSources(job)));
   }
 
+  /** Cross-model queue/history, always restricted to jobs submitted by this actor. */
+  async myJobs(userId: string, query: { modelId?: string; view: 'active' | 'history'; page: number; limit: number }) {
+    const models = await this.models.listJobModels(userId);
+    if (query.modelId && !models.some((model) => model.id === query.modelId)) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    }
+    const scoped = query.modelId ? models.filter((model) => model.id === query.modelId) : models;
+    const page = scoped.length ? await this.runtime.listMyJobs(userId, scoped.map((model) => model.id), {
+      view: query.view, page: query.page, limit: query.limit,
+    }) : { items: [], pagination: { page: query.page, limit: query.limit, total: 0, totalPages: 0 }, activeCount: 0, queuedCount: 0 };
+    const byId = new Map(scoped.map((model) => [model.id, model]));
+    return { ...page,
+      items: page.items.flatMap((job) => {
+        const model = job.modelId ? byId.get(job.modelId) : undefined;
+        if (!model) return [];
+        const conceptId = job.scope?.kind === 'concept' ? job.scope.conceptId : undefined;
+        return [{ ...job, modelName: model.name, canManage: ['owner', 'editor'].includes(model.role),
+          conceptLabel: conceptId ? model.conceptLabels[conceptId] ?? conceptId : null }];
+      }),
+      models: models.map(({ id, name, role }) => ({ id, name, canManage: ['owner', 'editor'].includes(role) })),
+    };
+  }
+
+  async stopMyJob(userId: string, jobId: string, onlyQueued: boolean) {
+    const job = await this.runtime.getJob(jobId, userId);
+    if (!job.modelId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    await this.models.requireRole(userId, job.modelId, ['owner', 'editor']);
+    return this.runtime.cancelJob(jobId, userId, onlyQueued);
+  }
+
+  async removeMyQueuedJobs(userId: string, modelId?: string) {
+    const models = await this.models.listJobModels(userId);
+    if (modelId) await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    const editable = models.filter((model) => ['owner', 'editor'].includes(model.role) && (!modelId || model.id === modelId));
+    if (!editable.length) return { cancelled: 0, skipped: 0 };
+    return this.runtime.cancelMyQueuedJobs(userId, editable.map((model) => model.id));
+  }
+
   /** The data update of this model still running for this person, or null. */
   async activeJob(userId: string, modelId: string) {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);

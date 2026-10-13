@@ -37,6 +37,7 @@ import {
   GraphOutlineQueryDto,
   GraphSearchQueryDto,
   GraphExportDto,
+  MyJobsQueryDto, RemoveMyQueuedJobsDto, StopMyJobDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -93,6 +94,28 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   create(@CurrentUser() user: AuthUser,@Body() dto: CreateSemanticModelDto) {
     return this.models.create(user._id.toString(),dto);
+  }
+
+  @Get('population/jobs')
+  @ApiOperation({ summary: 'My submitted semantic-model jobs across accessible models' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL], 'any')
+  myJobs(@CurrentUser() user: AuthUser, @Query() query: MyJobsQueryDto) {
+    return this.populationRefresh.myJobs(user._id.toString(), query);
+  }
+
+  @Post('population/jobs/queued/remove')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove my queued jobs within the selected editable models; keep cancelled history' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL], 'any')
+  removeMyQueuedJobs(@CurrentUser() user: AuthUser, @Body() dto: RemoveMyQueuedJobsDto) {
+    return this.populationRefresh.removeMyQueuedJobs(user._id.toString(), dto.modelId);
+  }
+
+  @Post('population/jobs/:jobId/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL], 'any')
+  stopMyJob(@CurrentUser() user: AuthUser, @Param('jobId') jobId: string, @Body() dto: StopMyJobDto) {
+    return this.populationRefresh.stopMyJob(user._id.toString(), jobId, dto.onlyQueued);
   }
 
   @Get(':modelId')

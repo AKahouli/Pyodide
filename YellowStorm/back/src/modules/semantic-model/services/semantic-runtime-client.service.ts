@@ -61,6 +61,15 @@ export interface RuntimeJob {
   completedAt?: string | null;
   /** Present only while the job is `queued`. */
   queue?: RuntimeJobQueue;
+  scope?: { kind: 'model' | 'concept'; conceptId?: string };
+  purpose?: string | null;
+}
+
+export interface RuntimeMyJobsPage {
+  items: RuntimeJob[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+  activeCount: number;
+  queuedCount: number;
 }
 
 export interface RuntimeValueOrigin {
@@ -1293,6 +1302,14 @@ export class SemanticRuntimeClientService {
     return items;
   }
 
+  async listMyJobs(actorUserId: string, modelIds: string[], query: { view: 'active' | 'history'; page: number; limit: number }): Promise<RuntimeMyJobsPage> {
+    return this.readPost<RuntimeMyJobsPage>('/v1/semantic-model-jobs/read', actorUserId, { modelIds, ...query });
+  }
+
+  async cancelMyQueuedJobs(actorUserId: string, modelIds: string[]): Promise<{ cancelled: number; skipped: number }> {
+    return this.post('/v1/semantic-model-jobs/cancel-queued', { modelIds }, { 'X-Actor-User-Id': actorUserId });
+  }
+
   /** The actor's run for the model that has not ended yet, if any. */
   async getActiveJob(modelId: string, actorUserId: string, jobType = 'population.run'): Promise<RuntimeJob | null> {
     const params = new URLSearchParams({ modelId, jobType });
@@ -1301,8 +1318,8 @@ export class SemanticRuntimeClientService {
   }
 
   /** Stop a job: one not started yet ends at once, a running one stops at its next step. */
-  async cancelJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
-    return this.post<RuntimeJob>(`/v1/semantic-model-jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+  async cancelJob(jobId: string, actorUserId: string, onlyQueued = false): Promise<RuntimeJob> {
+    return this.post<RuntimeJob>(`/v1/semantic-model-jobs/${encodeURIComponent(jobId)}/cancel${onlyQueued ? '?onlyQueued=true' : ''}`, {}, {
       'X-Actor-User-Id': actorUserId,
     });
   }

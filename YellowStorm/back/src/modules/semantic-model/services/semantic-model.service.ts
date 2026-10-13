@@ -93,6 +93,10 @@ export class SemanticModelService {
     return this.models.listForUser(userId, query);
   }
 
+  listJobModels(userId: string) {
+    return this.models.listJobModels(userId);
+  }
+
   async get(userId: string, modelId: string): Promise<SemanticModelRow & { role: string }> {
     const model = await this.models.findAccessible(userId, modelId);
     if (!model) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
