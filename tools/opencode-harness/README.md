@@ -5,6 +5,12 @@ here. `config/opencode.example.json` uses environment references for credentials
 it is a reference, not an automatic replacement for working provider settings.
 The existing Hindsight integration remains independent of task checkpoints.
 
+For developer onboarding and manual steps, start with
+[Developer setup](docs/DEVELOPER-SETUP.md), then
+[Hindsight setup](docs/HINDSIGHT-SETUP.md) and
+[Operations/recovery](docs/OPERATIONS.md). `package.ps1` exports committed source
+and the reviewed repository context profile with a manifest and hashes.
+
 ## Install
 
 Run `./tools/opencode-harness/install.ps1` from PowerShell, then stop and restart
@@ -13,6 +19,9 @@ reload plugins. Startup output and `sdlc_health` expose the loaded runtime versi
 use it to identify hosts still running an older installed plugin.
 The installer copies the runtime and approved agent instructions into the user
 configuration. It preserves `opencode.json`, authentication, and provider keys.
+Existing owned runtime/agent/skill/instruction files are backed up under the
+destination's `.sdlc-backups/` before replacement. Reconcile personal instruction
+or model overrides from that backup after installation.
 The installed plugin SDK must already exist in that configuration directory.
 Native parallel-session checks are verified against OpenCode CLI 1.18.34;
 the graph driver is also verified in the desktop's Node 24.15 runtime.

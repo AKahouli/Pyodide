@@ -1,0 +1,15 @@
+{
+  "serverMode": "self-hosted",
+  "apiUrl": "http://127.0.0.1:9077",
+  "bankIdTemplate": "coding-agent::{gitProject}",
+  "resolveWorktrees": true,
+  "optInOnly": true,
+  "optInPaths": ["C:/work/YellowStorm-poc"],
+  "retainSessions": true,
+  "autoInject": "recall",
+  "injectTimeoutMs": 2000,
+  "recallOptions": { "budget": "low", "max_tokens": 1000, "types": ["world", "experience"] },
+  "autoSeed": false,
+  "codebaseSurvey": false,
+  "autoUpdate": false
+}

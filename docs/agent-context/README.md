@@ -4,6 +4,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 
 | Scope | Reviewed context | Direct checks |
 | --- | --- | --- |
+| Developer installation, manual setup and sharing | [Developer setup](../../tools/opencode-harness/docs/DEVELOPER-SETUP.md), [Hindsight setup](../../tools/opencode-harness/docs/HINDSIGHT-SETUP.md), [Operations/recovery](../../tools/opencode-harness/docs/OPERATIONS.md) | pinned dependencies, own sign-in, bank initialization, graph watcher, native health and private QA |
 | Session startup integration readiness | [ADR-0009](decisions/ADR-0009-native-startup-readiness.md) (current mechanism), [ADR-0008](decisions/ADR-0008-session-integration-health.md) (original decision), [Harness guide](../../tools/opencode-harness/README.md) | automatic current-root graph/bank reads, capture configuration, per-session checkpoint receipt and loaded runtime version |
 | New schema/service/module/runtime or changed architecture | [Architecture change control](architecture/change-control.md), [ADR-0007](decisions/ADR-0007-architecture-approval-and-documentation.md) | confirmed design scope, source/contract verification and documentation-impact checkpoint |
 | System architecture baseline (components, runtimes, flows) | [Overview](architecture/overview.md), [Component map](architecture/component-map.md), [Gaps](architecture/baseline-gaps.md) | source paths + verification date in each record; unresolved items in gaps |
