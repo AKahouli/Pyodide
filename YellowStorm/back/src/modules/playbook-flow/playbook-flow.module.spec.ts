@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import { MODULE_METADATA, GUARDS_METADATA } from '@nestjs/common/constants';
 import type { Provider, Type } from '@nestjs/common';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import { ConfigService } from '@nestjs/config';
 import { PlaybookFlowModule } from './playbook-flow.module';
 import * as persistence from './persistence';
 import { PLAYBOOK_REPOSITORIES } from './persistence';
@@ -39,6 +40,19 @@ describe('PlaybookFlowModule wiring', () => {
   /** Any method call on it returns undefined: enough for constructors that only read a value or set a context. */
   const standIn = (): unknown => new Proxy({}, { get: (_target, prop) => (prop === 'then' ? undefined : jest.fn()) });
 
+  /**
+   * ConfigService is read by guards, e.g. `get('INTERNAL_SERVICE_SECRET', '').trim()`: a bare stand-in
+   * returns undefined and breaks on the .trim(). Honour the string default, like the real service does.
+   */
+  const configStandIn: Provider = {
+    provide: ConfigService,
+    useValue: {
+      get: (_key: string, defaultValue?: unknown) =>
+        typeof defaultValue === 'string' ? defaultValue : '',
+      getOrThrow: () => '',
+    },
+  };
+
   it('registers every repository as a provider', () => {
     for (const repository of PLAYBOOK_REPOSITORIES) expect(own.has(repository)).toBe(true);
   });
@@ -50,7 +64,7 @@ describe('PlaybookFlowModule wiring', () => {
     const unregistered: string[] = [];
     for (const cls of needed) {
       for (const dep of [...dependencies(cls), ...guardsOf(cls)]) {
-        if (dep === DRIZZLE_DB || own.has(dep) || dep === Object || dep === undefined) continue;
+        if (dep === DRIZZLE_DB || dep === ConfigService || own.has(dep) || dep === Object || dep === undefined) continue;
         // A repository of this module is never somebody else's: it must be a provider, not a stand-in.
         if (repositories.has(dep)) unregistered.push(`${cls.name} needs ${(dep as Type).name}`);
         else standIns.set(dep, { provide: dep as Type, useValue: standIn() });
@@ -59,7 +73,7 @@ describe('PlaybookFlowModule wiring', () => {
     expect(unregistered).toEqual([]);
     const module = await Test.createTestingModule({
       controllers,
-      providers: [...providers, { provide: DRIZZLE_DB, useValue: standIn() }, ...standIns.values()],
+      providers: [...providers, { provide: DRIZZLE_DB, useValue: standIn() }, configStandIn, ...standIns.values()],
     }).compile();
     for (const cls of needed) expect(() => module.get(cls, { strict: false })).not.toThrow();
     await module.close();
