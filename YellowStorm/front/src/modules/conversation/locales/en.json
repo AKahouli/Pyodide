@@ -678,5 +678,8 @@
   "rootInput.pendingCount_other": "{{count}} need your input",
   "openui.report.panelTitle": "Report",
   "openui.report.close": "Close report",
-  "openui.report.sources": "Sources"
+  "openui.report.sources": "Sources",
+  "openui.image.loading": "Loading document image…",
+  "openui.image.unavailable": "The document image could not be loaded.",
+  "openui.image.page": "Page {{page}}"
 }

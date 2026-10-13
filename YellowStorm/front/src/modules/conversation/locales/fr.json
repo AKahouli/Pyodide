@@ -678,5 +678,8 @@
   "rootInput.pendingCount_other": "{{count}} demandent votre réponse",
   "openui.report.panelTitle": "Rapport",
   "openui.report.close": "Fermer le rapport",
-  "openui.report.sources": "Sources"
+  "openui.report.sources": "Sources",
+  "openui.image.loading": "Chargement de l’image du document…",
+  "openui.image.unavailable": "L’image du document n’a pas pu être chargée.",
+  "openui.image.page": "Page {{page}}"
 }

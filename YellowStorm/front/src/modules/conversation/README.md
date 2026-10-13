@@ -44,6 +44,39 @@ The conversation module is a self-contained feature module that handles:
 
 ## Architecture
 
+### OpenUI document images
+
+Agents with Generative UI enabled are instructed to obtain relevant images from their available tools
+and use the stock OpenUI photo cards, grids, carousels and galleries. Web search and image-generation
+results must provide an actual image URL; a web-page URL is insufficient. Generated illustrations
+are labelled as generated. This does not add an image-search or generation tool to an agent:
+its configured tools determine which images it can obtain. Without an image result the answer uses
+text/icon cards, explaining missing pictures when requested. Document figures use the citation path below.
+
+When an agent's **Generative UI** checkbox and `VITE_OPENUI_RENDER_ENABLED` are enabled, its
+OpenUI answer can use an attached document citation as an image source: `Image("Original figure", "[1]")`.
+`ImageGallery` and the stock image cards, lists and image options accept the same references.
+Only image source fields are resolved; citation markers in prose keep their usual source chips.
+
+The renderer waits for answer completion, then resolves the citation through the existing
+message citation URL endpoint or the owning root evidence endpoint. Private paths and signed
+URLs are never placed in the stored OpenUI program. Image files are loaded into temporary blob
+URLs; PDF figures are rasterized from the cited page and region with the installed EmbedPDF
+engine. Without region metadata, the preview shows the cited page. Standalone figures retain
+their proportions and have a source chip that opens the existing document viewer.
+
+Reopening the answer resolves access again. Unknown references, non-document citations,
+incomplete evidence identities and inaccessible files show a localized retryable error.
+Temporary image URLs and PDF engines are released when their rendering work ends.
+Standalone document figures keep their intrinsic width within a responsive 48rem container and
+a 24rem height bound. Document galleries share the width bound and show complete figures without cropping.
+The resolver introduces no new endpoint, persistence schema or service.
+
+Sources: [`document-images.tsx`](components/openui/document-images.tsx),
+[`pdf-image.ts`](components/openui/pdf-image.ts), [`library.tsx`](components/openui/library.tsx),
+and [`generate-openui-prompt.mjs`](../../../scripts/generate-openui-prompt.mjs).
+Focused regression coverage is in `document-images.test.tsx` and `pdf-image.test.ts` alongside the renderer.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           CONVERSATION MODULE                                │
