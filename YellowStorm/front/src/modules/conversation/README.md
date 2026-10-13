@@ -52,6 +52,10 @@ results must provide an actual image URL; a web-page URL is insufficient. Genera
 are labelled as generated. This does not add an image-search or generation tool to an agent:
 its configured tools determine which images it can obtain. Without an image result the answer uses
 text/icon cards, explaining missing pictures when requested. Document figures use the citation path below.
+Travel and destination recommendations request photographs proactively, use a search tool's image-results
+option when available, and reuse relevant returned URLs. The configured Linkup MCP connector supplies
+web photographs directly to the model; stock OpenUI visual cards render those URLs with source chips in
+their supported text. No document citation resolver or additional image proxy is involved for public photos.
 
 When an agent's **Generative UI** checkbox and `VITE_OPENUI_RENDER_ENABLED` are enabled, its
 OpenUI answer can use an attached document citation as an image source: `Image("Original figure", "[1]")`.
