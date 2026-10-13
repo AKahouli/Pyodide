@@ -14,7 +14,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
-vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader }));
+vi.mock('@/modules/file-viewer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/modules/file-viewer')>(),
+  openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader,
+}));
 vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
 vi.mock('../../hooks/useConversationSettings', () => ({
   useConversationSettings: () => ({ redactSensitiveText: mocks.redactSensitiveText }),
@@ -1301,6 +1304,42 @@ describe('ConversationAssistantBubble', () => {
     await waitFor(() => expect(anchorClick).toHaveBeenCalled());
     expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledTimes(2);
     anchorClick.mockRestore();
+  });
+
+  it.each([
+    { filename: 'Zied-Turki-CV.docx', mimeType: undefined, expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'Zied-Turki-CV.DOCX', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'report.pdf', mimeType: 'application/octet-stream', expectedMime: 'application/pdf' },
+    { filename: 'report.docx', mimeType: 'application/pdf', expectedMime: 'application/pdf' },
+    { filename: 'notes.md', mimeType: undefined, expectedMime: 'text/markdown' },
+    { filename: 'notes.txt', mimeType: 'application/octet-stream', expectedMime: 'text/plain' },
+    { filename: 'metrics.csv', mimeType: undefined, expectedMime: 'text/csv' },
+    { filename: 'report.xlsx', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+    { filename: 'deck.pptx', mimeType: undefined, expectedMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' },
+    { filename: 'deck.ppt', mimeType: 'application/octet-stream', expectedMime: 'application/vnd.ms-powerpoint' },
+    { filename: 'document.docx', mimeType: 'application/zip', expectedMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    { filename: 'archive.zip', mimeType: 'application/zip', expectedMime: 'application/zip' },
+    { filename: 'archive.7z', mimeType: undefined, expectedMime: 'application/octet-stream' },
+  ])('opens $filename with $expectedMime when artifact MIME is $mimeType', async ({ filename, mimeType, expectedMime }) => {
+    mocks.getArtifactDownloadUrl.mockResolvedValue({
+      viewUrl: 'https://storage.example/existing-artifact',
+      downloadUrl: 'https://storage.example/download',
+    });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename, mimeType, availability: 'ready' } }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    await waitFor(() => expect(mocks.openFileViewerFromUrlLoader).toHaveBeenCalledWith(
+      JSON.stringify(['conversation-1', 'message-1', 'opaque-1']),
+      filename,
+      expectedMime,
+      expect.any(Function),
+    ));
+    expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledWith('conversation-1', 'message-1', 'opaque-1');
   });
 
   it('strips attachment sentinels from answer text but renders paths verbatim', () => {

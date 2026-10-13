@@ -21,6 +21,8 @@ When adding a new editable field to an autosaved editor, update all layers in on
 - Theming: light/dark via class on `<html>`. Color themes: `default | yellowsys | claude | kpmg` in `COLOR_THEMES`. Use Tailwind semantic tokens (`bg-primary`, `text-muted-foreground`), never hardcode brand colors.
 - Icons: default to `lucide-react`; brand/custom SVGs in `src/components/icons.tsx` under `<Icons.*>`. `<AppLogo />` is theme-aware.
 
+**Conversation artifacts:** When viewing an artifact, [ArtifactRow](../../../YellowStorm/front/src/modules/conversation/components/activity/ConversationAssistantBubble.tsx) uses the supplied MIME only when `isViewableFile` accepts it; otherwise it infers from the filename via `getMimeTypeFromFilename`, then falls back to the supplied MIME, then `application/octet-stream`. This supports Markdown, text, CSV, XLSX, PPT/PPTX, PDF, and DOCX filenames; a DOCX filename can override a misleading `application/zip` MIME, while an unknown ZIP filename retains `application/zip`. DOCX rendering remains owned by the existing `DocxRenderer`. Focused behavior coverage is in [ConversationAssistantBubble.test.tsx](../../../YellowStorm/front/src/modules/conversation/components/activity/ConversationAssistantBubble.test.tsx).
+
 ## Internationalisation (i18n)
 
 **No hardcoded user-facing string. Ever.** Every label, placeholder, tooltip, toast, validation message, and aria-label goes through i18n.
