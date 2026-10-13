@@ -108,30 +108,3 @@ export function resolveMemoryTarget(raw, root, env = process.env) {
   }
   return { cfg, bankId, workspace: root };
 }
-
-// bank may be the configured section key or the final diagnosed bank alias.
-export function effectiveMemorySettings(raw, root, bank, env = process.env) {
-  const fromEnv = {};
-  for (const key of ['disabled', 'retainSessions', 'resolveWorktrees', 'optInOnly']) {
-    const name = `HINDSIGHT_${key.replace(/[A-Z]/g, letter => '_' + letter).toUpperCase()}`;
-    if (env[name]?.trim()) fromEnv[key] = ['1', 'true', 'yes', 'on'].includes(env[name].trim().toLowerCase());
-  }
-  for (const [key, name] of [['apiUrl', 'HINDSIGHT_API_URL'], ['apiToken', 'HINDSIGHT_API_TOKEN'], ['serverMode', 'HINDSIGHT_SERVER_MODE']]) if (env[name]?.trim()) fromEnv[key] = env[name];
-  if (env.HINDSIGHT_API_PORT?.trim() && Number.isFinite(Number(env.HINDSIGHT_API_PORT))) fromEnv.apiPort = Number(env.HINDSIGHT_API_PORT);
-  if (env.HINDSIGHT_OPT_IN_PATHS?.trim()) fromEnv.optInPaths = env.HINDSIGHT_OPT_IN_PATHS.split(',').map(item => item.trim()).filter(Boolean);
-  let cfg = resolve(merge(merge(fromEnv, raw), raw?.harnesses?.opencode));
-  const directories = [path.normalize(root)];
-  if (cfg.resolveWorktrees ?? true) {
-    const main = mainRoot(root, env);
-    if (main && path.normalize(main) !== directories[0]) directories.push(path.normalize(main));
-  }
-  if (cfg.optInOnly && !directories.some(directory => cfg.optInPaths.some(item => within(directory, configured(item))) || Boolean(lookup(cfg.mapPathToBank, directory)))) return { ...cfg, disabled: true };
-  const section = directories.map(directory => lookup(cfg.paths, directory)).find(item => item !== undefined);
-  if (section) cfg = override(cfg, section);
-  if (bank) {
-    const candidates = Object.entries(cfg.banks ?? {}).filter(([key, section]) => key === bank || section?.bank === bank);
-    if (candidates.length > 1) throw new Error('Hindsight bank settings are ambiguous: multiple configured sections match the diagnosed bank. Use a unique bank mapping before retrying health checks.');
-    if (candidates.length === 1) cfg = override(cfg, candidates[0][1]);
-  }
-  return cfg;
-}

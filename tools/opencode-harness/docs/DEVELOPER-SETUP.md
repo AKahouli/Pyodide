@@ -10,7 +10,7 @@ and service-start procedure have not been verified there.
 
 | Included in the ZIP | Installed/downloaded separately |
 | --- | --- |
-| Native runtime, SQLite checkpoints and health gate | OpenCode, Node/npm, Git, Windows uv/uvx |
+| Native runtime, SQLite checkpoints and health checks | OpenCode, Node/npm, Git, Windows uv/uvx |
 | Seven specialist agents and three skills | Hindsight Coding Agents plugin and WSL daemon |
 | Configuration examples, installer and tests | Chrome and graph MCP packages |
 | Repository `AGENTS.md`, frontend/backend instructions and Git context/ADRs | Your own model-provider sign-in; application runtime and QA account |
@@ -244,8 +244,8 @@ large repository; do it before starting a coding session. CLI status should show
 MCP statistics. A matching `built_at_commit`/`current_sha` is a committed-source
 freshness anchor; it does not prove every uncommitted edit is indexed.
 
-The health gate reads `$repoRoot\.code-review-graph\graph.db`. Keep the default
-data directory; external `--data-dir` is not supported by this gate. The core
+The health check reads `$repoRoot\.code-review-graph\graph.db`. Keep the default
+data directory; external `--data-dir` is not supported by this check. The core
 package supplies structural indexing; embeddings/PyTorch are not prerequisites.
 For later source changes use an incremental update, not a routine full rebuild:
 
@@ -298,10 +298,12 @@ Do not repeat diagnostic tool calls when the native checks already passed.
 ```
 
 Expected: graph/Hindsight/checkpoints **PASS**, loaded harness
-`2026-10-13-native-startup`, and tools `sdlc_checkpoint`, `sdlc_prepare`,
+`2026-10-13-advisory-integrations`, and tools `sdlc_checkpoint`, `sdlc_prepare`,
 `sdlc_resume`, `sdlc_diff`, `sdlc_health`. Failure must be visible with a recovery
 action. After fixing a reported problem, retry `sdlc_health(refresh: true)`;
-do not rebuild a healthy graph because another integration failed.
+do not rebuild a healthy graph because another integration failed. Graph/Hindsight
+failures or pending checks never block coding: use source/tests and Git docs/checkpoints.
+Actual checkpoint storage and file ownership still protect native edits.
 
 Run the behavioral suite from the repository root:
 
@@ -309,7 +311,7 @@ Run the behavioral suite from the repository root:
 node --test tools/opencode-harness/tests/*.test.mjs
 ```
 
-The Windows distribution baseline has **50 passing tests**: 48 runtime tests
+The Windows distribution baseline has **44 passing tests**: 42 runtime tests
 and two installer preservation/failure checks, including 12 simultaneous
 first-time checkpoint initializations, independent process receipts, interrupted
 edits, reuse gates and stale-event recovery. Tests use disposable repositories
@@ -384,8 +386,10 @@ must produce `BLOCKED / BROWSER_ISOLATION`.
   in parallel; overlapping edits need coordination or separate worktrees.
 - After interruption, send `resume` or `resume task TASK_ID`. Multiple unfinished
   candidates require selection. New ordinary requests do not adopt old tasks.
-- Every human reply gets a brief experience follow-up. Hindsight capture is
-  asynchronous; a reply is not proof that memory extraction succeeded.
+- Every human reply ends with **Follow-up:** who does what next, where, and the
+  expected result or verification. Avoid abstract lesson-only endings or routine
+  approval requests. Hindsight capture is asynchronous; a reply is not proof that
+  memory extraction succeeded.
 - Git docs live in `docs/agent-context/`: `architecture/`, `decisions/`,
   `frontend/`, `backend/`, `testing/`, routed by `README.md`. Code/graph checks
   establish implementation; reviewed docs establish approved intent; experience

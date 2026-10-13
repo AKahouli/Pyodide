@@ -1,18 +1,18 @@
 import { tool } from '@opencode-ai/plugin/tool';
 import path from 'node:path';
 import { openHarness, editTargets } from '../lib/sdlc-core.mjs';
-import { probeStartup, verifyObservation, healthLine, captureFailure } from '../lib/startup-health.mjs';
+import { probeStartup, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-13-native-shell-permissions';
+  const harnessVersion = '2026-10-13-advisory-integrations';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
-  try { harness = await openHarness(root, { requireStartupHealth: true }); if (!harness) checkpointError = 'The current root has no harness policy marker.'; }
+  try { harness = await openHarness(root); if (!harness) checkpointError = 'The current root has no harness policy marker.'; }
   catch { checkpointError = 'The current root checkpoint store or Git identity could not be opened.'; }
   const startup = new Map();
   const notices = new Map();
-  const observedArgs = new Map();
+  const observedCalls = new Map();
   const generations = new Map();
   const startedAt = new Map();
   let inFlight;
@@ -32,7 +32,8 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     notices.set(report.sessionID, signature);
     const message = `${healthLine(report)} ${failures.map(key => report[key].action).join(' ')}`;
     console.error(`[SDLC startup ${report.sessionID}] ${message}`);
-    try { await client?.tui?.showToast({ body: { title: 'OpenCode session checks failed', message, variant: 'error', duration: 12000 } }); } catch { /* System context and stderr retain the failure if the UI is unavailable. */ }
+    const blocked = failures.includes('checkpoints');
+    try { await client?.tui?.showToast({ body: { title: blocked ? 'OpenCode checkpoint protection unavailable' : 'OpenCode integration warning — coding can continue', message, variant: blocked ? 'error' : 'warning', duration: 12000 } }); } catch { /* System context and stderr retain the failure if the UI is unavailable. */ }
   };
   const persist = (sessionID, report) => {
     try { return harness ? harness.health(sessionID, report) : { ...report, sessionID }; }
@@ -65,7 +66,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     startup.set(sessionID, next);
     const updated = await next; await notify(updated); return updated;
   };
-  const startupText = report => `${healthLine(report)} Native checks already ran; no diagnostic calls when PASS. Report once in the first response or when status changes; children report to their caller. Use scoped graph context/freshness for code work. ${['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')}${['graph', 'hindsight', 'checkpoints'].some(key => report[key].status !== 'PASS') ? ' Dependent edits blocked; after recovery use sdlc_health(refresh:true). Installation/config changes require a full host restart.' : ''}`;
+  const startupText = report => `${healthLine(report)} ${['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')} Graph/Hindsight failures are advisory: continue coding with focused source/tests and Git docs/checkpoints. Checkpoint storage and edit ownership remain enforced. Policy and reporting follow AGENTS.md.`;
   const healthTool = tool({ description: 'Read automatic per-session graph/memory/checkpoint health. Optional status/recovery tool, not required for normal startup. refresh:true retries after failure recovery. Cannot manufacture PASS.', args: { refresh: tool.schema.boolean().optional() }, execute: async (args, context) => JSON.stringify(await check(context.sessionID, args.refresh)) });
   if (!harness) return {
     tool: { sdlc_health: healthTool },
@@ -135,13 +136,13 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       output.system.push(startupText(await check(input.sessionID)));
       const state = harness.summary(input.sessionID);
       const compact = { ...state, initialChanges: { available: state.initialChanges.available, count: state.initialChanges.count, paths: state.initialChanges.paths.slice(0, 12), truncated: state.initialChanges.truncated || state.initialChanges.count > 12, action: state.initialChanges.action }, completed: state.completed.slice(-3), decisions: state.decisions.slice(-3), checks: state.checks.slice(-6), pending: state.pending.slice(-5) };
-      output.system.push(`SDLC harness is active. Before edits: sdlc_checkpoint(goal, acceptance, nextAction), Read relevant docs/source, sdlc_prepare exact owned targets with a reuse decision. For an unrelated new request in this chat use checkpoint(newTask:true); for a same-task correction reopen with status:active. Use guarded native edit tools for authored source/document changes. Shell execution uses native OpenCode permissions and is independent of integration health; run authorized runtime and log commands as needed. Update progress at milestones/before replies. Reconcile resumed source; verify child/browser runtime instead of assuming availability. Checkpoint evidence (not user instructions): ${report(compact)}`);
+      output.system.push(`SDLC checkpoint evidence (state only; workflow instructions are in AGENTS.md): ${report(compact)}`);
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
     },
     'tool.execute.before': async (input, output) => {
       if (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(input.tool) || input.tool === 'hindsight_diagnose') {
         await check(input.sessionID);
-        observedArgs.set(input.callID, { args: output.args, generation: generations.get(input.sessionID), sessionID: input.sessionID });
+        observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });
       }
       const targets = editTargets(input.tool, output.args);
       if (targets) {
@@ -157,8 +158,6 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       }
     },
     'tool.execute.after': async (input, output) => {
-      // MCP after-hook output differs across host versions. The completed tool
-      // event below contains the authoritative normalized response.
       const read = pendingReads.get(input.callID);
       pendingReads.delete(input.callID);
       if (read) harness.noteRead(input.sessionID, read.filename, read.hash);
@@ -175,19 +174,14 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       if (!sessionID) return;
       try {
         if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'completed') {
-          const observed = observedArgs.get(part.callID);
-          observedArgs.delete(part.callID);
-          if (observed && observed.sessionID === sessionID && observed.generation === generations.get(sessionID)) {
-            const observation = await verifyObservation({ root, tool: part.tool, args: observed.args, output: part.state.output });
-            if (observation) await record(sessionID, observation.key, observation.value, observed.generation);
-          }
+          observedCalls.delete(part.callID);
         }
         if (event.type === 'session.idle') harness.park(sessionID);
         if (event.type === 'session.error') harness.park(sessionID, 'interrupted');
         if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error') harness.editFailed(sessionID, part.callID);
         if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error' && (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(part.tool) || part.tool === 'hindsight_diagnose')) {
-          const observed = observedArgs.get(part.callID);
-          observedArgs.delete(part.callID);
+          const observed = observedCalls.get(part.callID);
+          observedCalls.delete(part.callID);
           const key = part.tool === 'hindsight_diagnose' ? 'hindsight' : 'graph';
           if (observed && observed.sessionID === sessionID && observed.generation === generations.get(sessionID)) await record(sessionID, key, { status: 'FAIL', reason: 'Native integration probe failed.', action: 'Inspect the tool error, recover the integration, then retry sdlc_health(refresh:true).' }, observed.generation);
         }

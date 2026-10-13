@@ -195,14 +195,6 @@ export async function openHarness(directory, options = {}) {
         return stored;
       });
     },
-    requireHealthy(sessionID) {
-      if (!options.requireStartupHealth) return;
-      const receipt = api.health(sessionID);
-      if (!receipt) throw new Error('Session startup health has not been verified for this OpenCode process and worktree. Run the startup checks before editing.');
-      const failed = ['checkpoints', 'graph', 'hindsight'].filter(name => receipt[name]?.status !== 'PASS');
-      if (failed.length) throw new Error(`Session startup health blocks edits: ${failed.map(name => `${name} ${receipt[name]?.status ?? 'PENDING'}: ${receipt[name]?.reason || 'verification missing'}${receipt[name]?.action ? ` Action: ${receipt[name].action}` : ''}`).join('; ')}`);
-      return receipt;
-    },
     state(sessionID) { return transaction(() => ensure(sessionID)); },
     activate(sessionID) { transaction(() => { const task = owned(sessionID); if (task.goal && !terminal.has(task.status)) task.status = 'active'; save(task); }); },
     list(sessionID) { return transaction(() => candidates(sessionID)); },
@@ -245,7 +237,6 @@ export async function openHarness(directory, options = {}) {
     fingerprint(filename) { return fileHash(relative(filename)); },
     search(sessionID) { transaction(() => { const task = owned(sessionID); task.searches++; save(task); }); },
     prepare(sessionID, input) {
-      api.requireHealthy(sessionID);
       redactCheck(input);
       return transaction(() => {
         const task = owned(sessionID);
@@ -287,7 +278,6 @@ export async function openHarness(directory, options = {}) {
       });
     },
     beforeEdit(sessionID, filenames, callID) {
-      api.requireHealthy(sessionID);
       return transaction(() => {
         const task = owned(sessionID);
         if (terminal.has(task.status)) throw new Error('Task is completed/cancelled; start a new task before editing.');

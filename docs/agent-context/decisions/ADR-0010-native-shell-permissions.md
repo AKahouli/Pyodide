@@ -1,12 +1,13 @@
 ---
 id: ADR-0010
-status: proposed
+status: accepted
 scope: agent-shell-permissions
 source_paths:
   - tools/opencode-harness/runtime/plugins/sdlc.js
   - tools/opencode-harness/config/opencode.example.json
   - tools/opencode-harness/config/agents/
   - tools/opencode-harness/tests/startup-plugin.test.mjs
+reviewed_at: 2026-10-13
 ---
 
 # Use native OpenCode permissions for shell execution

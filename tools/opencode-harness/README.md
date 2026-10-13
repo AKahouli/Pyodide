@@ -72,9 +72,12 @@ search may be unavailable; use structural queries and focused source search.
 Use the injected native results; `sdlc_health` is optional for inspection and
 recovery. The agent reports failures; child agents report them to their caller.
 Failures include recovery actions in
-system context, stderr and a UI toast when available. Native source/document edits
-are gated until all three checks pass. Shell execution uses native OpenCode
-permissions, independent of integration health or checkpoint availability.
+system context, stderr and a UI toast when available. Graph/Hindsight failures or
+pending checks are advisory: continue coding with focused source/tests and Git
+docs/checkpoints. Native edit tools still require durable checkpoint intent, current
+read evidence and transactional ownership; actual storage/ownership failures block
+them. Shell execution uses native OpenCode permissions, independent of integration
+health or checkpoint availability.
 Authorized runtime startup, log collection, tests and builds can continue during
 recovery. Restricted specialists return runtime/access needs to `build` rather
 than bypass their native permissions. Investigation and
@@ -175,5 +178,25 @@ pre-existing dirty changes, native patch targets,
 task generations, and worktree isolation. Live OpenCode checks additionally
 exercise the native plugin hooks, specialist tool permissions, and resume context.
 `tests/startup-plugin.test.mjs` verifies that runtime/log commands reach native
-permission handling during graph failure or missing checkpoint policy while
-native source edits remain guarded. See [ADR-0010](../../docs/agent-context/decisions/ADR-0010-native-shell-permissions.md).
+permission handling during graph failure or missing checkpoint policy. It verifies
+that prepared coding works with graph and memory unavailable, while overlapping
+file ownership and missing checkpoint policy still block native edits.
+See [ADR-0010](../../docs/agent-context/decisions/ADR-0010-native-shell-permissions.md)
+and [ADR-0011](../../docs/agent-context/decisions/ADR-0011-advisory-integrations-and-native-policy.md).
+
+## Native policy and clear follow-up
+
+Workflow and response instructions live in `AGENTS.md` and native agent Markdown;
+command and specialist permissions live in `opencode.json`/agent frontmatter.
+Keep broad permission defaults before specific exceptions: native rules use the
+last matching rule. The plugin injects compact task state and health observations,
+rather than another copy of the workflow prompt. Successful diagnostic tools do
+not trigger duplicate graph validation or authenticated memory reads. Native tool
+errors and session capture failures remain visible; explicit health refresh checks
+recovery without gating coding.
+
+Each human-facing response ends with **Follow-up:** an explicit next actor/action
+and expected result. Ready-to-test work includes a concrete route/action/check;
+proposals must not imply implementation. Ongoing authorized work continues without
+routine confirmation. Reusable lessons are optional when useful, not a substitute
+for the next step. Hindsight persistence is separate from the footer.

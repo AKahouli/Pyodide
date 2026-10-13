@@ -12,7 +12,7 @@ Tool names below omit the `code-review-graph_` prefix. Use the installed tool sc
 - Start new code investigations with `get_minimal_context_tool(task=..., repo_root=<absolute active worktree>)`. Reuse current scoped graph evidence supplied by the caller instead of repeating the same entry query. This returns readiness, summary, risk, and suggestions, not source snippets.
 - Pass the same explicit root to every repository-scoped call. Never share one graph data directory across unrelated repositories/worktrees.
 - The shared `crg-daemon` watches paths configured in `~/.code-review-graph/watch.toml`; MCP servers only serve queries. Do not add duplicate edit hooks or `--auto-watch`. Daemon liveness alone does not establish graph freshness.
-- On `not_ready`, use targeted source search immediately. The build agent refreshes incrementally when needed for an unresolved impact question; read-only agents request refresh from their caller. Check `ok`/`partial`/`error` before relying on results. A matching HEAD does not prove uncommitted edits are indexed.
+- Graph availability is advisory, never a coding gate. On `not_ready` or failure, use targeted source search and tests immediately. The build agent refreshes incrementally when needed for an unresolved impact question; read-only agents request refresh from their caller. Check `ok`/`partial`/`error` before relying on results. A matching HEAD does not prove uncommitted edits are indexed.
 - Incremental update is the default. Use full rebuild only for a concrete indexing problem. `postprocess="minimal"` refreshes signatures/FTS but does not recompute flows/communities; use full postprocessing when those analyses matter.
 - Skip graph calls for prose and git-only chores. Missing indexing, unsupported/static-invisible relationships, or an unavailable MCP justify targeted file-search fallback; state the limitation.
 
@@ -31,7 +31,7 @@ Tool names below omit the `code-review-graph_` prefix. Use the installed tool sc
 
 ## Review
 
-1. Refresh meaningful edits before reviewing unless freshness is established.
+1. Reuse established graph freshness. If stale/unavailable, review the scoped diff, source and tests directly; request incremental refresh only for an unanswered impact question.
 2. `detect_changes_tool(repo_root=..., base=<explicit revision>, changed_files=[<scoped paths>], detail_level="minimal", max_results=10)`.
 3. Use `base="HEAD"` for uncommitted work; use the actual merge-base commit for branch review. Do not blindly use the `HEAD~1` default.
 4. Query callers/tests for high-risk symbols. Request `get_review_context_tool` snippets or affected-flow details only where the first analysis is insufficient.

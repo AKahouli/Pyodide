@@ -3,7 +3,7 @@ import { test, before, after } from 'node:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { probeStartup, probeGraphIndex, verifyObservation, canonical, healthLine, captureFailure } from '../runtime/lib/startup-health.mjs';
+import { probeStartup, probeGraphIndex, canonical, healthLine, captureFailure } from '../runtime/lib/startup-health.mjs';
 
 let directory, root, otherRoot;
 before(() => {
@@ -21,10 +21,6 @@ const request = async () => ({ ok: true, status: 200, json: async () => ({ statu
 const tools = { ids: async () => ({ data: ['hindsight_diagnose'] }) };
 const client = { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: tools };
 const probe = overrides => probeStartup({ root, client, readConfig, request, readGraph: async () => ({ repoRoot: overrides?.root ?? root, hasNodes: true }), ...overrides });
-const graph = overrides => verifyObservation({ root, tool: 'code-review-graph_list_graph_stats_tool', args: { repo_root: root }, output: JSON.stringify({ status: 'ok', total_nodes: 12, total_edges: 9 }), readConfig, request, ...overrides });
-const diagnoseOutput = () => ({ workspace: root, bank_id: 'synthetic-bank', config: { api_url: 'http://hindsight.invalid/', disabled: false }, credential: { api_token_matches_config: true } });
-const hindsight = overrides => verifyObservation({ root, tool: 'hindsight_diagnose', args: {}, output: diagnoseOutput(), readConfig, request, ...overrides });
-
 test('automatic connected current-root graph and authenticated memory bank pass without model tools', async () => {
   let observedRoot;
   const report = await probe({ client: { tool: tools, mcp: { status: async (input, options) => {
@@ -80,67 +76,6 @@ test('corrupt, disabled, capture-disabled and malformed-endpoint configuration f
   ]) assert.equal((await probe({ readConfig: reader })).hindsight.status, 'FAIL');
 });
 
-test('graph rejects missing or different root and tool error responses', async () => {
-  for (const overrides of [
-    { args: {} },
-    { args: { repo_root: otherRoot } },
-    { output: { error: 'synthetic' } },
-    { output: { isError: true } },
-    { output: { status: 'error' } },
-    { output: 'invalid JSON' },
-  ]) assert.equal((await graph(overrides)).value.status, 'FAIL');
-});
-
-test('graph rejects empty or missing index and passes usable scoped statistics', async () => {
-  for (const output of [
-    { status: 'ok', total_nodes: 0 }, { status: 'ok', node_count: 0 }, { status: 'not_initialized' },
-    { status: 'ok', message: 'graph not found' }, { status: 'ok' }, {}, null,
-  ]) assert.equal((await graph({ output })).value.status, 'FAIL', JSON.stringify(output));
-  const result = await graph();
-  assert.equal(result.key, 'graph');
-  assert.equal(result.value.status, 'PASS');
-  assert.equal(result.value.root, root);
-});
-
-test('Hindsight diagnose rejects wrong workspace, disabled plugin and rejected credential', async () => {
-  for (const output of [
-    { ...diagnoseOutput(), workspace: otherRoot },
-    { ...diagnoseOutput(), workspace: undefined },
-    { ...diagnoseOutput(), config: { ...diagnoseOutput().config, disabled: true } },
-    { ...diagnoseOutput(), credential: { api_token_matches_config: false } },
-    { ...diagnoseOutput(), bank_id: undefined },
-    { error: 'synthetic' },
-  ]) assert.equal((await hindsight({ output })).value.status, 'FAIL');
-});
-
-test('bank read rejection fails even when diagnose itself succeeds', async () => {
-  for (const status of [401, 403, 404, 503]) {
-    const result = await hindsight({ request: async () => ({ ok: false, status }) });
-    assert.equal(result.value.status, 'FAIL');
-    assert.ok(result.value.action);
-  }
-});
-
-test('successful diagnose authenticates the actual bank before reporting PASS', async () => {
-  let requested, options;
-  const output = { ...diagnoseOutput(), bank_id: 'bank/with space' };
-  const result = await hindsight({ output, request: async (url, opts) => {
-    requested = String(url); options = opts;
-    return { ok: true, json: async () => ({ total_memories: 3 }) };
-  } });
-  assert.equal(requested, 'http://hindsight.invalid/v1/default/banks/bank%2Fwith%20space/stats');
-  assert.equal(options.headers.Authorization, 'Bearer synthetic-test-token');
-  assert.ok(options.signal);
-  assert.equal(result.value.status, 'PASS');
-  assert.equal(result.value.bank, output.bank_id);
-});
-
-test('diagnose cannot promote disabled or capture-disabled local configuration to PASS', async () => {
-  for (const cfg of [{ ...readConfig(), disabled: true }, { ...readConfig(), retainSessions: false }, { ...readConfig(), banks: { 'synthetic-bank': { retainSessions: false } } }]) {
-    assert.equal((await hindsight({ readConfig: () => cfg })).value.status, 'FAIL');
-  }
-});
-
 test('canonical roots and concurrent reports remain distinct', async () => {
   assert.notEqual(canonical(root), canonical(otherRoot));
   assert.equal(canonical(path.join(root, '.')), canonical(root));
@@ -149,7 +84,6 @@ test('canonical roots and concurrent reports remain distinct', async () => {
   assert.equal(reports[1].root, otherRoot);
   assert.equal(reports[0].checkpoints.status, 'PENDING');
   assert.equal(reports[1].checkpoints.status, 'FAIL');
-  assert.equal(await verifyObservation({ root, tool: 'unrelated_tool', output: {} }), null);
 });
 
 test('effective harness and current-directory capture overrides are honored', async () => {
@@ -161,17 +95,22 @@ test('effective harness and current-directory capture overrides are honored', as
     { ...readConfig(), paths: { [directory]: { retainSessions: false } } },
   ]) {
     assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'FAIL');
-    assert.equal((await hindsight({ readConfig: () => cfg })).value.status, 'FAIL');
   }
   const cfg = { ...readConfig(), paths: { [otherRoot]: { retainSessions: false } } };
   assert.equal((await probe({ readConfig: () => cfg })).hindsight.status, 'PASS');
-  assert.equal((await hindsight({ readConfig: () => cfg })).value.status, 'PASS');
 });
 
-test('diagnose hooks disabled and HTTP-success bank error payload cannot report PASS', async () => {
-  assert.equal((await hindsight({ output: { ...diagnoseOutput(), environment: { hooks_disabled: true } } })).value.status, 'FAIL');
+test('automatic memory rejects disabled hooks and HTTP-success bank error payloads', async () => {
+  const previous = process.env.HINDSIGHT_DISABLE_HOOKS;
+  try {
+    process.env.HINDSIGHT_DISABLE_HOOKS = '1';
+    assert.equal((await probe()).hindsight.status, 'FAIL');
+  } finally {
+    if (previous === undefined) delete process.env.HINDSIGHT_DISABLE_HOOKS;
+    else process.env.HINDSIGHT_DISABLE_HOOKS = previous;
+  }
   for (const body of [{ error: 'synthetic rejection' }, { isError: true }]) {
-    assert.equal((await hindsight({ request: async () => ({ ok: true, status: 200, json: async () => body }) })).value.status, 'FAIL');
+    assert.equal((await probe({ request: async url => String(url).endsWith('/stats') ? { ok: true, json: async () => body } : request() })).hindsight.status, 'FAIL');
   }
 });
 
@@ -210,17 +149,6 @@ test('capture diagnostics only read the bounded tail and never expose raw errors
   assert.equal(captureFailure('own', since, path.join(directory, 'absent.jsonl')), null);
 });
 
-test('native MCP and custom-tool envelopes preserve verified evidence and errors', async () => {
-  const stats = { status: 'ok', total_nodes: 2 };
-  for (const output of [
-    { content: [{ type: 'text', text: JSON.stringify(stats) }] },
-    { structuredContent: stats },
-  ]) assert.equal((await graph({ output })).value.status, 'PASS');
-  assert.equal((await graph({ output: { isError: true, structuredContent: stats } })).value.status, 'FAIL');
-  assert.equal((await hindsight({ output: { output: JSON.stringify(diagnoseOutput()) } })).value.status, 'PASS');
-  assert.equal(await graph({ tool: 'code-review-graph_get_minimal_context_tool', output: { status: 'ok' } }), null);
-});
-
 test('automatic probes reject wrong/missing graph identity and empty/corrupt index', async () => {
   for (const graph of [{ repoRoot: otherRoot, hasNodes: true }, { hasNodes: true }, { repoRoot: root, hasNodes: false }]) {
     assert.equal((await probe({ readGraph: async () => graph })).graph.status, 'FAIL');
@@ -231,7 +159,9 @@ test('automatic probes reject wrong/missing graph identity and empty/corrupt ind
 test('automatic memory checks exact mapped bank, opt-in, native registration and bank errors', async () => {
   const urls = [];
   const cfg = { ...readConfig(), mapPathToBank: { [root]: 'mapped/bank' } };
-  const report = await probe({ readConfig: () => cfg, request: async url => {
+  const report = await probe({ readConfig: () => cfg, request: async (url, options) => {
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-test-token');
+    assert.ok(options.signal);
     urls.push(String(url)); return request();
   } });
   assert.equal(report.hindsight.status, 'PASS');
@@ -270,8 +200,4 @@ test('nested launch directory memory overrides do not change graph worktree scop
   } } } });
   assert.equal(report.graph.status, 'PASS'); assert.equal(report.graph.root, root);
   assert.equal(report.hindsight.status, 'FAIL');
-  const output = { ...diagnoseOutput(), workspace: nested };
-  assert.equal((await hindsight({ memoryDirectory: nested, output })).value.status, 'PASS');
-  assert.equal((await hindsight({ output })).value.status, 'FAIL');
-  assert.equal((await hindsight({ memoryDirectory: nested, output, readConfig: () => cfg })).value.status, 'FAIL');
 });

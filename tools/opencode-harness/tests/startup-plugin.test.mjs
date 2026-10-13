@@ -51,6 +51,15 @@ const health = async (plugin, sid, refresh = false) => JSON.parse(await plugin.t
 function assertPass(report) {
   for (const key of ['graph', 'hindsight', 'checkpoints']) assert.equal(report[key].status, 'PASS', `${key}: ${report[key].reason}`);
 }
+async function prepareEdit(plugin, root, sid) {
+  await plugin.tool.sdlc_checkpoint.execute({ goal: 'Test guarded reuse', acceptance: ['Read evidence accepted'], nextAction: 'Edit owned source' }, { sessionID: sid });
+  for (const file of ['docs/agent-context/README.md', 'guidelines.md', 'src/a.js']) {
+    const callID = `${sid}-read-${file}`;
+    await plugin['tool.execute.before']({ sessionID: sid, tool: 'read', callID }, { args: { filePath: path.join(root, file) } });
+    await plugin['tool.execute.after']({ sessionID: sid, tool: 'read', callID }, { output: 'synthetic successful read' });
+  }
+  return plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: ['docs/agent-context/README.md', 'guidelines.md'], sources: ['src/a.js'], reuseDecision: 'Reuse existing value export' }, { sessionID: sid });
+}
 async function observation(plugin, root, sid, tool, callID, status = 'completed') {
   const args = tool === 'hindsight_diagnose' ? {} : { repo_root: root };
   await plugin['tool.execute.before']({ sessionID: sid, tool, callID }, { args });
@@ -69,13 +78,7 @@ test('automatic checks create independent receipts and allow prepared edits with
   assertPass(first); assertPass(second);
   assert.equal(first.sessionID, 'first'); assert.equal(second.sessionID, 'second');
   assert.notEqual(first.probe, second.probe);
-  await plugin.tool.sdlc_checkpoint.execute({ goal: 'Test guarded reuse', acceptance: ['Read evidence accepted'], nextAction: 'Edit owned source' }, { sessionID: 'first' });
-  for (const file of ['docs/agent-context/README.md', 'guidelines.md', 'src/a.js']) {
-    const callID = `read-${file}`;
-    await plugin['tool.execute.before']({ sessionID: 'first', tool: 'read', callID }, { args: { filePath: path.join(root, file) } });
-    await plugin['tool.execute.after']({ sessionID: 'first', tool: 'read', callID }, { output: 'synthetic successful read' });
-  }
-  await plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: ['docs/agent-context/README.md', 'guidelines.md'], sources: ['src/a.js'], reuseDecision: 'Reuse existing value export' }, { sessionID: 'first' });
+  await prepareEdit(plugin, root, 'first');
 });
 
 test('concurrent sessions share pending process probes but retain their own cached receipts', async t => {
@@ -103,7 +106,29 @@ test('native shell permissions remain authoritative during graph failures', asyn
     await plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'bash', callID: command }, output);
     assert.equal(output.args.command, command);
   }
-  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'edit', callID: 'edit' }, { args: { filePath: 'src/a.js' } }), /graph FAIL/);
+  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'edit', callID: 'edit' }, { args: { filePath: 'src/a.js' } }), /sdlc_prepare/);
+});
+
+test('graph and memory failures allow prepared coding while retaining parallel file protection', async t => {
+  const { plugin, root, toasts } = await create(t, async () => ({ data: { 'code-review-graph': { status: 'disconnected' } } }), { ids: async () => ({ data: [] }) });
+  const receipt = await health(plugin, 'coding');
+  assert.equal(receipt.graph.status, 'FAIL'); assert.equal(receipt.hindsight.status, 'FAIL');
+  assert.equal(receipt.checkpoints.status, 'PASS');
+  assert.equal(toasts.at(-1).variant, 'warning');
+  const context = { system: [] };
+  await plugin['experimental.chat.system.transform']({ sessionID: 'coding' }, context);
+  assert.match(context.system[0], /advisory: continue coding/);
+  assert.doesNotMatch(context.system.join(' '), /edits blocked|require.*all.*PASS/i);
+  await prepareEdit(plugin, root, 'coding');
+  await assert.rejects(prepareEdit(plugin, root, 'parallel'), /belongs to task/);
+  for (const [tool, args] of [['edit', { filePath: 'src/a.js' }], ['write', { filePath: 'src/a.js' }], ['apply_patch', { patchText: '*** Update File: src/a.js' }]]) {
+    await plugin['tool.execute.before']({ sessionID: 'coding', tool, callID: tool }, { args });
+    writeFileSync(path.join(root, 'src/a.js'), `export const value = '${tool}';\n`);
+    await plugin['tool.execute.after']({ sessionID: 'coding', tool, callID: tool }, {});
+  }
+  assert.match(readFileSync(path.join(root, 'src/a.js'), 'utf8'), /apply_patch/);
+  assert.equal((await health(plugin, 'coding')).graph.status, 'FAIL');
+  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'parallel', tool: 'edit', callID: 'overlap' }, { args: { filePath: 'src/a.js' } }), /sdlc_prepare/);
 });
 
 test('missing policy reports failure and blocks native edits without replacing shell permissions', async t => {
@@ -142,15 +167,24 @@ test('refresh supersedes delayed startup failure and stale integration tool erro
   assertPass(await health(plugin, 'race'));
 });
 
-test('persisted graph completion tolerates raw transport envelope; tool failure is visible and blocks edits until refresh', async t => {
+test('native tool errors remain visible without duplicate probes or blocking coding', async t => {
   const { plugin, root, toasts } = await create(t);
   assertPass(await health(plugin, 'runtime'));
   await observation(plugin, root, 'runtime', 'code-review-graph_list_graph_stats_tool', 'raw-envelope');
   assertPass(await health(plugin, 'runtime'));
+  const previousFetch = globalThis.fetch;
+  let redundantRequests = 0;
+  try {
+    globalThis.fetch = async (...args) => { redundantRequests++; return previousFetch(...args); };
+    await observation(plugin, root, 'runtime', 'hindsight_diagnose', 'successful-diagnose');
+    assert.equal(redundantRequests, 0, 'successful native diagnosis must not repeat authenticated bank probes');
+  } finally { globalThis.fetch = previousFetch; }
   await observation(plugin, root, 'runtime', 'code-review-graph_list_graph_stats_tool', 'runtime-error', 'error');
   assert.equal((await health(plugin, 'runtime')).graph.status, 'FAIL');
   assert.ok(toasts.some(item => item.message.includes('graph FAIL')));
-  await assert.rejects(plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: [], sources: [], reuseDecision: 'reuse' }, { sessionID: 'runtime' }), /startup|health|integration/i);
+  await prepareEdit(plugin, root, 'runtime');
+  await plugin['tool.execute.before']({ sessionID: 'runtime', tool: 'edit', callID: 'allowed' }, { args: { filePath: 'src/a.js' } });
+  await plugin['tool.execute.after']({ sessionID: 'runtime', tool: 'edit', callID: 'allowed' }, {});
   assertPass(await health(plugin, 'runtime', true));
 });
 

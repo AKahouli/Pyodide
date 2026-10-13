@@ -150,8 +150,9 @@ procedure; the package contains neither kind of credential.
 
 ## E. Create the first repository bank — manual, once
 
-Automatic seeding is off, so a new bank may not exist. The mandatory startup gate
-reads its statistics and will correctly fail on 404 until it is created.
+Automatic seeding is off, so a new bank may not exist. The automatic startup check
+reads its statistics and reports failure on 404 until it is created. This warning
+does not block coding; use Git docs/checkpoints while recovering memory access.
 
 From the owning repository root, use the shipped resolver rather than guessing
 the bank of a renamed checkout or linked worktree. Set `$repoRoot` as in the main

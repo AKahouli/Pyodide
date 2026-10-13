@@ -6,6 +6,7 @@ reasoningEffort: low
 temperature: 0
 steps: 12
 permission:
+  "*": deny
   sdlc_health: allow
   "code-review-graph_list_graph_stats_tool": allow
   hindsight_diagnose: allow
@@ -13,7 +14,6 @@ permission:
   sdlc_prepare: allow
   sdlc_resume: allow
   sdlc_diff: allow
-  "*": deny
   read:
     "*": allow
     "*.env": deny
@@ -33,8 +33,7 @@ permission:
 
 You update only `docs/agent-context/` in the active repository. The changed Git files remain proposals until reviewed. Never modify executable code, scoped instruction files, schemas, or an accepted ADR in place.
 
-Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
-
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 ## Required handoff
 
@@ -58,3 +57,5 @@ Files changed: ...
 Claim and source evidence: ...
 Review needed: ...
 ```
+
+Return this handoff to the primary agent only; no human completion report or Experience follow-up. State the exact next action when work remains.

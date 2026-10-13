@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { effectiveMemorySettings as effective, resolveMemoryTarget } from './memory-settings.mjs';
+import { resolveMemoryTarget } from './memory-settings.mjs';
 
 const fail = (reason, action) => ({ status: 'FAIL', reason, action });
 const pending = (reason, action) => ({ status: 'PENDING', reason, action });
@@ -82,31 +82,6 @@ export async function probeStartup({ root, hostDirectory = root, memoryDirectory
     })(),
   ]);
   return result;
-}
-
-export async function verifyObservation({ root, memoryDirectory = root, tool, args, output, readConfig = config, request = fetch }) {
-  if (/code.review.graph.*list_graph_stats_tool$/.test(tool)) {
-    try {
-      if (!args?.repo_root || canonical(args.repo_root) !== canonical(root)) throw new Error('root');
-      const data = response(output);
-      if (!data || data.status !== 'ok' || data.error) throw new Error('response');
-      if (/list_graph_stats_tool$/.test(tool) && !(data.total_nodes > 0)) throw new Error('index');
-      // An empty/missing index cannot provide code context even if MCP is connected.
-      if (data.total_nodes === 0 || data.node_count === 0 || data.status === 'not_initialized') throw new Error('index');
-      return { key: 'graph', value: { status: 'PASS', reason: 'Scoped graph tool completed in the current root.', root } };
-    } catch (error) { return { key: 'graph', value: fail(`Graph verification failed (${['root', 'response', 'index'].includes(error.message) ? error.message : 'parse/tool error'}).`, `Inspect the scoped graph response for ${root}, recover the integration, then retry sdlc_health(refresh:true).`) }; }
-  }
-  if (tool === 'hindsight_diagnose') {
-    try {
-      const data = response(output);
-      if (canonical(data.workspace) !== canonical(memoryDirectory) || data.config?.disabled || data.credential?.api_token_matches_config === false || data.environment?.hooks_disabled || !data.bank_id) throw new Error('workspace');
-      const cfg = effective(readConfig(), memoryDirectory, data.bank_id);
-      if (cfg.disabled || cfg.retainSessions === false || process.env.HINDSIGHT_DISABLE_HOOKS) throw new Error('capture disabled');
-      response(await json(new URL(`v1/default/banks/${encodeURIComponent(data.bank_id)}/stats`, data.config.api_url.replace(/\/?$/, '/')), cfg.apiToken, request));
-      return { key: 'hindsight', value: { status: 'PASS', reason: `Plugin workspace and authenticated bank read verified (${data.bank_id}); capture is configured.`, bank: data.bank_id, root } };
-    } catch { return { key: 'hindsight', value: fail('Hindsight workspace, opt-in, credential or bank read verification failed.', 'Fix Hindsight configuration for this directory and restart the host if changed; rerun hindsight_diagnose.') }; }
-  }
-  return null;
 }
 
 export function healthLine(report) {

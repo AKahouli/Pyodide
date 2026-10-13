@@ -4,6 +4,7 @@ mode: subagent
 reasoningEffort: medium
 steps: 30
 permission:
+  "*": deny
   sdlc_health: allow
   "code-review-graph_list_graph_stats_tool": allow
   hindsight_diagnose: allow
@@ -11,7 +12,6 @@ permission:
   sdlc_prepare: allow
   sdlc_resume: allow
   sdlc_diff: allow
-  "*": deny
   read:
     "*": allow
     "*.env": deny
@@ -51,8 +51,7 @@ permission:
 
 Implement exactly the caller's bounded task. An editing task requires the absolute repo root, acceptance criteria, explicitly owned files, shared files reserved by the primary agent, and concise context/checks already established. Return `BLOCKED` if an editing task lacks file ownership. A read-only or harness-check task may explicitly own no files; honor its acceptance criterion without demanding edits.
 
-Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
-
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 - Reuse the handoff; investigate only unanswered questions. Follow repository and applicable package instructions.
 - A new schema/table/collection, module, service or runtime needs the caller's confirmed user-approved design scope and message reference. If missing, return the concrete proposal/question to the primary and pause dependent edits; broad task ownership is not architecture approval. Report changed architectural facts/documentation impact in the result; the primary owns documentation integration.

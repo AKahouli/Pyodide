@@ -6,13 +6,13 @@ reasoningEffort: low
 temperature: 0
 steps: 60
 permission:
+  "*": deny
   sdlc_health: allow
   "code-review-graph_list_graph_stats_tool": allow
   hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
   sdlc_diff: allow
-  "*": deny
   read:
     "*": allow
     "*.env": deny
@@ -32,8 +32,7 @@ permission:
 
 You validate frontend-visible changes in a real browser and return a verdict with evidence. Never modify source code.
 
-Native startup checks run automatically. Use their injected results; do not repeat graph statistics, Hindsight diagnosis or health calls routinely. Report failures and recovery needs to the primary; dependent edits wait for PASS. `sdlc_health` is available for diagnosis/refresh. A missing tool or stale loaded runtime requires host restart after installation, not another chat.
-
+Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 ## Setup
 
@@ -85,3 +84,4 @@ Owned data / cleanup: ...
 Login recipe: non-secret confirmed details when newly established, or unchanged
 ```
 
+Return this handoff to the primary agent only; no human completion report or Experience follow-up. State the exact next action when work remains.

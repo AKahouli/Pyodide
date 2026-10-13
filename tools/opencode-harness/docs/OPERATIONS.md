@@ -32,25 +32,26 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Old loaded version / same failures in new chats | Stop the entire host, reinstall from the intended source commit, restart. New chat alone cannot reload cached plugin code. |
 | Checkpoints FAIL / missing policy | Launch in the intended Git checkout; verify `tools/opencode-harness/policy.json`, committed HEAD, local writable `.opencode/sdlc/` and routed documents. |
 | Checkpoint initialization lock budget exceeded | Identify competing writers, live owner or a nonlocal/symlinked store; recover the environment, then refresh health. Do not delete an active database to clear ownership. |
-| Graph FAIL / MCP connection | Check the current host's `code-review-graph` MCP, Windows PATH, pinned core package and index. Restore connection; rebuild only for a missing/empty/corrupt index. |
+| Graph FAIL / MCP connection | Continue coding using focused source/search/tests. Check the current host's `code-review-graph` MCP, Windows PATH, pinned core package and index in parallel; rebuild only for a missing/empty/corrupt index. |
 | Graph nonempty but stale | Verify watcher registration/running state, branch/source changes; run scoped incremental `update --repo`. Startup availability is not freshness. |
 | Graph failure mentioning PyTorch/DLL | Use core `code-review-graph==2.3.9`, without `[embeddings]`; vector embeddings are optional. |
-| Hindsight FAIL / connection | Start the configured WSL profile, inspect `/health`, port 9077 and client `self-hosted` API URL. |
+| Hindsight FAIL / connection | Continue coding using Git docs/checkpoints; do not claim memory saved. Start the configured WSL profile, inspect `/health`, port 9077 and client `self-hosted` API URL in parallel. |
 | Hindsight FAIL / opt-in or bank 404 | Correct the actual owning worktree's enrollment/mapping and initialize its exact bank once. Restart after config changes. |
 | Health PASS but experience absent | Run the real write/read and automatic-capture checks. Check provider sign-in, asynchronous extraction, recall types and session-scoped diagnostic events. |
 | Retention fails after final response | It may surface at the next health/turn check; recover provider/API access and verify the next `retain_ok`. Do not claim that response text proves memory saved. |
-| Context7 unavailable | Configure personal service access if required, or use official library docs and state the limitation; it is not one of the three startup gates. |
+| Context7 unavailable | Configure personal service access if required, or use official library docs and state the limitation; it is not a startup check. |
 | QA cannot sign in | `AUTH_REQUIRED`; developer signs into the owned private context, then resumes the same child/context. Login recipes are not reusable cookies. |
 | Browser isolation or page routing missing | Install the pinned Chrome MCP and proper flags, fully restart. Never use a shared default tab as fallback. |
 | Evidence save denied by Chrome | Verify MCP roots/allowed active repository workspace; keep files in owned `qa-artifacts/` and avoid unrestricted path flags. |
 | Specialist model unavailable | Change/remove its explicit `model:` override, select an accessible primary model, restart the host. |
 | `Task(background: true)` unsupported/foreground only | Enable `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1` in the launching process and restart the host; verify the tested OpenCode version. |
-| Shell write rejected | Use guarded native Edit/Write/ApplyPatch after checkpoint, scoped reads and prepare. Do not bypass the gate with command chains/scripts. |
+| Shell command denied | Inspect the current agent's native permissions. Restricted specialists return runtime/log needs to the primary; the plugin no longer filters shell commands. Authored source changes still use guarded native edit tools. |
 | Resume has several candidates | Select the real task ID; reconcile source/check fingerprints before continuing. An active old process must park/interrupt its task first. |
 
 After repairing a real failure, `sdlc_health(refresh: true)` reruns native checks.
-Repeated health reads do not repair services. Never manufacture PASS, disable
-the gate to hide a problem, or borrow another session's receipt.
+Repeated health reads do not repair services. Never manufacture PASS or borrow
+another session's receipt. Graph/memory failures remain visible and advisory;
+actual checkpoint persistence and parallel ownership protection remain enforced.
 
 ## Updates and rollback
 
