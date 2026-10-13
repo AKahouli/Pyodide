@@ -5,12 +5,14 @@ import { Readable } from 'stream';
 import { DEFAULT_CRAWL_USER_AGENT } from '../../../config/indexing.config';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { assertUrlIsSafe } from './url-safety';
+import { assertUrlIsSafe, publicAddressLookup } from './url-safety';
+import { Agent } from 'node:https';
 
 export interface GuardedDownloadOptions {
   maxBytes: number;
   authHeaders?: Record<string, string>;
   deadlineMs?: number;
+  pinDns?: boolean;
 }
 
 export interface GuardedDownloadResult {
@@ -103,6 +105,7 @@ export class GuardedUrlDownloaderService {
     const deadlineMs = options.deadlineMs ?? 30_000;
     const controller = new AbortController();
     const timer = setTimeout(() => { controller.abort(); }, deadlineMs);
+    const httpsAgent = options.pinDns ? new Agent({ lookup: publicAddressLookup }) : undefined;
     let currentUrl = url;
     const headers: Record<string, string> = {
       ...this.pickIngestAuthHeaders(options.authHeaders),
@@ -123,6 +126,7 @@ export class GuardedUrlDownloaderService {
         }
 
         const res = await axios.get(currentUrl, {
+          ...(httpsAgent ? { httpsAgent, proxy: false as const } : {}),
           responseType: 'stream',
           timeout: deadlineMs,
           signal: controller.signal,
@@ -186,6 +190,7 @@ export class GuardedUrlDownloaderService {
       );
     } finally {
       clearTimeout(timer);
+      httpsAgent?.destroy();
     }
   }
 

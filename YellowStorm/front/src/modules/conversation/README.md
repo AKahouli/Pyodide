@@ -58,7 +58,20 @@ are parsed separately from chat, including during streaming. Saved presentation-
 their renderer if the agent's Generative UI checkbox is later disabled. Panel ownership and cleanup
 remain scoped to the answer; switching conversations or opening the document viewer closes the preview.
 Slide source markers are retained in text and exposed as clickable chips below the artifact.
-This reuses the existing artifact store and installed library, with no new service, schema or dependency.
+This reuses the existing artifact store and installed presentation library.
+
+The preview header's Export menu downloads PDF or PowerPoint files with one 1920×1080 image per
+slide; text and charts in PowerPoint are flattened. Export uses the standalone OpenUI print renderer,
+adapting the saved Presentation root to SlideShow. `html-to-image`, `pdf-lib` and `pptxgenjs` are
+loaded on demand. Public images are fetched directly when browser CORS permits; requests omit credentials
+and referrers. If CORS blocks an HTTPS image, the authenticated message `slides/image` route in the
+existing ConversationArtifactService accepts only exact URLs referenced by that saved AI answer.
+It reuses GuardedUrlDownloaderService with connection-time public DNS validation on each redirect,
+proxy bypass disabled, a 15-second deadline and
+a 20 MiB streamed cap; only PNG/JPEG/WebP/GIF responses are returned as data URLs. Failed images
+stop export with a translated message. Exports allow 1–50 slides,
+20 MiB per image, and a 60-second deadline; closing the preview cancels export and removes its stage.
+No new service or schema is introduced.
 
 Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `render-mode.ts` and
 `scripts/generate-openui-prompt.mjs`; focused coverage is in `ReportPanel.test.tsx` and `report-program.test.ts`.

@@ -1,5 +1,7 @@
 import './devtools-off';
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useStore } from 'zustand';
 import { createLibrary, Renderer, type DefinedComponent, type ParseResult } from '@openuidev/react-lang';
 import { ChatProvider, DetailedViewContext, type ChatLLM } from '@openuidev/react-headless';
 import { reportLibrary, presentationLibrary } from '@openuidev/thesys';
@@ -7,6 +9,7 @@ import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-
 import { useModuleTranslation } from '@/modules/localization';
 import { reportPanelStore } from './report-panel-store';
 import type { OpenUiCitationScope } from './citations';
+import { SlideExportMenu } from './SlideExportMenu';
 
 /**
  * Two reasons the thesys `Report` needs a provider: it is an artifact component (a chip in the chat
@@ -66,15 +69,19 @@ interface ReportBlockProps {
  */
 export function ReportBlock({ program, isStreaming, panelId, citations, citationScope, onParseResult }: Readonly<ReportBlockProps>) {
   const { t } = useModuleTranslation('conversation');
-  const library = /^\s*root\s*=\s*Presentation\s*\(/.test(program) ? openUiPresentationLibrary : openUiReportLibrary;
+  const presentation = /^\s*root\s*=\s*Presentation\s*\(/.test(program);
+  const library = presentation ? openUiPresentationLibrary : openUiReportLibrary;
+  const activeId = useStore(reportPanelStore, (state) => state.activeDetailedViewId);
+  const exportMenuNode = useStore(reportPanelStore, (state) => state._exportMenuNode);
   // The panel portals the report out of this block's tree: if the block goes away (message unmounted by a
   // reload or list virtualization) while its report is open, the panel would be left empty, so close it.
   useEffect(() => () => {
     const { activeDetailedViewId, reset } = reportPanelStore.getState();
-    if (activeDetailedViewId?.startsWith(`${panelId}:`)) reset();
+    if (activeDetailedViewId?.startsWith(`artifact-${panelId}:`) || activeDetailedViewId?.startsWith(`${panelId}:`)) reset();
   }, [panelId]);
   return (
     <div data-openui-report='' data-testid='openui-report'>
+      {presentation && activeId === `artifact-${panelId}:root` && exportMenuNode && createPortal(<SlideExportMenu program={program} isStreaming={isStreaming} citationScope={citationScope} />, exportMenuNode)}
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>

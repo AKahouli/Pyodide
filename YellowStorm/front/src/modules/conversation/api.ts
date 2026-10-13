@@ -270,6 +270,11 @@ export async function getArtifactDownloadUrl(conversationId: string, messageId: 
   return response.data.data;
 }
 
+export async function fetchSlideExportImage(conversationId: string, messageId: string, url: string, signal: AbortSignal): Promise<string> {
+  const response = await apiClient.post<ApiResponse<{ dataUrl: string }>>(`/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/slides/image`, { url }, { signal });
+  return response.data.data.dataUrl;
+}
+
 export async function getCitationViewUrl(conversationId: string, messageId: string, citation: { source: string; fileName?: string; reference?: string }): Promise<{ url: string; fileName: string; mimeType: string }> {
   const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.citationUrl(conversationId, messageId), citation);
   return response.data.data;
