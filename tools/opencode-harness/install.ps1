@@ -9,6 +9,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $Destination 'node_modules\@opencode
 New-Item -ItemType Directory -Path (Join-Path $Destination 'plugins'),(Join-Path $Destination 'lib'),(Join-Path $Destination 'agents') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $runtime 'plugins\sdlc.js') -Destination (Join-Path $Destination 'plugins\sdlc.js')
 Copy-Item -LiteralPath (Join-Path $runtime 'lib\sdlc-core.mjs') -Destination (Join-Path $Destination 'lib\sdlc-core.mjs')
+Copy-Item -LiteralPath (Join-Path $runtime 'lib\startup-health.mjs') -Destination (Join-Path $Destination 'lib\startup-health.mjs')
+Copy-Item -LiteralPath (Join-Path $runtime 'lib\memory-settings.mjs') -Destination (Join-Path $Destination 'lib\memory-settings.mjs')
 Copy-Item -LiteralPath (Join-Path $config 'AGENTS.md') -Destination (Join-Path $Destination 'AGENTS.md')
 foreach ($file in Get-ChildItem -LiteralPath (Join-Path $config 'agents') -Filter '*.md') {
     Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Destination ('agents\' + $file.Name))

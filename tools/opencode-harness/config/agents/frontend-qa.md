@@ -6,6 +6,9 @@ reasoningEffort: low
 temperature: 0
 steps: 60
 permission:
+  sdlc_health: allow
+  "code-review-graph_list_graph_stats_tool": allow
+  hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
   sdlc_diff: allow

@@ -16,6 +16,8 @@
 
 ## CRG: graph-first code work
 
+- Every new session/process in its current repository must complete native startup health: inspect `sdlc_health`, run the pending scoped graph statistics and `hindsight_diagnose` probes, then read `sdlc_health` again. Report one short actual status line; child sessions report to the primary. Never infer PASS from configured tools or another session's receipt. Failed/pending checks block edits; diagnose and repair, then use `sdlc_health(refresh: true)` and repeat the probes. If `sdlc_health` is absent, report checkpoint integration unavailable and restart/repair plugin installation instead of silently proceeding.
+
 - When the SDLC plugin is active, checkpoint intent/progress, read scoped docs/code, and prepare exact targets with a reuse decision before edits. Preserve task IDs through handoffs; use `sdlc_diff(file, taskID)` for scoped review. New unrelated work in the same chat uses `sdlc_checkpoint(newTask: true)`; same-task corrections reopen with `status: active`. Resume from persisted state rather than restarting discovery.
 
 - Start a new code investigation with `get_minimal_context_tool(task=..., repo_root=...)`. Reuse a caller's current scoped graph evidence instead of repeating this in every specialist. Pass the active repository/worktree's absolute `repo_root` to every repository-scoped graph call.

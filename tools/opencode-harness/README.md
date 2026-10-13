@@ -13,13 +13,51 @@ configuration. It preserves `opencode.json`, authentication, and provider keys.
 The installed plugin SDK must already exist in that configuration directory.
 This implementation is verified against OpenCode 1.18.34.
 
-The plugin activates only in worktrees containing
-`tools/opencode-harness/policy.json`; other repositories are unaffected.
+Checkpoint/edit workflow activates in worktrees containing
+`tools/opencode-harness/policy.json`. Startup diagnostics also run elsewhere:
+missing policy/checkpoint support is reported rather than silently disabled,
+and guarded native edits wait for recovery. This does not automatically opt
+other repositories into Hindsight or create their policy files.
 Policy routes identify the minimum documentation that must be consulted for
 each edited area. Extend them for new owning contracts; retain the human index
 at `docs/agent-context/README.md`.
 
 ## Task lifecycle and reuse gate
+
+### Mandatory session startup checks
+
+Each new session, including children and parallel OpenCode processes, receives
+its own startup check in the active root. Checkpoint health is a real local
+SQLite transaction write/read round trip. Graph connection and Hindsight API
+health are checked with bounded requests through the existing services.
+They remain `PENDING` until actual scoped graph statistics and
+`hindsight_diagnose` results verify the graph root and the actual plugin's memory
+workspace/bank. Hindsight also performs an authenticated bank read and checks
+that automatic capture is configured. This verifies availability/configuration,
+not the success of future asynchronous memory extraction or graph freshness.
+Session-tagged asynchronous capture failures are checked in the bounded Hindsight
+diagnostic tail during later health/turn checks; another session's failure cannot
+invalidate this session. A background failure appearing after the final turn is
+reported on the next check, rather than promised as an immediate callback.
+
+The default graph MCP uses the core `code-review-graph` package. Optional vector
+embeddings are not a startup dependency: Windows PyTorch DLL failures in the
+embeddings environment must not disable structural graph navigation. Semantic
+search may be unavailable; use structural queries and focused source search.
+
+Use `sdlc_health` to read the actual statuses. The agent reports a short startup
+line; child agents report to their caller. Failures include recovery actions in
+system context, stderr and a UI toast when available. Source edits and mutating
+Git/build commands are gated until all three checks pass. Read-only diagnosis and
+checkpoint/blocker recording remain available. After recovery run
+`sdlc_health(refresh: true)`, repeat the pending probes, and read health again.
+
+Health receipts are isolated by canonical worktree, native session and process
+owner. A restart/resume cannot borrow another session's healthy receipt; same-chat
+task generations preserve the current session's verified startup. There is no
+automatic daemon restart, opt-in expansion, graph rebuild or second graph MCP
+process. A missing/unloadable plugin cannot diagnose itself: global instructions
+require reporting a missing `sdlc_health` tool as a setup failure.
 
 1. `sdlc_checkpoint`: save goal, 2-5 acceptance criteria, execution choice,
    decisions, completed work, blockers, pending task IDs, and exact next action.

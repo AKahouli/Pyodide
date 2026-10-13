@@ -70,7 +70,7 @@
       "command": [
         "uvx",
         "--from",
-        "code-review-graph[embeddings]",
+        "code-review-graph",
         "code-review-graph",
         "serve"
       ],

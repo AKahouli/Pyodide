@@ -21,6 +21,8 @@ Read the short scoped `YellowStorm/front/AGENTS.md` or `YellowStorm/back/AGENTS.
 
 ## Context and Token Budget
 
+- Each new primary/child session checks graph, Hindsight and checkpoints in the actual root using the native startup gate. Complete pending scoped graph-statistics and Hindsight diagnosis probes, then inspect `sdlc_health`; state failures and recovery actions. Read-only work can continue while recovering, but edits require all checks PASS. Do not reuse another session/process/worktree's health. If the health tool is absent, report the missing plugin and repair installation before implementation.
+
 - Reuse verified paths, decisions, graph freshness, and checks already in the session or handoff. Start a new code investigation with minimal CRG context and the active absolute worktree root; query only unresolved callers, impact, or tests. Source/tests resolve graph gaps. If the graph is unavailable, use focused source search immediately; refresh incrementally only when needed for a remaining analysis.
 - Read the necessary source ranges. For non-obvious design or contracts, use `docs/agent-context/README.md` to route to matching records. Avoid loading unrelated guidelines, full files, architecture listings, or raw test logs.
 - Hindsight recall is automatic at session start; manually retrieve only relevant history that is still missing. Context7 is for external library behavior local evidence cannot establish.

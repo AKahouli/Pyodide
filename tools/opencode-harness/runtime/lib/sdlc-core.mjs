@@ -147,6 +147,35 @@ export async function openHarness(directory, options = {}) {
 
   const api = {
     root, filename,
+    health(sessionID, value) {
+      return transaction(() => {
+        const task = owned(sessionID);
+        if (value === undefined) {
+          const receipt = task.startupHealth?.[sessionID];
+          return receipt?.root === root && receipt.sessionID === sessionID && receipt.processID === pid && receipt.ownerToken === owner ? receipt : null;
+        }
+        redactCheck(value);
+        const service = name => {
+          const item = value[name];
+          if (!item || !['PASS', 'PENDING', 'FAIL'].includes(item.status)) throw new Error(`Startup health requires an explicit ${name} status.`);
+          return { status: item.status, reason: String(item.reason ?? '').slice(0, 1500), action: String(item.action ?? '').slice(0, 1500) };
+        };
+        const receipt = { root, sessionID, processID: pid, ownerToken: owner, checkedAt: new Date().toISOString(), probe: randomUUID(), checkpoints: { status: 'PASS', reason: 'Transactional checkpoint write/read verified in this worktree.' }, graph: service('graph'), hindsight: service('hindsight') };
+        task.startupHealth = { ...(task.startupHealth ?? {}), [sessionID]: receipt };
+        save(task);
+        const stored = taskById(task.id)?.startupHealth?.[sessionID];
+        if (JSON.stringify(stored) !== JSON.stringify(receipt)) throw new Error('Checkpoint startup health write/read verification failed. Repair local checkpoint storage before editing.');
+        return stored;
+      });
+    },
+    requireHealthy(sessionID) {
+      if (!options.requireStartupHealth) return;
+      const receipt = api.health(sessionID);
+      if (!receipt) throw new Error('Session startup health has not been verified for this OpenCode process and worktree. Run the startup checks before editing.');
+      const failed = ['checkpoints', 'graph', 'hindsight'].filter(name => receipt[name]?.status !== 'PASS');
+      if (failed.length) throw new Error(`Session startup health blocks edits: ${failed.map(name => `${name} ${receipt[name]?.status ?? 'PENDING'}: ${receipt[name]?.reason || 'verification missing'}${receipt[name]?.action ? ` Action: ${receipt[name].action}` : ''}`).join('; ')}`);
+      return receipt;
+    },
     state(sessionID) { return transaction(() => ensure(sessionID)); },
     activate(sessionID) { transaction(() => { const task = owned(sessionID); if (task.goal && !terminal.has(task.status)) task.status = 'active'; save(task); }); },
     list(sessionID) { return transaction(() => candidates(sessionID)); },
@@ -158,7 +187,9 @@ export async function openHarness(directory, options = {}) {
           if (task.inFlight) throw new Error('Finish the in-flight edit before starting another task.');
           if (!terminal.has(task.status) && task.status !== 'ready') task.status = 'waiting';
           save(task);
+          const startupHealth = task.startupHealth;
           task = create(sessionID, `${sessionID}-${randomUUID().slice(0, 8)}`);
+          task.startupHealth = startupHealth;
         }
         const allowed = ['goal', 'acceptance', 'decisions', 'completed', 'pending', 'blockers', 'nextAction', 'execution', 'phase', 'qa', 'status'];
         for (const key of allowed) if (input[key] !== undefined) task[key] = input[key];
@@ -187,6 +218,7 @@ export async function openHarness(directory, options = {}) {
     fingerprint(filename) { return fileHash(relative(filename)); },
     search(sessionID) { transaction(() => { const task = owned(sessionID); task.searches++; save(task); }); },
     prepare(sessionID, input) {
+      api.requireHealthy(sessionID);
       redactCheck(input);
       return transaction(() => {
         const task = owned(sessionID);
@@ -228,6 +260,7 @@ export async function openHarness(directory, options = {}) {
       });
     },
     beforeEdit(sessionID, filenames, callID) {
+      api.requireHealthy(sessionID);
       return transaction(() => {
         const task = owned(sessionID);
         if (terminal.has(task.status)) throw new Error('Task is completed/cancelled; start a new task before editing.');
@@ -285,6 +318,8 @@ export async function openHarness(directory, options = {}) {
         if (task.root !== root || task.branch !== identity().branch) throw new Error('Checkpoint belongs to a different worktree/branch.');
         if (task.sessionID !== sessionID && (task.inFlight || task.status === 'active') && alive(task.owner.pid)) throw new Error('The original task is active. Interrupt/park it before transferring ownership.');
         const previousSession = task.sessionID;
+        // Only the destination session's current-process checks remain valid.
+        task.startupHealth = { ...(task.startupHealth ?? {}), ...(provisional.startupHealth ?? {}) };
         task.sessionID = sessionID;
         task.owner = { pid, token: owner };
         task.checks = invalidateChecks(task);
@@ -333,6 +368,7 @@ export async function openHarness(directory, options = {}) {
       if (/[;&|<>\r\n`$]/.test(command) || /--output(?:=|\s)|\s-e(?:\s|$)|--eval|pathspec-from-file/i.test(command)) return false;
       const readOnly = /^\s*(?:git\s+(?:status|diff|log|show|rev-parse|symbolic-ref)\b|(?:pwd|Get-Location)\s*$)/i.test(command);
       if (readOnly) return true;
+      api.requireHealthy(sessionID);
       if (!api.state(sessionID).goal) return false;
       return /^\s*(?:git\s+(?:add|commit)\b|npm\s+(?:test\b|run\s+(?:test(?::[\w-]+)?|lint|build|typecheck|dev|start(?::[\w-]+)?)\b)|npx\s+(?:vitest|jest|tsc|playwright\s+test)\b|conda\s+run\s+-n\s+meta\s+pytest\b|node\s+scripts\/observability\/(?:check-policy|run-gates)\.mjs\b)/i.test(command);
     },

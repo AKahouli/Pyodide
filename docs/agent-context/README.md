@@ -4,6 +4,7 @@ Use this index to locate reviewed engineering knowledge. Match the task's change
 
 | Scope | Reviewed context | Direct checks |
 | --- | --- | --- |
+| Session startup integration readiness | [ADR-0008](decisions/ADR-0008-session-integration-health.md), [Harness guide](../../tools/opencode-harness/README.md) | current-root native graph/memory probes, checkpoint write/read and session/process health receipt |
 | New schema/service/module/runtime or changed architecture | [Architecture change control](architecture/change-control.md), [ADR-0007](decisions/ADR-0007-architecture-approval-and-documentation.md) | confirmed design scope, source/contract verification and documentation-impact checkpoint |
 | System architecture baseline (components, runtimes, flows) | [Overview](architecture/overview.md), [Component map](architecture/component-map.md), [Gaps](architecture/baseline-gaps.md) | source paths + verification date in each record; unresolved items in gaps |
 | Agent harness and knowledge workflow | [ADR-0001](decisions/ADR-0001-agent-knowledge.md), [ADR-0002](decisions/ADR-0002-fast-validation-and-parallel-work.md), [ADR-0003](decisions/ADR-0003-autonomy-and-qa-sign-in.md), [ADR-0004](decisions/ADR-0004-private-qa-and-regression-fixtures.md) (current browser policy) | `AGENTS.md`, OpenCode user settings |
