@@ -15,8 +15,19 @@ ON does two things:
    agent's own pre-prompt and DB instruction (`appendGenUiOutputFormat`, back/src/modules/agent/prompts). The agent's own prompt
    stays in the database; code only adds the format block. Playbook, A2A and agent-task prompts are not touched.
 2. **Front end**: `resolveAnswerRenderMode` (render-mode.ts) returns `openui` when the producing agent has `genUiEnabled` and the
-   build has `VITE_OPENUI_RENDER_ENABLED=true` (global kill switch; off = markdown everywhere and the OpenUI chunk is never
-   requested). The agent comes from the agents already in the store, so there is no per-message lookup.
+   build has the kill switch ON. The agent comes from the agents already in the store, so there is no per-message lookup.
+
+### The global kill switch (`isOpenUiRenderEnabled`)
+
+Read in `render-mode.ts` with the same precedence as the app's other runtime config (`lib/api/config.ts`):
+
+1. **Runtime** `window.__APP_CONFIG__.OPENUI_RENDER_ENABLED` — from `/config.js`, written by `env.sh` from the container env
+   `OPENUI_RENDER_ENABLED` (`"true"`/`"false"`). Toggles the feature without rebuilding the image.
+2. **Build time** `import.meta.env.VITE_OPENUI_RENDER_ENABLED` (`.env`, or Docker `--build-arg VITE_OPENUI_RENDER_ENABLED=…`).
+   The front Dockerfile bakes `true` by default for this image.
+3. Otherwise off.
+
+Off = markdown everywhere and the OpenUI chunk is never requested.
 
 Answers keep the form they were produced in: a stored text that starts with `root = Card(` or `root = Report(` is rendered as an
 OpenUI program even after the toggle was switched off, and a markdown answer of an agent switched on later falls back to markdown

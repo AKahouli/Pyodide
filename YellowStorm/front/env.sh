@@ -8,6 +8,9 @@ set -e
 #
 #   VITE_API_URL          — public REST base URL (include /api/v1)
 #   VITE_SOCKET_BASE_URL  — optional Socket.IO origin override
+#   OPENUI_RENDER_ENABLED — optional generative-UI kill switch ("true"/"false").
+#                           Overrides the build-time VITE_OPENUI_RENDER_ENABLED
+#                           inlined in the bundle. Omit to keep the baked value.
 # =============================================================================
 
 TARGET_DIR="/usr/share/nginx/html"
@@ -15,9 +18,11 @@ CONFIG_FILE="${TARGET_DIR}/config.js"
 
 RESOLVED_API_URL="${VITE_API_URL:-}"
 RESOLVED_SOCKET_URL="${VITE_SOCKET_BASE_URL:-}"
+RESOLVED_OPENUI_RENDER="${OPENUI_RENDER_ENABLED:-}"
 
 RESOLVED_API_URL=$(echo "$RESOLVED_API_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|/*$||')
 RESOLVED_SOCKET_URL=$(echo "$RESOLVED_SOCKET_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|/*$||')
+RESOLVED_OPENUI_RENDER=$(echo "$RESOLVED_OPENUI_RENDER" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 echo "==> YellowStorm Frontend Runtime Config"
 if [ -n "$RESOLVED_API_URL" ]; then
@@ -30,11 +35,18 @@ if [ -n "$RESOLVED_SOCKET_URL" ]; then
     echo "    VITE_SOCKET_BASE_URL: $RESOLVED_SOCKET_URL"
 fi
 
+if [ -n "$RESOLVED_OPENUI_RENDER" ]; then
+    echo "    OPENUI_RENDER_ENABLED: $RESOLVED_OPENUI_RENDER"
+else
+    echo "    OPENUI_RENDER_ENABLED: (not set - using the build-time value)"
+fi
+
 if [ -d "$TARGET_DIR" ]; then
     cat <<EOF > "${CONFIG_FILE}.tmp"
 window.__APP_CONFIG__ = {
   API_URL: "${RESOLVED_API_URL}",
-  SOCKET_BASE_URL: "${RESOLVED_SOCKET_URL}"
+  SOCKET_BASE_URL: "${RESOLVED_SOCKET_URL}",
+  OPENUI_RENDER_ENABLED: "${RESOLVED_OPENUI_RENDER}"
 };
 EOF
     mv -f "${CONFIG_FILE}.tmp" "$CONFIG_FILE" 2>/dev/null || cat "${CONFIG_FILE}.tmp" > "$CONFIG_FILE"
