@@ -19,6 +19,8 @@ interface Window {
   __APP_CONFIG__?: {
     API_URL?: string;
     SOCKET_BASE_URL?: string;
+    /** Runtime kill switch for generative UI ("true"/"false"); see openui/render-mode.ts. */
+    OPENUI_RENDER_ENABLED?: string | boolean;
     [key: string]: unknown;
   };
 }
