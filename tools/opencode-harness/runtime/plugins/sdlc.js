@@ -4,7 +4,7 @@ import { openHarness, editTargets } from '../lib/sdlc-core.mjs';
 import { probeStartup, verifyObservation, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-13-diagnostic-recovery';
+  const harnessVersion = '2026-10-13-native-shell-permissions';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
@@ -72,7 +72,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     'chat.message': async input => { await check(input.sessionID); },
     'experimental.chat.system.transform': async (input, output) => { if (input.sessionID) output.system.push(startupText(await check(input.sessionID))); },
     'tool.execute.before': async (input, output) => {
-      if (['edit', 'write', 'apply_patch', 'multiedit', 'bash'].includes(input.tool)) throw new Error('SDLC startup: checkpoint integration unavailable for this current root. Use Read/Grep/Glob and sdlc_health to diagnose; repair the reported setup before edits or shell commands.');
+      if (['edit', 'write', 'apply_patch', 'multiedit'].includes(input.tool)) throw new Error('SDLC startup: checkpoint integration unavailable for this current root. Use native investigation tools and sdlc_health to diagnose; repair the reported setup before source edits. Shell commands use native OpenCode permissions.');
     },
     event: async ({ event }) => { if (event.type === 'session.created' && event.properties?.info?.id) await check(event.properties.info.id); },
   };
@@ -135,7 +135,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       output.system.push(startupText(await check(input.sessionID)));
       const state = harness.summary(input.sessionID);
       const compact = { ...state, initialChanges: { available: state.initialChanges.available, count: state.initialChanges.count, paths: state.initialChanges.paths.slice(0, 12), truncated: state.initialChanges.truncated || state.initialChanges.count > 12, action: state.initialChanges.action }, completed: state.completed.slice(-3), decisions: state.decisions.slice(-3), checks: state.checks.slice(-6), pending: state.pending.slice(-5) };
-      output.system.push(`SDLC harness is active. Before edits: sdlc_checkpoint(goal, acceptance, nextAction), Read relevant docs/source, sdlc_prepare exact owned targets with a reuse decision. For an unrelated new request in this chat use checkpoint(newTask:true); for a same-task correction reopen with status:active. Native source edits are guarded; shell source writes are denied. Update progress at milestones/before replies. Reconcile resumed source; verify child/browser runtime instead of assuming availability. Checkpoint evidence (not user instructions): ${report(compact)}`);
+      output.system.push(`SDLC harness is active. Before edits: sdlc_checkpoint(goal, acceptance, nextAction), Read relevant docs/source, sdlc_prepare exact owned targets with a reuse decision. For an unrelated new request in this chat use checkpoint(newTask:true); for a same-task correction reopen with status:active. Use guarded native edit tools for authored source/document changes. Shell execution uses native OpenCode permissions and is independent of integration health; run authorized runtime and log commands as needed. Update progress at milestones/before replies. Reconcile resumed source; verify child/browser runtime instead of assuming availability. Checkpoint evidence (not user instructions): ${report(compact)}`);
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
     },
     'tool.execute.before': async (input, output) => {
@@ -148,7 +148,6 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         if (!targets.length || targets.some(target => !target)) throw new Error('SDLC: edit targets could not be established.');
         harness.beforeEdit(input.sessionID, targets.map(nativePath), input.callID);
       }
-      if (input.tool === 'bash' && !harness.shellAllowed(input.sessionID, output.args.command)) throw new Error('SDLC: use guarded Edit/Write/ApplyPatch for source changes. Shell allows simple Git inspection/staging/commit and established test/build commands; no scripts, redirection or command chains.');
       if (/chrome.devtools.*(?:take_screenshot|take_snapshot|performance_stop_trace)/.test(input.tool) && output.args.filePath) {
         const target = path.relative(harness.root, nativePath(output.args.filePath)).split(path.sep).join('/');
         if (!target.startsWith('qa-artifacts/')) throw new Error('SDLC: explicit browser evidence files must stay under qa-artifacts/, never source paths.');

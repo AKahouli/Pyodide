@@ -72,12 +72,12 @@ search may be unavailable; use structural queries and focused source search.
 Use the injected native results; `sdlc_health` is optional for inspection and
 recovery. The agent reports failures; child agents report them to their caller.
 Failures include recovery actions in
-system context, stderr and a UI toast when available. Source edits and mutating
-Git/build commands are gated until all three checks pass. Focused tests, lint,
-type checks and the established observability diagnostics remain available even
-when graph/memory health fails, so the agent can reproduce defects and recover.
-Shell metacharacter/output/eval guards still apply; these trusted scripts are not
-an OS sandbox. Read-only diagnosis and
+system context, stderr and a UI toast when available. Native source/document edits
+are gated until all three checks pass. Shell execution uses native OpenCode
+permissions, independent of integration health or checkpoint availability.
+Authorized runtime startup, log collection, tests and builds can continue during
+recovery. Restricted specialists return runtime/access needs to `build` rather
+than bypass their native permissions. Investigation and
 checkpoint/blocker recording remain available. After recovery run
 `sdlc_health(refresh: true)` to rerun native checks. Do not repeat model tool probes.
 
@@ -154,10 +154,12 @@ The gate verifies documentation/source evidence and a declared reuse decision;
 it cannot prove semantic uniqueness or that every relevant contract was chosen.
 Tests, self-review, and risk-based independent review remain necessary.
 
-Direct shell source mutation, command chains, redirection, and arbitrary scripts
-are denied. Simple Git inspection/staging/commit and established test/build/dev
-commands are allowed; existing OpenCode permissions still apply. Allowed scripts
-are trusted project code, not an OS sandbox. Browser evidence file outputs must
+The plugin does not parse or whitelist shell commands. Command permissions belong
+to native `opencode.json` and agent Markdown frontmatter. Agents must use guarded
+native edit tools for authored source/document changes; shell/script writes can
+bypass read receipts and file claims, so this is not an OS sandbox. In parallel
+sessions, runtime commands must respect existing resource ownership and avoid
+shared resets. Browser evidence file outputs must
 stay under `qa-artifacts/`. Other external tools retain their own permissions.
 
 Checkpoint credential detection is heuristic: never submit passwords, tokens,
@@ -169,6 +171,9 @@ Review proposals before treating documentation as approved policy.
 
 `node --test tools/opencode-harness/tests/harness.test.mjs` checks evidence gates,
 concurrent process writes, killed-edit recovery, ambiguous resume, stale checks,
-pre-existing dirty changes, native patch targets, shell mutation rejection,
+pre-existing dirty changes, native patch targets,
 task generations, and worktree isolation. Live OpenCode checks additionally
 exercise the native plugin hooks, specialist tool permissions, and resume context.
+`tests/startup-plugin.test.mjs` verifies that runtime/log commands reach native
+permission handling during graph failure or missing checkpoint policy while
+native source edits remain guarded. See [ADR-0010](../../docs/agent-context/decisions/ADR-0010-native-shell-permissions.md).

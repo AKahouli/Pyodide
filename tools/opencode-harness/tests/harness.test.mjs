@@ -102,7 +102,7 @@ test('resume never guesses an unrelated task and invalidates stale checks', asyn
   } finally { h.close(); f.cleanup(); }
 });
 
-test('baseline excludes earlier dirty changes, shell writes fail, ready status survives idle', async () => {
+test('baseline excludes earlier dirty changes and ready status survives idle', async () => {
   const f = fixture(); writeFileSync(path.join(f.root, 'src/a.js'), 'export const value = 9;\n');
   const h = await openHarness(f.root);
   try {
@@ -112,10 +112,6 @@ test('baseline excludes earlier dirty changes, shell writes fail, ready status s
     writeFileSync(path.join(f.root, 'src/a.js'), 'export const value = 10;\n'); h.afterEdit('a', 'one');
     const diff = h.diff('a', 'src/a.js').diff;
     assert.match(diff, /-export const value = 9/); assert.doesNotMatch(diff, /-export const value = 1;/);
-    assert.equal(h.shellAllowed('a', 'git status --short'), true);
-    assert.equal(h.shellAllowed('a', 'npm test -- focused'), true);
-    assert.equal(h.shellAllowed('a', 'node -e "writeFileSync()"'), false);
-    assert.equal(h.shellAllowed('a', 'npm test; echo changed > src/a.js'), false);
     h.checkpoint('a', { status: 'ready' }); h.park('a');
     assert.equal(h.state('a').status, 'ready');
     assert.throws(() => h.beforeEdit('a', ['src/a.js'], 'two'), /sdlc_prepare/);

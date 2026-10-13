@@ -95,14 +95,28 @@ test('concurrent sessions share pending process probes but retain their own cach
   assert.equal(calls, 1);
 });
 
-test('missing policy reports failure and blocks every shell command and native edit', async t => {
+test('native shell permissions remain authoritative during graph failures', async t => {
+  const { plugin } = await create(t, async () => ({ data: { 'code-review-graph': { status: 'disconnected' } } }));
+  assert.equal((await health(plugin, 'diagnose')).graph.status, 'FAIL');
+  for (const command of ['powershell.exe -NoProfile -File scripts/start-local.ps1', 'pwsh -File ./scripts/start-local.ps1', 'Get-Content logs/worker.log -Tail 80', 'npm run build', 'git status --short']) {
+    const output = { args: { command } };
+    await plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'bash', callID: command }, output);
+    assert.equal(output.args.command, command);
+  }
+  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'edit', callID: 'edit' }, { args: { filePath: 'src/a.js' } }), /graph FAIL/);
+});
+
+test('missing policy reports failure and blocks native edits without replacing shell permissions', async t => {
   const { root, toasts } = await create(t);
   rmSync(path.join(root, 'tools/opencode-harness/policy.json'));
   const fallback = await SdlcHarness({ worktree: root, directory: root, client: { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: { ids: async () => ({ data: ['hindsight_diagnose'] }) }, tui: { showToast: async input => { toasts.push(input.body); } } } });
   const report = await health(fallback, 'missing-policy');
   assert.equal(report.checkpoints.status, 'FAIL');
   assert.ok(toasts.some(item => item.message.includes('checkpoints FAIL')));
-  for (const [tool, args] of [['bash', { command: 'git status' }], ['bash', { command: 'git diff --output=src/a.js' }], ['edit', { filePath: 'src/a.js' }], ['write', { filePath: 'src/a.js' }]]) {
+  for (const command of ['git status', 'powershell.exe -NoProfile -File scripts/start-local.ps1', 'Get-Content logs/worker.log -Tail 80']) {
+    await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'bash', callID: command }, { args: { command } });
+  }
+  for (const [tool, args] of [['edit', { filePath: 'src/a.js' }], ['write', { filePath: 'src/a.js' }]]) {
     await assert.rejects(fallback['tool.execute.before']({ sessionID: 'missing-policy', tool, callID: tool }, { args }), /checkpoint integration unavailable/);
   }
 });
