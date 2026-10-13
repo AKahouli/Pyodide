@@ -7,7 +7,7 @@ import { UsageService, UsageType } from '../usage';
 import { ModelsService } from '../models';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { StreamService } from '../conversation/services/stream.service';
-import { ConversationV2GrpcClientService } from '../conversation-v2/services/conversation-v2.grpc-client.service';
+import { AppBuilderGrpcClientService } from '../app-builder/services/app-builder.grpc-client.service';
 import { SemanticModelDatabaseService } from '../semantic-model/infrastructure/semantic-model-database.service';
 import { PostgresConnectionService } from '../postgres/postgres-connection.service';
 import { FeatureVisibilityService } from '../system/feature-visibility.service';
@@ -26,7 +26,7 @@ export class HealthService {
     private readonly modelsService: ModelsService,
     private readonly litellmConnection: LiteLLMConnectionService,
     private readonly streamService: StreamService,
-    private readonly conversationV2Grpc: ConversationV2GrpcClientService,
+    private readonly appBuilderGrpc: AppBuilderGrpcClientService,
     private readonly semanticModelDatabase: SemanticModelDatabaseService,
     private readonly postgres: PostgresConnectionService,
     private readonly featureVisibility: FeatureVisibilityService,
@@ -37,7 +37,7 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
+    const [memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, appBuilderGrpc, playbookMcp, semanticModel] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
@@ -46,13 +46,13 @@ export class HealthService {
         this.checkEmail(),
         this.checkLiteLLM(),
         this.checkConversationGrpc(),
-        this.checkConversationV2Grpc(),
+        this.checkAppBuilderGrpc(),
         this.checkPlaybookMcp(),
         this.checkSemanticModel(),
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
+      memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, appBuilderGrpc, playbookMcp, semanticModel,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -98,8 +98,8 @@ export class HealthService {
     const conversationGrpcCheck = await this.checkConversationGrpc();
     checks.conversationGrpc = conversationGrpcCheck.status === 'up';
 
-    const conversationV2GrpcCheck = await this.checkConversationV2Grpc();
-    checks.conversationV2Grpc = conversationV2GrpcCheck.status === 'up';
+    const appBuilderGrpcCheck = await this.checkAppBuilderGrpc();
+    checks.appBuilderGrpc = appBuilderGrpcCheck.status === 'up';
 
     const playbookMcpCheck = await this.checkPlaybookMcp();
     checks.playbookMcp = playbookMcpCheck.status === 'up';
@@ -356,22 +356,22 @@ export class HealthService {
     };
   }
 
-  private async checkConversationV2Grpc(): Promise<HealthCheckDetail> {
+  private async checkAppBuilderGrpc(): Promise<HealthCheckDetail> {
     const startTime = Date.now();
-    const healthStatus = this.conversationV2Grpc.getHealthStatus();
+    const healthStatus = this.appBuilderGrpc.getHealthStatus();
 
     let status: 'up' | 'down' | 'degraded';
     let message: string;
 
     if (healthStatus.connected) {
       status = 'up';
-      message = `ConversationV2 (Manus) gRPC operational at ${healthStatus.grpcUrl}`;
+      message = `AppBuilder (Manus) gRPC operational at ${healthStatus.grpcUrl}`;
     } else if (healthStatus.available) {
       status = 'down';
-      message = healthStatus.error || 'ConversationV2 gRPC unavailable';
+      message = healthStatus.error || 'AppBuilder gRPC unavailable';
     } else {
       status = 'down';
-      message = healthStatus.error || 'ConversationV2 gRPC not configured';
+      message = healthStatus.error || 'AppBuilder gRPC not configured';
     }
 
     return {

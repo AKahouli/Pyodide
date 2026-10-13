@@ -7,7 +7,7 @@ import { UserModule } from '../user/user.module';
 import { AppDataModule } from '../app-data/app-data.module';
 import { AppRuntimeModule } from '../app-runtime/app-runtime.module';
 import { AppBuilderAiModule } from '../app-builder-ai/app-builder-ai.module';
-import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from '../app-builder/app-builder.module';
 import { AiProxyController } from './ai-proxy.controller';
 import { AiProxyService } from './ai-proxy.service';
 import { AiProxyStreamService } from './ai-proxy-stream.service';
@@ -28,7 +28,7 @@ import { PgAiPreviewTicketStore } from './persistence/pg-ai-preview-ticket.store
     forwardRef(() => AppDataModule),
     forwardRef(() => AppRuntimeModule),
     forwardRef(() => AppBuilderAiModule),
-    forwardRef(() => ConversationV2Module),
+    forwardRef(() => AppBuilderModule),
   ],
   controllers: [AiProxyController],
   providers: [

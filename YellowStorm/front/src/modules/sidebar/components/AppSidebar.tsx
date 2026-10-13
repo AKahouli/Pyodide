@@ -21,7 +21,7 @@ import {
   useConversationsLoading,
   useHistoryConversations,
 } from '@/modules/conversation/store';
-import { useConversationV2PointersStore } from '@/modules/conversation-v2/store';
+import { useAppBuilderStudioPointersStore } from '@/modules/app-builder-studio/store';
 import {
   DEFAULT_FEATURE_VISIBILITY,
   ensureEvaluationTarget,
@@ -71,8 +71,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
-  const v2Pointers = useConversationV2PointersStore((s) => s.items);
-  const fetchV2Pointers = useConversationV2PointersStore((s) => s.fetch);
+  const v2Pointers = useAppBuilderStudioPointersStore((s) => s.items);
+  const fetchV2Pointers = useAppBuilderStudioPointersStore((s) => s.fetch);
 
   useEffect(() => {
     // Load at least the rail cap so "All chats" is reachable whenever more exists.

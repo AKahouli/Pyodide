@@ -5,11 +5,11 @@ vi.mock('./api', () => ({
   getModels: vi.fn(),
 }));
 
-vi.mock('@/modules/conversation-v2/selectedModelStorage', () => ({
+vi.mock('@/modules/app-builder-studio/selectedModelStorage', () => ({
   clearSelectedModelIdFromAllSessions: vi.fn(),
 }));
 
-describe('useModelsStore.syncConversationV2Default', () => {
+describe('useModelsStore.syncAppBuilderDefault', () => {
   beforeEach(() => {
     useModelsStore.setState({
       models: [
@@ -24,7 +24,7 @@ describe('useModelsStore.syncConversationV2Default', () => {
           types: ['chat'],
           isActive: true,
           isDefault: false,
-          isConversationV2Default: true,
+          __WIRE__isConversationV2Default__: true,
           omitTemperature: false,
           inputModalities: ['text'],
           maxInputTokens: null,
@@ -42,7 +42,7 @@ describe('useModelsStore.syncConversationV2Default', () => {
           types: ['chat'],
           isActive: true,
           isDefault: false,
-          isConversationV2Default: false,
+          __WIRE__isConversationV2Default__: false,
           omitTemperature: false,
           inputModalities: ['text'],
           maxInputTokens: null,
@@ -58,24 +58,24 @@ describe('useModelsStore.syncConversationV2Default', () => {
     });
   });
 
-  it('updates conversation v2 default flags immediately', () => {
-    useModelsStore.getState().syncConversationV2Default('model-b');
+  it('updates App Builder default flags immediately', () => {
+    useModelsStore.getState().syncAppBuilderDefault('model-b');
 
     const models = useModelsStore.getState().models;
-    expect(models.find((m) => m.id === 'model-a')?.isConversationV2Default).toBe(false);
-    expect(models.find((m) => m.id === 'model-b')?.isConversationV2Default).toBe(true);
+    expect(models.find((m) => m.id === 'model-a')?.__WIRE__isConversationV2Default__).toBe(false);
+    expect(models.find((m) => m.id === 'model-b')?.__WIRE__isConversationV2Default__).toBe(true);
   });
 
   it('uses the broadcast previousDefaultId when applying a remote sync', async () => {
     const { clearSelectedModelIdFromAllSessions } = await import(
-      '@/modules/conversation-v2/selectedModelStorage'
+      '@/modules/app-builder-studio/selectedModelStorage'
     );
-    useModelsStore.getState().syncConversationV2Default('model-b');
+    useModelsStore.getState().syncAppBuilderDefault('model-b');
     vi.mocked(clearSelectedModelIdFromAllSessions).mockClear();
 
     const channel = new BroadcastChannel('ym-models-sync');
     channel.postMessage({
-      type: 'conversation-v2-default',
+      type: 'app-builder-default',
       modelId: 'model-a',
       previousDefaultId: 'model-b',
     });

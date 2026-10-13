@@ -41,7 +41,7 @@ describe('AppDataRemoteOwnerController', () => {
   };
 
   const resolvedSession = (ownerId: string, actorUserId: string) =>
-    ({ conversationV2Session: { ownerId, actorUserId } }) as unknown as Request;
+    ({ appBuilderSession: { ownerId, actorUserId } }) as unknown as Request;
 
   it('issues an owner-scoped ticket when the caller is the session owner', async () => {
     const { controller, client, deployment } = buildController();

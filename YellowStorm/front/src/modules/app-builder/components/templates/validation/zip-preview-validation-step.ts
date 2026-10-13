@@ -3,12 +3,12 @@ import {
   getOrCreateHost,
   removeHost,
   type BrowserRuntimeHost,
-} from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
+} from '@/modules/app-builder-studio/runtime/BrowserRuntimeHost';
 import type { ValidationStep } from './pipeline';
 import { extractTemplateZipFromFile } from './extract-template-zip';
 
 const READY_TIMEOUT_MS = 300_000;
-/** Local-only preview sessions — no Conversation v2 / Ceph staging. */
+/** Local-only preview sessions — no App Builder / Ceph staging. */
 export const LOCAL_TEMPLATE_VALIDATION_PREFIX = 'validate-local-';
 
 class AbortedError extends Error {

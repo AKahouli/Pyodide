@@ -41,7 +41,7 @@ export class RuntimeFinalizedRevisionService {
 
   constructor(
     private readonly store: PgRuntimeFinalizedRevisionStore,
-    // forwardRef: the Conversation V2 implementation of this port depends on
+    // forwardRef: the App Builder implementation of this port depends on
     // StreamService, which depends on this service (cross-module DI cycle).
     @Optional()
     @Inject(forwardRef(() => APPLICATION_COMPONENT_EVENT_SOURCE))

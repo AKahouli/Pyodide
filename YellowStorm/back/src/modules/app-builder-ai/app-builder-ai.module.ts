@@ -3,7 +3,7 @@ import { PostgresModule } from '../postgres/postgres.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { RateLimiterModule } from '../rate-limiter/rate-limiter.module';
 import { AppDataModule } from '../app-data/app-data.module';
-import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from '../app-builder/app-builder.module';
 import { UserModule } from '../user/user.module';
 import { AppBuilderAiSettingsService } from './services/app-builder-ai-settings.service';
 import { AppBuilderAiOfferService } from './services/app-builder-ai-offer.service';
@@ -20,7 +20,7 @@ import { PgAppBuilderAiOfferStore } from './persistence/pg-app-builder-ai-offer.
     RateLimiterModule,
     forwardRef(() => AuthorizationModule),
     forwardRef(() => AppDataModule),
-    forwardRef(() => ConversationV2Module),
+    forwardRef(() => AppBuilderModule),
     forwardRef(() => UserModule),
   ],
   controllers: [AdminAppBuilderAiController],

@@ -14,7 +14,7 @@ import { APP_BUILDER_AI_USAGE_SOURCE } from '../constants';
 import { AppBuilderAiSettingsService } from './app-builder-ai-settings.service';
 import { AppBuilderAiOfferService } from './app-builder-ai-offer.service';
 import { AppBuilderAiUsageService } from './app-builder-ai-usage.service';
-import { PgConversationV2SessionStore } from '../../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
+import { PgAppBuilderSessionStore } from '../../app-builder/persistence/postgres/pg-app-builder-session.store';
 
 interface AppUsageAgg {
   sessionId: string | null;
@@ -34,7 +34,7 @@ export class AppBuilderAiAdminService {
     private readonly usage: AppBuilderAiUsageService,
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     @Inject(USER_STORE) private readonly users: UserStore,
-    private readonly sessions: PgConversationV2SessionStore,
+    private readonly sessions: PgAppBuilderSessionStore,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 

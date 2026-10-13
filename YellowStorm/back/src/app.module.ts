@@ -14,7 +14,7 @@ import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
 import aiProxyConfig from './config/ai-proxy.config';
 import conversationConfig from './config/conversation.config';
-import conversationV2Config from './config/conversation-v2.config';
+import appBuilderConfig from './config/app-builder.config';
 import appRuntimeConfig from './config/app-runtime.config';
 import appDataConfig from './config/app-data.config';
 import playbookFlowConfig from './config/playbook-flow.config';
@@ -52,7 +52,7 @@ import { BrowserSessionModule } from './modules/browser-session/browser-session.
 import { ModelsModule } from './modules/models';
 import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
-import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from './modules/app-builder/app-builder.module';
 import { AppRuntimeModule } from './modules/app-runtime/app-runtime.module';
 import { AppDataModule } from './modules/app-data/app-data.module';
 import { ToolModule } from './modules/tool';
@@ -88,7 +88,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, appBuilderConfig, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -123,7 +123,7 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
     IndexingModule,
     BrowserSessionModule,
     ConversationModule,
-    ConversationV2Module,
+    AppBuilderModule,
     AppRuntimeModule,
     AppDataModule,
     ModelsModule,

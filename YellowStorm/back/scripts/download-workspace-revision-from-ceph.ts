@@ -1,5 +1,5 @@
 /**
- * Download a Conversation V2 workspace revision from Ceph into a local folder.
+ * Download a App Builder workspace revision from Ceph into a local folder.
  *
  * Usage (from YellowStorm/back):
  *   npx ts-node scripts/download-workspace-revision-from-ceph.ts \

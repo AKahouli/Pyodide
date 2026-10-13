@@ -41,7 +41,7 @@ function row(overrides: Partial<ModelRow>): ModelRow {
     types: ['chat'],
     isActive: true,
     isDefault: false,
-    isConversationV2Default: false,
+    isAppBuilderDefault: false,
     omitTemperature: false,
     inputModalities: ['text'],
     maxInputTokens: null,
@@ -62,7 +62,7 @@ class InMemoryModelStore implements ModelStore {
   readonly rows = new Map<string, ModelRow>();
   readonly inserted: ModelRow[] = [];
   readonly clearedClassifierFor: string[] = [];
-  readonly exclusiveFlags: { modelId: string; flag: 'isDefault' | 'isConversationV2Default' }[] = [];
+  readonly exclusiveFlags: { modelId: string; flag: 'isDefault' | 'isAppBuilderDefault' }[] = [];
   deactivatedNotIn: string[][] = [];
 
   async findByModelId(modelId: string): Promise<ModelRow | null> {
@@ -120,7 +120,7 @@ class InMemoryModelStore implements ModelStore {
     this.clearedClassifierFor.push(modelId);
   }
 
-  async setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isConversationV2Default'): Promise<ModelRow | null> {
+  async setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isAppBuilderDefault'): Promise<ModelRow | null> {
     this.exclusiveFlags.push({ modelId, flag });
     for (const r of this.rows.values()) (r as any)[flag] = false;
     const target = this.rows.get(modelId);
@@ -132,8 +132,8 @@ class InMemoryModelStore implements ModelStore {
     return [...this.rows.values()].find((r) => r.isDefault && r.isActive && (r.types.includes('chat') || r.type === 'chat')) ?? null;
   }
 
-  async findConversationV2Default(): Promise<ModelRow | null> {
-    return [...this.rows.values()].find((r) => r.isConversationV2Default && r.isActive && (r.types.includes('chat') || r.type === 'chat')) ?? null;
+  async findAppBuilderDefault(): Promise<ModelRow | null> {
+    return [...this.rows.values()].find((r) => r.isAppBuilderDefault && r.isActive && (r.types.includes('chat') || r.type === 'chat')) ?? null;
   }
 
   async findGuardrailsClassifier(): Promise<ModelRow | null> {
@@ -383,37 +383,37 @@ describe('ModelsService', () => {
     });
   });
 
-  describe('conversation-v2 default', () => {
+  describe('app-builder default', () => {
     it('queries the flagged active chat model only', async () => {
-      store.rows.set('v2-default', row({ modelId: 'v2-default', isConversationV2Default: true, isActive: false }));
+      store.rows.set('v2-default', row({ modelId: 'v2-default', isAppBuilderDefault: true, isActive: false }));
 
-      await expect(svc.getConversationV2DefaultModel()).resolves.toBeNull();
+      await expect(svc.getAppBuilderDefaultModel()).resolves.toBeNull();
     });
 
-    it('allows an active chat model as the conversation-v2 default and clears the previous one', async () => {
+    it('allows an active chat model as the app-builder default and clears the previous one', async () => {
       store.rows.set('chat', row({ modelId: 'chat', name: 'Chat' }));
 
-      const result = await svc.setConversationV2DefaultModel('chat');
+      const result = await svc.setAppBuilderDefaultModel('chat');
 
-      expect(store.exclusiveFlags).toEqual([{ modelId: 'chat', flag: 'isConversationV2Default' }]);
+      expect(store.exclusiveFlags).toEqual([{ modelId: 'chat', flag: 'isAppBuilderDefault' }]);
       expect(result?.isConversationV2Default).toBe(true);
     });
 
-    it('does not touch the conversation-v2 default for a non-chat or inactive model', async () => {
+    it('does not touch the app-builder default for a non-chat or inactive model', async () => {
       store.rows.set('embedding', row({ modelId: 'embedding', type: 'embedding', types: ['embedding'] }));
 
-      await expect(svc.setConversationV2DefaultModel('embedding')).resolves.toBeNull();
+      await expect(svc.setAppBuilderDefaultModel('embedding')).resolves.toBeNull();
 
       expect(store.exclusiveFlags).toHaveLength(0);
     });
 
     it('clears the flag and surfaces it in the response', async () => {
-      store.rows.set('chat', row({ modelId: 'chat', name: 'Chat', isConversationV2Default: true }));
+      store.rows.set('chat', row({ modelId: 'chat', name: 'Chat', isAppBuilderDefault: true }));
 
-      const result = await svc.clearConversationV2DefaultModel('chat');
+      const result = await svc.clearAppBuilderDefaultModel('chat');
 
       expect(result?.isConversationV2Default).toBe(false);
-      expect(store.rows.get('chat')!.isConversationV2Default).toBe(false);
+      expect(store.rows.get('chat')!.isAppBuilderDefault).toBe(false);
     });
   });
 });

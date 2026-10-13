@@ -11,7 +11,7 @@ The primary `build` agent runs the whole development loop. Subagents (`explore`,
 
 ## Product Rules
 
-- "Conversation" means the feature at `http://localhost:5173/#/conversation`, not Conversation v2, unless the user says v2.
+- "Conversation" means the feature at `http://localhost:5173/#/conversation`, not App Builder, unless the user says.
 - Any feature that needs LLM inference is built as a dedicated agent through the YellowStorm ADK (configurable in the agent library), not as a direct chat-completion call.
 
 ## Repository Map

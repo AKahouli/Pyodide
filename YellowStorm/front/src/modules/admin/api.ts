@@ -810,16 +810,16 @@ export async function clearDefaultModel(id: string): Promise<AdminModelResponse>
   return response.data.data;
 }
 
-export async function setConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+export async function setAppBuilderDefaultModel(id: string): Promise<AdminModelResponse> {
   const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
-    API_ENDPOINTS.adminModels.setConversationV2Default(id)
+    API_ENDPOINTS.adminModels.setAppBuilderDefault(id)
   );
   return response.data.data;
 }
 
-export async function clearConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+export async function clearAppBuilderDefaultModel(id: string): Promise<AdminModelResponse> {
   const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
-    API_ENDPOINTS.adminModels.clearConversationV2Default(id)
+    API_ENDPOINTS.adminModels.clearAppBuilderDefault(id)
   );
   return response.data.data;
 }

@@ -16,7 +16,7 @@ const row: ModelRow = {
   types: ['chat'],
   isActive: true,
   isDefault: true,
-  isConversationV2Default: false,
+  isAppBuilderDefault: false,
   omitTemperature: false,
   inputModalities: ['text', 'image'],
   maxInputTokens: 128000,

@@ -19,7 +19,7 @@ interface TemplateCardProps {
 
 /**
  * Marketplace-style card (preview badge + hover clone pill).
- * Preview/title open the detail modal; Clone App opens Conversation V2 without auto-prompt.
+ * Preview/title open the detail modal; Clone App opens App Builder without auto-prompt.
  */
 export const TemplateCard = memo(function TemplateCard({
   template,

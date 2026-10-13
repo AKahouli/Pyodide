@@ -237,8 +237,8 @@ vi.mock('@/modules/workspace/components/WorkspaceSelect', () => ({
   WorkspaceSelect: () => <div>workspace-select</div>,
 }));
 
-vi.mock('@/modules/conversation-v2/api', () => ({
-  conversationV2Api: {
+vi.mock('@/modules/app-builder-studio/api', () => ({
+  appBuilderStudioApi: {
     createSession: vi.fn(),
   },
 }));

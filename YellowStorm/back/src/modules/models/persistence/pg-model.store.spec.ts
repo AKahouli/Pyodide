@@ -22,13 +22,13 @@ describeIntegration('PgModelStore (integration)', () => {
   beforeAll(async () => {
     // setExclusiveFlag clears the flag on EVERY row; remember holders to restore them.
     priorDefault = (await db.select({ id: schema.catalogAiModels.id }).from(schema.catalogAiModels).where(eq(schema.catalogAiModels.isDefault, true))).map((r) => r.id);
-    priorV2Default = (await db.select({ id: schema.catalogAiModels.id }).from(schema.catalogAiModels).where(eq(schema.catalogAiModels.isConversationV2Default, true))).map((r) => r.id);
+    priorV2Default = (await db.select({ id: schema.catalogAiModels.id }).from(schema.catalogAiModels).where(eq(schema.catalogAiModels.isAppBuilderDefault, true))).map((r) => r.id);
   });
 
   afterAll(async () => {
     if (modelIds.length) await db.delete(schema.catalogAiModels).where(inArray(schema.catalogAiModels.modelId, modelIds));
     if (priorDefault.length) await db.update(schema.catalogAiModels).set({ isDefault: true }).where(inArray(schema.catalogAiModels.id, priorDefault));
-    if (priorV2Default.length) await db.update(schema.catalogAiModels).set({ isConversationV2Default: true }).where(inArray(schema.catalogAiModels.id, priorV2Default));
+    if (priorV2Default.length) await db.update(schema.catalogAiModels).set({ isAppBuilderDefault: true }).where(inArray(schema.catalogAiModels.id, priorV2Default));
     await close();
   });
 
@@ -45,7 +45,7 @@ describeIntegration('PgModelStore (integration)', () => {
     expect(results.filter(Boolean)).toHaveLength(1);
   });
 
-  it.each(['isDefault', 'isConversationV2Default'] as const)('setExclusiveFlag(%s) leaves a single holder', async (flag) => {
+  it.each(['isDefault', 'isAppBuilderDefault'] as const)('setExclusiveFlag(%s) leaves a single holder', async (flag) => {
     const a = row(`${flag}-a`);
     const b = row(`${flag}-b`);
     await store.insertIfAbsent(a);

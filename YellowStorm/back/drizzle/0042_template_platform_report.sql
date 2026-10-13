@@ -1,5 +1,5 @@
 -- Platform Kit analysis of an uploaded template ZIP, computed at publish time.
--- Lets admins see whether a template will survive Template -> Conversation V2 ->
+-- Lets admins see whether a template will survive Template -> App Builder ->
 -- Deployment before a user hits a failed deploy.
 SET LOCAL lock_timeout = '5s';
 

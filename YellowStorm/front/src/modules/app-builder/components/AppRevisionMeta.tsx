@@ -1,5 +1,5 @@
 import { useModuleTranslation } from '@/modules/localization';
-import { formatFinalizedDate } from '@/modules/conversation-v2/utils/finalized-versions';
+import { formatFinalizedDate } from '@/modules/app-builder-studio/utils/finalized-versions';
 import type { AppRevisionCatalogFields } from '../types';
 
 interface AppRevisionMetaProps {

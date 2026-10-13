@@ -126,9 +126,9 @@ vi.mock('@/modules/conversation/store', () => ({
   useConversationsLoading: () => convoState.loading,
 }));
 
-vi.mock('@/modules/conversation-v2/store', () => ({
-  useConversationV2PointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
-  useConversationV2Store: (
+vi.mock('@/modules/app-builder-studio/store', () => ({
+  useAppBuilderStudioPointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
+  useAppBuilderStudioStore: (
     selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
   ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
 }));

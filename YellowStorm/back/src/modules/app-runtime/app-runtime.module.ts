@@ -1,8 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from '@modules/auth/auth.module';
-import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
-import { ConversationV2PersistenceModule } from '@modules/conversation-v2/persistence/conversation-v2-persistence.module';
+import { AppBuilderModule } from '@modules/app-builder/app-builder.module';
+import { AppBuilderPersistenceModule } from '@modules/app-builder/persistence/app-builder-persistence.module';
 import { AppDataModule } from '@modules/app-data/app-data.module';
 import appRuntimeConfig from '@config/app-runtime.config';
 import { AppRuntimeInternalController } from './controllers/app-runtime-internal.controller';
@@ -30,10 +30,10 @@ import { PlatformBaselineService } from './platform-kit/platform-baseline.servic
   imports: [
     ConfigModule.forFeature(appRuntimeConfig),
     forwardRef(() => AuthModule),
-    // Direct import so template/session stores resolve even when ConversationV2Module
-    // is still constructing through the AppRuntime ↔ ConversationV2 cycle.
-    ConversationV2PersistenceModule,
-    forwardRef(() => ConversationV2Module),
+    // Direct import so template/session stores resolve even when AppBuilderModule
+    // is still constructing through the AppRuntime ↔ AppBuilder cycle.
+    AppBuilderPersistenceModule,
+    forwardRef(() => AppBuilderModule),
     forwardRef(() => AppDataModule),
   ],
   controllers: [AppRuntimeInternalController, AppRuntimeMcpController],
