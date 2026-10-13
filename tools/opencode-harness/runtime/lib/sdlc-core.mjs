@@ -395,6 +395,10 @@ export async function openHarness(directory, options = {}) {
       if (/[;&|<>\r\n`$]/.test(command) || /--output(?:=|\s)|\s-e(?:\s|$)|--eval|pathspec-from-file/i.test(command)) return false;
       const readOnly = /^\s*(?:git\s+(?:status|diff|log|show|rev-parse|symbolic-ref)\b|(?:pwd|Get-Location)\s*$)/i.test(command);
       if (readOnly) return true;
+      // Focused diagnosis must remain available to reproduce a defect and
+      // recover an integration. Trusted test scripts are not an OS sandbox.
+      const diagnostic = /^\s*(?:npm\s+(?:test\b|run\s+(?:test(?::[\w-]+)?|lint|typecheck)\b)|npx\s+(?:vitest|jest|tsc|playwright\s+test)\b|conda\s+run\s+-n\s+meta\s+pytest\b|node\s+scripts\/observability\/(?:check-policy|run-gates)\.mjs\b)/i.test(command);
+      if (diagnostic) return true;
       api.requireHealthy(sessionID);
       if (!api.state(sessionID).goal) return false;
       return /^\s*(?:git\s+(?:add|commit)\b|npm\s+(?:test\b|run\s+(?:test(?::[\w-]+)?|lint|build|typecheck|dev|start(?::[\w-]+)?)\b)|npx\s+(?:vitest|jest|tsc|playwright\s+test)\b|conda\s+run\s+-n\s+meta\s+pytest\b|node\s+scripts\/observability\/(?:check-policy|run-gates)\.mjs\b)/i.test(command);

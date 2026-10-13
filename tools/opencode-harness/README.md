@@ -73,7 +73,11 @@ Use the injected native results; `sdlc_health` is optional for inspection and
 recovery. The agent reports failures; child agents report them to their caller.
 Failures include recovery actions in
 system context, stderr and a UI toast when available. Source edits and mutating
-Git/build commands are gated until all three checks pass. Read-only diagnosis and
+Git/build commands are gated until all three checks pass. Focused tests, lint,
+type checks and the established observability diagnostics remain available even
+when graph/memory health fails, so the agent can reproduce defects and recover.
+Shell metacharacter/output/eval guards still apply; these trusted scripts are not
+an OS sandbox. Read-only diagnosis and
 checkpoint/blocker recording remain available. After recovery run
 `sdlc_health(refresh: true)` to rerun native checks. Do not repeat model tool probes.
 

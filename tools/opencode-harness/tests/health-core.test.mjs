@@ -64,6 +64,8 @@ if (process.argv[2] === '--bootstrap-worker') {
       assert.throws(() => h.prepare('session-a', {}), /startup health/);
       assert.throws(() => h.beforeEdit('session-a', ['src/a.js'], 'edit'), /startup health/);
       assert.equal(h.shellAllowed('session-a', 'git status'), true);
+      for (const command of ['npm test -- focused', 'npm run typecheck', 'npx tsc --noEmit', 'conda run -n meta pytest tests/test_existing.py -q']) assert.equal(h.shellAllowed('session-a', command), true);
+      for (const command of ['npm test; echo changed > src/a.js', 'npx tsc --output src/a.js', 'node -e "writeFileSync()"']) assert.equal(h.shellAllowed('session-a', command), false);
       assert.throws(() => h.shellAllowed('session-a', 'git commit -m verified'), /startup health/);
       const receipt = h.health('session-a', { ...passing, root: 'wrong', sessionID: 'wrong', checkpoints: { status: 'FAIL' } });
       assert.equal(receipt.root, h.root);
@@ -72,6 +74,8 @@ if (process.argv[2] === '--bootstrap-worker') {
       assert.equal(h.requireHealthy('session-a').probe, receipt.probe);
       assert.equal(h.shellAllowed('session-a', 'git commit -m verified'), true);
       h.health('session-a', { ...passing, graph: { status: 'FAIL', reason: 'Wrong root', action: 'Check this repository graph' } });
+      assert.equal(h.shellAllowed('session-a', 'npm test -- focused'), true);
+      assert.throws(() => h.shellAllowed('session-a', 'npm run build'), /graph FAIL/);
       assert.throws(() => h.requireHealthy('session-a'), /graph FAIL: Wrong root.*Check this repository graph/);
       h.health('session-a', { ...passing, hindsight: { status: 'PENDING', reason: 'Checking recall' } });
       assert.throws(() => h.requireHealthy('session-a'), /hindsight PENDING/);

@@ -4,7 +4,7 @@ import { openHarness, editTargets } from '../lib/sdlc-core.mjs';
 import { probeStartup, verifyObservation, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-13-native-startup';
+  const harnessVersion = '2026-10-13-diagnostic-recovery';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
