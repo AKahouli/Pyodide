@@ -4,6 +4,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { checkDerivedSource, type DerivedSource } from '../domain/semantic-derived-source.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticBusinessTrustService } from './semantic-business-trust.service';
+import { SemanticGraphSearchService } from './semantic-graph-search.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
@@ -62,9 +63,14 @@ export class SemanticReviewQueueService {
     private readonly trust: SemanticBusinessTrustService,
     private readonly runtime: SemanticRuntimeClientService,
     @Optional() private readonly refresh?: SemanticPopulationRefreshService,
+    @Optional() private readonly graphSearch?: SemanticGraphSearchService,
   ) {}
 
-  async reviewQueue(userId: string, modelId: string) {
+  /**
+   * `dataGaps: false` leaves out what the last run's data is missing: the model health screen
+   * explains that with the run's own account, and lists only what is wrong before any run.
+   */
+  async reviewQueue(userId: string, modelId: string, options: { dataGaps?: boolean } = {}) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const versionId = model.currentDraftVersionId;
@@ -88,7 +94,7 @@ export class SemanticReviewQueueService {
          ORDER BY relation.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),
-      this.dataGaps(userId, model.id),
+      options.dataGaps === false ? Promise.resolve([] as ReviewQueueItem[]) : this.dataGaps(userId, model.id),
       // Concepts that hold data but read it from nowhere: no ready source in a connected workspace.
       this.database.query<{ id: string; label: string }>(
         `SELECT n.id::text AS id, n.label FROM semantic_model.node_types n
@@ -97,6 +103,7 @@ export class SemanticReviewQueueService {
              JOIN semantic_model.workspace_links w ON w.model_id=sm.model_id AND w.workspace_id=sm.workspace_id AND w.enabled
              WHERE sm.model_id=$1 AND sm.concept_id=n.id AND sm.status='ready')
            AND NOT EXISTS (SELECT 1 FROM semantic_model.derived_sources d WHERE d.model_id=$1 AND d.concept_id=n.id)
+           AND NOT EXISTS (SELECT 1 FROM semantic_model.records r WHERE r.model_id=$1 AND r.version_id=$2 AND r.node_type_id=n.id AND r.status='active')
          ORDER BY n.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),
@@ -402,8 +409,11 @@ export class SemanticReviewQueueService {
    * Absent when nothing has been prepared yet.
    */
   private async dataGaps(userId: string, modelId: string): Promise<ReviewQueueItem[]> {
+    // No source-authorization wiring, no data read: the gaps would be someone else's counts.
+    if (!this.graphSearch) return [];
     try {
-      const records = await this.runtime.getBoundRecords(modelId, userId, 1);
+      const records = await this.runtime.getBoundRecords(modelId, userId, 1,
+        await this.graphSearch.allowedWorkspaceIds(userId, modelId));
       const concepts = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
       // The prepared data names a link by its key ("repond_a"); a person reads its label ("répond à").
       const relationLabels = await this.database.query<{ id: string; label: string }>(

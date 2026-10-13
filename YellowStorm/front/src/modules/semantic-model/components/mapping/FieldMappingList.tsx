@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Columns } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns, KeyRound, Loader2, Play, Undo2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ComputedFieldRule, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
@@ -28,12 +28,25 @@ const TEXT_KIND: Record<MappingSourceKind, ReadingTextKind> = { document: 'docum
 /** "Read all fields with": a strategy, or (sheets) reading each column as it is. */
 export type ReadAllChoice = SourceExtractionStrategy | 'direct';
 
+// A document's metadata modes are listed apart (see DOCUMENT_METADATA_FIELDS), below the others.
 const MODES: Record<MappingSourceKind, SourceFieldMapping['mode'][]> = {
-  document: ['extract', 'metadata', 'constant', 'computed', 'ignore'],
+  document: ['extract', 'constant', 'computed', 'ignore'],
   sheet: ['direct', 'extract', 'computed', 'constant', 'ignore'],
   record: ['direct', 'extract', 'computed', 'constant', 'ignore'],
 };
 const NO_COLUMN = '__none';
+
+/** What a document mapping can fill a field with from the document itself: mode 'metadata', one per source field. */
+export const DOCUMENT_METADATA_FIELDS = ['document_name', 'workspace_id', 'document_id'] as const;
+export type DocumentMetadataField = typeof DOCUMENT_METADATA_FIELDS[number];
+const METADATA_LABEL = { document_name: 'metadata', workspace_id: 'workspaceId', document_id: 'documentId' } as const satisfies Record<DocumentMetadataField, string>;
+const METADATA_PREFIX = 'metadata:';
+
+/** The mode list entry a field shows: its mode, or for a document's metadata mode the property it reads. */
+function modeChoice(mapping: SourceFieldMapping, kind: MappingSourceKind): string {
+  if (kind !== 'document' || mapping.mode !== 'metadata') return mapping.mode;
+  return `${METADATA_PREFIX}${DOCUMENT_METADATA_FIELDS.find((field) => field === mapping.sourceField) ?? 'document_name'}`;
+}
 
 /** A name compared without case, accents, spaces or punctuation: “Référence client” reads “referenceclient”. */
 export function normalizeName(value: string) {
@@ -76,12 +89,12 @@ export function withAiPatch(mapping: SourceFieldMapping, patch: Pick<SourceField
  * The field read another way. Only what that way uses is kept, so the payload matches what the runtime
  * expects; a sheet field keeps its column to go back to it.
  */
-export function withMode(mapping: SourceFieldMapping, mode: SourceFieldMapping['mode'], kind: MappingSourceKind, fallbackColumn?: string): SourceFieldMapping {
+export function withMode(mapping: SourceFieldMapping, mode: SourceFieldMapping['mode'], kind: MappingSourceKind, fallbackColumn?: string, metadataField: DocumentMetadataField = 'document_name'): SourceFieldMapping {
   if (kind === 'document') {
     const next: SourceFieldMapping = {
       ...mapping,
       mode,
-      sourceField: mode === 'metadata' ? 'document_name' : null,
+      sourceField: mode === 'metadata' ? metadataField : null,
       constantValue: mode === 'constant' ? mapping.constantValue ?? '' : undefined,
       computed: mode === 'computed' ? mapping.computed ?? newComputedRule() : undefined,
       // A strategy only applies to extracted fields.
@@ -152,6 +165,22 @@ export function recipeChangesValue(mapping: SourceFieldMapping) {
   return Boolean(mapping.computed && recipeStepCount(mapping.computed, mapping.sourceField) > 0);
 }
 
+/** Fields folded to one line each, opened one by one; with their key toggle and what changed since saving. */
+export interface FieldFolding {
+  open: string[];
+  onToggle: (field: string) => void;
+  /** The line a folded field shows: where it reads, how, what it found. */
+  summary: (mapping: SourceFieldMapping) => ReactNode;
+  isKey?: (field: string) => boolean;
+  onToggleKey?: (field: string) => void;
+  changed?: (mapping: SourceFieldMapping) => boolean;
+  onRevert?: (field: string) => void;
+  /** Reads this one field on the sample records now; why it cannot, when it cannot. */
+  onRead?: (field: string) => void;
+  readBlocked?: string;
+  readingField?: string | null;
+}
+
 /** What a field row shows beside its settings, given by the drawer that knows the source. */
 export interface FieldRowExtras {
   /** The value read for the field on the shown document or row, and how to find it there. */
@@ -164,7 +193,10 @@ export interface FieldRowExtras {
   pageCount?: number;
 }
 
-export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource, conceptId }: Readonly<{
+// A column value short enough to show under a field that extracts from it.
+const SHORT_SAMPLE = 120;
+
+export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource, conceptId, folding }: Readonly<{
   kind: MappingSourceKind;
   modelId: string;
   attributes: ReadonlyArray<{ key: string; label: string; description?: string }>;
@@ -183,15 +215,18 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
   recipeSource: RecipeSource;
   /** Documents: the concept whose text fields can change their search index next to the AI pane. */
   conceptId?: string;
+  folding?: FieldFolding;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const attributeLabel = (key: string) => attributes.find((attribute) => attribute.key === key)?.label ?? key;
   const update = (index: number, next: SourceFieldMapping) => onChange(mappings.map((mapping, itemIndex) => itemIndex === index ? next : mapping));
-  const setMode = (index: number, mode: SourceFieldMapping['mode']) => {
+  const setMode = (index: number, choice: string) => {
     const mapping = mappings[index];
+    const metadataField = choice.startsWith(METADATA_PREFIX) ? choice.slice(METADATA_PREFIX.length) as DocumentMetadataField : undefined;
+    const mode = metadataField ? 'metadata' : choice as SourceFieldMapping['mode'];
     if (mode === 'ignore') onIgnore?.(mapping.targetAttribute);
     const attribute = attributes.find((item) => item.key === mapping.targetAttribute);
-    update(index, withMode(mapping, mode, kind, attribute ? sameNamedColumn(attribute, columns) : undefined));
+    update(index, withMode(mapping, mode, kind, attribute ? sameNamedColumn(attribute, columns) : undefined, metadataField));
   };
   const modeLabel = (mode: SourceFieldMapping['mode']) => t(`mapping.method.${mode}`);
   const record = kind === 'record';
@@ -203,13 +238,43 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
       const readsColumn = kind !== 'document' && (mapping.mode === 'direct' || mapping.mode === 'extract');
       const row = extras?.(mapping, index) ?? {};
       const columnChoices = [...new Set([...columns, ...(mapping.sourceField ? [mapping.sourceField] : [])])];
-      const sample = readsColumn && mapping.sourceField ? columnSamples?.[mapping.sourceField] : undefined;
-      return <div key={mapping.targetAttribute} className='space-y-2 px-3 py-2.5'>
+      // The value a column gives; a long text read out by rules or AI is not repeated under every field.
+      const columnSample = readsColumn && mapping.sourceField ? columnSamples?.[mapping.sourceField] : undefined;
+      const sample = columnSample && (mapping.mode === 'direct' || (columnSample.length <= SHORT_SAMPLE && !columnSample.includes('\n'))) ? columnSample : undefined;
+      const open = !folding || folding.open.includes(mapping.targetAttribute);
+      const isKey = folding?.isKey?.(mapping.targetAttribute) ?? false;
+      const changed = folding?.changed?.(mapping) ?? false;
+      const header = folding && <div className='flex items-center gap-1.5'>
+        <button type='button' className='flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs' aria-expanded={open}
+          aria-label={t('mapping.fold.toggle', { field: fieldLabel })} onClick={() => folding.onToggle(mapping.targetAttribute)}>
+          {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
+          <span className='shrink-0 truncate font-medium'>{fieldLabel}</span>
+          {changed && <span className='h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500' title={t('mapping.fold.changed')} aria-label={t('mapping.fold.changed')} />}
+          <span className={cn('min-w-0 flex-1 truncate', mapping.mode === 'ignore' ? 'text-muted-foreground/60' : 'text-muted-foreground')}>{folding.summary(mapping)}</span>
+        </button>
+        {folding.onRead && mapping.mode !== 'ignore' && <button type='button' disabled={Boolean(folding.readBlocked) || Boolean(folding.readingField)}
+          className='flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40'
+          aria-label={t('mapping.fold.readFor', { field: fieldLabel })} title={folding.readBlocked ?? t('mapping.fold.readFor', { field: fieldLabel })}
+          onClick={() => folding.onRead!(mapping.targetAttribute)}>
+          {folding.readingField === mapping.targetAttribute ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Play className='h-3.5 w-3.5' />}</button>}
+        {changed && folding.onRevert && <button type='button' className='flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground'
+          aria-label={t('mapping.fold.revertFor', { field: fieldLabel })} onClick={() => folding.onRevert!(mapping.targetAttribute)}>
+          <Undo2 className='h-3 w-3' />{t('mapping.fold.revert')}</button>}
+        {folding.onToggleKey && mapping.mode !== 'ignore' && <button type='button' aria-pressed={isKey} aria-label={t('derived.keyFor', { field: fieldLabel })}
+          title={t('derived.keyFor', { field: fieldLabel })}
+          className={cn('flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px]',
+            isKey ? 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-300' : 'border-transparent text-muted-foreground/60 hover:border-border hover:text-muted-foreground')}
+          onClick={() => folding.onToggleKey!(mapping.targetAttribute)}>
+          <KeyRound className='h-3 w-3' />{isKey && t('derived.key')}</button>}
+      </div>;
+      if (!open) return <div key={mapping.targetAttribute} className='px-3 py-2'>{header}</div>;
+      return <div key={mapping.targetAttribute} className={cn('space-y-2 px-3 py-2.5', folding && 'bg-muted/20')}>
+        {header}
         <div className='flex flex-wrap items-center gap-2'>
-          <span className='flex min-w-[8rem] flex-1 items-center gap-1.5 text-xs font-medium'>
+          {!folding ? <span className='flex min-w-[8rem] flex-1 items-center gap-1.5 text-xs font-medium'>
             <span className='truncate'>{fieldLabel}</span>
             {addedFields.includes(mapping.targetAttribute) && <span className='shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-300'>{t('mapping.newField')}</span>}
-          </span>
+          </span> : <span className='flex-1' />}
           {readsColumn && <Select value={mapping.sourceField ?? NO_COLUMN} onValueChange={(value) => update(index, { ...mapping, sourceField: value === NO_COLUMN ? null : value })}>
             <SelectTrigger className={cn(INPUT_COMPACT, 'w-36 text-xs', !mapping.sourceField && 'border-amber-500/60')}
               aria-label={record ? t('derived.sourceFieldFor', { field: fieldLabel }) : t('mapping.cell.columnFor', { field: fieldLabel })}>
@@ -220,10 +285,17 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
               {columnChoices.map((column) => <SelectItem key={column} value={column}>{columnName(column)}</SelectItem>)}
             </SelectContent>
           </Select>}
-          <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
+          <Select value={modeChoice(mapping, kind)} onValueChange={(value) => setMode(index, value)}>
             <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
             <SelectContent>
               {MODES[kind].map((mode) => <SelectItem key={mode} value={mode}>{modeLabel(mode)}</SelectItem>)}
+              {kind === 'document' && <>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel className='py-1 text-[11px] font-medium text-muted-foreground'>{t('mapping.methodGroupDocument')}</SelectLabel>
+                  {DOCUMENT_METADATA_FIELDS.map((field) => <SelectItem key={field} value={`${METADATA_PREFIX}${field}`}>{t(`mapping.method.${METADATA_LABEL[field]}`)}</SelectItem>)}
+                </SelectGroup>
+              </>}
             </SelectContent>
           </Select>
           {mapping.mode === 'extract' && <Select value={mapping.extractionStrategy ?? 'deterministic'} onValueChange={(value: SourceExtractionStrategy) => update(index, withStrategy(mapping, value))}>

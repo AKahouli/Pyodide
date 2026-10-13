@@ -13,6 +13,7 @@ import { BranchNavigation } from './BranchNavigation';
 import { ConversationAssistantBubble } from './activity/ConversationAssistantBubble';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
+import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { TopLoadTrigger, getScrollContainer } from './TopLoadTrigger';
 import type { ChoiceInteractionMetadata, Message } from '../types';
 import { ParentMessagePreview } from './ParentMessagePreview';
@@ -339,6 +340,7 @@ export function GroupConversationContent() {
           )}
           </div>
         </ChatConversationContent>
+        <OutlineAnchorScroller />
         <MentionMessageJump />
         <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>

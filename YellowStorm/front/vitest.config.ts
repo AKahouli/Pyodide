@@ -1,6 +1,17 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
+
+/** See vite.config.ts: lucide-react no longer ships `dynamicIconImports.mjs`. */
+function resolveDynamicIconImports(): string {
+  const candidates = [
+    path.resolve(__dirname, 'node_modules/@openuidev/react-ui/node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dynamicIconImports.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1];
+}
 
 export default defineConfig({
   plugins: [react()],
@@ -45,6 +56,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'lucide-react/dynamicIconImports.mjs': resolveDynamicIconImports(),
     },
   },
 });

@@ -24,13 +24,16 @@ export class RootInputService {
     for (const job of background) await this.results.authorizeBackgroundExecution(conversationId, job.executionId, actorId);
     const pending = [...roots.filter((root) => root.rootAgentId === conversation.rootAgentId
       && root.resultPayload?.nativeState?.actorId === actorId).map((root) => ({
-        id: root.id, mode: 'foreground' as const, state: root.resultPayload!.nativeState!,
-      })), ...background.map((job) => ({ id: job.executionId, mode: 'background' as const, state: job.nativeState! }))];
+        id: root.id, mode: 'foreground' as const, state: root.resultPayload!.nativeState!, origin: root.resultPayload!.nativeState!.origin,
+      })), ...background.map((job) => ({ id: job.executionId, mode: 'background' as const, state: job.nativeState!,
+        origin: job.nativeState!.origin }))];
     const current = await this.conversations.getConversationDocument(conversationId);
     if (current.createdBy !== actorId || current.isArchived || current.isGroup
       || current.rootAgentId !== conversation.rootAgentId || (current.rootWorkEpoch ?? 0) !== epoch) return [];
     return pending.map((root) => ({
       executionId: root.id, epoch, ...(root.mode === 'background' ? { mode: root.mode } : {}),
+      ...(root.origin ? { originAssistantMessageId: root.origin.assistantMessageId,
+        ...(root.origin.questionMessageId ? { originQuestionMessageId: root.origin.questionMessageId } : {}) } : {}),
       inputs: root.state.pendingInputs.map((input) => ({
         inputId: input.inputId,
         inputVersion: input.inputVersion ?? 1,

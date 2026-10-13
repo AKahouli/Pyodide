@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
-import { PopulationStartedPanel, populationServing } from './PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing, runCanStop, runSourceCount } from './PopulationStartedPanel';
 
 const mappings = [
   { id: 'mapping-1', documentName: 'master-agreement-0041.pdf' },
@@ -14,6 +14,29 @@ describe('PopulationStartedPanel', () => {
 
     expect(screen.getByText('population.started')).toBeInTheDocument();
     expect(screen.getByText('population.allSourcesIncluded')).toBeInTheDocument();
+  });
+
+  it('shows where a queued run waits, and drops it once the run has started', () => {
+    const queue = { queueName: 'semantic-model-population.batch', position: 2, ahead: { running: 1, queued: 0 }, workersOnline: 1 };
+    const { rerender } = render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'queued', skipped: [], reused: false }} sourceMappings={mappings}
+      queue={queue} queuedSince='2026-10-10T12:00:00Z' onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('population.queued.position');
+
+    rerender(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: false }} sourceMappings={mappings}
+      progress={{ phase: 'reading', total: 3, done: 1 }} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.queryByText('population.queued.position')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('population.progress.title')).toBeInTheDocument();
+  });
+
+  it('shows the progress of a refresh that reads no file: its AI calls and records', () => {
+    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: false }} sourceMappings={mappings}
+      progress={{ phase: 'making', total: 0, done: 0, records: 121, ai: { planned: 400, answered: 37, reused: 0, failed: 0, skipped: 0 } }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+
+    expect(screen.getByLabelText('population.progress.title')).toBeInTheDocument();
+    expect(screen.getByText('121')).toBeInTheDocument();
+    expect(screen.getByLabelText('population.progress.ai.title')).toBeInTheDocument();
+    expect(screen.queryByText('population.progress.filesRead')).not.toBeInTheDocument();
   });
 
   it('names every source that will not be read, with its reason', () => {
@@ -116,5 +139,77 @@ describe('PopulationStartedPanel', () => {
       serving={populationServing({ servingDecision: 'activate', blockingGapKinds: [] })} />);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(populationServing({ dataRevisionId: 'r' })).toBeUndefined();
+  });
+
+  it('tells a source limit the person set apart from missing data: an info line, no warning', () => {
+    const serving = populationServing({ servingDecision: 'activate', blockingGapKinds: [],
+      userSampleLimits: [{ conceptId: 'c1', read: 10, total: 25000, limit: 10 }, { conceptId: 'c2', read: 5 }, { read: 1 }] });
+    expect(serving?.samples).toEqual([{ conceptId: 'c1', read: 10, total: 25000 }, { conceptId: 'c2', read: 5 }]);
+    render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'completed', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()}
+      serving={serving} conceptLabels={{ c1: 'Message' }} />);
+    expect(screen.getByText('runServing.sampleTitle')).toBeInTheDocument();
+    expect(screen.getByText('runServing.userSample')).toBeInTheDocument();
+    expect(screen.getByText('runServing.userSampleUnknownTotal')).toBeInTheDocument();
+    expect(screen.queryByText('runServing.kept')).not.toBeInTheDocument();
+    expect(screen.queryByText('runServing.firstIncomplete')).not.toBeInTheDocument();
+    expect(populationServing({ servingDecision: 'activate', blockingGapKinds: [] })?.samples).toBeUndefined();
+  });
+});
+
+describe('PopulationStartedPanel stop', () => {
+  const running = { jobId: 'job-1', status: 'running', skipped: [], reused: false };
+
+  it('stops a run that is still reading', () => {
+    const onStop = vi.fn();
+    render(<PopulationStartedPanel outcome={running} sourceMappings={mappings} progress={{ phase: 'reading', total: 2, done: 1 }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    fireEvent.click(screen.getByRole('button', { name: 'runStop.stop' }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Stop disabled, saying why, once the data is being saved', () => {
+    const onStop = vi.fn();
+    render(<PopulationStartedPanel outcome={running} sourceMappings={mappings} progress={{ phase: 'saving', total: 2, done: 2, cancellable: false }}
+      onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    const button = screen.getByRole('button', { name: /runStop\.stop/ });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleName('runStop.stop: runStop.notNow');
+    fireEvent.click(button);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it('knows a run can no longer be stopped from its phase or its flag', () => {
+    expect(runCanStop(undefined)).toBe(true);
+    expect(runCanStop({ phase: 'reading' })).toBe(true);
+    expect(runCanStop({ phase: 'linking', cancellable: true })).toBe(true);
+    for (const phase of ['saving', 'comparing', 'projecting'] as const) expect(runCanStop({ phase })).toBe(false);
+    expect(runCanStop({ phase: 'reading', cancellable: false })).toBe(false);
+  });
+  it('tells when a stop takes long: the worker may be gone and the run ends when its lease runs out', () => {
+    const outcome = { jobId: 'job-1', status: 'cancel_requested', skipped: [], reused: false };
+    const { rerender } = render(<PopulationStartedPanel outcome={outcome} sourceMappings={mappings} stopping onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByText('runStop.stoppingHint')).toBeInTheDocument();
+
+    rerender(<PopulationStartedPanel outcome={outcome} sourceMappings={mappings} stopping stoppingSlow onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.getByText('runStatus.stoppingSlowHint')).toBeInTheDocument();
+  });
+});
+
+describe('runSourceCount', () => {
+  const model = [
+    { id: 'm-1', conceptId: 'participation' }, { id: 'm-2', conceptId: 'message' }, { id: 'm-3', conceptId: 'attachment' },
+  ] as ConceptSourceMapping[];
+
+  it('counts every mapping of the model for a whole-model run that reported nothing yet', () => {
+    expect(runSourceCount({ skipped: [] }, undefined, model)).toBe(3);
+  });
+
+  it('counts only the mappings of the refreshed concept for a concept refresh followed without its start figures', () => {
+    expect(runSourceCount({ skipped: [] }, { scopeConceptId: 'participation', total: 0 }, model)).toBe(1);
+  });
+
+  it('prefers what the run reports, then what was counted when it started', () => {
+    expect(runSourceCount({ sourceCount: 2, skipped: [] }, { scopeConceptId: 'participation', total: 0 }, model)).toBe(2);
+    expect(runSourceCount({ sourceCount: 2, skipped: [] }, { total: 1 }, model)).toBe(1);
   });
 });

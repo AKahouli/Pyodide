@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { LayoutGrid } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { SidebarMenuButton } from '@/components/ui/sidebar';
@@ -43,13 +43,13 @@ export function NavigationLauncher({ settings, items, language, mobile, onNewCon
   return <div ref={portalContainer} className='contents'>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <SidebarMenuButton tooltip={label} className='border border-sidebar-border bg-sidebar-accent/60 font-medium'>
-          <Plus /><span>{label}</span>
+        <SidebarMenuButton tooltip={label} className='text-sidebar-foreground/70'>
+          <LayoutGrid /><span>{label}</span>
         </SidebarMenuButton>
       </PopoverTrigger>
       <PopoverContent portalContainer={mobile ? portalContainer.current : undefined} side={mobile ? 'bottom' : 'right'} align='start' sideOffset={8} className='pointer-events-auto max-h-[min(36rem,calc(100vh-2rem))] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto p-3'>
         <div className='mb-3 flex items-center gap-2 border-b pb-3'>
-          <span className='flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground'><Plus className='size-4' /></span>
+          <span className='flex size-8 items-center justify-center rounded-lg bg-muted'><LayoutGrid className='size-4' /></span>
           <h2 className='font-semibold'>{label}</h2>
         </div>
         <div className='space-y-4'>

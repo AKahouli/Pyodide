@@ -24,12 +24,14 @@ async def pool():
         await connection.execute("DROP SCHEMA IF EXISTS semantic_jobs CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_population CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_runtime CASCADE")
+        await connection.execute("DROP SCHEMA IF EXISTS semantic_graph_search CASCADE")
         for name in ("001_durable_jobs.sql", "005_runtime_store.sql", "006_population_store.sql",
                       "008_versioned_specification_mirrors.sql",
                       "009_invalidate_unverified_age_projections.sql",
                       "010_ui_signal_outbox.sql", "015_population_execution_fingerprint.sql",
                        "016_draft_population_binding.sql",
-                       "017_current_specification_selection.sql"):
+                       "017_current_specification_selection.sql", "029_assertion_candidates.sql",
+                       "022_graph_search.sql", "031_partition_revision_tables.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -74,6 +76,15 @@ async def test_revision_lifecycle_with_idempotent_writes(pool: asyncpg.Pool):
                                         assertions=assertions) == 1
     assert await pool.fetchval(
         "SELECT mapping_version FROM semantic_population.assertions") == "map-v1"
+    # Another document states the same field: its value is kept beside the served one.
+    other = {"entityId": "crm:aaa", "attribute": "name", "value": "Y", "origin": "source",
+             "evidence": {"assetRef": {"assetId": "a2"}, "blockPk": 3}}
+    assert await store.store_assertions(pool, model_id="m1", revision_id=revision,
+                                        assertions=[*assertions, other]) == 1
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.assertions") == 1
+    assert (await store.list_assertion_candidates(pool, revision, "crm:aaa"))["name"][0]["value"] == "Y"
+    assert [a["value"] for a in await store.list_revision_assertions(pool, revision)] == ["X", "Y"]
+    await pool.execute("DELETE FROM semantic_population.assertion_candidates")
 
     relationships = [{"relationId": "r1", "sourceEntityId": "crm:aaa",
                       "targetEntityId": "crm:aaa", "matchingStrategy": "exact"}]

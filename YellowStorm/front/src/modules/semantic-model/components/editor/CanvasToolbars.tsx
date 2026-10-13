@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeftRight, Briefcase, KeyRound, Keyboard, ListPlus, PanelRight, Pencil, Plus, Settings2, Sheet, Table2, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, Briefcase, KeyRound, ListPlus, PanelRight, Pencil, Plus, Settings2, Sheet, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -95,7 +95,7 @@ export interface ConceptToolbarActions {
   onRename: () => void;
   onBringData?: () => void;
   onLinkConcept?: () => void;
-  onAddRecord?: () => void;
+  onManualTable?: () => void;
   onBrowseRecords?: () => void;
   onDetails: () => void;
   onDelete?: () => void;
@@ -114,7 +114,7 @@ export function ConceptToolbar({ conceptId, label, attributes, keyFields, onTogg
         className='nodrag nopan flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium hover:bg-muted'><ListPlus className='h-4 w-4' />{attributes.length}</button>} />
     <ToolbarDivider />
     {actions.onBringData && <ToolButton tone='data' label={t('canvasTools.bringData')} onClick={actions.onBringData}><Sheet className='h-4 w-4' /></ToolButton>}
-    {actions.onAddRecord && <ToolButton tone='data' label={t('records.quickAdd')} onClick={actions.onAddRecord}><Keyboard className='h-4 w-4' /></ToolButton>}
+    {actions.onManualTable && <ToolButton tone='data' label={t('manualTable.tool')} onClick={actions.onManualTable}><Table2 className='h-4 w-4' /></ToolButton>}
     {actions.onLinkConcept && <ToolButton label={t('concept.quickAdd')} onClick={actions.onLinkConcept}><Briefcase className='h-4 w-4' /></ToolButton>}
     <ToolbarDivider />
     {actions.onBrowseRecords && <ToolButton label={t('records.table.browse')} onClick={actions.onBrowseRecords}><Table2 className='h-4 w-4' /></ToolButton>}
@@ -123,16 +123,15 @@ export function ConceptToolbar({ conceptId, label, attributes, keyFields, onTogg
   </ToolbarShell>;
 }
 
-/** Actions for a source box: its mapping, another concept to feed, removal. Typed records open their list instead, and removing them deletes them. */
-export function SourceToolbar({ label, typed, onOpen, onAddFeed, onAddRecord, onSwitch, onRemove }: Readonly<{
-  label: string; typed: boolean; onOpen?: () => void; onAddFeed?: () => void; onAddRecord?: () => void; onSwitch?: () => void; onRemove?: () => void;
+/** Actions for a source box: its mapping, another concept to feed, removal. A manual table opens its grid, and removing it deletes its rows. */
+export function SourceToolbar({ label, typed, onOpen, onAddFeed, onSwitch, onRemove }: Readonly<{
+  label: string; typed: boolean; onOpen?: () => void; onAddFeed?: () => void; onSwitch?: () => void; onRemove?: () => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   return <ToolbarShell label={t('canvasTools.sourceToolbar', { name: label })}>
     {typed
       ? <ToolButton tone='data' label={t('canvasTools.openRecords')} onClick={onOpen}><Table2 className='h-4 w-4' /></ToolButton>
       : <ToolButton tone='data' label={t('canvasTools.editMapping')} onClick={onOpen}><Settings2 className='h-4 w-4' /></ToolButton>}
-    {typed && onAddRecord && <ToolButton tone='data' label={t('records.quickAdd')} onClick={onAddRecord}><Plus className='h-4 w-4' /></ToolButton>}
     {!typed && onAddFeed && <ToolButton label={t('designer.plus.feed', { name: label })} onClick={onAddFeed}><Plus className='h-4 w-4' /></ToolButton>}
     {!typed && onSwitch && <ToolButton label={t('canvasTools.switchSource', { name: label })} onClick={onSwitch}><ArrowLeftRight className='h-4 w-4' /></ToolButton>}
     {onRemove && <><ToolbarDivider /><ToolButton tone='danger' label={typed ? t('designer.delete.typed') : t('designer.delete.source', { name: label })} onClick={onRemove}><Trash2 className='h-4 w-4' /></ToolButton></>}

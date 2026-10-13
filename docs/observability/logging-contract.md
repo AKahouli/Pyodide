@@ -37,6 +37,8 @@ Normative files (source of truth) live in [`contracts/observability/`](../../con
 
 Developers do not choose sinks; collectors own remote delivery; the SDK never sees Loki credentials or endpoints.
 
+Local dev pretty-printing (does not change the wire format): `npm run start:dev:pretty` in `YellowStorm/back`, `dev-pretty.cmd` in `yellowstorm-adk`, or pipe any service through `node scripts/observability/pretty.mjs`. Host the pipe in cmd/bash (`cmd /c "svc 2>&1 | node ...pretty.mjs"`) — Windows PowerShell's `2>&1 |` wraps stderr lines in ErrorRecords and they never reach the filter.
+
 ## Short agent instructions
 
 - Emit events through the SDK with registry names and allowlisted attributes.

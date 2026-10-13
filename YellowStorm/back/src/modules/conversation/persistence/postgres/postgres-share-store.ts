@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -29,6 +29,7 @@ export class PostgresShareStore implements ShareStore {
         workspaceIds: sql<string[]>`COALESCE((SELECT array_agg(cw.workspace_id ORDER BY cw.position) FROM conversation.conversation_workspaces cw WHERE cw.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
         memberIds: sql<string[]>`COALESCE((SELECT array_agg(gm.user_id ORDER BY gm.position) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
         runtimeMode: schema.conversations.runtimeMode,
+        governanceContext: schema.conversations.governanceContext,
         messageCount: schema.conversations.messageCount,
         lastMessageAt: schema.conversations.lastMessageAt,
       })
@@ -43,10 +44,28 @@ export class PostgresShareStore implements ShareStore {
           workspaceIds: row.workspaceIds.map((value) => value.trim()),
           memberIds: row.memberIds.map((value) => value.trim()),
           runtimeMode: row.runtimeMode,
+          governanceScopeId: (row.governanceContext as { scopeId?: string } | null)?.scopeId,
           messageCount: row.messageCount,
           lastMessageAt: row.lastMessageAt ?? undefined,
         }
       : null;
+  }
+
+  async searchAudienceUsers(query: string, ownerId: string, scopeId: string) {
+    const pattern = `%${query.trim().replace(/[\\%_]/g, '\\$&')}%`;
+    const users = schema.identityUsers;
+    const rows = await this.db.select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+      .from(users)
+      .where(and(eq(users.status, 'active'), ne(users.id, ownerId),
+        or(ilike(users.email, pattern), ilike(users.firstName, pattern), ilike(users.lastName, pattern)),
+        sql`EXISTS (SELECT 1 FROM governance.governance_scopes scope WHERE scope.id = ${scopeId}
+          AND scope.status = 'active' AND (scope.audience_mode = 'all_authenticated'
+            OR EXISTS (SELECT 1 FROM governance.governance_scope_audience_users au WHERE au.scope_id = scope.id AND au.user_id = ${users.id})
+            OR EXISTS (SELECT 1 FROM governance.governance_scope_audience_groups ag
+              JOIN identity.user_group_members gm ON gm.group_id = ag.group_id
+              WHERE ag.scope_id = scope.id AND gm.user_id = ${users.id})))`,
+      )).limit(10);
+    return rows.map((row) => ({ id: row.id.trim(), email: row.email, firstName: row.firstName ?? undefined, lastName: row.lastName ?? undefined }));
   }
 
   async listSnapshotMessages(conversationId: string, limit: number): Promise<EmbeddedMessage[]> {
@@ -286,6 +305,27 @@ export class PostgresShareStore implements ShareStore {
       .update(schema.sharedConversations)
       .set({ isRevoked: true, updatedAt: new Date() })
       .where(eq(schema.sharedConversations.id, shareId));
+  }
+
+  async removePrivateRecipient(shareId: string, conversationId: string, recipientId: string, email: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const updated = await tx.update(schema.sharedConversations).set({
+        recipientUserIds: sql`array_remove(${schema.sharedConversations.recipientUserIds}, ${recipientId})`,
+        recipientEmails: sql`array_remove(${schema.sharedConversations.recipientEmails}, ${email})`,
+        isRevoked: sql`cardinality(array_remove(${schema.sharedConversations.recipientUserIds}, ${recipientId})) = 0`,
+        updatedAt: new Date(),
+      }).where(and(eq(schema.sharedConversations.id, shareId), eq(schema.sharedConversations.isRevoked, false),
+        sql`${recipientId} = ANY(${schema.sharedConversations.recipientUserIds})`)).returning({ id: schema.sharedConversations.id });
+      if (!updated.length) throw new Error('Share recipient changed before revocation');
+      await tx.delete(schema.conversationMemberMentions).where(and(
+        eq(schema.conversationMemberMentions.conversationId, conversationId),
+        eq(schema.conversationMemberMentions.userId, recipientId),
+      ));
+      await tx.delete(schema.conversationGroupMembers).where(and(
+        eq(schema.conversationGroupMembers.conversationId, conversationId),
+        eq(schema.conversationGroupMembers.userId, recipientId),
+      ));
+    });
   }
 
   async findPublicByToken(accessToken: string): Promise<SharedConversationRecord | null> {

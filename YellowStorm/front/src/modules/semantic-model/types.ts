@@ -19,7 +19,7 @@ export interface SemanticModelShareResult {
 export type SemanticModelKind = 'workspace_default' | 'designed';
 export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';
-export type EditorMode = 'structure' | 'records' | 'mappings';
+export type EditorMode = 'structure' | 'records' | 'mappings' | 'health';
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error' | 'conflict';
 
 export interface SemanticModel {
@@ -66,6 +66,14 @@ export interface AttributeDefinition {
   aliases?: string[];
   /** Text fields: how the search index cuts this field into passages; absent = the global settings. */
   searchIndex?: FieldSearchIndex;
+  /** How the graph shows this field; absent = shown, whole. Records, search and the health check are not affected. */
+  graph?: FieldGraph;
+}
+
+/** A field's place in the graph: `expose: false` leaves it out, `maxChars` cuts a long text. */
+export interface FieldGraph {
+  expose?: boolean;
+  maxChars?: number;
 }
 
 /** A text field's own search index settings, over the global ones. */
@@ -129,6 +137,87 @@ export interface AgeGraphNode {
   id: string;
   label: string;
   properties: Record<string, unknown>;
+}
+
+/** What the person may see of the whole data graph, whatever part of it was read. */
+export interface GraphTotals {
+  records: number;
+  links: number;
+  /** Records per concept id. */
+  concepts: Record<string, number>;
+  /** Links per relationship id. */
+  relations: Record<string, number>;
+}
+
+/** A part of the data graph, without values: what the graph view draws and counts. */
+export interface GraphOutline {
+  dataRevisionId?: string;
+  /** True when records the person may see were left out of this part. */
+  truncated?: boolean;
+  nodeLimit?: number;
+  /** Null when read around one record. */
+  totals?: GraphTotals | null;
+  concepts: Array<{ id: string; fields: string[] }>;
+  /**
+   * Id, concept id, name, missing field keys, dates by field, and `n`: how many links the record has in all the data
+   * the person may see, read or not (absent when the server did not count them).
+   */
+  records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string>; n?: number }>;
+  /** Id, relation id, source, target. */
+  links: Array<{ id: string; r: string; s: string; t: string }>;
+}
+
+export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null }
+
+/** A document a cited record was read from, as the file viewer opens it. */
+export interface CitedRecordDocument { documentId: string; workspaceId: string; name: string; path: string; mimeType: string }
+
+export interface CitedRecordField {
+  key: string;
+  label: string;
+  value: unknown;
+  truncated?: boolean;
+  origin?: {
+    kind: 'source' | 'metadata' | 'ai' | 'human';
+    documentId?: string;
+    page?: number;
+    row?: number;
+    column?: string;
+    sheet?: string;
+    fromRecord?: { entityId: string; name: string };
+    corrected?: boolean;
+  };
+}
+
+/** The record behind a chat citation, read again for the person opening it. */
+export interface CitedRecordView {
+  model: { id: string; name: string };
+  data: 'published' | 'draft';
+  dataRevisionId: string;
+  changed: boolean;
+  status: 'ok' | 'hidden' | 'missing';
+  record?: {
+    entityId: string;
+    concept: string;
+    conceptKey: string;
+    name: string;
+    keyFields: Record<string, unknown>;
+    fields: CitedRecordField[];
+    sources: Array<CitedRecordDocument & { rows?: number[] }>;
+    unavailableSources: number;
+  };
+}
+
+export type GraphExportChoice = 'full' | 'short' | 'exclude';
+
+export interface GraphExportContent {
+  dataRevisionId?: string;
+  modelName: string;
+  exportedBy: string;
+  exportedAt: string;
+  shortenTo: number;
+  records: Array<{ id: string; c: string; l: string; v: Record<string, unknown> }>;
+  links: Array<{ id: string; r: string; s: string; t: string }>;
 }
 
 export interface AgeGraphEdge {
@@ -229,6 +318,43 @@ export interface SheetFieldProfile {
   sample: string;
   populatedRatio: number;
   uniqueRatio: number;
+}
+
+/** The kinds of data source a model can be connected to; SQL databases come next. */
+export type DataConnectionKind = 'mail_archive';
+
+/** A data source of the model, listed in its source explorer. A mail archive is read as three tables. */
+export interface DataConnection {
+  id: string;
+  kind: DataConnectionKind;
+  name: string;
+  workspaceId: string;
+  documentId: string;
+  /** Whether runs also copy the e-mails and attachments into the workspace, to be searched there. */
+  indexInWorkspace: boolean;
+  /** The reading limits set on this connection; one left out uses its default. */
+  limits: ArchiveReadLimits;
+  /** The most read time and memory an admin allows, also the value of a connection that sets none. */
+  ceilings: Required<Pick<ArchiveReadLimits, 'archiveTimeoutSeconds' | 'parserMemoryMb'>>;
+  /** False when the file is gone or its workspace is no longer open to the person. */
+  available: boolean;
+  createdAt: string;
+}
+
+/** How much of a mail archive a run reads, chosen per connection. */
+export interface ArchiveReadLimits {
+  maxArchiveEmails?: number;
+  maxArchiveMb?: number;
+  archiveTimeoutSeconds?: number;
+  parserMemoryMb?: number;
+}
+
+export interface DataConnectionDraft {
+  kind: DataConnectionKind;
+  workspaceId: string;
+  documentId: string;
+  name?: string;
+  indexInWorkspace?: boolean;
 }
 
 export interface SheetProfile {
@@ -341,10 +467,39 @@ export interface RunLimits {
   maxValuesPerRun: number;
   maxAiRowsPerSource: number;
   maxAiParallelCalls: number;
-  maxArchiveEmails: number;
-  maxArchiveMb: number;
+  /** Also the most a mail archive connection may give its reader, and what one that sets none gets. */
   parserMemoryMb: number;
   archiveTimeoutSeconds: number;
+  /** What is read of each e-mail and attachment of a mail archive. */
+  maxEmlMb: number;
+  maxAttachmentMb: number;
+  /** Levels of attached e-mails opened as e-mails of their own; 0 lists them without opening them. */
+  maxNesting: number;
+  maxPdfPages: number;
+  maxSheetCells: number;
+  maxSlides: number;
+  /** Characters of an attachment's text kept in its record. */
+  maxAttachmentChars: number;
+  /** Characters of an e-mail's body kept in its record. */
+  maxBodyChars: number;
+  /** What a zipped office file may hold once decompressed, in MB. */
+  maxInflatedMb: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. */
+  purgeTimeoutSeconds: number;
+  /** Rows a run writes per batch when it saves its data. */
+  saveBatchRows: number;
+  /** Seconds one save batch may take. */
+  saveStatementSeconds: number;
+  /** Graph elements (records or links) written per statement when a run builds its graph. Never part of a run's identity. */
+  projectionBatchRows: number;
+  /** Texts sent per embedding call when a search index is built. Never part of a run's identity. */
+  embeddingBatchSize: number;
+  /** Embedding calls in flight at once when a search index is built. */
+  embeddingParallelCalls: number;
+  /** Seconds one embedding call may take. */
+  embeddingTimeoutSeconds: number;
+  /** Records read per page when a search index is built. */
+  indexReadPageRows: number;
 }
 
 export interface RunLimitsDefaults {
@@ -361,12 +516,18 @@ export interface AiExtractionSettings {
   parallelCalls?: number;
   /** One document gives several records, one per item the AI finds. Set on a mapping only. */
   manyRecords?: boolean;
+  /** Most records a sheet mapping gives, never above the admin's records per source. Mapping only. */
+  maxRecords?: number;
+  /** Most files a workspace mapping reads, never above the admin's files per run. Mapping only. */
+  maxFiles?: number;
 }
 
 /** The admin defaults with every limit filled in, and which ones the admin set. */
 export interface AiExtractionDefaults {
   aiSettings: AiExtractionSettings;
   configured: Partial<AiExtractionSettings>;
+  /** The most records and files a mapping may choose (the admin's run limits); absent from the admin endpoint. */
+  sourceCeilings?: { maxRecordsPerSource: number; maxRunSources: number };
 }
 
 /** How one extracted field was read in a preview, or why it was not. */
@@ -667,6 +828,16 @@ export interface PopulationRebuildResponse extends PopulationRefreshResponse {
   cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
 }
 
+/** Where a queued job stands on its task queue (counts only). Sent only while the job is `queued`. */
+export interface PopulationJobQueue {
+  queueName: string;
+  /** 1-based: the jobs ahead of this one, across all models, plus one. */
+  position: number;
+  ahead: { running: number; queued: number };
+  /** Workers consuming the queue; null when the runtime cannot tell. */
+  workersOnline: number | null;
+}
+
 export interface PopulationJob {
   jobId: string;
   jobType: string;
@@ -679,10 +850,11 @@ export interface PopulationJob {
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
+  queue?: PopulationJobQueue;
 }
 
 export interface PopulationProgress {
-  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'projecting';
+  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'comparing' | 'projecting';
   total: number;
   done: number;
   /** Files whose earlier result was reused because nothing about them changed. */
@@ -694,8 +866,12 @@ export interface PopulationProgress {
   startedAt: string;
   /** What the saved result changed in the data in use; absent until saved, or when there was no data before. */
   changes?: PopulationChanges;
-  /** How far the current step is: rows of a sheet, files sent for indexing; no total while an archive opens. */
-  step?: { unit: 'rows' | 'files' | 'opening' | string; done: number; total: number | null };
+  /** How far the current step is: rows of a sheet, files sent for indexing, entries saved, graph elements written; no total while an archive opens or the stored records load. */
+  step?: { unit: 'rows' | 'files' | 'opening' | 'entries' | 'elements' | 'loading' | string; done: number; total: number | null };
+  /** False once the new data is being saved: a stop request is then not acted on. Absent while the run can still be stopped. */
+  cancellable?: boolean;
+  /** The one concept a concept refresh makes again; absent for a run of the whole model. */
+  scopeConceptId?: string;
   /** AI calls of the whole run so far. */
   ai?: { planned: number; answered: number; reused: number; skipped: number; failed: number };
 }
@@ -714,6 +890,21 @@ export interface SearchIndexStatus {
     reusedCount?: number;
     passageCount?: number;
     passageIndexedCount?: number;
+    /** While indexing: 'comparing' (finding the records changed since the previous index) and 'carrying' (copying the unchanged ones) of an incremental build, then 'documents' (records read into search cards), 'reusing' (earlier vectors taken from the cache) or 'embedding'. loadedCount counts the records done in the first three. */
+    stage?: 'comparing' | 'carrying' | 'documents' | 'reusing' | 'embedding' | null;
+    loadedCount?: number;
+    /** How the build runs: 'incremental' (unchanged records carried over from the previous index) or 'full' (see buildReason); absent before it starts. */
+    buildMode?: 'full' | 'incremental' | null;
+    /** Why a build is full: no_previous_generation, previous_not_comparable, specification_changed, too_many_changes or empty_revision. */
+    buildReason?: string | null;
+    carriedCount?: number;
+    rebuiltCount?: number;
+    /** Records whose vector the embedding model computed (not carried over, not taken from the cache). */
+    embeddedCount?: number;
+    /** The build's worker stopped answering (its lease ran out, or no progress for a long while); what was embedded is kept. */
+    stalled?: boolean;
+    /** ISO time of the build's last real progress. */
+    lastProgressAt?: string | null;
     lastErrorCode?: string | null;
   };
 }
@@ -968,7 +1159,7 @@ export interface SemanticDataPreview {
   sourceIssues: SourcePreviewIssue[];
   /** What the prepared records are missing; absent on records prepared before gaps were kept. */
   gaps?: SemanticDataGaps;
-  summary: { entities: number; resolvedRelations: number; unresolvedRelations: number; ambiguousRelations: number; conflicts: number };
+  summary: { entities: number; resolvedRelations: number; unresolvedRelations: number; ambiguousRelations: number };
 }
 
 export interface SemanticDataGaps {
@@ -1067,10 +1258,109 @@ export interface ReviewQueue {
   items: ReviewQueueItem[];
 }
 
+/** Mirrors the back end's `ModelHealth` (GET /semantic-models/:id/health). */
+export type HealthStatus = 'blocked' | 'warning' | 'info' | 'healthy';
+export type HealthSeverity = Exclude<HealthStatus, 'healthy'>;
+/** Who can change what is wrong: the model's design, a limit an admin set, the source or its mapping, or the values read. */
+export type HealthCause = 'design' | 'limit' | 'mapping' | 'values';
+export type HealthIssueKind = 'identity_too_coarse' | 'rows_without_key' | 'ai_row_limit' | 'values_disagree' | 'missing_values'
+  | 'links_unmatched' | 'documents_not_read' | 'extraction_failed' | 'reading_limit' | 'archive_reading' | 'inherited' | 'other_gap';
+
+export type HealthAction =
+  | { kind: 'choose_unique_field'; conceptId: string; suggestedFields?: string[] }
+  | { kind: 'raise_ai_limit'; currentLimit: number; suggestedLimit?: number }
+  | { kind: 'open_run_limits' }
+  | { kind: 'open_sources'; conceptId: string }
+  | { kind: 'fix_values'; conceptId: string; attribute: string }
+  | { kind: 'check_links'; relationId: string }
+  | { kind: 'go_to_concept'; conceptId: string }
+  | { kind: 'view_records'; conceptId: string };
+
+/** Where a row came from: the file, its sheet and the row (or the record it was made from). */
+export interface HealthExample {
+  source?: string;
+  sheet?: string;
+  row?: number | string;
+  record?: string;
+  values: Record<string, string>;
+}
+
+export interface HealthIssue {
+  id: string;
+  conceptId: string;
+  kind: HealthIssueKind;
+  cause: HealthCause;
+  severity: HealthSeverity;
+  params: Record<string, string | number>;
+  impact: { rows?: number; of?: number; values?: number };
+  breakdown?: { kind: 'key_values' | 'ai_cost' | 'reading'; items: Array<{ label: string; value: number; current?: boolean }> };
+  examples: HealthExample[];
+  forecast?: { records: number; estimated: boolean };
+  upstreamConceptId?: string;
+  fix?: HealthAction;
+  secondary?: HealthAction;
+}
+
+export interface HealthJourney {
+  unit: 'rows' | 'records';
+  rowsAvailable: number | null;
+  rowsRead: number | null;
+  ai?: { read: number; limit: number; limited: number };
+  recordsMade: number;
+  dropped: Array<{ reason: 'missing_identity' | 'ai_limit' | 'same_key' | 'run_cap'; rows: number; field?: string }>;
+}
+
+export interface HealthConcept {
+  conceptId: string;
+  label: string;
+  status: HealthStatus;
+  origin: { kind: 'sheet' | 'document' | 'derived' | 'manual'; sources: string[]; fromConceptId?: string };
+  keyFields: Array<{ key: string; label: string }>;
+  journey: HealthJourney;
+  keepRatio: number | null;
+  issues: HealthIssue[];
+}
+
+export interface ModelHealth {
+  state: 'ready' | 'no_data';
+  dataRevisionId: string | null;
+  verdict: { conceptId: string; issueId: string; kind: HealthIssueKind; params: Record<string, string | number> } | null;
+  summary: { concepts: number; healthy: number; rowsRead: number; recordsKept: number; fixesNeeded: number; limits: number; setupItems: number };
+  concepts: HealthConcept[];
+  setup: ReviewQueueItem[];
+}
+
 export interface PopulationFreshness {
   /** current: built from the model as it is now; outdated: the design, a mapping or a source file changed since. */
   state: 'current' | 'outdated' | 'never_run' | 'not_runnable';
   reason?: string;
+}
+
+/** One thing wrong (error) or doubtful (warning) in a model, found by the model check. */
+export interface ModelCheckIssue {
+  severity: 'error' | 'warning';
+  /** Stable; the suffix of the message key. */
+  code: string;
+  /** Narrows the code to one case. */
+  reason?: string;
+  /** English fallback text. */
+  message: string;
+  conceptId?: string;
+  fieldId?: string;
+  relationId?: string;
+  mappingId?: string;
+  /** A derived source (derivation). */
+  sourceId?: string;
+  params?: Record<string, string | number>;
+}
+
+export interface ModelCheck {
+  modelId: string;
+  versionKey: string;
+  checkedAt: string;
+  errorCount: number;
+  warningCount: number;
+  issues: ModelCheckIssue[];
 }
 
 /** Where a source or typed-record box sits on the canvas. */

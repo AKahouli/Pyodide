@@ -145,3 +145,34 @@ def test_partial_punctuation_extends_active_reasoning() -> None:
     assert punctuation is not None
     assert punctuation.component_id == first.component_id
     assert punctuation.detail == "Inspect the report."
+
+
+def test_tool_boundary_preserves_unfinished_snapshot_identity() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Inspect the report", True, "start")
+    tracker.end_for_tool_boundary()
+    assert tracker.observe("Inspect the report", False, "snapshot") is None
+    tracker.end_for_tool_boundary()
+    next_span = tracker.observe("Inspect the report", False, "next")
+    assert first is not None and next_span is not None
+    assert first.component_id != next_span.component_id
+
+
+def test_corrected_snapshot_after_tool_boundary_updates_original_activity() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Inspect the", True, "start")
+    tracker.end_for_tool_boundary()
+    snapshot = tracker.observe("Inspect the full report", False, "snapshot")
+    assert first is not None and snapshot is not None
+    assert snapshot.component_id == first.component_id
+    assert snapshot.action == "update"
+    assert snapshot.detail == "Inspect the full report"
+
+
+def test_new_partial_after_tool_boundary_starts_separate_activity() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Inspect the report", True, "start")
+    tracker.end_for_tool_boundary()
+    next_span = tracker.observe("Compare the results", True, "next")
+    assert first is not None and next_span is not None
+    assert first.component_id != next_span.component_id

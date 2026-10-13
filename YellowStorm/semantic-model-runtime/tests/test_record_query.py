@@ -115,7 +115,7 @@ def test_an_inverse_label_reads_the_relation_backwards() -> None:
         {"field": "receives.amount", "op": "gt", "value": 100}, {"field": "billed_to", "op": "is_empty"}]})
     assert errors == []
     assert [f["direction"] for f in applied["filters"]] == ["incoming", "incoming"]
-    assert "rel.target_entity_id = typed.id" in plan.where
+    assert "w1_1_l.target_entity_id = typed.id" in plan.where
 
 
 def test_unknown_names_come_back_part_by_part() -> None:
@@ -206,7 +206,7 @@ def test_visibility_is_applied_in_sql_before_counting() -> None:
     scoped = sql.split("), typed AS")[0]
     assert "$4::text[] IS NULL OR NOT EXISTS" in scoped
     # The linked record must be readable too.
-    assert "jsonb_array_elements(CASE WHEN jsonb_typeof(o.provenance" in plan.where
+    assert "jsonb_array_elements(CASE WHEN jsonb_typeof(w1_1.provenance" in plan.where
 
 
 def test_grouping_by_a_date_bucket_and_default_order() -> None:

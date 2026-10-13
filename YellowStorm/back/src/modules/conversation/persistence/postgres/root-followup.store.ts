@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { createHash } from 'node:crypto';
 import { DRIZZLE_DB } from '../../../postgres/postgres.constants';
@@ -9,6 +9,8 @@ import { newOwnedId } from '../owned-id';
 import { requireBackgroundOwner, type RootControlTransaction } from './root-background-owner';
 import type { RootJobOwner } from './root-background-job.store';
 import { loadFollowupEvidence } from './root-followup-evidence';
+import { acquireFollowupWriter, releaseLegacyFollowupWriter } from './root-followup-writer';
+import { rootResultCounts } from '../../root-work/root-result-counts';
 
 type Execution = typeof schema.rootExecutions.$inferSelect;
 const stateOf = (execution: Execution) => (execution.resultPayload as DelegateResultV1 | null)?.nativeState;
@@ -32,6 +34,19 @@ export class RootFollowupStore {
       eq(schema.rootExecutions.status, 'completed'),
       sql`${schema.rootExecutions.resultPayload}->'nativeState'->'followup'->>'publishedAt' IS NULL`,
       ...(afterId ? [gt(schema.rootExecutions.id, afterId)] : []))).orderBy(schema.rootExecutions.id).limit(32);
+  }
+
+  async releaseLegacyWriters() {
+    const rows = await this.db.select({ id: schema.rootExecutions.id, conversationId: schema.rootExecutions.conversationId })
+      .from(schema.rootExecutions).innerJoin(schema.conversationExecutions, eq(schema.rootExecutions.id, schema.conversationExecutions.id))
+      .where(and(eq(schema.rootExecutions.role, 'followup'), eq(schema.conversationExecutions.ownerReplicaId, 'root-followup'),
+        eq(schema.conversationExecutions.status, 'running'))).limit(32);
+    for (const row of rows) await this.db.transaction(async (tx) => {
+      await tx.select({ id: schema.conversations.id }).from(schema.conversations)
+        .where(eq(schema.conversations.id, row.conversationId)).limit(1).for('update');
+      const [execution] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, row.id)).limit(1);
+      if (execution) await releaseLegacyFollowupWriter(tx, execution, execution.status === 'cancelled' || execution.status === 'cancellation_requested');
+    });
   }
 
   private async members(tx: RootControlTransaction, root: Execution, state: RootNativeState) {
@@ -65,37 +80,32 @@ export class RootFollowupStore {
           || existing.conversationEpoch !== root.conversationEpoch || stateOf(existing)?.followup?.manifestDigest !== seal.digest) {
           throw new Error('Synthesis reservation identity conflicts');
         }
+        await releaseLegacyFollowupWriter(tx, existing);
         return existing;
       }
       const members = await this.members(tx, root, state);
       if (!members) return null;
-      // Missing writer-slot storage throws; synthesis never falls back to a
-      // process-local lock. Pending ordinary placeholders retain priority.
-      const [pendingUser] = await tx.select({ id: schema.messages.id }).from(schema.messages).where(and(
-        eq(schema.messages.conversationId, root.conversationId), eq(schema.messages.conversationType, 'ai'),
-        eq(schema.messages.isComplete, false), eq(schema.messages.isStreaming, true))).limit(1);
-      const [approval] = await tx.select({ id: schema.rootExecutions.id }).from(schema.rootExecutions).where(and(
-        eq(schema.rootExecutions.conversationId, root.conversationId), eq(schema.rootExecutions.conversationEpoch, root.conversationEpoch),
-        eq(schema.rootExecutions.status, 'waiting'))).limit(1);
-      if (pendingUser || approval) return null;
       const publicationMessageId = newOwnedId();
       const deadline = new Date(Math.min(Date.now() + 300000, state.scope.deadlineEpochMs ?? Infinity));
       if (deadline.getTime() <= Date.now()) return null;
-      const [writer] = await tx.insert(schema.conversationExecutions).values({ id: seal.followupExecutionId,
-        conversationId: root.conversationId, userId: actorId, messageId: publicationMessageId,
-        ownerReplicaId: 'root-followup', expiresAt: deadline }).onConflictDoNothing().returning();
-      if (!writer) return null;
       const sessionId = `background_${seal.followupExecutionId}`;
       const evidence = await loadFollowupEvidence(tx, members);
-      const task = JSON.stringify({ rootStatus: root.status,
+      const task = JSON.stringify({ rootStatus: root.status, itemCounts: rootResultCounts(members),
+        originalRequest: state.requestProfile?.content?.slice(0, 8000) ?? '',
+        originalRequestTruncated: (state.requestProfile?.content?.length ?? 0) > 8000,
+        clarifications: (state.clarifications ?? []).map(({ inputId, inputVersion, question, response }) => ({ inputId, inputVersion, question, response })),
         evidence: evidence.slice(0, 100).map(({ record, displayReference, nativeReference }) => ({ evidenceId: record.id,
           executionId: record.executionId, kind: record.kind, displayReference, nativeReference })),
+        evidenceTruncated: evidence.length > 100,
         results: members.map((member) => {
         const result = member.resultPayload as DelegateResultV1 | null;
-        return { executionId: member.id, status: member.status,
-          text: result?.text?.slice(0, Math.min(8000, Math.floor(64000 / members.length))) ?? null,
-          citationCount: result?.citationRefs.length ?? 0, artifactCount: result?.artifactRefs.length ?? 0,
-          textTruncated: (result?.text?.length ?? 0) > Math.min(8000, Math.floor(64000 / members.length)),
+        const fullText = result?.fullText ?? result?.text ?? '';
+        const previewLength = Math.min(8000, Math.floor(64000 / members.length));
+        return { executionId: member.id, role: member.role, status: member.status,
+          text: fullText.slice(0, previewLength),
+          citationCount: result?.citationRefs?.length ?? 0, artifactCount: result?.artifactRefs?.length ?? 0,
+          textTruncated: fullText.length > previewLength,
+          nextOffset: fullText.length > previewLength ? previewLength : null,
           safeError: result?.safeError ?? null };
       }) });
       const digest = createHash('sha256').update(`${rootId}:${seal.digest}:${task}`).digest('hex');
@@ -128,11 +138,7 @@ export class RootFollowupStore {
       const state = stateOf(execution)!;
       if (!root || state.followup?.manifestDigest !== stateOf(root)?.schedulingSeal?.digest
         || execution.id !== stateOf(root)?.schedulingSeal?.followupExecutionId) throw new Error('Synthesis manifest changed');
-      const [writer] = await tx.select().from(schema.conversationExecutions).where(and(
-        eq(schema.conversationExecutions.id, execution.id), eq(schema.conversationExecutions.status, 'running'),
-        sql`${schema.conversationExecutions.expiresAt} > clock_timestamp()`,
-        eq(schema.conversationExecutions.messageId, state.followup!.publicationMessageId))).limit(1);
-      if (!writer) throw new Error('Synthesis writer authority changed');
+      await releaseLegacyFollowupWriter(tx, execution);
       return { execution, root, state, job };
     });
   }
@@ -184,21 +190,46 @@ export class RootFollowupStore {
       }
       const members = await this.members(tx, root, stateOf(root)!);
       if (!members || typeof result?.fullText !== 'string' || Buffer.byteLength(result.fullText) > 262144) return null;
-      const [writer] = await tx.select().from(schema.conversationExecutions).where(and(
-        eq(schema.conversationExecutions.id, executionId), eq(schema.conversationExecutions.status, 'running'),
-        sql`${schema.conversationExecutions.expiresAt} > clock_timestamp()`,
-        eq(schema.conversationExecutions.messageId, state.followup.publicationMessageId))).limit(1).for('update');
+      // Synthesis owns only its fenced job. Hold the Conversation writer just
+      // for this transaction so user turns can run during result preparation.
+      const [pendingUser] = await tx.select({ id: schema.messages.id }).from(schema.messages).where(and(
+        eq(schema.messages.conversationId, followup.conversationId), eq(schema.messages.conversationType, 'ai'),
+        eq(schema.messages.isComplete, false), eq(schema.messages.isStreaming, true))).limit(1);
+      const [approval] = await tx.select({ id: schema.rootExecutions.id }).from(schema.rootExecutions).where(and(
+        eq(schema.rootExecutions.conversationId, followup.conversationId),
+        eq(schema.rootExecutions.conversationEpoch, followup.conversationEpoch),
+        eq(schema.rootExecutions.status, 'waiting'))).limit(1);
+      if (pendingUser || approval) return null;
+      const now = new Date();
+      const writer = await acquireFollowupWriter(tx, followup);
       if (!writer) return null;
       const evidence = await loadFollowupEvidence(tx, members);
-      const now = new Date();
       const aliases = new Set(evidence.map((item) => item.displayReference).filter(Boolean));
       for (const match of result.fullText.matchAll(/\[(\d+)\]/g)) {
         if (!aliases.has(match[1])) throw new Error('Synthesis references evidence outside its sealed registry');
       }
-      const components = [{ id: `${executionId}_text`, type: 'text' as const, data: { content: result.fullText } },
+      const [agent] = followup.rootAgentId ? await tx.select({ name: schema.agents.name }).from(schema.agents)
+        .where(eq(schema.agents.id, followup.rootAgentId)).limit(1) : [];
+      const [usage] = await tx.select({ model: sql<string>`${schema.rootBackgroundEvents.payload}->'usage'->>'model'` })
+        .from(schema.rootBackgroundEvents).where(and(eq(schema.rootBackgroundEvents.executionId, executionId),
+          sql`${schema.rootBackgroundEvents.payload}->>'kind' = 'usage'`,
+          sql`length(${schema.rootBackgroundEvents.payload}->'usage'->>'model') BETWEEN 1 AND 100`))
+        .orderBy(desc(schema.rootBackgroundEvents.sequence)).limit(1);
+      const components = [
+        ...(agent ? [{ id: `${executionId}_agent`, type: 'agentActivity' as const,
+          data: { actorId: followup.rootAgentId, actorName: agent.name, status: 'completed', summary: '' } }] : []),
+        { id: `${executionId}_text`, type: 'text' as const,
+          data: { content: result.fullText, actorId: followup.rootAgentId,
+            backgroundWork: { executionId, parentExecutionId: root.id,
+              ...(stateOf(root)?.requestProfile?.content
+                ? { task: stateOf(root)!.requestProfile!.content.slice(0, 160) } : {}),
+              ...(stateOf(root)?.origin ? { originAssistantMessageId: stateOf(root)!.origin!.assistantMessageId,
+                ...(stateOf(root)!.origin!.questionMessageId
+                  ? { originQuestionMessageId: stateOf(root)!.origin!.questionMessageId } : {}) } : {}) } } },
         ...evidence.map((item) => item.component)];
       const [message] = await tx.insert(schema.messages).values({ id: state.followup.publicationMessageId,
         conversationId: followup.conversationId, senderId: actorId, conversationType: 'ai', components,
+        agentIds: followup.rootAgentId ? [followup.rootAgentId] : [], modelId: usage?.model ?? stateOf(root)?.requestProfile?.modelId ?? null,
         isComplete: true, isStreaming: false, executionStatus: 'completed', executionTerminalAt: now }).returning();
       await tx.update(schema.conversations).set({ messageCount: sql`${schema.conversations.messageCount} + 1`,
         lastMessageAt: now, updatedAt: now }).where(eq(schema.conversations.id, followup.conversationId));

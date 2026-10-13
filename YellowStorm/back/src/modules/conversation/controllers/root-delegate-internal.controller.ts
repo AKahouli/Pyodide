@@ -15,6 +15,8 @@ import { RootBackgroundLifecycleService } from '../root-work/root-background-lif
 import { RootBackgroundSubmissionService } from '../root-work/root-background-submission.service';
 import { RootBackgroundSubmissionDto } from '../dto/root-background-submission.dto';
 import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
+import { RootJobResultDto } from '../dto/root-work-public.dto';
+import { RootConversationReplyService } from '../root-work/root-conversation-reply.service';
 
 @ApiTags('Root work internal')
 @Public()
@@ -23,7 +25,13 @@ import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 export class RootDelegateInternalController {
   constructor(private readonly definitions: RootDelegateDefinitionService,
     private readonly temporary: RootTemporaryDefinitionService, private readonly fanout: RootFanoutService,
-    private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService) {}
+    private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService,
+    private readonly conversationReplies: RootConversationReplyService) {}
+
+  @Post(':executionId/conversation-replies/:messageId/cancel')
+  cancelConversationReply(@Param('executionId') executionId: string, @Param('messageId') messageId: string) {
+    return this.conversationReplies.cancel(executionId, messageId);
+  }
 
   @Post(':executionId/background-task')
   submitBackground(@Param('executionId') executionId: string, @Body() request: RootBackgroundSubmissionDto) {
@@ -38,6 +46,22 @@ export class RootDelegateInternalController {
   @Post(':executionId/background-tasks/:childId/status')
   statusBackground(@Param('executionId') executionId: string, @Param('childId') childId: string) {
     return this.backgroundSubmission.status(executionId, childId);
+  }
+
+  @Post(':executionId/background-tasks')
+  backgroundTasks(@Param('executionId') executionId: string) {
+    return this.backgroundSubmission.list(executionId);
+  }
+
+  @Post(':executionId/background-tasks/:childId/result')
+  backgroundResult(@Param('executionId') executionId: string, @Param('childId') childId: string,
+    @Body() request: RootJobResultDto) {
+    return this.backgroundSubmission.result(executionId, childId, request.offset);
+  }
+
+  @Post(':executionId/background-tasks/:childId/cancel')
+  cancelBackgroundTask(@Param('executionId') executionId: string, @Param('childId') childId: string) {
+    return this.backgroundSubmission.cancel(executionId, childId);
   }
 
   @Post(':executionId/background-definition')
@@ -66,6 +90,17 @@ export class RootDelegateInternalController {
   settleBackgroundItem(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
     @Body() request: RootBackgroundSettlementDto) {
     return this.background.itemSettle(executionId, itemId, request);
+  }
+
+  @Post(':executionId/background-items/:itemId/evidence-page')
+  stageBackgroundItemEvidence(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
+    @Body() request: RootBackgroundSettlementDto) {
+    return this.background.stageEvidence(executionId, request, itemId);
+  }
+
+  @Post(':executionId/background-evidence-page')
+  stageBackgroundEvidence(@Param('executionId') executionId: string, @Body() request: RootBackgroundSettlementDto) {
+    return this.background.stageEvidence(executionId, request);
   }
 
   @Post(':executionId/background-lifecycle')
@@ -109,5 +144,11 @@ export class RootDelegateInternalController {
   settle(@Param('executionId') executionId: string, @Param('childId') childId: string,
     @Body() request: SettleRootDelegateDto) {
     return this.definitions.settle(executionId, childId, request);
+  }
+
+  @Post(':executionId/children/:childId/evidence-page')
+  stageEvidence(@Param('executionId') executionId: string, @Param('childId') childId: string,
+    @Body() request: SettleRootDelegateDto) {
+    return this.definitions.stageEvidence(executionId, childId, request);
   }
 }

@@ -221,24 +221,6 @@ def build_step_tool_scope(
     )
 
 
-def build_sandbox_prompt_note(
-    tool_scope: StepToolScope,
-    tool_names: set[str],
-) -> str:
-    if "code interpreter" not in tool_names or not tool_scope.sandbox_inputs:
-        return ""
-
-    paths = "\n".join(f"- {item['path']}" for item in tool_scope.sandbox_inputs)
-    return (
-        "Authoritative sandbox inputs (validated immediately after sandbox creation):\n"
-        f"{paths}\n"
-        "Use only these exact paths as task inputs. Do not rediscover them, scan other "
-        "workspaces, substitute similarly named files, or use internal IDs, metadata storage "
-        "filenames, and storage paths. If validation fails, stop; the runtime handles the "
-        "single allowed retry."
-    )
-
-
 def build_prompt_input_context(input_context: dict[str, Any]) -> dict[str, Any]:
     sanitized = _sanitize_for_prompt(input_context)
     return sanitized if isinstance(sanitized, dict) else {}

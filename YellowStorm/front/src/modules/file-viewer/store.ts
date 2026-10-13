@@ -316,6 +316,20 @@ export const useFileViewerStore = create<FileViewerStore>()(
         const resolved = resolveDisplayMode(options?.displayMode);
         const pending = createPendingNavigation(tabId, options as FileOpenOptions | undefined);
 
+        // A loaded tab only needs the new navigation: signing a fresh URL would
+        // change the tab's url and make the renderer download the whole file
+        // again. An expired URL is re-signed by the renderer via refreshTabUrl.
+        if (existingTab?.url && !existingTab.isLoading) {
+          set((state) => ({
+            activeTabId: tabId,
+            mode: 'open',
+            pendingNavigation: pending,
+            closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
+            ...(resolved ? { displayMode: resolved } : state.mode === 'closed' ? { displayMode: 'floating' as const } : {}),
+          }));
+          return;
+        }
+
         set((state) => ({
           tabs: existingTab
             ? state.tabs.map((tab) => tab.id === tabId ? { ...tab, fileName, mimeType, isLoading: true } : tab)

@@ -18,11 +18,12 @@ jest.mock('@modules/authorization', () => ({
   PermissionsGuard: class PermissionsGuard {},
 }));
 
-function service(stored: { index?: unknown; search?: unknown } = {}) {
+function service(stored: { index?: unknown; search?: unknown; runLimits?: unknown } = {}) {
   const database = {
     query: jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.startsWith('SELECT index_settings')) return { rows: stored.index ? [{ value: stored.index }] : [] };
       if (sql.startsWith('SELECT search_settings')) return { rows: stored.search ? [{ value: stored.search }] : [] };
+      if (sql.startsWith('SELECT run_limits')) return { rows: stored.runLimits ? [{ value: stored.runLimits }] : [] };
       return { rows: [] };
     }),
   };
@@ -125,5 +126,11 @@ describe('SemanticSearchSettingsService', () => {
       search: { rrfK: 30 },
     });
     expect(await service().settings.runtimePayload(null)).toEqual({ index: {}, search: {} });
+  });
+
+  it('sends the index build limits the admin set, and only those, apart from the index settings', async () => {
+    const { settings } = service({ runLimits: { maxRunSources: 40, embeddingBatchSize: 64, embeddingParallelCalls: 99, indexReadPageRows: 1000 } });
+    // Out of range or unrelated run limits never travel as build settings.
+    expect(await settings.runtimePayload(null)).toEqual({ index: {}, search: {}, build: { embeddingBatchSize: 64, indexReadPageRows: 1000 } });
   });
 });

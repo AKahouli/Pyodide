@@ -1,6 +1,15 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('storage', () => ({
+  // 'ceph' (default) keeps existing deployments untouched; 'azure' switches to
+  // Azure Blob / Data Lake Gen2.
+  provider: (process.env.STORAGE_PROVIDER || 'ceph').toLowerCase(),
+
+  azure: {
+    connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING || '',
+    container: process.env.AZURE_STORAGE_CONTAINER_NAME || 'documents',
+  },
+
   s3: {
     endpoint: process.env.CEPH_S3_ENDPOINT || process.env.CEPH_ENDPOINT || '',
     region: process.env.CEPH_S3_REGION || process.env.CEPH_REGION || 'us-east-1',

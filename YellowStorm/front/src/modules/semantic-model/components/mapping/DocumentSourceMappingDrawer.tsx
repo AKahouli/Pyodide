@@ -26,6 +26,7 @@ import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, Docum
 import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
+import { ReadLimitPane, readLimitProblem } from './ReadLimitPane';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
 import { computedPayload, computedProblem } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
@@ -298,7 +299,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
   const usesAi = mappingsUseAi(activeMappings);
   // A rule the runtime would refuse, or a limit out of bounds, is fixed here rather than at run time.
   const rulesValid = activeMappings.every((mapping) => mapping.mode !== 'extract' || !usesRules(mapping.extractionStrategy) || !rulesProblem(mapping.rules));
-  const limitsValid = !usesAi || !limitProblem(aiSettings);
+  const fileCeiling = defaultsQuery.data?.sourceCeilings?.maxRunSources;
+  const limitsValid = (!usesAi || !limitProblem(aiSettings)) && (!workspace || !readLimitProblem(aiSettings.maxFiles, fileCeiling));
   // Fields a computed field can be taken from: the other mapped fields that are not computed themselves.
   const computedInputs = (self: string) => recipeInputs(activeMappings, self, 'document');
   const computedProblems = activeMappings.filter((mapping) => mapping.mode === 'computed')
@@ -521,6 +523,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
           {/* Several records per document: the AI's items, or one record per match of a field's rules. */}
           {activeMappings.some((mapping) => mapping.mode === 'extract') && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
+          {workspace && <ReadLimitPane id='document-files' limit='maxFiles' ceiling={fileCeiling} value={aiSettings} onChange={setAiSettings} />}
         </section>}
 
         {concept && concept.attributes.length > 0 && <section className={FORM_SECTION}>

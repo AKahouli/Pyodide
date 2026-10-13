@@ -206,6 +206,7 @@ export function CreateEditAgentDialog({
             reasoningEffort: agent.reasoning_effort || "",
             instruction: agent.instruction || "",
             ignorePrePrompt: agent.ignorePrePrompt,
+            genUiEnabled: agent.genUiEnabled ?? false,
             knowledgeBases: agent.knowledgeBases || [],
             tools: agent.tools || [],
             skills: agent.skills || [],
@@ -611,6 +612,26 @@ export function CreateEditAgentDialog({
                         >
                           {t('createEdit.fields.ignorePrePrompt')}
                         </label>
+                      </div>
+
+                      {/* Generative UI (OpenUI answers) */}
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="user-gen-ui-enabled"
+                            checked={watch("genUiEnabled")}
+                            onCheckedChange={(checked) =>
+                              setValue("genUiEnabled", checked === true)
+                            }
+                          />
+                          <label
+                            htmlFor="user-gen-ui-enabled"
+                            className="text-sm font-medium leading-none"
+                          >
+                            {t('createEdit.fields.genUiEnabled')}
+                          </label>
+                        </div>
+                        <p className="pl-6 text-xs text-muted-foreground">{t('createEdit.fields.genUiEnabledHint')}</p>
                       </div>
 
                       {/* Model */}

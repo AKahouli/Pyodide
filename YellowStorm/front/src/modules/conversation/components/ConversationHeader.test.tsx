@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockNavigate } from '@/test/setup';
 import { ConversationHeader } from './ConversationHeader';
 
+vi.mock('@/modules/auth', () => ({ useAuth: () => ({ user: { id: 'owner-1' } }) }));
+
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -61,7 +63,7 @@ vi.mock('../store', () => ({
 describe('ConversationHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    currentConversation.value = { id: 'conv-1', title: 'Conversation title', workspaces: [] };
+    currentConversation.value = { id: 'conv-1', title: 'Conversation title', createdBy: 'owner-1', workspaces: [] };
     fetchMessagesMock.mockResolvedValue({
       items: [
         { id: 'u1', conversationType: 'user', content: 'Question?', createdAt: '2026-01-01T10:00:00Z' },
@@ -85,6 +87,18 @@ describe('ConversationHeader', () => {
     await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'header.tooltips.share' }));
     expect(screen.getByText('share-open')).toBeInTheDocument();
+  });
+
+  it('offers governed sharing to its owner but not to a recipient', async () => {
+    currentConversation.value = { ...currentConversation.value, runtimeMode: 'governed' };
+    const { rerender } = render(<ConversationHeader />);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'header.tooltips.share' }));
+    expect(screen.getByText('share-open')).toBeInTheDocument();
+    currentConversation.value = { ...currentConversation.value, createdBy: 'someone-else' };
+    rerender(<ConversationHeader />);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
+    expect(screen.queryByRole('menuitem', { name: 'header.tooltips.share' })).not.toBeInTheDocument();
   });
 
   it('places rename beside the title and exposes delete as a direct action', async () => {

@@ -197,6 +197,20 @@ async def test_a_run_makes_the_derived_records_and_links_them():
     assert not [gap for gap in outcome["gaps"] if gap["kind"] != "missing_value"]
 
 
+@pytest.mark.asyncio
+async def test_the_derived_records_count_in_the_run_progress():
+    from app.workers.population_tasks import PopulationProgress
+
+    progress = PopulationProgress()
+    await run_population_for_task(
+        command([derivation()], [{"relationId": "r1", "referenceField": "customer_id", "targetField": "org_id"}]),
+        fetch=fake_fetch, prepare=fake_prepare, query=fake_query, progress=progress)
+    plain = PopulationProgress()
+    await run_population_for_task(command([]), fetch=fake_fetch, prepare=fake_prepare, query=fake_query, progress=plain)
+    # The two organizations made from the contracts add to the records the sheet gave.
+    assert progress.records == plain.records + 2
+
+
 def test_a_command_without_derivations_keeps_its_admission_shape():
     from app.jobs.models import PopulationPayload
 

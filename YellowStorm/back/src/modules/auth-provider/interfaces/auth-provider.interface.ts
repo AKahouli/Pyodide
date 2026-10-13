@@ -31,8 +31,8 @@ export interface AuthProviderAdminResponse {
 
 export interface OAuthCallbackResult {
   type: 'login' | 'link_required';
-  // For 'login':
-  accessToken?: string;
+  // For 'login': single-use exchange code, delivered to the browser in an HttpOnly cookie (never in a URL).
+  exchangeCode?: string;
   expiresIn?: number;
   refreshToken?: string;
   user?: Record<string, unknown>;

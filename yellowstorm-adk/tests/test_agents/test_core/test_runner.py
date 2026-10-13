@@ -306,7 +306,7 @@ class TestAgentRunner:
         with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=adk_runner), \
              patch('src.smart_rag.agents.core.runner.MessageTransformer.simple_tag_transformer', side_effect=lambda tempmsg, **_kwargs: (tempmsg, "", [])), \
              patch.object(agent_runner, '_replace_diagram_references_during_streaming', new_callable=AsyncMock, side_effect=lambda text, _session: text), \
-             patch.object(agent_runner, '_extract_generated_files', new_callable=AsyncMock, return_value=[]):
+             AsyncMock() as _unused_patch:
             result = await agent_runner._run_standard_agent(
                 agent=agent, agent_name="GuardedAgent", agent_type="agent",
                 session_helper=session_helper, user_id="user", session_id="session",
@@ -503,7 +503,23 @@ class TestAgentRunner:
 
         # Mock Runner class
         async def mock_run_async(*args, **kwargs):
-            yield thought_event
+            for index, thought in enumerate(hidden_thoughts):
+                delta = MagicMock()
+                delta.content.parts = [thought]
+                delta.partial = True
+                delta.is_final_response.return_value = False
+                yield delta
+                if index == 1:
+                    unfinished_call = MagicMock()
+                    unfinished_call.content.parts = [function_call]
+                    unfinished_call.partial = True
+                    unfinished_call.is_final_response.return_value = False
+                    yield unfinished_call
+            snapshot = MagicMock()
+            snapshot.content.parts = [types.Part(text="Private chain of thought", thought=True)]
+            snapshot.partial = False
+            snapshot.is_final_response.return_value = False
+            yield snapshot
             yield function_event
             if narration_partial:
                 completed_call = MagicMock()

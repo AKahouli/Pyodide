@@ -19,7 +19,7 @@ vi.mock('./api', () => ({
 import { useAppBuilderStudioStreamConnection } from './useStream';
 import { useAppBuilderStudioStore } from './store';
 import { appBuilderStudioStreamService } from './appBuilderStudioStream';
-import { AUTH_STORAGE_KEYS } from '@/lib/api';
+import { setAccessToken } from '@/lib/api/access-token-store';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -56,7 +56,7 @@ function mountConnection() {
 describe('conversation-v2 per-user stream pipe', () => {
   beforeEach(() => {
     MockEventSource.instances.length = 0;
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'test-token');
+    setAccessToken('test-token');
     useAppBuilderStudioStore.getState().reset();
     sendMessageMock.mockClear();
     listEventsMock.mockReset();
@@ -80,7 +80,7 @@ describe('conversation-v2 per-user stream pipe', () => {
   it('replaces the per-user pipe when the token changes', () => {
     mountConnection();
     const original = MockEventSource.instances.at(-1)!;
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'refreshed-token');
+    setAccessToken('refreshed-token');
 
     appBuilderStudioStreamService.reconnectWithNewToken();
 

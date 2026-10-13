@@ -28,7 +28,7 @@ describe('ConversationOutlineRail', () => {
   beforeEach(() => {
     storeMock.messages = displayMessages;
     useConversationUiStore.setState({
-      ...initialConversationUiState,
+      ...initialConversationUiState, outlineCollapsed: false,
       outlineHeadingsByMessageId: {
         a1: [
           { id: 'outline-0-h2-0', level: 2, text: 'Revenue detail' },
@@ -77,16 +77,16 @@ describe('ConversationOutlineRail', () => {
     expect(screen.getByRole('button', { name: 'Revenue detail' })).not.toHaveAttribute('data-active');
   });
 
-  it('collapses to a slim strip and expands again', async () => {
+  it('collapses without taking space and can reopen through the shared state', async () => {
     const user = userEvent.setup();
     render(<ConversationOutlineRail />);
 
     await user.click(screen.getByRole('button', { name: 'outline.collapse' }));
     expect(useConversationUiStore.getState().outlineCollapsed).toBe(true);
-    expect(screen.getByRole('button', { name: 'outline.expand' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Revenue detail' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'outline.expand' }));
+    act(() => useConversationUiStore.getState().setOutlineCollapsed(false));
     expect(useConversationUiStore.getState().outlineCollapsed).toBe(false);
     expect(screen.getByRole('button', { name: 'Revenue detail' })).toBeInTheDocument();
   });
@@ -109,7 +109,7 @@ describe('ConversationOutlineRail', () => {
   });
 
   it('renders an empty-state hint when there are no headings and no questions', () => {
-    useConversationUiStore.setState({ ...initialConversationUiState, outlineHeadingsByMessageId: {} });
+    useConversationUiStore.setState({ ...initialConversationUiState, outlineCollapsed: false, outlineHeadingsByMessageId: {} });
     storeMock.messages = [];
     render(<ConversationOutlineRail />);
 
@@ -118,15 +118,15 @@ describe('ConversationOutlineRail', () => {
     expect(screen.queryByRole('button', { name: 'Revenue detail' })).not.toBeInTheDocument();
   });
 
-  it('stays mounted with the collapse strip even when empty', () => {
+  it('takes no space when collapsed and empty', () => {
     useConversationUiStore.setState({ ...initialConversationUiState, outlineCollapsed: true, outlineHeadingsByMessageId: {} });
     storeMock.messages = [];
     render(<ConversationOutlineRail />);
 
-    expect(screen.getByRole('button', { name: 'outline.expand' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
-  it('never hides itself behind a responsive breakpoint, in both collapse states', () => {
+  it('renders expanded content and removes the collapsed rail', () => {
     const { container, rerender } = render(<ConversationOutlineRail />);
 
     expect(screen.getByRole('navigation', { name: 'outline.title' })).not.toHaveClass('hidden');
@@ -137,7 +137,7 @@ describe('ConversationOutlineRail', () => {
     rerender(<ConversationOutlineRail />);
 
     const collapsedRail = container.querySelector("[data-outline-rail='collapsed']");
-    expect(collapsedRail).not.toBeNull();
-    expect(collapsedRail).not.toHaveClass('hidden');
+    expect(collapsedRail).toBeNull();
+
   });
 });

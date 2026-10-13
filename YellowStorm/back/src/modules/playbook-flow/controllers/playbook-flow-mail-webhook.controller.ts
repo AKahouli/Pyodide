@@ -2,9 +2,15 @@ import { Controller, Get, Post, Query, Req, Res, HttpCode, HttpStatus } from '@n
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
+import { RateLimit } from '@modules/rate-limiter';
 import { Request, Response } from 'express';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailWebhookService } from '../services/playbook-flow-mail-webhook.service';
+
+// Graph posts notifications for every subscribed mailbox from a small set of
+// shared egress IPs, so the ceiling must stay far above normal traffic while
+// still bounding spoofing attempts.
+const MAIL_WEBHOOK_RATE = { limit: 600, windowMs: 60_000, keyPrefix: 'playbook:mail:webhook' };
 
 @ApiExcludeController()
 @SkipResponseWrap()
@@ -31,6 +37,7 @@ export class PlaybookFlowMailWebhookController {
   @Post('webhook')
   @Public()
   @HttpCode(202)
+  @RateLimit(MAIL_WEBHOOK_RATE)
   async receiveWebhook(
     @Query('validationToken') validationToken: string | undefined,
     @Req() req: Request,

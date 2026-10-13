@@ -1,4 +1,5 @@
-import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
+import { API_CONFIG } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/access-token-store';
 import type { AgentEvent, PipeEvent } from './interfaces';
 
 type Listener = (event: PipeEvent) => void;
@@ -36,7 +37,7 @@ class AppBuilderStudioStreamService {
   connect(): void {
     if (this.eventSource) return; // already connected/connecting
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) return;
 
     const url = `${API_CONFIG.baseURL}/app-builder/stream?token=${encodeURIComponent(token)}`;

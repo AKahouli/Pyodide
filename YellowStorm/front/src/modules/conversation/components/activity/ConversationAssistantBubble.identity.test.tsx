@@ -67,6 +67,17 @@ describe('answer producer header', () => {
     }
   });
 
+  it('shows a neutral label while a live reply has not named its agent yet', () => {
+    render(<ConversationAssistantBubble conversationId='c' messageId='m' components={[]} isStreaming showWorking />);
+    expect(screen.getAllByText('stream.activity.assistant').length).toBeGreaterThan(0);
+    expect(screen.queryByText('stream.activity.agentNameUnavailable')).not.toBeInTheDocument();
+  });
+
+  it('names a live reply from its stream start before any activity', () => {
+    render(<ConversationAssistantBubble conversationId='c' messageId='m' agentId='unlisted' agentName='Smart Agent' components={[]} isStreaming showWorking />);
+    expect(screen.getAllByText('Smart Agent').length).toBeGreaterThan(0);
+  });
+
   it('labels unattributable old answers honestly', () => {
     render(<ConversationAssistantBubble conversationId='c' messageId='m' components={[workerTool, { ...answer, data: { content: 'Answer' } }]} isStreaming={false} />);
     expect(screen.getAllByText('stream.activity.agentNameUnavailable').length).toBeGreaterThan(0);

@@ -52,8 +52,16 @@ def apply_corrections(outcome: dict[str, Any],
     result = dict(outcome)
     entities = {e["entityId"]: copy.deepcopy(e) for e in outcome.get("entities", [])}
     order = [e["entityId"] for e in outcome.get("entities", [])]
-    assertions = {(a["entityId"], a["attribute"]): copy.deepcopy(a)
-                  for a in outcome.get("assertions", [])}
+    # The first assertion of a field is the one served (as the merged attribute is); the others
+    # are other sources' values, kept as they are.
+    assertions: dict[tuple[str, str], dict[str, Any]] = {}
+    others: list[dict[str, Any]] = []
+    for assertion in outcome.get("assertions", []):
+        key = (assertion["entityId"], assertion["attribute"])
+        if key in assertions:
+            others.append(copy.deepcopy(assertion))
+        else:
+            assertions[key] = copy.deepcopy(assertion)
     links = {_link_key(r): copy.deepcopy(r) for r in outcome.get("relationships", [])}
     removed_entities: set[str] = set()
     removed_links: set[tuple[str, str, str]] = set()
@@ -101,8 +109,8 @@ def apply_corrections(outcome: dict[str, Any],
                 removed_links.add(key)
                 applied += 1
     result["entities"] = [entities[i] for i in order if i not in removed_entities]
-    result["assertions"] = [a for (entity_id, _), a in assertions.items()
-                            if entity_id not in removed_entities]
+    result["assertions"] = ([a for (entity_id, _), a in assertions.items() if entity_id not in removed_entities]
+                            + [a for a in others if a["entityId"] not in removed_entities])
     result["relationships"] = [
         r for key, r in links.items()
         if key not in removed_links and key[1] not in removed_entities

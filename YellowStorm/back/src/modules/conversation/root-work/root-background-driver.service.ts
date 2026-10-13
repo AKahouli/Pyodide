@@ -43,7 +43,7 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
   }
 
   async ready(fanout = false): Promise<boolean> {
-    return fanout ? this.stream.rootBackgroundReady(true) : this.stream.rootBackgroundReady();
+    return this.stream.rootBackgroundReady(fanout, true);
   }
 
   private async poll() {

@@ -12,7 +12,6 @@ def _silence_noise_loggers() -> None:
         logging.getLogger(_log).propagate = True
     logging.getLogger("uvicorn.access").handlers.clear()
     logging.getLogger("uvicorn.access").propagate = False
-    logging.getLogger("elastic_transport").setLevel(logging.CRITICAL)
     logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.CRITICAL)
     logging.getLogger("litellm").setLevel(logging.CRITICAL)
     logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)

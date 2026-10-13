@@ -107,7 +107,8 @@ describeIntegration('real governed Root native qualification', () => {
     const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController, RootInputController, RootWorkPublicController], providers: [
       { provide: RootWorkPublicService, useValue: new RootWorkPublicService(conversationsFixture as never, work as never,
         jobs, new RootBackgroundEventStore(database.db, results), results,
-        { getActiveStreamSnapshot: () => null } as never, {} as never, { get: () => true } as never) },
+        { getActiveStreamSnapshots: () => [] } as never, {} as never, { get: () => true } as never,
+        { snapshot: async () => [] } as never) },
       { provide: CONVERSATION_STORE, useValue: { findActiveAccessById: async (requestedId: string) => {
         const [row] = await database.db.select().from(conversations).where(eq(conversations.id, requestedId));
         return row ? { ...row, memberIds: [], invitedEmails: [] } : null;

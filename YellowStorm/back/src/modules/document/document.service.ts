@@ -1,17 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  DeleteObjectCommand,
-  HeadObjectCommand,
-  CopyObjectCommand,
-  ListObjectsV2Command,
-  ListObjectsV2CommandOutput,
-  HeadObjectCommandOutput,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
@@ -29,6 +17,11 @@ import {
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
+import {
+  StorageAmbiguousError,
+  StorageNotFoundError,
+  type StorageBackend,
+} from './storage/types';
 
 @Injectable()
 export class DocumentService {
@@ -63,20 +56,16 @@ export class DocumentService {
     return this.connectionService.getHealthStatus();
   }
 
-  private getS3Client(): S3Client {
-    const client = this.connectionService.getS3Client();
-    if (!client) {
+  private getBackend(): StorageBackend {
+    const backend = this.connectionService.getBackend();
+    if (!backend) {
       throw new InternalServerException(undefined, 'Document service is not available');
     }
-    return client;
-  }
-
-  private getBucket(): string {
-    return this.connectionService.getBucket();
+    return backend;
   }
 
   /**
-   * Upload a document to Ceph S3
+   * Upload a document to the configured storage backend
    */
   async upload(
     file: Buffer | Readable,
@@ -126,16 +115,11 @@ export class DocumentService {
     };
 
     try {
-      await this.getS3Client().send(
-        new PutObjectCommand({
-          Bucket: this.getBucket(),
-          Key: objectKey,
-          Body: uploadData,
-          ContentType: mimeType,
-          CacheControl: 'max-age=31536000',
-          Metadata: metadata,
-        }),
-      );
+      await this.getBackend().put(objectKey, uploadData, {
+        contentType: mimeType,
+        cacheControl: 'max-age=31536000',
+        metadata,
+      });
 
       this.logger.log('Document uploaded', {
         id,
@@ -186,18 +170,11 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      const response = await this.getS3Client().send(
-        new GetObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
-
-      if (!response.Body) {
-        throw new BadRequestException('Document not found');
-      }
-
-      return this.streamToBuffer(response.Body as Readable);
+      const { body } = await this.getBackend().getStream(objectKey);
+      return this.streamToBuffer(body);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
-      if (this.isNotFoundError(error)) {
+      if (error instanceof StorageNotFoundError) {
         throw new BadRequestException('Document not found');
       }
 
@@ -214,9 +191,7 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      await this.getS3Client().send(
-        new DeleteObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
+      await this.getBackend().delete(objectKey);
 
       this.logger.log('Document deleted', {
         objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
@@ -239,23 +214,16 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      await this.headObjectWithRetry(objectKey);
-      return true;
+      return (await this.getBackend().head(objectKey)) !== null;
     } catch (error) {
-      if (this.isNotFoundError(error)) {
-        return false;
-      }
-      // Ceph often returns 403 Unknown on HeadObject even when the object
-      // exists (same quirk handled in workspace bulk-complete). After retries,
-      // treat as present so checkExists callers (artifact-url, download-url)
-      // return a signed URL instead of ERR_1000.
-      if (this.isTransientS3Error(error)) {
-        this.logger.warn(
-          'S3 HeadObject still 403 Unknown after retries; assuming object present',
-          {
-            objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
-          },
-        );
+      // Ceph RGW keeps answering 403 Unknown for a short window after a
+      // presigned PUT even though the object landed. Treat it as present so
+      // checkExists callers (artifact-url, download-url) return a signed URL
+      // instead of ERR_1000.
+      if (error instanceof StorageAmbiguousError) {
+        this.logger.warn('Storage could not confirm object state; assuming present', {
+          objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
+        });
         return true;
       }
       const err = error as {
@@ -263,7 +231,7 @@ export class DocumentService {
         message?: string;
         $metadata?: { httpStatusCode?: number };
       };
-      this.logger.error('S3 HeadObject failed (not a 404)', {
+      this.logger.error('Storage head request failed (not a 404)', {
         objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
         errorName: err?.name,
         httpStatusCode: err?.$metadata?.httpStatusCode,
@@ -282,23 +250,10 @@ export class DocumentService {
     }
 
     try {
-      const response = await this.getS3Client().send(
-        new GetObjectCommand({ Bucket: this.getBucket(), Key: objectKey, Range: range }),
-      );
-      if (!response.Body) {
-        throw new BadRequestException('Document not found');
-      }
-      return {
-        body: response.Body as Readable,
-        contentType: response.ContentType,
-        contentLength: response.ContentLength,
-        contentRange: response.ContentRange,
-        acceptRanges: response.AcceptRanges,
-        ...(response.Metadata ? { metadata: response.Metadata } : {}),
-      };
+      return await this.getBackend().getStream(objectKey, range);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
-      if (this.isNotFoundError(error)) {
+      if (error instanceof StorageNotFoundError) {
         throw new BadRequestException('Document not found');
       }
       const err = error as Error;
@@ -316,15 +271,12 @@ export class DocumentService {
   ): Promise<void> {
     this.ensureAvailable();
     try {
-      await this.getS3Client().send(new PutObjectCommand({
-        Bucket: this.getBucket(),
-        Key: objectKey,
-        Body: body,
-        ContentType: contentType,
-        ContentLength: contentLength,
-        CacheControl: 'private, no-store',
-        Metadata: this.normalizeMetadata(metadata),
-      }));
+      await this.getBackend().put(objectKey, body, {
+        contentType,
+        contentLength,
+        cacheControl: 'private, no-store',
+        metadata: this.normalizeMetadata(metadata),
+      });
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to stream object to storage', {
@@ -364,52 +316,34 @@ export class DocumentService {
     const permissions = options.permissions || 'r';
     const isWrite = permissions.includes('w') || permissions.includes('c');
 
-    if (isWrite) {
-      return getSignedUrl(
-        this.getS3Client(),
-        new PutObjectCommand({
-          Bucket: this.getBucket(),
-          Key: objectKey,
-        }),
-        { expiresIn: expirySeconds },
-      );
-    }
-
-    return getSignedUrl(
-      this.getS3Client(),
-      new GetObjectCommand({
-        Bucket: this.getBucket(),
-        Key: objectKey,
-        ResponseContentDisposition: options.contentDisposition,
-      }),
-      { expiresIn: expirySeconds },
-    );
+    return this.getBackend().signedUrl(objectKey, {
+      expirySeconds,
+      write: isWrite,
+      ...(options.contentDisposition ? { contentDisposition: options.contentDisposition } : {}),
+    });
   }
 
   async list(options: DocumentListOptions = {}): Promise<DocumentListResult> {
     this.ensureAvailable();
 
     try {
-      const response: ListObjectsV2CommandOutput = await this.getS3Client().send(
-        new ListObjectsV2Command({
-          Bucket: this.getBucket(),
-          Prefix: options.folder,
-          MaxKeys: options.maxResults || 100,
-          ContinuationToken: options.continuationToken,
-        }),
+      const page = await this.getBackend().list(
+        options.folder,
+        options.maxResults || 100,
+        options.continuationToken,
       );
 
-      const documents: DocumentInfo[] = (response.Contents || []).map((item) => ({
-        name: (item.Key || '').split('/').pop() || item.Key || '',
-        blobPath: item.Key || '',
-        size: item.Size || 0,
+      const documents: DocumentInfo[] = page.objects.map((item) => ({
+        name: item.key.split('/').pop() || item.key,
+        blobPath: item.key,
+        size: item.sizeBytes,
         contentType: 'application/octet-stream',
-        lastModified: item.LastModified || new Date(),
+        lastModified: item.lastModified || new Date(),
       }));
 
       return {
         documents,
-        continuationToken: response.NextContinuationToken,
+        continuationToken: page.continuationToken,
       };
     } catch (error) {
       const err = error as Error;
@@ -427,20 +361,18 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      const response = await this.headObjectWithRetry(objectKey);
+      const metadata = await this.getBackend().head(objectKey);
+      if (!metadata) return null;
 
       return {
         name: objectKey.split('/').pop() || objectKey,
         blobPath: objectKey,
-        size: response.ContentLength || 0,
-        contentType: response.ContentType || 'application/octet-stream',
-        lastModified: response.LastModified || new Date(),
-        metadata: response.Metadata,
+        size: metadata.sizeBytes,
+        contentType: metadata.contentType || 'application/octet-stream',
+        lastModified: metadata.lastModified || new Date(),
+        metadata: metadata.metadata,
       };
     } catch (error) {
-      if (this.isNotFoundError(error)) {
-        return null;
-      }
       const err = error as Error;
       this.logger.error('Failed to get document metadata', {
         errorName: err.name,
@@ -459,13 +391,7 @@ export class DocumentService {
         throw new BadRequestException('Source document not found');
       }
 
-      await this.getS3Client().send(
-        new CopyObjectCommand({
-          Bucket: this.getBucket(),
-          CopySource: `/${this.getBucket()}/${encodeURIComponent(sourceKey)}`,
-          Key: destinationKey,
-        }),
-      );
+      await this.getBackend().copy(sourceKey, destinationKey);
 
       this.logger.log('Document copied', {
         sourceFingerprint: this.storageKeyFingerprint(sourceKey),
@@ -498,9 +424,7 @@ export class DocumentService {
   // ============ Private Methods ============
 
   private getObjectUrl(objectKey: string): string {
-    const base = this.connectionService.getPublicUrl().replace(/\/+$/, '');
-    const bucket = this.getBucket();
-    return `${base}/${bucket}/${objectKey}`;
+    return this.getBackend().publicUrl(objectKey);
   }
 
   private ensureAvailable(): void {
@@ -579,53 +503,6 @@ export class DocumentService {
       stream.on('error', reject);
       stream.on('end', () => { resolve(Buffer.concat(chunks)); });
     });
-  }
-
-  private async headObjectWithRetry(objectKey: string): Promise<HeadObjectCommandOutput> {
-    const maxAttempts = 3;
-    let lastError: unknown;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        return await this.getS3Client().send(
-          new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-        );
-      } catch (error) {
-        lastError = error;
-        if (!this.isTransientS3Error(error) || attempt === maxAttempts) {
-          throw error;
-        }
-
-        const delayMs = 200 * attempt;
-        this.logger.warn('S3 HeadObject transient error, retrying', {
-          objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
-          attempt,
-          maxAttempts,
-          delayMs,
-          httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata
-            ?.httpStatusCode,
-        });
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    throw lastError;
-  }
-
-  private isTransientS3Error(error: unknown): boolean {
-    const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
-    return err?.$metadata?.httpStatusCode === 403 && err?.name === 'Unknown';
-  }
-
-  private isNotFoundError(error: unknown): boolean {
-    const err = error as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
-    return (
-      err?.name === 'NotFound' ||
-      err?.name === 'NoSuchKey' ||
-      err?.Code === 'NoSuchKey' ||
-      err?.Code === 'NotFound' ||
-      err?.$metadata?.httpStatusCode === 404
-    );
   }
 
   private normalizeMetadata(metadata?: Record<string, string>): Record<string, string> {

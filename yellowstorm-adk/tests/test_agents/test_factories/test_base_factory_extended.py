@@ -139,24 +139,6 @@ class TestBaseFactoryExtended:
         assert isinstance(agent, Agent)
         assert len(agent.tools) == 1
 
-    def test_create_agent_with_code_interpreter(self, agent_factory):
-        with patch(
-            "src.smart_rag.agents.factories.base_factory.python_interpreter",
-            new=MagicMock(name="python_interpreter"),
-        ) as mock_python, patch(
-            "src.smart_rag.agents.factories.base_factory.MCPHelper.create_toolsets",
-            return_value=[MagicMock()],
-        ):
-            agent = agent_factory.create_agent(
-                name="Operator",
-                prompt="Run code",
-                chatbot_name="gpt-4o",
-                code_interpreter_tool=True,
-                session_id="sess-1",
-                brain_ids=["brain1"],
-            )
-        assert mock_python in agent.tools
-
     def test_create_agent_with_html_design(self, agent_factory):
         with patch.object(agent_factory, "_create_html_diagram_tool", return_value=MagicMock()):
             agent = agent_factory.create_agent(

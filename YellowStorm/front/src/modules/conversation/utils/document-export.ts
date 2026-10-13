@@ -1,5 +1,6 @@
 import type { Message, MessageComponent } from '../types';
 import { componentsToMarkdown, isVisualConversationComponent } from '../utils';
+import { createOpenUiTextProjector } from '../components/openui/plain-text';
 
 /** One conversational turn in an exported document. */
 export interface ExportBlock {
@@ -101,7 +102,7 @@ export function buildExportBlocks(
   messages.forEach((message, index) => {
     if (message.conversationType !== 'ai') return;
     const components = message.components || [];
-    const markdown = componentsToMarkdown(components);
+    const markdown = componentsToMarkdown(components, createOpenUiTextProjector(message.id, components));
     // Chart/HTML-preview-only answers have no markdown but must still be exported.
     if (!markdown.trim() && !components.some(isVisualConversationComponent)) return;
     const turn: SortedTurn = { time: timeOf(message.createdAt), seq: index, block: { role: 'ai', label: labels.assistant, timestamp: stamp(message.createdAt), markdown, components } };

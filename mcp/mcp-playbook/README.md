@@ -6,13 +6,17 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 
 - `YELLOWSTORM_BACKEND_URL`: NestJS origin, default `http://localhost:3000`.
 - `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: value sent as `X-Internal-Token` to NestJS.
-- `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret sent as `Authorization: Bearer <token>`.
+- `PLAYBOOK_MCP_AUTH_MODE`: `Bearer` (default) or `JWT`.
+- `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret in Bearer mode.
+- `PLAYBOOK_MCP_JWT_PUBLIC_KEY_FILE`, `PLAYBOOK_MCP_JWT_ISSUER`, `PLAYBOOK_MCP_JWT_AUDIENCE`: public PEM, issuer, and audience (`mcp-playbook`) in JWT mode.
 - `MCP_PORT`: Streamable HTTP port, default `8025`.
 - `PLAYBOOK_MCP_TIMEOUT_SECONDS`: backend timeout, constrained to 1-300 seconds.
 - `PLAYBOOK_MCP_MAX_RESPONSE_BYTES`: maximum buffered backend response, default 2 MiB and maximum 8 MiB.
 - `PLAYBOOK_MCP_SEARCH_LIMIT_MAX`: maximum Yellowmind search/list result count, default and maximum `25`.
 
 Bearer authentication is sufficient for MCP initialization and tool inspection. User-scoped tool calls additionally require `X-YellowStorm-User-Id`; callers may provide `X-YellowStorm-Tenant-Id`, `X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id`, and `X-Correlation-Id` as an optional complete actor envelope for authorization and audit correlation. Identity headers are never model tool arguments.
+
+In JWT mode, YellowStorm signs a five-minute RS256 token for the authenticated user. The MCP verifies it and takes the acting user only from `sub`; a caller-supplied user header cannot override it. YellowStorm's connector and ADK runtime renew tokens automatically. Read tools need only the user token; construction calls that use conversation context still require agent, conversation, and correlation headers. The backend checks current Playbook permissions and share grants on each operation.
 
 ## Yellowmind
 
@@ -38,7 +42,7 @@ The YellowStorm Playbook canvas uses its JWT-authenticated `/api/v1/playbooks/:p
 
 - Liveness: `GET /health/live`.
 - Readiness: `GET /health/ready`; readiness fails when required secrets or bounded settings are invalid.
-- Inject both secrets through the deployment secret manager. Never put real values in images, manifests, logs, browser configuration, or connector persistence.
+- Inject the internal service token and the configured ingress credential through the deployment secret manager. Never put real values in images, manifests, logs, browser configuration, or connector persistence.
 - Rotate the ingress token by updating MCP and NestJS together, verify readiness and tool inventory, then allow connector reconciliation.
 - Roll back by disabling connector reconciliation first, then the MCP assistant flag.
 

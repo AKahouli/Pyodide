@@ -30,9 +30,9 @@ def is_leaf_tool(tool) -> bool:
         approval = _approved.get(id(func))
         if approval is not None and approval[0]() is func:
             return approval[1] == "leaf"
-        from src.smart_rag.tools import calculator, render_chart, present_choices
+        from src.smart_rag.tools import calculator, render_chart
         from src.smart_rag.tools.search.toolkit import SearchToolkit
-        if any(func is native for native in (calculator, render_chart, present_choices)):
+        if any(func is native for native in (calculator, render_chart)):
             return True
         owner = getattr(func, "__self__", None)
         methods = ("perform_standard_search", "perform_filtered_search",

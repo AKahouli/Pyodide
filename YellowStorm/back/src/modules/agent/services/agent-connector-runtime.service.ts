@@ -1,5 +1,5 @@
 import { workerExecutionKind } from '../../connector/utils/connector-worker-policy';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 import { LoggerService } from '../../logger';
@@ -9,6 +9,7 @@ import { ConnectorService } from '../../connector/connector.service';
 import { IConnectorResponse } from '../../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
+import { SemanticModelMcpJwtService } from '../../connector/services/semantic-model-mcp-jwt.service';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -23,6 +24,7 @@ export class AgentConnectorRuntimeService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly configService: ConfigService,
+    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
   ) {
     this.logger.setContext(AgentConnectorRuntimeService.name);
   }
@@ -287,6 +289,14 @@ export class AgentConnectorRuntimeService {
       }
     }
 
+    if (userId && this.mcpJwt) {
+      for (const binding of bindings) {
+        const auth = await this.mcpJwt.bindingAuth(binding.mcp_server_url, userId,
+          binding.connector_id, binding.auth_headers, binding.auth_env);
+        binding.auth_headers = auth.headers;
+        binding.auth_env = auth.env;
+      }
+    }
     return bindings;
   }
 

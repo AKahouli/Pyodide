@@ -53,7 +53,11 @@ export class ConversationNameService {
       const litellmModel = chosen ? `litellm_proxy/${chosen.id}` : (await this.modelsService.getDefaultModel())?.litellmModel || '';
 
       const response = await this.callGenerateNameGrpc(chatbotClient, query, litellmModel, username);
-      const generatedName = response.conversation_name || 'New Conversation';
+      const generatedName = response.conversation_name?.trim();
+      if (!generatedName) {
+        // An empty name is a failure, not a title: keep the default instead of persisting a placeholder.
+        throw new Error('Name generation returned an empty name');
+      }
 
       // Update conversation title in database
       await this.conversationService.updateConversationInternal(conversationId, {

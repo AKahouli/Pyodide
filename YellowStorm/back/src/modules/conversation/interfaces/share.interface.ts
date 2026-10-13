@@ -27,6 +27,7 @@ export interface ShareResponse {
   title: string;
   accessToken?: string;
   recipientEmails?: string[];
+  recipientUserIds?: string[];
   forkedConversationIds?: string[];
   notFound?: string[];
   invalid?: string[];

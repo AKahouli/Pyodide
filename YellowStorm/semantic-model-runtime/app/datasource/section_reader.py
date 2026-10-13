@@ -212,6 +212,7 @@ async def read_complete_section_set(connection: Any, *, document_pk: Any,
     merged: dict[int, dict[str, Any]] = {}
     missing: list[int] = []
     last: dict[str, Any] | None = None
+    outline_truncated = False
     while offset < max_total_blocks:
         page_size = min(MAX_BLOCKS, max_total_blocks - offset)
         last = await read_sections(
@@ -221,6 +222,7 @@ async def read_complete_section_set(connection: Any, *, document_pk: Any,
             current = merged.setdefault(section["sectionPk"], {**section, "blocks": []})
             current["blocks"].extend(section["blocks"])
         missing.extend(pk for pk in last["missingTargets"] if pk not in missing)
+        outline_truncated = outline_truncated or bool(last["coverage"].get("outlineTruncated"))
         if last["continuation"] is None:
             break
         offset = int(last["continuation"])
@@ -234,6 +236,8 @@ async def read_complete_section_set(connection: Any, *, document_pk: Any,
             "requestedSections": len(section_pks),
             "returnedSections": len(merged),
             "budgetExhausted": not complete,
+            # The outline itself was cut: sections past its limit were never listed, so never read.
+            "outlineTruncated": outline_truncated,
         },
         "continuation": None if complete else str(offset),
     }

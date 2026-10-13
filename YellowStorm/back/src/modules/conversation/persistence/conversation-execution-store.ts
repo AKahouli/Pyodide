@@ -18,6 +18,8 @@ export interface AdmitExecutionInput {
   conversationId: string;
   userId: string;
   messageId: string;
+  /** Set only for an isolated ROOT turn; absence retains shared-session exclusivity. */
+  nativeSessionId?: string;
   ownerReplicaId: string | null;
   /** Row expiry: running rows stop counting against capacity after it. */
   expiresAt: Date;

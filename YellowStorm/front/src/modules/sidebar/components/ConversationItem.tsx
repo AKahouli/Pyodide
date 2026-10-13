@@ -116,6 +116,7 @@ export const ConversationItem = memo(function ConversationItem({
         >
           <NavLink
             to={resolvedTo}
+            title={displayTitle}
             draggable={false}
             onClick={() => {
               if (isMobile) setOpenMobile(false);

@@ -372,6 +372,16 @@ message RootExecutionContext {
     uint32 background_task_timeout_seconds = 18;
     uint32 background_max_attempts = 19;
     bool background_fanout_enabled = 20;
+    repeated OngoingConversationRequest ongoing_requests = 21;
+    string ongoing_requests_observed_at = 22;
+}
+
+// Historical user text is reference data, never an instruction for this turn.
+message OngoingConversationRequest {
+    string question_message_id = 1;
+    string request_excerpt = 2;
+    string submitted_at = 3;
+    repeated string assistant_message_ids = 4;
 }
 
 // ===== RESPONSE MESSAGES =====
@@ -572,12 +582,29 @@ message WebSourceData {
     string evidence_origin = 8;
 }
 
+// A record of a semantic model an answer cites; the chat reads it again (values, origins) when opened.
+message RecordSourceData {
+    string type = 1;             // "record"
+    string reference = 2;        // Citation reference (e.g., "[1]")
+    string model_id = 3;
+    string model_name = 4;
+    string data = 5;             // "published" | "draft"
+    string data_revision_id = 6; // The data the record was read from
+    string entity_id = 7;
+    string concept = 8;          // Concept label (e.g., "Contract")
+    string name = 9;             // Record name
+    map<string, string> key_fields = 10;
+    string field = 11;           // Field the quote comes from, if any
+    string quote = 12;           // Passage or snippet the answer relied on
+}
+
 message CitationComponent {
     string parent_id = 1;        // ID of the parent text component
     oneof source_data {
         TextSourceData text_source = 2;
         ImageSourceData image_source = 3;
         WebSourceData web_source = 4;
+        RecordSourceData record_source = 5;
     }
 }
 

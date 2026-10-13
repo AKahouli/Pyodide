@@ -20,6 +20,18 @@ describe('Root input read authorization', () => {
     ]);
     expect(work.listWaitingRoots).toHaveBeenCalledWith('conversation', 4);
   });
+  it('projects only the server-owned message binding alongside readable schema fields', async () => {
+    const { work, service } = setup();
+    work.listWaitingRoots.mockResolvedValue([{ id: 'execution', rootAgentId: 'root', resultPayload: { nativeState: {
+      ...nativeState, origin: { assistantMessageId: 'answer', questionMessageId: 'question' }, pendingInputs: [{
+        inputId: 'ask', functionName: 'adk_request_input', responseSchema: { type: 'string', title: 'Interval', examples: ['Daily', '4-hour'] },
+      }],
+    } } }] as never);
+    const inputs = await service.getPendingInputs('conversation', 'owner');
+    expect(inputs[0]).toMatchObject({ originAssistantMessageId: 'answer', originQuestionMessageId: 'question',
+      inputs: [{ responseSchema: { title: 'Interval', examples: ['Daily', '4-hour'] } }] });
+    expect(JSON.stringify(inputs)).not.toContain('private-invocation');
+  });
   it('projects an authorized background approval with its route discriminator and no native credentials', async () => {
     const jobs = { publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, rootAgentId: 'root', jobs: [
       { executionId: 'background', status: 'waiting', nativeState },

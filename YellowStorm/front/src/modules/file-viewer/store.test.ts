@@ -102,6 +102,26 @@ describe('file-viewer store', () => {
     await Promise.all([first, second]);
   });
 
+  it('keeps a loaded document and only navigates when it is opened again', async () => {
+    const load = vi.fn()
+      .mockResolvedValueOnce({ url: 'https://example.test/report.pdf?sig=1' })
+      .mockResolvedValueOnce({ url: 'https://example.test/report.pdf?sig=2' });
+
+    await useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load, { page: 4 },
+    );
+    await useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load, { page: 9, highlightText: 'Second passage' },
+    );
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(useFileViewerStore.getState()).toMatchObject({
+      activeTabId: 'loader:citation-1',
+      tabs: [{ id: 'loader:citation-1', url: 'https://example.test/report.pdf?sig=1', isLoading: false }],
+      pendingNavigation: { tabId: 'loader:citation-1', page: 9, highlightText: 'Second passage' },
+    });
+  });
+
   it('ignores an older completion after closing and reopening a loader tab', async () => {
     const older = createDeferred<{ url: string }>();
     const newer = createDeferred<{ url: string }>();

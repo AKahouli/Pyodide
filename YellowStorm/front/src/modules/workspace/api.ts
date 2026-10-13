@@ -652,8 +652,11 @@ export function uploadToAzure(
     });
 
     xhr.open('PUT', uploadUrl);
-    // Ceph/S3 presigned PUT — do not send Azure-only headers (x-ms-blob-type);
-    // they are ignored or can confuse S3-compatible stores after migration.
+    // x-ms-blob-type is mandatory on an Azure Blob PUT — without it Azure answers
+    // 400 MissingRequiredHeader. It is safe to send unconditionally: an S3
+    // presigned URL only signs `host` (X-Amz-SignedHeaders=host), so Ceph ignores
+    // the extra header and still answers 200.
+    xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.send(file);
   });

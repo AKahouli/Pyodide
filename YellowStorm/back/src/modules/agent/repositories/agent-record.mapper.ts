@@ -27,6 +27,8 @@ export interface AgentRecord {
   email?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  /** Generative UI toggle; absent (fixtures, legacy callers) means off. */
+  genUiEnabled?: boolean;
   knowledgeBases: string[];
   tools: string[];
   skills: string[];
@@ -73,6 +75,7 @@ export function rowToRecord(row: AgentRow, j: AgentJunctions): AgentRecord {
     email: row.email ?? undefined,
     instruction: row.instruction,
     ignorePrePrompt: row.ignorePrePrompt,
+    genUiEnabled: row.genUiEnabled,
     knowledgeBases: j.knowledgeBases.map(trim24),
     tools: j.tools.map(trim24),
     skills: j.skills.map(trim24),

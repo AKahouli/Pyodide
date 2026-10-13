@@ -34,7 +34,8 @@ from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Iterator
 
-from .attachment_text import attachment_text
+from .attachment_text import attachment_text, is_extractable
+from .extraction_limits import ExtractionLimits
 
 EMAIL_ARCHIVE_MIMES = {"application/zip", "application/x-zip-compressed"}
 EML_MIMES = {"message/rfc822"}
@@ -61,15 +62,12 @@ ATTACHMENT_COLUMNS = [
 COLUMNS = {SHEET_MESSAGES: MESSAGE_COLUMNS, SHEET_PARTICIPANTS: PARTICIPANT_COLUMNS,
            SHEET_ATTACHMENTS: ATTACHMENT_COLUMNS}
 
-# Archive bounds: far above the workbook ones, still finite.
+# Archive bounds: far above the workbook ones, still finite. Sizes, nesting and text cuts are the admin's
+# (``extraction_limits``).
 DEFAULT_MAX_ARCHIVE_EMAILS = 50000
 MAX_ARCHIVE_EMAILS_CEILING = 200000
 MAX_ARCHIVE_ENTRIES = 50000
 MAX_ARCHIVE_DECOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
-MAX_EML_BYTES = 100 * 1024 * 1024
-MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
-MAX_NESTING = 3
-BODY_CHARS = 100_000
 
 # Formats the workspace indexer reads; anything else is kept but not read.
 _INDEXABLE = {
@@ -79,6 +77,9 @@ _INDEXABLE = {
     "text/plain": ".txt",
 }
 _INDEXABLE_EXTENSIONS = {ext: mime for mime, ext in _INDEXABLE.items()}
+# Read for the attachments table's text but not copied to the workspace, whose indexer does not read them.
+_READABLE_EXTENSIONS = {**_INDEXABLE_EXTENSIONS, ".csv": "text/csv",
+                        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}
 _ENCRYPTED = {"application/pkcs7-mime", "application/x-pkcs7-mime", "application/pgp-encrypted"}
 _SIGNATURES = {"application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature"}
 
@@ -130,11 +131,13 @@ def _safe_path(name: str) -> str:
     return normalized
 
 
-def iter_raw_emails(data: bytes | str | Any, mime_type: str) -> Iterator[tuple[str, bytes]]:
+def iter_raw_emails(data: bytes | str | Any, mime_type: str,
+                    limits: ExtractionLimits | None = None) -> Iterator[tuple[str, bytes]]:
     """Yield ``(path, raw bytes)`` for each .eml of a zip, or the one .eml."""
+    limits = limits or ExtractionLimits.from_environment()
     if mime_type in EML_MIMES:
         raw = data if isinstance(data, (bytes, bytearray)) else open(data, "rb").read()
-        if len(raw) > MAX_EML_BYTES:
+        if len(raw) > limits.eml_bytes:
             raise ValueError("email_too_large")
         yield "message.eml", bytes(raw)
         return
@@ -163,19 +166,20 @@ def iter_raw_emails(data: bytes | str | Any, mime_type: str) -> Iterator[tuple[s
             path = _safe_path(info.filename)
             if info.flag_bits & 0x1:
                 raise ValueError("archive_encrypted")
-            if info.file_size > MAX_EML_BYTES:
+            if info.file_size > limits.eml_bytes:
                 yield path, b""
                 continue
             with archive.open(info) as entry:
-                raw = entry.read(MAX_EML_BYTES + 1)
-            yield path, raw[:MAX_EML_BYTES]
+                raw = entry.read(limits.eml_bytes + 1)
+            yield path, raw[:limits.eml_bytes]
 
 
 def read_messages(data: bytes | Any, mime_type: str, *, with_payloads: bool = False,
                   with_text: bool = False) -> Iterator[Message]:
     """Parse every e-mail once; copies of one e-mail (same key) are read once."""
     seen: set[str] = set()
-    for path, raw in iter_raw_emails(data, mime_type):
+    limits = ExtractionLimits.from_environment()
+    for path, raw in iter_raw_emails(data, mime_type, limits):
         if not raw:
             key = "msg_" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
             yield _unreadable_message(key, path, "e-mail trop volumineux, non lu")
@@ -184,7 +188,8 @@ def read_messages(data: bytes | Any, mime_type: str, *, with_payloads: bool = Fa
         if key in seen:
             continue
         seen.add(key)
-        yield from _parse(raw, path, key, parent=None, depth=0, seen=seen, with_payloads=with_payloads, with_text=with_text)
+        yield from _parse(raw, path, key, parent=None, depth=0, seen=seen, limits=limits,
+                          with_payloads=with_payloads, with_text=with_text)
 
 
 def _message_key(raw: bytes) -> str:
@@ -395,21 +400,21 @@ def _filename(part: EmailMessage) -> str | None:
 
 def _guess_type(filename: str, declared: str) -> str:
     extension = ("." + filename.rsplit(".", 1)[1].lower()) if "." in filename else ""
-    if declared in ("application/octet-stream", "application/x-octet-stream", "") and extension in _INDEXABLE_EXTENSIONS:
-        return _INDEXABLE_EXTENSIONS[extension]
+    if declared in ("application/octet-stream", "application/x-octet-stream", "") and extension in _READABLE_EXTENSIONS:
+        return _READABLE_EXTENSIONS[extension]
     return declared
 
 
-def _status(content_type: str, payload: bytes | None, filename: str) -> str:
+def _status(content_type: str, payload: bytes | None, filename: str, limits: ExtractionLimits) -> str:
     if payload is None:
         return "illisible"
     if content_type in _ENCRYPTED or filename.lower().endswith((".p7m", ".pgp", ".gpg")):
         return "chiffrée"
-    if len(payload) > MAX_ATTACHMENT_BYTES:
+    if len(payload) > limits.attachment_bytes:
         return "trop volumineuse"
     if content_type == "application/pdf" and b"/Encrypt" in payload[:200000]:
         return "chiffrée"
-    if content_type in _INDEXABLE or content_type == "message/rfc822":
+    if content_type in _INDEXABLE or is_extractable(content_type) or content_type == "message/rfc822":
         return "lue"
     return "non prise en charge"
 
@@ -479,7 +484,7 @@ def read_tnef(data: bytes) -> tuple[list[tuple[str, bytes]], str]:
 # ---------------------------------------------------------------- one e-mail
 
 def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
-           seen: set[str], with_payloads: bool, with_text: bool = False) -> Iterator[Message]:
+           seen: set[str], limits: ExtractionLimits, with_payloads: bool, with_text: bool = False) -> Iterator[Message]:
     anomalies: list[str] = []
     try:
         message: EmailMessage = BytesParser(policy=policy.default).parsebytes(raw)  # type: ignore[assignment]
@@ -536,9 +541,9 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             index += 1
             filename = _filename(part) or (str(inner_message.get("Subject") or "e-mail joint") + ".eml"
                                            if inner_message is not None else "e-mail joint.eml")
-            attachments.append(_attachment(key, index, filename, "message/rfc822", payload,
+            attachments.append(_attachment(key, index, filename, "message/rfc822", payload, limits,
                                            inline=False, is_email=True, with_payloads=with_payloads, with_text=with_text))
-            if payload and depth < MAX_NESTING:
+            if payload and depth < limits.nesting:
                 nested.append((payload, f"{path}#{index}"))
             continue
         if part is not message and not _is_attachment(part, body_part):
@@ -563,15 +568,16 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             for inner_name, inner_payload in inner_files:
                 index += 1
                 attachments.append(_attachment(key, index, inner_name, _guess_type(inner_name, "application/octet-stream"),
-                                               inner_payload, inline=False, is_email=False, with_payloads=with_payloads, with_text=with_text))
+                                               inner_payload, limits, inline=False, is_email=False,
+                                               with_payloads=with_payloads, with_text=with_text))
             continue
         index += 1
-        attachments.append(_attachment(key, index, filename, content_type, payload,
+        attachments.append(_attachment(key, index, filename, content_type, payload, limits,
                                        inline=inline, is_email=False, with_payloads=with_payloads, with_text=with_text))
 
-    full_body = _bounded_body(text, anomalies, "corps complet")
+    full_body = _bounded_body(text, anomalies, "corps complet", limits.body_chars)
     # A forward or reply that adds nothing of its own: its body is the quoted message.
-    body = _bounded_body(new_text, anomalies, "corps") if new_text.strip() else full_body
+    body = _bounded_body(new_text, anomalies, "corps", limits.body_chars) if new_text.strip() else full_body
     recipients = [p["adresse"] for p in participants if p["role"] in ("destinataire", "copie")]
     row = {
         "cle_message": key,
@@ -601,15 +607,15 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             continue
         seen.add(nested_key)
         yield from _parse(payload, nested_path, nested_key, parent=key, depth=depth + 1,
-                          seen=seen, with_payloads=with_payloads, with_text=with_text)
+                          seen=seen, limits=limits, with_payloads=with_payloads, with_text=with_text)
 
 
-def _bounded_body(text: str, anomalies: list[str], label: str) -> str | None:
-    """The body as written (line breaks kept), cut at ``BODY_CHARS`` with a note when longer."""
+def _bounded_body(text: str, anomalies: list[str], label: str, limit: int) -> str | None:
+    """The body as written (line breaks kept), cut at ``limit`` characters with a note when longer."""
     body = re.sub(r"[ \t]+\n", "\n", text).strip()
-    if len(body) > BODY_CHARS:
-        anomalies.append(f"{label} tronqué à {BODY_CHARS} caractères")
-        body = body[:BODY_CHARS].rstrip() + "…"
+    if len(body) > limit:
+        anomalies.append(f"{label} tronqué à {limit} caractères")
+        body = body[:limit].rstrip() + "…"
     return body or None
 
 
@@ -636,13 +642,13 @@ def _parts(message: EmailMessage) -> Iterator[EmailMessage]:
 
 
 def _attachment(message_key: str, index: int, filename: str, content_type: str,
-                payload: bytes | None, *, inline: bool, is_email: bool,
+                payload: bytes | None, limits: ExtractionLimits, *, inline: bool, is_email: bool,
                 with_payloads: bool, with_text: bool = False) -> Attachment:
     key = _attachment_key(message_key, index)
-    status = _status(content_type, payload, filename)
+    status = _status(content_type, payload, filename, limits)
     # The file's own text, so what an attachment says can be searched like any field.
     # Read only for the attachments table: the other tables would pay for it on every pass.
-    content, content_status = (attachment_text(content_type, payload)
+    content, content_status = (attachment_text(content_type, payload, limits)
                                if with_text and status == "lue" and not is_email else (None, "non extrait"))
     row = {
         "cle_piece_jointe": key,

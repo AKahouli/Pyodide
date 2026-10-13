@@ -12,6 +12,8 @@ export interface CreateDatasetData {
 export interface EvaluationDatasetStore {
   create(data: CreateDatasetData): Promise<DatasetRecord>;
   findByCreator(userId: string): Promise<DatasetRecord[]>;
-  findById(id: string): Promise<DatasetRecord | null>;
-  deleteById(id: string): Promise<void>;
+  /** Null when the dataset does not exist OR belongs to someone else — the two are indistinguishable. */
+  findByIdForCreator(id: string, userId: string): Promise<DatasetRecord | null>;
+  /** No-op when the dataset belongs to someone else. */
+  deleteByIdForCreator(id: string, userId: string): Promise<void>;
 }

@@ -11,6 +11,16 @@ from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1, Invocati
 from src.root_runtime.invocation import NativeInvocationProjection, native_run_options
 
 
+def test_readable_schema_annotations_are_bounded_and_do_not_project_defaults():
+    from src.root_runtime.invocation import _input_schema
+    schema = _input_schema({"type": "string", "title": "x" * 101, "description": "Choose an interval",
+                            "examples": ["Daily", "4-hour", "x" * 201, {}, False, 1, 2], "default": "private"})
+    assert len(schema["title"]) <= 100
+    assert schema["description"] == "Choose an interval"
+    assert schema["examples"] == ["Daily", "4-hour", False, 1]
+    assert "default" not in schema and "enum" not in schema
+
+
 def resume_scope():
     return ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id="execution",
                             resume_intent="resume", native_session_id="session",
@@ -64,6 +74,39 @@ async def test_partial_resume_preserves_other_pending_inputs():
 
 
 @pytest.mark.asyncio
+async def test_streamed_input_waits_for_complete_arguments_before_projection():
+    from src.grpc_generated import chatbot_pb2
+    schema = {"type": "string", "enum": ["ocean", "forest"]}
+    def event(partial, args):
+        return SimpleNamespace(id="same-event", invocation_id="invocation", partial=partial,
+            content=types.Content(parts=[types.Part(function_call=types.FunctionCall(
+                id="choice", name="adk_request_input", args=args))]))
+
+    partial = event(True, {})
+    complete = event(False, {"message": "Ocean or forest?", "response_schema": schema})
+    projection = NativeInvocationProjection(resume_scope(), "session", "root")
+    queue = asyncio.Queue()
+    await projection.observe(partial, queue)
+    assert (await queue.get())["execution_trace"]["lifecycle"] == chatbot_pb2.INVOCATION_LIFECYCLE_STATE_STARTED
+    assert queue.empty() and projection.pending == {} and projection.input_events == set()
+    await projection.observe(complete, queue)
+    trace = (await queue.get())["execution_trace"]
+    assert trace["lifecycle"] == chatbot_pb2.INVOCATION_LIFECYCLE_STATE_WAITING
+    details = trace["pending_inputs"][0]
+    assert details["message"] == "Ocean or forest?" and details["input_version"] == 1
+    assert json.loads(details["response_schema_json"]) == schema
+    await projection.observe(complete, queue)
+    assert projection.input_versions == {"choice": 1}
+
+    restored = NativeInvocationProjection(resume_scope(), "session", "root")
+    sessions = SimpleNamespace(get_session=AsyncMock(return_value=SimpleNamespace(events=[partial, complete])))
+    await restored.restore_pending(sessions, "user", [])
+    assert restored.input_details == projection.input_details
+    await restored.restore_pending(sessions, "user", [{"input_id": "choice"}])
+    assert restored.pending == {} and restored.input_details == {}
+
+
+@pytest.mark.asyncio
 async def test_repeated_input_id_uses_distinct_versions_and_restores_them():
     def event(event_id, part):
         return SimpleNamespace(id=event_id, invocation_id="invocation", content=types.Content(parts=[part]))
@@ -95,7 +138,7 @@ async def test_pending_projection_drops_tool_arguments_and_schema_private_hints(
         types.Part(function_call=types.FunctionCall(id="ask", name="adk_request_input", args={
             "message": "What value?", "payload": {"password": "private-password"},
             "response_schema": {"type": "object", "properties": {"value": {
-                "type": "string", "default": "private-default", "description": "private-description",
+                "type": "string", "default": "private-default", "description": "Choose a view",
             }}, "required": ["value"]},
         })),
     ]))
@@ -106,7 +149,7 @@ async def test_pending_projection_drops_tool_arguments_and_schema_private_hints(
     assert "private-" not in encoded and "https://remote" not in encoded
     assert traces[-1]["pending_inputs"][0] == {"input_id": "confirm", "function_name": "adk_request_confirmation", "input_version": 1}
     assert json.loads(traces[-1]["pending_inputs"][1]["response_schema_json"]) == {
-        "type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"],
+        "type": "object", "properties": {"value": {"type": "string", "description": "Choose a view"}}, "required": ["value"],
     }
 
 

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
@@ -34,6 +34,9 @@ import {
   ResolveReviewItemDto,
   RequestPopulationRefreshDto, RebuildPopulationDto,
   RecordCorrectionDto,
+  GraphOutlineQueryDto,
+  GraphSearchQueryDto,
+  GraphExportDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -46,10 +49,14 @@ import { SemanticSourceMappingService } from '../services/semantic-source-mappin
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
+import { SemanticModelCheckService } from '../services/semantic-model-check.service';
+import { ModelCheckDto } from '../dto/semantic-model-check.dto';
+import { SemanticModelHealthService } from '../services/semantic-model-health.service';
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
-import { GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { CitedRecordQueryDto, GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { SemanticRecordCitationService } from '../services/semantic-record-citation.service';
 import { SemanticGraphSearchService } from '../services/semantic-graph-search.service';
 
 @ApiTags('Semantic Models')
@@ -71,6 +78,9 @@ export class SemanticModelController {
     private readonly reviewQueue: SemanticReviewQueueService,
     private readonly assistant: SemanticModelAssistantService,
     private readonly graphSearch: SemanticGraphSearchService,
+    private readonly recordCitations: SemanticRecordCitationService,
+    private readonly modelCheck: SemanticModelCheckService,
+    private readonly modelHealth: SemanticModelHealthService,
   ) {}
 
   @Get()
@@ -157,6 +167,43 @@ export class SemanticModelController {
     return this.populationRefresh.boundGraph(user._id.toString(), modelId, dataRevisionId);
   }
 
+  @Get(':modelId/age-graph/outline')
+  @ApiOperation({ summary: 'A bounded part of the data graph, without values, with the totals the person may see' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  graphOutline(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: GraphOutlineQueryDto) {
+    return this.populationRefresh.graphOutline(user._id.toString(), modelId, query);
+  }
+
+  @Get(':modelId/age-graph/search')
+  @ApiOperation({ summary: 'Records of the data graph whose values hold the words typed' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  searchGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: GraphSearchQueryDto) {
+    return this.populationRefresh.searchGraph(user._id.toString(), modelId, query.q, query.dataRevisionId, query.limit);
+  }
+
+  @Get(':modelId/age-graph/records/:recordId')
+  @ApiOperation({ summary: "One data graph record's values" })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  graphRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('recordId') recordId: string,@Query('dataRevisionId') dataRevisionId?: string) {
+    return this.populationRefresh.graphRecord(user._id.toString(), modelId, recordId, dataRevisionId);
+  }
+
+  @Get(':modelId/cited-records/:entityId')
+  @ApiOperation({ summary: 'A record a chat answer cited: its values, where each came from, and the documents the person may open' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  citedRecord(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('entityId') entityId: string,@Query() query: CitedRecordQueryDto) {
+    return this.recordCitations.citedRecord(user._id.toString(), modelId, { entityId, data: query.data, dataRevisionId: query.dataRevisionId });
+  }
+
+  @Post(':modelId/age-graph/export')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'The whole data graph for a standalone file (owners and editors)' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  exportGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphExportDto) {
+    const name = [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ') || user.email;
+    return this.populationRefresh.exportGraph({ id: user._id.toString(), name }, modelId, dto);
+  }
+
   @Post(':modelId/graph/impact')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   impact(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphOperationsDto) {
@@ -201,6 +248,24 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   ensureSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
     return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment);
+  }
+
+  @Post(':modelId/search-index/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Stop the build of the search index of the data in use; it is built again on the next explicit request' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index-stop' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  stopSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.stopIndex(user._id.toString(),modelId,dto.environment);
+  }
+
+  @Post(':modelId/search-index/restart')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Stop the build of the search index (a stalled one ends at once) and build it again, reusing what is already embedded' })
+  @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index-restart' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  restartSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.restartIndex(user._id.toString(),modelId,dto.environment);
   }
 
   @Get(':modelId/workspaces')
@@ -404,6 +469,14 @@ export class SemanticModelController {
     return this.populationRefresh.reprojectGraphs(user._id.toString(),modelId);
   }
 
+  @Get(':modelId/check')
+  @ApiOperation({ summary: 'Every inconsistency a preview, build or publish of the draft would hit, checked live and cached by what it covers' })
+  @ApiOkResponse({ type: ModelCheckDto })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  check(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.modelCheck.check(user._id.toString(),modelId);
+  }
+
   @Get(':modelId/population/freshness')
   @ApiOperation({ summary: 'Whether the records in use were built from the model as it is now' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
@@ -541,6 +614,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   reviewQueueList(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.reviewQueue.reviewQueue(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/health')
+  @ApiOperation({ summary: 'How the last run turned rows into records, concept by concept: what went wrong, why, and the fix to try' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  health(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.modelHealth.health(user._id.toString(), modelId);
   }
 
   @Get(':modelId/review-items')

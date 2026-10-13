@@ -16,12 +16,13 @@ settings = get_settings()
 # threads (docker-compose) / solo; re-init via worker_process_init before switching.
 setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
 
-# Create Celery app with Redis broker and backend
+# Create Celery app with Redis broker and backend. No tasks are registered
+# since the attribute-extraction endpoints were removed; the app stays so an
+# existing worker deployment boots (and for future tasks).
 celery_app = Celery(
     'attribute_extraction',
     broker=f'redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}',
     backend=f'redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB + 1}',
-    include=['src.attribute_extraction.tasks']
 )
 
 # Configure Celery settings
@@ -41,12 +42,6 @@ celery_app.conf.update(
     worker_disable_rate_limits=True,  # Disable rate limiting for Windows
     task_always_eager=False,  # Don't run tasks locally
     worker_hijack_root_logger=False,  # Don't hijack root logger
-    task_routes={
-        'attribute-extraction-task': {
-            'queue': 'attribute_extraction',
-            'routing_key': 'attribute_extraction'
-        }
-    }
 )
 
 # Job context envelopes (plan P05): every task execution carries its celery task id

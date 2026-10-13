@@ -453,6 +453,38 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(result.entities[0].provenance.fields.year).toEqual({ method: 'computed_field' });
   });
 
+  it('fills a document field with the document name, workspace id or document id, and refuses another property', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'name', label: 'Name', type: 'text' }, { key: 'workspace', label: 'Workspace', type: 'text' }, { key: 'doc', label: 'Doc', type: 'text' }] }] })
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [{ key: 'name', label: 'Name', type: 'text' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'ACME_2024.pdf',
+      size: 10, createdBy: 'u-2', indexingStatus: 'ready', contentHash: 'sha256:1' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {} }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+    const metadata = [
+      { sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' as const },
+      { sourceField: 'workspace_id', targetAttribute: 'workspace', mode: 'metadata' as const },
+      { sourceField: 'document_id', targetAttribute: 'doc', mode: 'metadata' as const },
+    ];
+
+    const result = await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', fieldMappings: metadata, identityFields: ['doc'],
+    }) as any;
+
+    // The runtime receives the property to read; the preview itself fills the value, as the run does.
+    expect(runtime.previewDocumentFields.mock.calls[0][0].entry.fieldMappings).toEqual(metadata);
+    expect(result.entities[0].values).toEqual({ name: 'ACME_2024.pdf', workspace: 'workspace-1', doc: 'document-1' });
+    expect(result.entities[0].provenance.fields.workspace).toEqual({ method: 'document_metadata' });
+    await expect(service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: 'owner_id', targetAttribute: 'name', mode: 'metadata' }], identityFields: ['name'],
+    })).rejects.toThrow('require document_name, document_id, or workspace_id');
+  });
+
   it('rejects a computed field reading a missing or computed field, and computed fields outside documents', async () => {
     const computedFrom = (name: string) => ({ sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
       computed: { input: { kind: 'field' as const, name }, method: 'split' as const, delimiter: '_', part: 1 } });

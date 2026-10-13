@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS agents (
   email                         varchar(320),                            -- optional
   instruction                   text         NOT NULL DEFAULT '',         -- maxlength 50000
   ignore_pre_prompt             boolean      NOT NULL DEFAULT false,
+  gen_ui_enabled                boolean      NOT NULL DEFAULT false,      -- OpenUI generative UI (0048)
 
   -- Type (agent_types stays in MongoDB)
   agent_type_id                 object_id    NOT NULL,                    -- opaque ref -> Mongo AgentType

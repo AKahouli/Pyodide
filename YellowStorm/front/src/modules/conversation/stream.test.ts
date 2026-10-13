@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationStreamService } from './stream';
+import { setAccessToken } from '@/lib/api/access-token-store';
 
 vi.mock('@/lib/api/config', () => ({
-  AUTH_STORAGE_KEYS: {
-    accessToken: 'accessToken',
-  },
   API_CONFIG: {
     baseURL: 'https://api.example.test',
   },
@@ -65,6 +63,7 @@ describe('conversationStreamService', () => {
   beforeEach(() => {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
     localStorage.clear();
+    setAccessToken(null); // memory store persists across tests in this file
     MockEventSource.reset();
     conversationStreamService.disconnect();
   });
@@ -85,7 +84,7 @@ describe('conversationStreamService', () => {
   });
 
   it('connects and emits stream events to listeners', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -117,7 +116,7 @@ describe('conversationStreamService', () => {
   });
 
   it('handles Nest named SSE events', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -135,7 +134,7 @@ describe('conversationStreamService', () => {
   });
 
   it('opens the pipe synchronously from ensureConnected without blocking the caller', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
 
     conversationStreamService.ensureConnected();
 
@@ -151,7 +150,7 @@ describe('conversationStreamService', () => {
 
   it('carries the last seen event id as the reconnect cursor', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     conversationStreamService.connect();
     const source = MockEventSource.instances[0];
     source.emitNamed('connected', { connectionId: 'conn-1' });
@@ -169,7 +168,7 @@ describe('conversationStreamService', () => {
 
   it('captures the replay cursor from the wrapped wire payload on the default event', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     conversationStreamService.connect();
     const source = MockEventSource.instances[0];
     source.emitNamed('connected', { connectionId: 'conn-1' });
@@ -187,7 +186,7 @@ describe('conversationStreamService', () => {
 
   it('ignores server auto-assigned numeric event ids when tracking the cursor', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     conversationStreamService.connect();
     const source = MockEventSource.instances[0];
     source.emitNamed('connected', { connectionId: 'conn-1' }, '1');
@@ -204,7 +203,7 @@ describe('conversationStreamService', () => {
   });
 
   it('drops the replay cursor when the pipe is disconnected explicitly', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     conversationStreamService.connect();
     MockEventSource.instances[0].emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:9');
 
@@ -216,12 +215,12 @@ describe('conversationStreamService', () => {
   });
 
   it('drops the replay cursor when the auth token changes', () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken('old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:9');
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken('new-token');
     conversationStreamService.connect();
 
     expect(original.closed).toBe(true);
@@ -231,7 +230,7 @@ describe('conversationStreamService', () => {
   });
 
   it('emits stream_resync_required events to listeners', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -246,11 +245,11 @@ describe('conversationStreamService', () => {
   });
 
   it('keeps the replay cursor across a token-refresh reconnect', () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken('old-token');
     conversationStreamService.connect();
     MockEventSource.instances[0].emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:7');
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken('new-token');
     conversationStreamService.reconnectWithNewToken();
 
     expect(MockEventSource.instances).toHaveLength(2);
@@ -260,7 +259,7 @@ describe('conversationStreamService', () => {
 
   it('keeps the replay cursor when the heartbeat watchdog forces a reconnect', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     conversationStreamService.connect();
     const source = MockEventSource.instances[0];
     source.emitNamed('connected', { connectionId: 'conn-1' });
@@ -275,11 +274,11 @@ describe('conversationStreamService', () => {
   });
 
   it('replaces the existing EventSource when the token is refreshed', () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken('old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken('new-token');
     conversationStreamService.reconnectWithNewToken();
 
     expect(original.closed).toBe(true);
@@ -288,12 +287,12 @@ describe('conversationStreamService', () => {
   });
 
   it('replaces a connected pipe when another singleton changes the shared token', () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken('old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken('new-token');
     conversationStreamService.connect();
 
     expect(original.closed).toBe(true);
@@ -303,12 +302,12 @@ describe('conversationStreamService', () => {
 
   it('closes native CONNECTING retries so reconnects can read the latest token', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken('old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken('new-token');
     original.readyState = MockEventSource.CONNECTING;
     original.emitError();
     vi.advanceTimersByTime(1000);
@@ -319,7 +318,7 @@ describe('conversationStreamService', () => {
   });
 
   it('keeps chart data arrays when chart payload arrives as JSON strings', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken('token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -375,7 +374,7 @@ describe('conversationStreamService', () => {
 
   it('schedules a reconnect without a failure dialog when the socket closes before connected', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-abc');
+    setAccessToken('token-abc');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -401,7 +400,7 @@ describe('conversationStreamService', () => {
 
   it('keeps retrying reconnection past the backoff cap without user action', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-abc');
+    setAccessToken('token-abc');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -426,7 +425,7 @@ describe('conversationStreamService', () => {
 
   it('resets to fast retries once the connection recovers', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'token-abc');
+    setAccessToken('token-abc');
     conversationStreamService.connect();
 
     // Drive the backoff out to the cap.

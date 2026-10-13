@@ -4,7 +4,8 @@
 
 import * as React from 'react';
 import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData,
-getAuthGeneration, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
+getAccessToken, getAuthGeneration, isTransientAuthFailure, restoreSessionFromCookie,
+scheduleProactiveRefresh, setAccessToken } from '@/lib/api';
 import { clearDataGrants } from '@/modules/semantic-model/data-plane/data-access-token';
 
 /**
@@ -39,10 +40,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = React.useState<AuthState>(initialState);
 
   const validateStoredSession = React.useCallback(async (): Promise<void> => {
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-    const userJson = localStorage.getItem(AUTH_STORAGE_KEYS.user);
+    let token = getAccessToken();
+    if (!token) {
+      // A fresh page load starts with an empty memory token; the HttpOnly
+      // refresh cookie decides whether a session exists. A network-level
+      // failure is a retryable state, not a logout.
+      try {
+        token = await restoreSessionFromCookie();
+      } catch {
+        setState({ ...initialState, isLoading: false, isAuthTemporarilyUnavailable: true });
+        return;
+      }
+    }
 
-    if (token && userJson) {
+    if (token) {
       let registrationEnabled = true;
       try {
         // Fetch registration status in parallel with auth validation
@@ -99,10 +110,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setState({ ...initialState, isLoading: false, registrationEnabled });
       }
     } else {
-      // No token - guest user, fetch registration status before finishing load.
-      // A missing local access token is not proof the HttpOnly refresh cookie
-      // is absent; the shared client's 401 flow attempts one coordinated
-      // recovery on the first protected dispatch.
+      // No session in the refresh cookie - guest user, fetch registration
+      // status before finishing load.
       try {
         const providers = await authApi.getAuthProviders();
         const classic = providers.find((p) => p.type === 'classic');
@@ -114,7 +123,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
-  // Initialize auth state from localStorage on mount
+  // Initialize auth state on mount: memory token first, then the refresh cookie
   React.useEffect(() => {
     void validateStoredSession();
   }, [validateStoredSession]);
@@ -128,8 +137,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const login = React.useCallback(async (credentials: LoginCredentials): Promise<void> => {
     const response = await authApi.login(credentials);
 
-    // Store access token and user data
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
+    // Keep the access token in memory only; user data stays a localStorage
+    // display cache (not a credential).
+    setAccessToken(response.accessToken);
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
     scheduleProactiveRefresh(response.accessToken);
     // A new principal must never reuse the previous session's data-plane grants.

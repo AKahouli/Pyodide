@@ -58,7 +58,7 @@ export class RegistrationApprovalService {
     });
 
     if (wasInactive && updated) {
-      await this.sendAccessActivatedEmail(updated.email);
+      await this.sendAccessActivatedEmail(updated.id, updated.email);
     }
 
     return this.toDecisionResult(updated ?? user, true);
@@ -123,7 +123,6 @@ export class RegistrationApprovalService {
       });
       if (!result.success) {
         this.logger.error('Failed to send registration notice to super admin', {
-          to,
           userId: notice.userId,
           error: result.error,
         });
@@ -220,11 +219,11 @@ export class RegistrationApprovalService {
     return `${day}/${month}/${year} à ${hour}:${minute}`;
   }
 
-  private async sendAccessActivatedEmail(email: string): Promise<void> {
+  private async sendAccessActivatedEmail(userId: string, email: string): Promise<void> {
     try {
       if (!this.emailService.isAvailable()) {
         this.logger.warn('Email service not available, skipping registration approval email', {
-          email,
+          userId,
         });
         return;
       }
@@ -242,13 +241,13 @@ export class RegistrationApprovalService {
       });
       if (!result.success) {
         this.logger.error('Failed to send registration approval email', {
-          email,
+          userId,
           error: result.error,
         });
       }
     } catch (error) {
       this.logger.error('Failed to send registration approval email', {
-        email,
+        userId,
         error: (error as Error).message,
       });
     }

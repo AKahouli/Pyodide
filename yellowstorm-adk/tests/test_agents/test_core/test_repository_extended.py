@@ -43,17 +43,6 @@ class TestAgentRepositoryExtended:
         repository.set_agents([{"name": "Calc", "tools": ["calculator"]}])
         assert repository.has_search_agents() is False
 
-    def test_has_code_interpreter_detects_tool(self, repository):
-        repository.set_agents(
-            [{"name": "Operator", "tools": ["code interpreter"]}]
-        )
-        assert repository.has_code_interpreter() is True
-
-        repository.set_agents(
-            [{"name": "Operator", "tools": [{"name": "code interpreter"}]}]
-        )
-        assert repository.has_code_interpreter() is True
-
     def test_get_normalized_agent_name_from_object(self, repository):
         agent_obj = MagicMock()
         agent_obj.name = "Report Writer"

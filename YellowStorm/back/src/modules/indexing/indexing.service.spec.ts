@@ -1,6 +1,35 @@
 import { IndexingService } from './indexing.service';
 import type { WorkspaceDocumentRecord } from '../workspace/ports';
 
+describe('IndexingService.deleteDocumentIndex', () => {
+  it('passes the workspace ID and stored file identifiers without a workspace lookup', async () => {
+    const service = Object.create(IndexingService.prototype) as IndexingService;
+    const deleteIndex = jest.fn().mockResolvedValue({ success: true });
+    const findOne = jest.fn().mockResolvedValue({
+      workspaceId: 'workspace-1',
+      path: 'files/report.pdf',
+      filename: 'report.pdf',
+      originalName: 'Original Report.pdf',
+    });
+    Object.assign(service, {
+      enabled: true,
+      documentReadPort: { findOne },
+      indexingClient: { deleteIndex },
+      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+
+    await service.deleteDocumentIndex('document-1', 'workspace-1');
+
+    expect(findOne).toHaveBeenCalledWith({ id: 'document-1', workspaceId: 'workspace-1' });
+    expect(deleteIndex).toHaveBeenCalledWith({
+      documentId: 'document-1',
+      workspaceId: 'workspace-1',
+      filePath: 'files/report.pdf',
+      fileName: 'report.pdf',
+    });
+  });
+});
+
 describe('IndexingService CODE_ONLY guard', () => {
   const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
 

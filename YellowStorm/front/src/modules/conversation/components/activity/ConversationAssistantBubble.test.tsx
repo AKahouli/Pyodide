@@ -21,10 +21,12 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string }) => ({
+  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string; seconds?: number }) => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
+    'stream.activity.agentPrepared': 'Request prepared',
+    'stream.activity.thinking': `Thinking… ${options?.seconds}s`,
     'stream.activity.assistant': 'Assistant',
     'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
     'stream.activity.usingTools': 'Using tools',
@@ -69,6 +71,32 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  it('keeps the background lifecycle visible after the dispatch tool completes', () => {
+    const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
+      components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Dispatched', status: 'completed' as const } }],
+      workActivity: <div data-background-activity>Background execution</div> };
+    const view = render(<ConversationAssistantBubble {...props} workState='running' />);
+    const header = screen.getByRole('button', { name: 'Expand activity' });
+    expect(header).toHaveTextContent('rootWork.status.running');
+    expect(header).not.toHaveTextContent('Completed');
+    expect(header.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+    expect(screen.getByText('Background execution')).toBeVisible();
+    view.rerender(<ConversationAssistantBubble {...props} workState='failed' />);
+    expect(header).toHaveTextContent('rootWork.status.failed');
+    expect(header.querySelector('.animate-spin')).toBeNull();
+  });
+  it('shows waiting rather than success, then animates the bound continuation with reduced-motion support', () => {
+    const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
+      components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Preparing', status: 'completed' as const } }] };
+    const view = render(<ConversationAssistantBubble {...props} requestInputState='waiting' />);
+    const header = screen.getByRole('button', { name: 'Expand activity' });
+    expect(header).toHaveTextContent('rootInput.waiting');
+    expect(header).not.toHaveTextContent('Completed');
+    expect(header.querySelector('.animate-spin')).toBeNull();
+    view.rerender(<ConversationAssistantBubble {...props} requestInputState='continuing' />);
+    expect(header).toHaveTextContent('rootInput.continuing');
+    expect(header.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.redactSensitiveText = true;
@@ -89,6 +117,30 @@ describe('ConversationAssistantBubble', () => {
 
     expect(container.querySelector('[data-mobile-working]')).toHaveClass('md:hidden');
     expect(screen.getAllByText('Using tools')).toHaveLength(2);
+  });
+
+  it('collapses exact adjacent saved reasoning replays without merging actors or tool spans', () => {
+    const data = { summary: 'Inspect the full report', detail: 'Inspect the full report before answering.', status: 'completed', actorId: 'agent-1' };
+    const { container } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[
+      { id: 'a', type: 'agentActivity', data },
+      { id: 'replay', type: 'agentActivity', data },
+      { id: 'other-actor', type: 'agentActivity', data: { ...data, actorId: 'agent-2' } },
+      { id: 'same-prefix', type: 'agentActivity', data: { ...data, detail: 'Inspect the full report with different evidence.' } },
+      { id: 'tool', type: 'toolActivity', data: { toolName: 'search', status: 'completed' } },
+      { id: 'next-span', type: 'agentActivity', data },
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand activity' }));
+    expect(container.querySelectorAll('[data-desktop-activity] [data-agent-summary]')).toHaveLength(4);
+    expect(container.querySelectorAll('[data-desktop-activity] [data-tool-status]')).toHaveLength(1);
+  });
+
+  it('provides localized running text under reduced motion on desktop and mobile', () => {
+    const components = [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Inspect the report', status: 'running' } }];
+    const { container, rerender } = render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming components={components} />);
+    expect(container.querySelector('[data-running-status]')).toHaveTextContent('Running');
+    expect(container.querySelector('[data-running-status]')).toHaveClass('motion-reduce:inline');
+    rerender(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={components} />);
+    expect(container.querySelector('[data-running-status]')).not.toBeInTheDocument();
   });
 
   it('renders tools in arrival order and keeps artifacts and the answer outside the activity pane', () => {
@@ -188,7 +240,7 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
 
     rerender(<ConversationAssistantBubble
       conversationId='conversation-1'
@@ -202,9 +254,74 @@ describe('ConversationAssistantBubble', () => {
 
     const summaries = container.querySelectorAll('[data-agent-summary]');
     expect(summaries).toHaveLength(2);
-    expect(summaries[0]).toHaveTextContent('Preparing your request');
+    expect(summaries[0]).toHaveTextContent('Request prepared');
     expect(summaries[1]).toHaveTextContent('Inspect the financial report');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
+  });
+
+  it('shows a live thinking counter until reasoning text arrives, then the real summary', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'running' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
+
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 3s');
+      expect(container).not.toHaveTextContent('Preparing your request');
+
+      rerender(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: 'Inspect the financial report', status: 'running' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Inspect the financial report');
+      expect(container).not.toHaveTextContent('Thinking');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the thinking counter for the ADK completed placeholder while the message streams', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed', actorName: 'Smart Agent' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 4s');
+      expect(container).not.toHaveTextContent('Preparing your request');
+
+      rerender(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming={false}
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed', actorName: 'Smart Agent' } }]}
+      />);
+      expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not show the thinking counter once the stream is no longer running', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } }]}
+    />);
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
+    expect(container).not.toHaveTextContent('Thinking');
   });
 
   it('distinguishes repeated tool rows by their activity descriptions', () => {
@@ -343,7 +460,7 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Request prepared');
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent(/start|contracts|parallel|call|now/);
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
     expect(screen.getAllByText(/Activate Skill/)).not.toHaveLength(0);
@@ -478,7 +595,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByRole('button', { name: 'Preparing your request, Completed. Show full reasoning' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Request prepared, Completed. Show full reasoning' })).toBeInTheDocument();
     const activityRows = screen.getAllByRole('button', { name: `${repeatedDetail}, Completed. Show full reasoning` });
     expect(activityRows).toHaveLength(3);
     fireEvent.click(activityRows[0]);
@@ -512,7 +629,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByText(/Preparing your request/)).toBeInTheDocument();
+    expect(screen.getByText(/Request prepared/)).toBeInTheDocument();
     expect(screen.getByText(/quarterly revenue/)).toBeInTheDocument();
     expect(screen.getAllByText(/Calculate the totals/)).not.toHaveLength(0);
     expect(screen.queryByText('stream.activity.toolFallback')).not.toBeInTheDocument();
@@ -588,7 +705,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
     expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
     expect(container).not.toHaveTextContent(/authorization|bearer|private-token|password|private-secret/i);
     expect(container.querySelector('[data-desktop-activity] button')).not.toBeInTheDocument();
@@ -625,11 +742,11 @@ describe('ConversationAssistantBubble', () => {
       />
     </>);
 
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Thinking… 0s');
     expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
     const mobileLabels = [...container.querySelectorAll('[data-mobile-activity]')].map((node) => node.textContent);
     expect(mobileLabels).toEqual(expect.arrayContaining([
-      expect.stringContaining('Preparing your request'),
+      expect.stringContaining('Thinking… 0s'),
       expect.stringContaining('Search'),
     ]));
   });
@@ -942,6 +1059,23 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-payload="response"]')).not.toBeInTheDocument();
   });
 
+  it('waits for streaming persistence and reloads the response after completion', async () => {
+    mocks.fetchToolResult.mockRejectedValueOnce(new Error('not persisted'))
+      .mockResolvedValueOnce({ resultJson: JSON.stringify({ matches: 7 }) });
+    const components = [{ id: 'tool-search', type: 'toolActivity' as const,
+      data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search' } }];
+    const { rerender } = render(<ConversationAssistantBubble conversationId='conversation-1'
+      messageId='message-1' isStreaming components={components} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+    expect(await screen.findByText('Waiting for the tool response.')).toBeInTheDocument();
+    expect(screen.queryByText('The response could not be loaded.')).not.toBeInTheDocument();
+    rerender(<ConversationAssistantBubble conversationId='conversation-1'
+      messageId='message-1' isStreaming={false} components={components} />);
+    expect(await screen.findByText(/"matches": 7/)).toBeInTheDocument();
+    expect(mocks.fetchToolResult).toHaveBeenCalledTimes(2);
+  });
+
   it('surfaces a load failure for an on-demand tool response', async () => {
     mocks.fetchToolResult.mockRejectedValue(new Error('network down'));
     render(<ConversationAssistantBubble
@@ -977,7 +1111,8 @@ describe('ConversationAssistantBubble', () => {
     const toggle = screen.getByRole('button', { name: 'Expand activity' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveClass('min-h-11', 'w-full');
-    expect(toggle).toHaveTextContent('Completed in 4m 12s');
+    expect(toggle).toHaveTextContent('rootInput.requestActivity');
+    expect(toggle).not.toHaveTextContent('Completed');
     expect(toggle).toHaveTextContent('2 steps');
     expect(toggle).toHaveTextContent('View process');
     fireEvent.click(toggle);
@@ -1110,7 +1245,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText('Your AI summary is ready.')).toBeInTheDocument();
     expect(screen.getAllByText('AI_Summary.pdf')).not.toHaveLength(0);
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-agent-summary]')[0]).toHaveTextContent('Preparing your request');
+    expect(container.querySelectorAll('[data-agent-summary]')[0]).toHaveTextContent('Request prepared');
   });
 
   it('shows tool states, mobile progress, and retry for a failed response', () => {

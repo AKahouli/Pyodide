@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleToolCall } from './toolCallRelay';
+import { setAccessToken } from '@/lib/api/access-token-store';
 
 /** The Streamable-HTTP SSE body the MCP returns for a tools/call — the backend's
  *  ApiResponse envelope is wrapped in result.content[0].text. */
@@ -12,12 +13,14 @@ function sse(toolText: unknown, isError = false): string {
 function mockFetch(body: string) {
   const f = vi.fn().mockResolvedValue({ text: () => Promise.resolve(body) } as unknown as Response);
   vi.stubGlobal('fetch', f);
-  vi.stubGlobal('localStorage', { getItem: () => 'jwt-abc', setItem: () => {} } as unknown as Storage);
   return f;
 }
 
 describe('handleToolCall (MCP relay, no REST fallback)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAccessToken('jwt-abc');
+  });
 
   it('issues a tools/call to the MCP with the tool name, args, streamId and bearer token', async () => {
     const f = mockFetch(sse({ success: true, data: { runId: 'r', sessionId: 's', accepted: true } }));

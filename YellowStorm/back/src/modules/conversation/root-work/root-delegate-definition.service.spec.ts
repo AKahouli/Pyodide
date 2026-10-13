@@ -1,4 +1,6 @@
 import { RootDelegateDefinitionService } from './root-delegate-definition.service';
+import { logDomainEvent } from '../../logger/logger.service';
+jest.mock('../../logger/logger.service', () => ({ logDomainEvent: jest.fn() }));
 import { freezeRootCapabilityCeiling } from './root-capability-ceiling';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 import { createHash } from 'node:crypto';
@@ -239,6 +241,36 @@ describe('lazy selected root delegate definition', () => {
     expect(completeExecution).toHaveBeenCalledTimes(1);
     await expect(h.service.settle(parentId, 'child', { status: 'completed', fullText: '😀'.repeat(65537) })).rejects.toThrow('durable result limit');
     expect(completeExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, '', '   '])('rejects empty completed output %s before persistence', async (text) => {
+    const h = harness();
+    h.work.getExecution.mockResolvedValue({ id: 'child', role: 'library_worker', parentExecutionId: parentId,
+      resultPayload: { nativeState: { ...h.state, rootContext: { selected_agent_id: agentId } } } } as any);
+    const completeExecution = jest.fn(); Object.assign(h.work, { completeExecution });
+    await expect(h.service.settle(parentId, 'child', { status: 'completed', text })).rejects.toThrow('deliverable');
+    expect(completeExecution).not.toHaveBeenCalled();
+    expect(logDomainEvent).toHaveBeenLastCalledWith('warn', 'worker.execution.rejected', {
+      run_id: 'child', conversation_id: undefined, reason_code: 'empty_deliverable', count: 0 });
+  });
+
+  it.each([true, false])('checks nested artifact availability at settlement (%s)', async (available) => {
+    const h = harness();
+    h.work.getExecution.mockResolvedValue({ id: 'child', conversationId: 'conversation', role: 'library_worker', parentExecutionId: parentId,
+      resultPayload: { nativeState: { ...h.state, rootContext: { selected_agent_id: agentId } } } } as any);
+    const completeExecution = jest.fn().mockResolvedValue({ resultPayload: { status: 'completed' } });
+    Object.assign(h.work, { completeExecution });
+    const pending = h.service.settle(parentId, 'child', { status: 'completed', evidence: [{
+      kind: 'artifact', nativeIdentity: 'file-1', outputOrdinal: 0,
+      payload: { source_object: { metadata: { path: 'report.pdf', availability: available ? 'available' : 'unavailable' } } },
+    }] });
+    if (available) {
+      await expect(pending).resolves.toMatchObject({ status: 'completed' });
+      expect(completeExecution).toHaveBeenCalled();
+    } else {
+      await expect(pending).rejects.toThrow('deliverable');
+      expect(completeExecution).not.toHaveBeenCalled();
+    }
   });
 
   it('isolates run-code output per child and mounts only selected worker documents', async () => {

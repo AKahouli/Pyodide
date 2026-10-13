@@ -6,6 +6,7 @@ import { UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
+import { JWT_ALGORITHM } from '../../auth/constants/jwt.constants';
 
 interface RequestWithSseUser extends Request {
   sseUser?: JwtPayload;
@@ -43,6 +44,7 @@ export class SseAuthGuard implements CanActivate {
         secret: this.configService.get<string>('jwt.secret'),
         issuer: this.configService.get<string>('jwt.issuer'),
         audience: this.configService.get<string>('jwt.audience'),
+        algorithms: [JWT_ALGORITHM],
       });
 
       if (payload.type !== 'access') {

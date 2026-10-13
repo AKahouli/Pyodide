@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AIMessageContent, openCitationSource, type CitationData } from './ai-message-content';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { useRecordCitationStore } from '@/modules/semantic-model/citations/record-citation-store';
 import { fetchRootEvidence, getCitationViewUrl } from '@/modules/conversation/api';
 
 vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn() }));
@@ -31,11 +32,26 @@ describe('openCitationSource', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+  it('keeps unused owned evidence out of the answer while retaining referenced badges', () => {
+    render(<AIMessageContent citationScope={{ conversationId: 'conversation', messageId: 'answer' }} parts={[
+      { type: 'text', content: 'Verified result [1].', citations: [
+        makeCitation({ evidenceId: 'used', executionId: 'worker', reference: '1', source: 'https://example.com/used' }),
+        makeCitation({ evidenceId: 'unused', executionId: 'worker', reference: '2', source: 'https://example.com/unused' }),
+      ] },
+      { type: 'citation', parentId: '', sourceType: 'web', source: 'https://example.com/unreferenced',
+        externalId: '', page: '', pageContent: '', workspaceId: '', evidenceId: 'standalone', executionId: 'worker', reference: '3' },
+    ]} />);
+    expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument();
+  });
 
   it('resolves owned evidence before web routing and uses its registered page and scoped cache key', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    vi.mocked(fetchRootEvidence).mockResolvedValue({ evidenceId: 'evidence', kind: 'citation', producerAgentId: 'worker',
-      url: 'https://storage.test/read', fileName: 'report.pdf', page: 13 });
+    vi.mocked(fetchRootEvidence).mockResolvedValue({
+      evidenceId: 'evidence', kind: 'citation', producerAgentId: 'worker',
+      url: 'https://storage.test/read', fileName: 'report.pdf', page: 13
+    });
     await openCitationSource(makeCitation({ evidenceId: 'evidence', executionId: 'worker', source: 'https://ignored.test', page: '1' }),
       'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' });
     expect(fetchRootEvidence).toHaveBeenCalledWith('conversation', 'worker', 'evidence');
@@ -57,11 +73,43 @@ describe('openCitationSource', () => {
     expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
   });
 
-  it('preserves owned identity through the standalone citation renderer', async () => {
+  it('opens a web source only after owned evidence authorization, using the registered URL', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     vi.mocked(fetchRootEvidence).mockResolvedValue({ evidenceId: 'evidence', kind: 'citation', producerAgentId: 'worker',
-      url: 'https://storage.test/read', fileName: 'report.pdf', page: 13 });
-    render(<AIMessageContent parts={[{ type: 'citation', ...makeCitation({ source: 'report.pdf', reference: '7',
-      evidenceId: 'evidence', executionId: 'worker' }) }]} citationScope={{ conversationId: 'conversation', messageId: 'message' }} />);
+      url: 'https://sqlite.org/backup.html', fileName: 'Document' });
+    await openCitationSource(makeCitation({ evidenceId: 'evidence', executionId: 'worker', sourceType: 'web',
+      source: 'https://ignored.test' }), 'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' });
+    expect(fetchRootEvidence).toHaveBeenCalledWith('conversation', 'worker', 'evidence');
+    expect(openSpy).toHaveBeenCalledWith('https://sqlite.org/backup.html', '_blank', 'noopener,noreferrer');
+    expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
+    vi.mocked(fetchRootEvidence).mockRejectedValueOnce(new Error('denied'));
+    openSpy.mockClear();
+    await expect(openCitationSource(makeCitation({ evidenceId: 'evidence', executionId: 'worker', sourceType: 'web',
+      source: 'https://ignored.test' }), 'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' })).rejects.toThrow('denied');
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens a registered web source when the first cached citation still looks like a document', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    vi.mocked(fetchRootEvidence).mockResolvedValue({ evidenceId: 'evidence', kind: 'citation', sourceKind: 'web',
+      producerAgentId: 'agent', url: 'https://official.test/source', fileName: '' });
+    await openCitationSource(makeCitation({ sourceType: 'text', source: 'evidence:evidence', evidenceId: 'evidence', executionId: 'worker' }),
+      'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' });
+    expect(openSpy).toHaveBeenCalledWith('https://official.test/source', '_blank', 'noopener,noreferrer');
+    expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
+  });
+
+  it('preserves owned identity through the standalone citation renderer', async () => {
+    vi.mocked(fetchRootEvidence).mockResolvedValue({
+      evidenceId: 'evidence', kind: 'citation', producerAgentId: 'worker',
+      url: 'https://storage.test/read', fileName: 'report.pdf', page: 13
+    });
+    render(<AIMessageContent parts={[{
+      type: 'citation', ...makeCitation({
+        source: 'report.pdf', reference: '7',
+        evidenceId: 'evidence', executionId: 'worker'
+      })
+    }]} citationScope={{ conversationId: 'conversation', messageId: 'message' }} />);
     fireEvent.click(screen.getByRole('button', { name: '7' }));
     await waitFor(() => expect(fetchRootEvidence).toHaveBeenCalledWith('conversation', 'worker', 'evidence'));
     expect(vi.mocked(openFileViewerFromUrlLoader).mock.calls[0][4]).toMatchObject({ page: 13 });
@@ -80,6 +128,18 @@ describe('openCitationSource', () => {
       expect(fetchRootEvidence).not.toHaveBeenCalled();
       expect(getCitationViewUrl).not.toHaveBeenCalled();
     });
+
+  it('opens a cited record in the record drawer, not the file viewer', async () => {
+    const record = {
+      modelId: 'm-1', modelName: 'Mails', data: 'published' as const, dataRevisionId: 'rev-1', entityId: 'e-1',
+      concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' }
+    };
+    await openCitationSource(makeCitation({ sourceType: 'record', source: 'CT001', record }), 'sidebar', 'Source',
+      { conversationId: 'conv-1', messageId: 'msg-1' });
+    expect(useRecordCitationStore.getState().target).toEqual(record);
+    expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
+    useRecordCitationStore.getState().close();
+  });
 
   it('opens web citations directly in a new tab without calling the citations API', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);

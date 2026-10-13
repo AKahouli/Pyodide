@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022, 024 and 025).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024, 025, 028, 030, 031, 034, 036 and 037).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -8,13 +8,40 @@ delivery never writes alongside a live one; ``ready`` is final.
 from __future__ import annotations
 
 import json
+import re
+import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
+
+from app.persistence.partitions import (drop_generation_partitions, ensure_generation_partitions,
+                                        with_partition_locks)
+from app.persistence.vector_indexes import build_vector_indexes
+
+# A build with no progress for this long reads as stalled even before its lease runs out. Longer
+# than the longest embedding call a build waits for.
+STALL_AFTER_SECONDS = 600
 
 _GENERATION_COLUMNS = (
     "index_id::text, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
     "state, attempt, owner, job_id::text, expected_count, indexed_count, exact_only_count, "
     "failed_count, reused_count, embedding_calls, last_error_code, created_at, completed_at, "
-    "passage_count, passage_indexed_count, passage_truncated_count, index_settings")
+    "passage_count, passage_indexed_count, passage_truncated_count, index_settings, vector_fingerprint, "
+    "progress_stage, loaded_count, progress_at AS last_progress_at, "
+    "build_mode, build_reason, card_digest, carried_count, rebuilt_count, embedded_count, "
+    "COALESCE(state = 'indexing' AND (lease_until < now() "
+    f"OR progress_at < now() - make_interval(secs => {STALL_AFTER_SECONDS})), false) AS stalled")
+
+# Word index of a text: its words as written, and their French and English stems.
+_LEXICAL_CONFIGS = ("simple", "french", "english")
+
+
+def _tsvector(param: str) -> str:
+    return " || ".join(f"to_tsvector('{config}', {param})" for config in _LEXICAL_CONFIGS)
+
+
+def _tsquery(param: str) -> str:
+    """A request (``documents.lexical_query`` text) matched as written or by its stems."""
+    return "(" + " || ".join(f"to_tsquery('{config}', {param})" for config in _LEXICAL_CONFIGS) + ")"
 
 
 def _generation(row: Any) -> dict[str, Any] | None:
@@ -27,10 +54,15 @@ def _generation(row: Any) -> dict[str, Any] | None:
     return generation
 
 
+# What ``public_generation`` reports of how a build runs, as opposed to what an index holds.
+BUILD_COUNT_KEYS = ("carriedCount", "rebuiltCount", "embeddedCount")
+
+
 def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
     if generation is None:
         return {"indexId": None, "state": "missing", "embeddingFingerprint": None}
     completed = generation.get("completed_at")
+    progressed = generation.get("last_progress_at")
     return {"indexId": generation["index_id"], "state": generation["state"],
             "embeddingFingerprint": generation["embedding_fingerprint"],
             "expectedCount": generation["expected_count"], "indexedCount": generation["indexed_count"],
@@ -40,6 +72,17 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
             "passageCount": generation.get("passage_count", 0),
             "passageIndexedCount": generation.get("passage_indexed_count", 0),
             "passageTruncatedCount": generation.get("passage_truncated_count", 0),
+            "stage": generation.get("progress_stage") if generation["state"] == "indexing" else None,
+            "loadedCount": generation.get("loaded_count", 0),
+            # How the build ran: "incremental" (records unchanged since the previous generation were
+            # carried over) or "full" (and why); NULL before the build starts or for older generations.
+            "buildMode": generation.get("build_mode"), "buildReason": generation.get("build_reason"),
+            "carriedCount": generation.get("carried_count", 0), "rebuiltCount": generation.get("rebuilt_count", 0),
+            "embeddedCount": generation.get("embedded_count", 0),
+            # The worker stopped answering (lease expired, or no progress for a long while): what was
+            # embedded is kept, and the build can be restarted.
+            "stalled": bool(generation.get("stalled")),
+            "lastProgressAt": progressed.isoformat() if hasattr(progressed, "isoformat") else progressed,
             "completedAt": completed.isoformat() if hasattr(completed, "isoformat") else completed}
 
 
@@ -75,15 +118,38 @@ async def get_generation_by_id(pool: Any, index_id: str) -> dict[str, Any] | Non
         "WHERE index_id = $1::uuid", index_id))
 
 
+class _GenerationExists(Exception):
+    """Another caller created the generation first; the partitions made for this attempt are undone."""
+
+
 async def create_generation(pool: Any, *, model_id: str, data_revision_id: str, projection_ref: str,
                             spec_hash: str, fingerprint: str,
-                            index_settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    await pool.execute(
-        "INSERT INTO semantic_graph_search.index_generations "
-        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, index_settings) "
-        "VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
-        model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
-        json.dumps(index_settings, sort_keys=True) if index_settings is not None else None)
+                            index_settings: dict[str, Any] | None = None,
+                            vector_fingerprint: str | None = None) -> dict[str, Any]:
+    """The generation of this revision and embedding profile, created with its partitions (migration
+    031) when it does not exist. The id is chosen here so the partitions exist before the row: attaching
+    them locks the generations table, and that must not upgrade a row lock."""
+    if await get_generation(pool, data_revision_id, fingerprint) is None:
+        index_id = str(uuid.uuid4())
+
+        async def create(connection: Any) -> None:
+            await ensure_generation_partitions(connection, index_id)
+            row = await connection.fetchrow(
+                "INSERT INTO semantic_graph_search.index_generations "
+                "(index_id, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
+                " index_settings, vector_fingerprint) "
+                "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8) "
+                "ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING RETURNING index_id",
+                index_id, model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
+                json.dumps(index_settings, sort_keys=True) if index_settings is not None else None,
+                vector_fingerprint)
+            if row is None:
+                raise _GenerationExists()
+
+        try:
+            await with_partition_locks(pool, create)
+        except _GenerationExists:
+            pass
     generation = await get_generation(pool, data_revision_id, fingerprint)
     assert generation is not None
     return generation
@@ -108,18 +174,32 @@ async def claim_generation(pool: Any, index_id: str, owner: str, lease_seconds: 
     row = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
         "SET state = 'indexing', owner = $2, lease_until = now() + make_interval(secs => $3), "
-        "last_error_code = NULL "
+        "progress_at = now(), last_error_code = NULL "
         "WHERE index_id = $1::uuid AND (state = 'queued' OR (state = 'indexing' "
         "AND (owner = $2 OR lease_until IS NULL OR lease_until < now()))) RETURNING index_id",
         index_id, owner, lease_seconds)
     return row is not None
 
 
+async def adopt_generation(pool: Any, index_id: str, job_id: str, owner: str) -> bool:
+    """Take over a generation another attempt of the same job left held. The caller holds the job's
+    task lease, which is exclusive: whoever owned the generation under this job is gone (a crashed
+    attempt, a restarted worker), so waiting for its lease to run out only strands the build."""
+    row = await pool.fetchrow(
+        "UPDATE semantic_graph_search.index_generations SET owner = NULL, lease_until = NULL "
+        "WHERE index_id = $1::uuid AND state = 'indexing' AND job_id = $2::uuid "
+        "AND owner IS NOT NULL AND owner <> $3 RETURNING index_id", index_id, job_id, owner)
+    return row is not None
+
+
 async def renew_generation(pool: Any, index_id: str, owner: str, lease_seconds: int,
                            embedding_calls: int = 0) -> bool:
+    """Extend the lease. Callers renew only after real progress (a wave stored, a page read, a chunk
+    reused), never on a timer: a build that stops progressing must let its lease run out."""
     row = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
-        "SET lease_until = now() + make_interval(secs => $3), embedding_calls = embedding_calls + $4 "
+        "SET lease_until = now() + make_interval(secs => $3), progress_at = now(), "
+        "embedding_calls = embedding_calls + $4 "
         "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2 RETURNING index_id",
         index_id, owner, lease_seconds, embedding_calls)
     return row is not None
@@ -131,14 +211,14 @@ async def insert_documents(pool: Any, index_id: str, documents: list[dict[str, A
     await pool.executemany(
         "INSERT INTO semantic_graph_search.entity_documents "
         "(index_id, entity_id, concept_id, label, label_key, source_workspaces, search_text, lexical, "
-        " content_hash, status, diagnostics) "
-        "VALUES ($1::uuid, $2, $3, $4, $5, $6::text[], $7, to_tsvector('simple', $8), $9, $10, $11::jsonb) "
+        " content_hash, status, diagnostics, source_digest) "
+        f"VALUES ($1::uuid, $2, $3, $4, $5, $6::text[], $7, {_tsvector('$8')}, $9, $10, $11::jsonb, $12) "
         "ON CONFLICT (index_id, entity_id) DO NOTHING",
         [(index_id, document["entityId"], document["conceptId"], document["label"],
           document["labelKey"], document["sourceWorkspaces"], document["searchText"],
           document["lexicalText"], document["contentHash"],
           "exact_only" if document["exactOnly"] else "pending",
-          json.dumps(document["diagnostics"], sort_keys=True))
+          json.dumps(document["diagnostics"], sort_keys=True), document.get("sourceDigest"))
          for document in documents])
 
 
@@ -154,32 +234,181 @@ async def insert_passages(pool: Any, index_id: str, documents: list[dict[str, An
             "INSERT INTO semantic_graph_search.entity_passages "
             "(index_id, entity_id, ordinal, concept_id, field_key, field_label, start_offset, end_offset, "
             " passage_text, search_text, lexical, content_hash, status, source_workspaces) "
-            "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_tsvector('simple', $11), $12, "
+            f"VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, {_tsvector('$11')}, $12, "
             "'pending', $13::text[]) ON CONFLICT (index_id, entity_id, ordinal) DO NOTHING", rows)
     return len(rows)
+
+
+# Incremental builds ----------------------------------------------------------------------------
+
+# Records carried over per statement. Carried rows meet no vector index (it is built once the generation is
+# filled, see ``vector_indexes``): the chunk bounds the statement's size and the time between two lease renewals.
+CARRY_CHUNK_ROWS = 500
+
+
+async def previous_ready_generation(pool: Any, model_id: str, embedding_fingerprint: str,
+                                    index_id: str) -> dict[str, Any] | None:
+    """The model's latest ready generation with this fingerprint (same embedding profile and index
+    settings), other than ``index_id``: what an incremental build carries records over from."""
+    return _generation(await pool.fetchrow(
+        f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
+        "WHERE model_id = $1 AND embedding_fingerprint = $2 AND state = 'ready' AND index_id <> $3::uuid "
+        "ORDER BY completed_at DESC NULLS LAST, created_at DESC LIMIT 1",
+        model_id, embedding_fingerprint, index_id))
+
+
+async def record_build_plan(pool: Any, index_id: str, owner: str, *, card_digest: str, mode: str,
+                            reason: str | None, carried_from: str | None) -> None:
+    """How this attempt builds the generation. The counts restart at zero: a resumed attempt counts again
+    the records it carries and rebuilds."""
+    await pool.execute(
+        "UPDATE semantic_graph_search.index_generations "
+        "SET card_digest = $3, build_mode = $4, build_reason = $5, carried_from = $6::uuid, "
+        "carried_count = 0, rebuilt_count = 0 "
+        "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2",
+        index_id, owner, card_digest, mode, reason, carried_from)
+
+
+async def revision_entity_ids(pool: Any, revision_id: str, after: str, limit: int) -> list[str]:
+    """Ids of the revision's records after ``after``, in id order."""
+    rows = await pool.fetch(
+        "SELECT id FROM semantic_population.entities WHERE data_revision_id = $1 AND id > $2 "
+        "ORDER BY id LIMIT $3", revision_id, after, limit)
+    return [row["id"] for row in rows]
+
+
+def _workspaces_text(alias: str) -> str:
+    """The workspaces a stored record was read from, sorted, as one text."""
+    return ("(SELECT COALESCE(string_agg(w.id, ',' ORDER BY w.id), '') FROM ("
+            "SELECT DISTINCT src.item -> 'assetRef' ->> 'workspaceId' AS id FROM jsonb_array_elements("
+            f"CASE WHEN jsonb_typeof({alias}.provenance -> 'sources') = 'array' THEN {alias}.provenance -> 'sources' "
+            "ELSE '[]'::jsonb END) AS src(item) "
+            "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '') AS w)")
+
+
+async def entity_digests(pool: Any, revision_id: str, entity_ids: list[str]) -> dict[str, str]:
+    """Per record, a digest of everything its search card is built from: its concept, name, key and
+    attribute values, the workspaces it was read from and the names of the records linked to it (the
+    ones ``linked_names`` puts on the card). A card changes only when this does, so a record whose digest
+    equals that stored with its card in an earlier generation has the same card there."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        f"WITH links AS ({_LINKS_OF}), "
+        "named AS ("
+        "  SELECT DISTINCT links.me, other.id, other.concept_id, other.label "
+        "  FROM links JOIN semantic_population.entities other "
+        "    ON other.data_revision_id = $1 AND other.id = links.other "
+        "  JOIN semantic_population.entities mine ON mine.data_revision_id = $1 AND mine.id = links.me "
+        f"  WHERE other.id <> links.me AND COALESCE(other.label, '') <> '' "
+        f"  AND {_workspaces('other')} <@ {_workspaces('mine')}), "
+        "linked AS (SELECT me, md5(string_agg(concept_id || chr(31) || label || chr(31) || id, chr(30) "
+        "  ORDER BY concept_id, label, id)) AS digest FROM named GROUP BY me) "
+        "SELECT entity.id, md5(concat_ws(chr(31), entity.concept_id, entity.label, entity.attributes::text, "
+        f"  entity.identity_key, {_workspaces_text('entity')}, COALESCE(linked.digest, ''))) AS digest "
+        "FROM semantic_population.entities entity LEFT JOIN linked ON linked.me = entity.id "
+        "WHERE entity.data_revision_id = $1 AND entity.id = ANY($2::text[])",
+        revision_id, list(entity_ids))
+    return {row["id"]: row["digest"] for row in rows}
+
+
+async def document_digests(pool: Any, index_id: str, entity_ids: list[str]) -> dict[str, str | None]:
+    """The digest stored with the card of each of these records in a generation (None: stored without one);
+    a record without a card is absent."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        "SELECT entity_id, source_digest FROM semantic_graph_search.entity_documents "
+        "WHERE index_id = $1::uuid AND entity_id = ANY($2::text[])", index_id, list(entity_ids))
+    return {row["entity_id"]: row["source_digest"] for row in rows}
+
+
+def _rows_of(tag: Any) -> int:
+    """Rows of an ``INSERT 0 n`` command tag."""
+    return int(str(tag).split()[-1]) if tag else 0
+
+
+async def carry_documents(pool: Any, *, from_index: str, to_index: str, entity_ids: list[str]) -> tuple[int, int]:
+    """Copy the cards, passages and vectors of these records from a generation to another, with their
+    digests, in the database. Records already there are left as they are (a resumed build). Returns the
+    cards and passages written."""
+    if not entity_ids:
+        return 0, 0
+    documents = await pool.execute(
+        "INSERT INTO semantic_graph_search.entity_documents "
+        "(index_id, entity_id, concept_id, label, label_key, source_workspaces, search_text, lexical, "
+        " content_hash, embedding, status, diagnostics, source_digest) "
+        "SELECT $2::uuid, entity_id, concept_id, label, label_key, source_workspaces, search_text, lexical, "
+        "  content_hash, embedding, status, diagnostics, source_digest "
+        "FROM semantic_graph_search.entity_documents "
+        "WHERE index_id = $1::uuid AND entity_id = ANY($3::text[]) "
+        "ON CONFLICT (index_id, entity_id) DO NOTHING", from_index, to_index, list(entity_ids))
+    passages = await pool.execute(
+        "INSERT INTO semantic_graph_search.entity_passages "
+        "(index_id, entity_id, ordinal, concept_id, field_key, field_label, start_offset, end_offset, "
+        " passage_text, search_text, lexical, content_hash, embedding, status, source_workspaces) "
+        "SELECT $2::uuid, entity_id, ordinal, concept_id, field_key, field_label, start_offset, end_offset, "
+        "  passage_text, search_text, lexical, content_hash, embedding, status, source_workspaces "
+        "FROM semantic_graph_search.entity_passages "
+        "WHERE index_id = $1::uuid AND entity_id = ANY($3::text[]) "
+        "ON CONFLICT (index_id, entity_id, ordinal) DO NOTHING", from_index, to_index, list(entity_ids))
+    return _rows_of(documents), _rows_of(passages)
+
+
+async def existing_document_ids(pool: Any, index_id: str, entity_ids: list[str]) -> set[str]:
+    """Which of these records already have a card in the generation."""
+    return set(await document_digests(pool, index_id, entity_ids))
 
 
 _VECTOR_TABLES = {"documents": "semantic_graph_search.entity_documents",
                   "passages": "semantic_graph_search.entity_passages"}
 
 
-async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: str,
-                          kind: str = "documents") -> int:
+# Rows reused per statement: a bounded chunk keeps a statement well inside the worker's statement timeout,
+# however large the revision (and writes into the vector index of a generation that already has one).
+CACHE_FILL_CHUNK_ROWS = 500
+
+
+async def fill_from_cache(pool: Any, index_id: str, model_id: str, fingerprint: str | list[str],
+                          kind: str = "documents", *, chunk_rows: int = CACHE_FILL_CHUNK_ROWS,
+                          on_chunk: Callable[[int], Awaitable[bool]] | None = None) -> int:
     """Reuse vectors already computed for the same text: no model call. ``kind``: documents
-    or passages (one cache: a vector depends only on the text and the profile)."""
-    result = await pool.execute(
-        f"UPDATE {_VECTOR_TABLES[kind]} document "
-        "SET embedding = cache.embedding, status = 'ready' "
-        "FROM semantic_graph_search.embedding_cache cache "
-        "WHERE document.index_id = $1::uuid AND document.status = 'pending' "
-        "AND cache.model_id = $2 AND cache.embedding_fingerprint = $3 "
-        "AND cache.content_hash = document.content_hash",
-        index_id, model_id, fingerprint)
-    reused = int(result.split()[-1]) if isinstance(result, str) and result.startswith("UPDATE") else 0
-    if reused:
-        await pool.execute(
-            "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
-            "WHERE index_id = $1::uuid", index_id, reused)
+    or passages (one cache: a vector depends only on the text and the vector space);
+    ``fingerprint``: the cache keys of that space.
+
+    Works ``chunk_rows`` records at a time, in record order (a record's passages go together), so no
+    statement outgrows the timeout on a revision of hundreds of thousands. ``on_chunk`` receives the
+    rows reused so far after each chunk and returns False to stop (the build was stopped, or lost its lease);
+    what was reused stays reused. Returns the rows reused."""
+    fingerprints = [fingerprint] if isinstance(fingerprint, str) else list(fingerprint)
+    table = _VECTOR_TABLES[kind]
+    reused = 0
+    after = ""
+    while True:
+        row = await pool.fetchrow(
+            "WITH chunk AS ("
+            f"  SELECT DISTINCT entity_id FROM {table} "
+            "   WHERE index_id = $1::uuid AND status = 'pending' AND entity_id > $2 "
+            "   ORDER BY entity_id LIMIT $3), "
+            f"updated AS (UPDATE {table} document "
+            "  SET embedding = cache.embedding, status = 'ready' "
+            "  FROM semantic_graph_search.embedding_cache cache "
+            "  WHERE document.index_id = $1::uuid AND document.status = 'pending' "
+            "  AND document.entity_id IN (SELECT entity_id FROM chunk) "
+            "  AND cache.model_id = $4 AND cache.embedding_fingerprint = ANY($5::text[]) "
+            "  AND cache.content_hash = document.content_hash RETURNING 1) "
+            "SELECT (SELECT count(*) FROM updated) AS reused, (SELECT max(entity_id) FROM chunk) AS last_entity",
+            index_id, after, chunk_rows, model_id, fingerprints)
+        if row is None or row["last_entity"] is None:
+            break
+        after = row["last_entity"]
+        if row["reused"]:
+            reused += int(row["reused"])
+            await pool.execute(
+                "UPDATE semantic_graph_search.index_generations SET reused_count = reused_count + $2 "
+                "WHERE index_id = $1::uuid", index_id, int(row["reused"]))
+        if on_chunk is not None and not await on_chunk(reused):
+            break
     return reused
 
 
@@ -235,9 +464,8 @@ async def store_vectors(pool: Any, *, index_id: str, model_id: str, fingerprint:
                  for _, content_hash, vector in vectors])
 
 
-async def finish_generation(pool: Any, index_id: str, owner: str, expected_count: int) -> str:
-    """``ready`` when every record of the revision has a vector or is key-only, and every
-    passage has a vector."""
+async def generation_counts(pool: Any, index_id: str) -> dict[str, int]:
+    """What the generation holds now, counted in its tables: records by status, passages."""
     row = await pool.fetchrow(
         "SELECT count(*) AS total, count(*) FILTER (WHERE status = 'ready') AS ready, "
         "count(*) FILTER (WHERE status = 'exact_only') AS exact_only, "
@@ -247,19 +475,47 @@ async def finish_generation(pool: Any, index_id: str, owner: str, expected_count
     passages = await pool.fetchrow(
         "SELECT count(*) AS total, count(*) FILTER (WHERE status = 'ready') AS ready "
         "FROM semantic_graph_search.entity_passages WHERE index_id = $1::uuid", index_id)
-    complete = (int(row["total"]) == expected_count and int(row["pending"]) == 0
-                and int(passages["ready"]) == int(passages["total"]))
+    return {"total": int(row["total"]), "ready": int(row["ready"]), "exact_only": int(row["exact_only"]),
+            "pending": int(row["pending"]), "truncated": int(row["truncated"]),
+            "passages": int(passages["total"]), "passages_ready": int(passages["ready"])}
+
+
+async def record_progress(pool: Any, index_id: str, owner: str, *, stage: str, loaded: int, expected: int,
+                          indexed: int = 0, exact_only: int = 0, passages: int = 0,
+                          passages_indexed: int = 0, carried: int | None = None, rebuilt: int | None = None,
+                          embedded: int | None = None) -> None:
+    """Where the build is, for whoever follows it: one cheap update per batch, not per record. The
+    final counts are set by ``finish_generation``. ``carried``, ``rebuilt`` and ``embedded`` (None: left
+    as they are) are the records carried over from the previous generation, built again, and embedded."""
+    await pool.execute(
+        "UPDATE semantic_graph_search.index_generations "
+        "SET progress_stage = $3, loaded_count = $4, expected_count = $5, indexed_count = $6, "
+        "exact_only_count = $7, passage_count = $8, passage_indexed_count = $9, "
+        "carried_count = COALESCE($10, carried_count), rebuilt_count = COALESCE($11, rebuilt_count), "
+        "embedded_count = COALESCE($12, embedded_count) "
+        "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2",
+        index_id, owner, stage, loaded, expected, indexed, exact_only, passages, passages_indexed,
+        carried, rebuilt, embedded)
+
+
+async def finish_generation(pool: Any, index_id: str, owner: str, expected_count: int) -> str:
+    """``ready`` when every record of the revision has a vector or is key-only, and every
+    passage has a vector."""
+    counts = await generation_counts(pool, index_id)
+    complete = (counts["total"] == expected_count and counts["pending"] == 0
+                and counts["passages_ready"] == counts["passages"])
     state = "ready" if complete else "failed"
     updated = await pool.fetchrow(
         "UPDATE semantic_graph_search.index_generations "
         "SET state = $3, owner = NULL, lease_until = NULL, expected_count = $4, "
         "indexed_count = $5, exact_only_count = $6, failed_count = $7, "
         "passage_count = $8, passage_indexed_count = $9, passage_truncated_count = $10, "
+        "progress_stage = NULL, loaded_count = $4, "
         "last_error_code = CASE WHEN $3 = 'ready' THEN NULL ELSE 'index_incomplete' END, "
         "completed_at = CASE WHEN $3 = 'ready' THEN now() ELSE NULL END "
         "WHERE index_id = $1::uuid AND state = 'indexing' AND owner = $2 RETURNING state",
-        index_id, owner, state, expected_count, int(row["ready"]), int(row["exact_only"]),
-        int(row["pending"]), int(passages["total"]), int(passages["ready"]), int(row["truncated"]))
+        index_id, owner, state, expected_count, counts["ready"], counts["exact_only"], counts["pending"],
+        counts["passages"], counts["passages_ready"], counts["truncated"])
     return updated["state"] if updated else "lease_lost"
 
 
@@ -273,19 +529,28 @@ async def fail_generation(pool: Any, index_id: str, error_code: str, owner: str 
 
 
 async def prune_generations(pool: Any, model_id: str, keep_recent: int = 2) -> int:
-    """Drop generations no binding serves, beyond the most recent few ready ones."""
-    result = await pool.execute(
-        "DELETE FROM semantic_graph_search.index_generations generation "
-        "WHERE generation.model_id = $1 AND generation.state IN ('ready', 'failed') "
-        "AND NOT EXISTS (SELECT 1 FROM semantic_runtime.active_bindings binding "
-        "  WHERE binding.model_id = generation.model_id "
-        "  AND binding.data_revision_id = generation.data_revision_id) "
-        "AND generation.index_id NOT IN (SELECT recent.index_id "
-        "  FROM semantic_graph_search.index_generations recent "
-        "  WHERE recent.model_id = $1 AND recent.state = 'ready' "
-        "  ORDER BY recent.created_at DESC LIMIT $2)",
-        model_id, keep_recent)
-    return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+    """Drop generations no binding serves, beyond the most recent few ready ones: their partitions
+    first, then their rows."""
+    async def prune(connection: Any) -> int:
+        rows = await connection.fetch(
+            "SELECT generation.index_id::text AS index_id FROM semantic_graph_search.index_generations generation "
+            "WHERE generation.model_id = $1 AND generation.state IN ('ready', 'failed') "
+            "AND NOT EXISTS (SELECT 1 FROM semantic_runtime.active_bindings binding "
+            "  WHERE binding.model_id = generation.model_id "
+            "  AND binding.data_revision_id = generation.data_revision_id) "
+            "AND generation.index_id NOT IN (SELECT recent.index_id "
+            "  FROM semantic_graph_search.index_generations recent "
+            "  WHERE recent.model_id = $1 AND recent.state = 'ready' "
+            "  ORDER BY recent.created_at DESC LIMIT $2) "
+            "FOR UPDATE OF generation",
+            model_id, keep_recent)
+        index_ids = [row["index_id"] for row in rows]
+        await drop_generation_partitions(connection, index_ids)
+        result = await connection.execute(
+            "DELETE FROM semantic_graph_search.index_generations WHERE index_id = ANY($1::uuid[])", index_ids)
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+
+    return await with_partition_locks(pool, prune)
 
 
 # Reads ---------------------------------------------------------------------
@@ -293,22 +558,35 @@ async def prune_generations(pool: Any, model_id: str, keep_recent: int = 2) -> i
 _VISIBLE = "($3::text[] IS NULL OR source_workspaces <@ $3::text[])"
 
 
-async def lexical_candidates(pool: Any, index_id: str, terms: list[str], label_query: str,
+async def lexical_candidates(pool: Any, index_id: str, tsquery: str | None, label_query: str,
                              concept_ids: list[str] | None, allowed_workspaces: list[str] | None,
                              limit: int) -> list[dict[str, Any]]:
-    """Records sharing words with the query, or whose name looks like it."""
-    tsquery = " | ".join(terms) if terms else None
+    """Records sharing words with the query (``documents.lexical_query``), or whose name looks
+    like it."""
     rows = await pool.fetch(
         "SELECT entity_id, "
-        "  COALESCE(ts_rank_cd(lexical, to_tsquery('simple', $4)), 0) "
+        f"  COALESCE(ts_rank_cd(lexical, {_tsquery('$4')}), 0) "
         "  + similarity(label_key, $5) AS score "
         "FROM semantic_graph_search.entity_documents "
         f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "AND (($4::text IS NOT NULL AND lexical @@ to_tsquery('simple', $4)) "
+        f"AND (($4::text IS NOT NULL AND lexical @@ {_tsquery('$4')}) "
         "     OR ($5 <> '' AND label_key % $5)) "
         "ORDER BY score DESC, entity_id LIMIT $6",
         index_id, concept_ids, allowed_workspaces, tsquery, label_query, limit)
     return [{"entityId": row["entity_id"], "score": float(row["score"])} for row in rows]
+
+
+async def reference_candidates(pool: Any, index_id: str, phrases: list[str], concept_ids: list[str] | None,
+                               allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """Records whose name holds every written reference of the request (``documents.reference_phrases``),
+    with the folded name, for the caller to check word boundaries and to order them."""
+    patterns = ["%" + re.sub(r"([\\%_])", r"\\\1", phrase) + "%" for phrase in phrases]
+    rows = await pool.fetch(
+        "SELECT entity_id, label_key FROM semantic_graph_search.entity_documents "
+        f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
+        "AND label_key LIKE ALL ($4::text[]) ORDER BY entity_id LIMIT $5",
+        index_id, concept_ids, allowed_workspaces, patterns, limit)
+    return [{"entityId": row["entity_id"], "labelKey": row["label_key"]} for row in rows]
 
 
 # Neighbours an approximate (HNSW) scan looks at, at least: more finds the true nearest more often.
@@ -359,25 +637,25 @@ def _passage_hits(rows: list[Any], score: str) -> list[dict[str, Any]]:
     return list(records.values())
 
 
-async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
+async def lexical_passage_candidates(pool: Any, index_id: str, tsquery: str | None,
                                      concept_ids: list[str] | None, allowed_workspaces: list[str] | None,
                                      limit: int, per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
-    """Records with a passage sharing words with the query, ranked by their best passage;
-    each with its best ``per_record`` passages."""
-    if not terms:
+    """Records with a passage sharing words with the query (``documents.lexical_query``), ranked
+    by their best passage; each with its best ``per_record`` passages."""
+    if not tsquery:
         return []
     rows = await pool.fetch(
         "WITH scored AS ("
-        "  SELECT entity_id, ordinal, ts_rank_cd(lexical, to_tsquery('simple', $4)) AS score "
+        f"  SELECT entity_id, ordinal, ts_rank_cd(lexical, {_tsquery('$4')}) AS score "
         "  FROM semantic_graph_search.entity_passages "
         f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "  AND lexical @@ to_tsquery('simple', $4)), "
+        f"  AND lexical @@ {_tsquery('$4')}), "
         "ranked AS (SELECT *, row_number() OVER (PARTITION BY entity_id ORDER BY score DESC, ordinal) AS place "
         "  FROM scored), "
         "best AS (SELECT entity_id, score FROM ranked WHERE place = 1 ORDER BY score DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.score FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.score DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, " | ".join(terms), limit, per_record)
+        index_id, concept_ids, allowed_workspaces, tsquery, limit, per_record)
     return _passage_hits(rows, "score")
 
 
@@ -422,16 +700,19 @@ async def passage_texts(pool: Any, index_id: str, keys: list[tuple[str, int]]) -
 
 
 async def exact_entity_ids(pool: Any, revision_id: str, text: str, identity_value: str | None,
-                           concept_ids: list[str] | None, limit: int = 25) -> list[str]:
-    """Records whose id, name or one key value is exactly the query (case aside).
+                           concept_ids: list[str] | None, allowed_workspaces: list[str] | None = None,
+                           limit: int = 25) -> list[str]:
+    """Records whose id, name or one key value is exactly the query (case aside), that the actor
+    may read: the limit applies to those, so records hidden from them never crowd out a readable one.
     Reads the revision itself, so it works before the search index is ready."""
     rows = await pool.fetch(
-        "SELECT id FROM semantic_population.entities "
+        "SELECT id FROM semantic_population.entities entity "
         "WHERE data_revision_id = $1 AND ($4::text[] IS NULL OR concept_id = ANY($4::text[])) "
         "AND (id = $2 OR lower(label) = lower($2) OR ($3::text IS NOT NULL AND EXISTS ("
         "  SELECT 1 FROM jsonb_each_text(identity_key::jsonb) key WHERE key.value = $3))) "
+        f"AND {_readable('entity', '$6')} "
         "ORDER BY id LIMIT $5",
-        revision_id, text, identity_value, concept_ids, limit)
+        revision_id, text, identity_value, concept_ids, limit, allowed_workspaces)
     return [row["id"] for row in rows]
 
 
@@ -451,6 +732,87 @@ async def entity_rows(pool: Any, revision_id: str, entity_ids: list[str]) -> dic
             "provenance": json.loads(provenance) if isinstance(provenance, str) else dict(provenance or {}),
         }
     return result
+
+
+async def fallback_generation(pool: Any, model_id: str, data_revision_id: str) -> dict[str, Any] | None:
+    """The ready generation to search while the wanted one is built: the revision's own (other
+    settings or text format) first, else the model's most recent one (earlier data)."""
+    return _generation(await pool.fetchrow(
+        f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
+        "WHERE model_id = $1 AND state = 'ready' "
+        "ORDER BY (data_revision_id = $2) DESC, completed_at DESC NULLS LAST, created_at DESC LIMIT 1",
+        model_id, data_revision_id))
+
+
+def _workspaces(alias: str) -> str:
+    """The workspaces a stored record was read from, as a text array (none: manual records)."""
+    return ("ARRAY(SELECT DISTINCT src.item -> 'assetRef' ->> 'workspaceId' FROM jsonb_array_elements("
+            f"CASE WHEN jsonb_typeof({alias}.provenance -> 'sources') = 'array' THEN {alias}.provenance -> 'sources' "
+            "ELSE '[]'::jsonb END) AS src(item) "
+            "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '')")
+
+
+def _readable(alias: str, param: str) -> str:
+    """Every workspace the record was read from is in ``param`` (NULL: no restriction)."""
+    return f"({param}::text[] IS NULL OR {_workspaces(alias)} <@ {param}::text[])"
+
+
+_LINKS_OF = (
+    "SELECT source_entity_id AS me, relation_id, 'outgoing' AS direction, target_entity_id AS other "
+    "FROM semantic_population.relationships WHERE data_revision_id = $1 AND state = 'accepted' "
+    "AND source_entity_id = ANY($2::text[]) "
+    "UNION ALL "
+    "SELECT target_entity_id, relation_id, 'incoming', source_entity_id "
+    "FROM semantic_population.relationships WHERE data_revision_id = $1 AND state = 'accepted' "
+    "AND target_entity_id = ANY($2::text[])")
+
+
+async def linked_names(pool: Any, revision_id: str, entity_ids: list[str],
+                       per_concept: int) -> dict[str, list[dict[str, Any]]]:
+    """Per record, the names of the records linked to it (accepted links, either way) that were
+    read from no workspace the record itself was not read from: at most ``per_concept`` per
+    linked concept, in name order, and how many more (``{"conceptId", "more"}``)."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        f"WITH links AS ({_LINKS_OF}), "
+        "named AS ("
+        "  SELECT DISTINCT links.me, other.id, other.concept_id, other.label "
+        "  FROM links JOIN semantic_population.entities other "
+        "    ON other.data_revision_id = $1 AND other.id = links.other "
+        "  JOIN semantic_population.entities mine ON mine.data_revision_id = $1 AND mine.id = links.me "
+        f"  WHERE other.id <> links.me AND COALESCE(other.label, '') <> '' "
+        f"  AND {_workspaces('other')} <@ {_workspaces('mine')}), "
+        "placed AS (SELECT *, row_number() OVER (PARTITION BY me, concept_id ORDER BY label, id) AS place, "
+        "  count(*) OVER (PARTITION BY me, concept_id) AS total FROM named) "
+        "SELECT me, concept_id, label, place, total FROM placed WHERE place <= $3 "
+        "ORDER BY me, concept_id, place",
+        revision_id, list(entity_ids), per_concept)
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        items = result.setdefault(row["me"], [])
+        items.append({"conceptId": row["concept_id"], "name": row["label"]})
+        if row["place"] == per_concept and row["total"] > per_concept:
+            items.append({"conceptId": row["concept_id"], "more": int(row["total"]) - per_concept})
+    return result
+
+
+async def neighbours(pool: Any, revision_id: str, entity_ids: list[str],
+                     allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """The records one accepted link away from ``entity_ids`` (either way) that the actor may
+    read, with the link: at most ``limit`` rows."""
+    if not entity_ids:
+        return []
+    rows = await pool.fetch(
+        f"WITH links AS ({_LINKS_OF}) "
+        "SELECT links.me, links.relation_id, links.direction, other.id AS other, other.concept_id "
+        "FROM links JOIN semantic_population.entities other "
+        "  ON other.data_revision_id = $1 AND other.id = links.other "
+        f"WHERE {_readable('other', '$3')} "
+        "ORDER BY links.me, links.relation_id, other.id LIMIT $4",
+        revision_id, list(entity_ids), allowed_workspaces, limit)
+    return [{"from": row["me"], "relationId": row["relation_id"], "direction": row["direction"],
+             "to": row["other"], "conceptId": row["concept_id"]} for row in rows]
 
 
 async def document_texts(pool: Any, index_id: str, entity_ids: list[str]) -> dict[str, str]:

@@ -4,7 +4,7 @@
  * and event distribution
  */
 
-import { AUTH_STORAGE_KEYS, API_CONFIG } from "@/lib/api";
+import { API_CONFIG, getAccessToken } from "@/lib/api";
 import type { Notification, SSEEvent, SSEEventType } from "./types";
 import { toast } from "sonner";
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -47,7 +47,7 @@ export class NotificationsService {
       return;
     }
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     toast.loading(tNotification("service.toasts.connecting", "Connecting to real time notification services"), { id: "sse-connection" });
     if (!token) {
       console.warn(

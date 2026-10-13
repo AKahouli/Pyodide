@@ -6,9 +6,12 @@ import { parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
 import { useModelsStore, DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
 import * as api from './api';
+import { LiveStreamBuffers, applyLiveChunks, streamKey, type LiveAnswer } from './live-streams';
 import { getStreamErrorMessage } from './utils';
 import { insertMessageChronologically } from './utils/message-order';
 import { conversationStreamService } from './stream';
+import { useRootInputUiStore } from './rootInputUiStore';
+import { useRootWorkStore } from './rootWorkStore';
 import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
@@ -27,6 +30,7 @@ export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
 let currentConversationRequestSequence = 0;
 let currentMessagesRequestSequence = 0;
+let liveAccountGeneration = 0;
 let conversationListRequestSequence = 0;
 let currentStreamRevision = 0;
 let currentRevisionStreamKey: string | null = null;
@@ -374,6 +378,9 @@ function upsertMessage(messages: Message[], message: Message): { messages: Messa
 }
 
 interface ConversationState {
+  pendingSends: Record<string, string>;
+  liveAnswers: Record<string, LiveAnswer>;
+  recoverLiveAnswers: (conversationId: string) => Promise<void>;
   // Conversation list - flat array for simpler CRUD
   conversations: Conversation[];
   conversationSummaries: ConversationSummary[];
@@ -509,7 +516,7 @@ interface ConversationState {
   // Actions - Messages
   fetchMessages: (conversationId: string) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
-  sendMessage: (conversationId: string, payload: SendMessagePayload) => Promise<void>;
+  sendMessage: (conversationId: string, payload: SendMessagePayload, onAccepted?: (assistantMessageId?: string) => void) => Promise<void>;
   updateFeedback: (conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null) => Promise<void>;
   regenerateMessage: (conversationId: string, messageId: string) => Promise<void>;
   reportMessage: (conversationId: string, messageId: string, payload: CreateReportPayload) => Promise<void>;
@@ -524,7 +531,7 @@ interface ConversationState {
   updateUserMessage: (conversationId: string, messageId: string, content: string, agentIds?: string[], memberIds?: string[]) => Promise<void>;
 
   // Actions - Stream
-  stopStream: () => Promise<void>;
+  stopStream: (messageId?: string, conversationId?: string) => Promise<void>;
   onStreamStart: (event: StreamStartEvent) => void;
   onStreamChunk: (event: StreamChunkEvent) => void;
   onStreamComplete: (event: StreamCompleteEvent) => void;
@@ -590,6 +597,14 @@ interface ConversationState {
 
 let lastConversationListParams: Parameters<ConversationState['fetchConversations']>[0] = {};
 
+// Reset only the visible transcript; live executions and pending sends keep their own ownership.
+const emptyConversationTranscript = (): Partial<ConversationState> => ({
+  messages: [], optimisticMessages: [], messagesTotal: 0, messagesCursor: null,
+  messagesHasMore: false, messagesLoadingOlder: false, conversationUsage: null,
+  branchCache: new Map(), activeBranches: new Map(), criticalError: null, inputDisabled: false,
+  replyingToMessage: null, editingMessageId: null,
+});
+
 export const useConversationStore = create<ConversationState>()(
   devtools(
     (set, get) => ({
@@ -620,6 +635,8 @@ export const useConversationStore = create<ConversationState>()(
       streamingMessageId: null,
       streamingQuestionMessageId: null,
       streamingComponents: [],
+      pendingSends: {},
+      liveAnswers: {},
       isStreaming: false,
       pendingLatencyPaint: null,
 
@@ -908,6 +925,7 @@ export const useConversationStore = create<ConversationState>()(
       claimCurrentConversation: (id, conversation, selections) => {
         const cached = conversation ?? get().conversations.find((candidate) => candidate.id === id) ?? null;
         set({
+          ...(get().currentConversationId !== id ? emptyConversationTranscript() : {}),
           currentConversationId: id,
           currentConversation: cached,
           conversationLoading: false,
@@ -923,6 +941,7 @@ export const useConversationStore = create<ConversationState>()(
         const requestSequence = ++currentConversationRequestSequence;
         const isSwitchingConversation = get().currentConversationId !== id;
         set({
+          ...(isSwitchingConversation ? emptyConversationTranscript() : {}),
           conversationLoading: true,
           currentConversationId: id,
           ...(isSwitchingConversation ? { selectedModelId: null, selectedSemanticModelId: null } : {}),
@@ -965,6 +984,7 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Message Actions =====
 
       fetchMessages: async (conversationId) => {
+        void get().recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
         cancelPendingStreamReconciliation();
         const requestSequence = ++currentMessagesRequestSequence;
         const existingStream = get();
@@ -974,7 +994,9 @@ export const useConversationStore = create<ConversationState>()(
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
-        set({
+        const refreshing = existingStream.currentConversationId === conversationId
+          && existingStream.messages.some((message) => message.conversationId === conversationId);
+        set(refreshing ? {} : {
           messagesLoading: true,
           messagesLoadingOlder: false,
           messages: [],
@@ -992,7 +1014,7 @@ export const useConversationStore = create<ConversationState>()(
           });
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
-          const messages = result.items || [];
+          const messages = (result.items || []).filter((message) => message.conversationId === conversationId);
 
           // Find the last user message's modelId
           let lastUserModelId: string | null = null;
@@ -1024,21 +1046,26 @@ export const useConversationStore = create<ConversationState>()(
 
           let hydratedMessages = messages;
           set((s) => {
-            const completedDuringHydration = s.messages.filter((message) => message.isComplete === true);
+            const ownedMessages = s.messages.filter((message) => message.conversationId === conversationId);
+            const completedDuringHydration = ownedMessages.filter((message) => message.isComplete === true);
             const completedById = new Map(completedDuringHydration.map((message) => [message.id, message]));
             hydratedMessages = messages.map((message) => completedById.get(message.id) ?? message);
+            if (refreshing) {
+              const refreshedIds = new Set(hydratedMessages.map((message) => message.id));
+              hydratedMessages = ownedMessages.filter((message) => !refreshedIds.has(message.id)).reduce(insertMessageChronologically, hydratedMessages);
+            }
             for (const message of completedDuringHydration) {
               if (!hydratedMessages.some((candidate) => candidate.id === message.id)) hydratedMessages.push(message);
             }
             return {
               messages: hydratedMessages,
               messagesTotal: Math.max(result.total || 0, hydratedMessages.length),
-              messagesHasMore: result.hasMore ?? (result.totalPages || 1) > 1,
-              messagesCursor: result.nextCursor ?? null,
+              messagesHasMore: refreshing ? s.messagesHasMore : result.hasMore ?? (result.totalPages || 1) > 1,
+              messagesCursor: refreshing ? s.messagesCursor : result.nextCursor ?? null,
               messagesLoading: false,
               conversationUsage: result.conversationUsage ?? null,
-              ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
-              ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
+              ...(!refreshing && lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
+              ...(!refreshing && lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
               branchCache: newBranchCache,
               activeBranches: newActiveBranches,
             };
@@ -1209,13 +1236,41 @@ export const useConversationStore = create<ConversationState>()(
         }
       },
 
-      sendMessage: async (conversationId, payload) => {
+      recoverLiveAnswers: async (conversationId) => {
+        const accountGeneration = liveAccountGeneration;
+        const tracked = Object.values(get().liveAnswers).filter((answer) => answer.conversationId === conversationId);
+        const snapshots = await api.fetchActiveStreams(conversationId);
+        if (accountGeneration !== liveAccountGeneration) return;
+        for (const answer of tracked) {
+          if (snapshots.some((snapshot) => snapshot.messageId === answer.messageId)) continue;
+          const message = await api.fetchMessage(conversationId, answer.messageId);
+          if (accountGeneration !== liveAccountGeneration) return;
+          if (!message.isComplete) continue;
+          finishLiveAnswer(conversationId, answer.messageId);
+          if (get().currentConversationId === conversationId) set((state) => ({ messages: upsertMessage(state.messages, message).messages }));
+        }
+        set((state) => {
+          const liveAnswers = { ...state.liveAnswers };
+          for (const snapshot of snapshots) {
+            const installed = liveBuffers.install(snapshot);
+            if (!installed) continue;
+            const key = streamKey(conversationId, snapshot.messageId);
+            liveAnswers[key] = { ...installed, createdAt: snapshot.createdAt ?? liveAnswers[key]?.createdAt ?? state.messages.find((message) => message.id === snapshot.messageId)?.createdAt ?? '' };
+          }
+          return { liveAnswers };
+        });
+      },
+
+      sendMessage: async (conversationId, payload, onAccepted) => {
+        const accountGeneration = liveAccountGeneration;
+        const requestId = payload.requestId ?? crypto.randomUUID();
+        payload = { ...payload, requestId };
         // Each turn owns a fresh client-metrics window (Phase 0 telemetry). The
         // generation bump also invalidates a deferred completion snapshot from
         // the previous turn so it cannot wipe this turn's early counters.
         clientMetricsGeneration += 1;
         streamMetrics.reset();
-        const tempId = `temp-${Date.now()}`;
+        const tempId = `temp-${crypto.randomUUID()}`;
         const optimisticMsg: Message = {
           id: tempId,
           conversationId,
@@ -1235,6 +1290,7 @@ export const useConversationStore = create<ConversationState>()(
           const inFlightSendConversations = new Set(s.inFlightSendConversations);
           inFlightSendConversations.add(conversationId);
           return {
+            pendingSends: { ...s.pendingSends, [requestId]: conversationId },
             isAwaitingFirstChunk: !payload.memberIds?.length,
             awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
             optimisticMessages: [...s.optimisticMessages, optimisticMsg],
@@ -1259,10 +1315,21 @@ export const useConversationStore = create<ConversationState>()(
           conversationStreamService.ensureConnected();
           streamMetrics.recordClickToPost(performance.now() - sendStartedAt);
           const result = await api.sendMessage(conversationId, apiPayload);
+          if (accountGeneration !== liveAccountGeneration) return;
 
           // Replace optimistic message with real user message (with deduplication).
           // Patch sticky taggedAgentIds when the set actually changes.
           set((s) => {
+            const pendingSends = { ...s.pendingSends };
+            delete pendingSends[requestId];
+            if (s.currentConversationId !== conversationId) return { pendingSends, inFlightSendConversations: new Set(Object.values(pendingSends)), optimisticMessages: s.optimisticMessages.filter((message) => message.id !== tempId) };
+            const liveAnswers = { ...s.liveAnswers };
+            if (result.aiMessageId) {
+              const key = streamKey(conversationId, result.aiMessageId);
+              if (!liveAnswers[key] && !s.messages.some((message) => message.id === result.aiMessageId && message.isComplete) && liveBuffers.start(key)) {
+                liveAnswers[key] = { conversationId, messageId: result.aiMessageId, questionMessageId: result.userMessage.id, revision: 0, components: [], createdAt: result.userMessage.createdAt };
+              }
+            }
             const alreadyExists = s.messages.some((m) => m.id === result.userMessage.id);
             // Insert (not append): SSE may already have delivered AI answers
             // created after this user message while the POST was in flight.
@@ -1271,13 +1338,14 @@ export const useConversationStore = create<ConversationState>()(
             const prevTagged = s.currentConversation?.taggedAgentIds;
             const taggedChanged = !!nextTaggedAgentIds && s.currentConversation?.id === conversationId && (prevTagged?.length !== nextTaggedAgentIds.length || nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged[i]));
             const inFlightSendConversations = new Set(s.inFlightSendConversations);
-            inFlightSendConversations.delete(conversationId);
+            if (!Object.values(pendingSends).includes(conversationId)) inFlightSendConversations.delete(conversationId);
 
             return {
+              pendingSends,
+              liveAnswers,
               messages: nextMessages,
               optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
               messagesTotal: alreadyExists ? s.messagesTotal : s.messagesTotal + 1,
-              selectedModelId: payload.modelId || s.selectedModelId,
               currentConversation: taggedChanged
                 ? {
                     ...s.currentConversation!,
@@ -1289,22 +1357,23 @@ export const useConversationStore = create<ConversationState>()(
             };
           });
 
-          const earlyError = get().earlyStreamErrors.get(conversationId);
+          onAccepted?.(result.aiMessageId);
+          const earlyError = result.aiMessageId ? get().earlyStreamErrors.get(result.aiMessageId) : undefined;
           if (earlyError) {
             const earlyStreamErrors = new Map(get().earlyStreamErrors);
-            earlyStreamErrors.delete(conversationId);
+            earlyStreamErrors.delete(earlyError.messageId);
             set({ earlyStreamErrors });
             if (earlyError.messageId === result.aiMessageId) get().onStreamError(earlyError);
           }
         } catch (err) {
+          if (accountGeneration !== liveAccountGeneration) return;
           // Rollback optimistic message
           const apiError = parseApiError(err);
           set((s) => ({
-            isAwaitingFirstChunk: false,
-            awaitingConversationId: null,
+            pendingSends: Object.fromEntries(Object.entries(s.pendingSends).filter(([id]) => id !== requestId)),
+            ...(s.awaitingConversationId !== conversationId || Object.entries(s.pendingSends).some(([id, conversation]) => id !== requestId && conversation === conversationId) ? {} : { isAwaitingFirstChunk: false, awaitingConversationId: null }),
             optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
-            earlyStreamErrors: new Map([...s.earlyStreamErrors].filter(([errorConversationId]) => errorConversationId !== conversationId)),
-            inFlightSendConversations: new Set([...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId)),
+            inFlightSendConversations: new Set([...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId || Object.entries(s.pendingSends).some(([id, pendingConversation]) => id !== requestId && pendingConversation === conversationId))),
           }));
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
@@ -1460,17 +1529,29 @@ export const useConversationStore = create<ConversationState>()(
 
       // ===== Stream Actions =====
 
-      stopStream: async () => {
-        const { streamingConversationId, streamingMessageId } = get();
+      stopStream: async (messageId, conversationId) => {
+        const streamingConversationId = conversationId ?? get().streamingConversationId;
+        const streamingMessageId = messageId ?? get().streamingMessageId;
         if (!streamingConversationId || !streamingMessageId) return;
         try {
           await api.stopStream(streamingConversationId, streamingMessageId);
-        } catch (err) {
-          console.error('[ConversationStore] stopStream error:', err);
+        } catch {
+          toast.error(translateConversation('input.stopFailed'));
         }
       },
 
       onStreamStart: (event) => {
+        const key = streamKey(event.conversationId, event.messageId);
+        if (!liveBuffers.start(key)) return;
+        // The send response usually installs the answer first; keep it and add
+        // the agent the start event names.
+        set((state) => {
+          const existing = state.liveAnswers[key];
+          const answer = existing
+            ? (event.agentId && !existing.agentId ? { ...existing, agentId: event.agentId, agentName: event.agentName } : existing)
+            : { ...event, revision: 0, components: [], createdAt: event.createdAt ?? state.messages.find((message) => message.id === event.messageId)?.createdAt ?? '' };
+          return answer === existing ? {} : { liveAnswers: { ...state.liveAnswers, [key]: answer } };
+        });
         cancelPendingStreamReconciliation();
         const state = get();
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
@@ -1534,6 +1615,15 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamChunk: (event) => {
+        if (event.messageId) {
+          const key = streamKey(event.conversationId, event.messageId);
+          if (!liveBuffers.push(event)) return;
+          if (!get().liveAnswers[key]) {
+            set((state) => ({ liveAnswers: { ...state.liveAnswers, [key]: { conversationId: event.conversationId, messageId: event.messageId!, revision: 0, components: [], createdAt: '' } } }));
+            void get().recoverLiveAnswers(event.conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
+          }
+          if (get().streamingMessageId && get().streamingMessageId !== event.messageId) return;
+        }
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
@@ -1674,6 +1764,9 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamComplete: async (event) => {
+        if (event.conversationId === get().currentConversationId) useRootWorkStore.getState().refresh();
+        const accountGeneration = liveAccountGeneration;
+        finishLiveAnswer(event.conversationId, event.messageId);
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
         if (pendingStreamReconcileTarget === eventStreamKey) cancelPendingStreamReconciliation();
         if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
@@ -1712,6 +1805,7 @@ export const useConversationStore = create<ConversationState>()(
 
           try {
             const message = await api.fetchMessage(event.conversationId, event.messageId);
+            if (accountGeneration !== liveAccountGeneration) return;
             if (get().currentConversationId === event.conversationId) {
               set((s) => {
                 const result = upsertMessage(s.messages, message);
@@ -1767,6 +1861,7 @@ export const useConversationStore = create<ConversationState>()(
         // Recover the persisted message if its ordered SSE update was missed.
         try {
           const message = await api.fetchMessage(event.conversationId, event.messageId);
+          if (accountGeneration !== liveAccountGeneration || get().currentConversationId !== event.conversationId) return;
           let resolvedMessage = message;
 
           set((s) => {
@@ -1807,6 +1902,7 @@ export const useConversationStore = create<ConversationState>()(
           // Refresh conversations list to update sidebar order (reset to get fresh order)
           get().fetchConversations({ reset: true });
         } catch (err) {
+          if (accountGeneration !== liveAccountGeneration || get().currentConversationId !== event.conversationId) return;
           console.error('[ConversationStore] onStreamComplete fetch error:', err);
           // Still clear streaming state and stale cache entry
           const current = get();
@@ -1832,6 +1928,10 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamError: (event) => {
+        if (event.conversationId === get().currentConversationId) useRootWorkStore.getState().refresh();
+        useRootInputUiStore.getState().failContinuation(event.conversationId, event.messageId);
+        const hadLiveAnswer = !!get().liveAnswers[streamKey(event.conversationId, event.messageId)];
+        finishLiveAnswer(event.conversationId, event.messageId);
         const state = get();
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
         // A failed stream keeps at most partial latency data — drop the
@@ -1846,9 +1946,15 @@ export const useConversationStore = create<ConversationState>()(
         const foregroundMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
         const ownsCompletedError = state.pendingTerminalErrorKey === eventStreamKey && (!foregroundMessageId || foregroundMessageId === event.messageId);
         if (!ownsForegroundStream && !ownsCachedStream && !ownsCompletedError) {
-          if (state.inFlightSendConversations.has(event.conversationId) && !foregroundMessageId) {
+          if (hadLiveAnswer && event.conversationId === state.currentConversationId) {
+            const errorInfo = getStreamErrorMessage(event.errorCode);
+            toast.error(errorInfo.title, { description: errorInfo.description });
+            void get().fetchMessages(event.conversationId);
+          }
+          if (state.inFlightSendConversations.has(event.conversationId)) {
             const earlyStreamErrors = new Map(state.earlyStreamErrors);
-            earlyStreamErrors.set(event.conversationId, event);
+            earlyStreamErrors.set(event.messageId, event);
+            if (earlyStreamErrors.size > 100) earlyStreamErrors.delete(earlyStreamErrors.keys().next().value!);
             set({ earlyStreamErrors });
           }
           return;
@@ -1993,6 +2099,8 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onMessageUpdated: (event) => {
+        const accountGeneration = liveAccountGeneration;
+        if (event.message.isComplete) finishLiveAnswer(event.conversationId, event.messageId);
         const state = get();
         if (event.conversationId !== state.currentConversationId) return;
 
@@ -2077,7 +2185,7 @@ export const useConversationStore = create<ConversationState>()(
         void api
           .fetchMessage(event.conversationId, event.messageId)
           .then((message) => {
-            if (get().currentConversationId !== event.conversationId) return;
+            if (accountGeneration !== liveAccountGeneration || get().currentConversationId !== event.conversationId) return;
             set((s) => {
               // The partial SSE update may arrive before the fetch it triggers. It is newer
               // than a response produced just before correction metadata was persisted.
@@ -2169,6 +2277,7 @@ export const useConversationStore = create<ConversationState>()(
         });
         const conversationId = get().currentConversationId;
         if (!conversationId) return;
+        void get().recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
         void forcedResyncActiveStream(conversationId);
       },
 
@@ -2437,6 +2546,9 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       clearAll: () => {
+        liveAccountGeneration += 1;
+        liveBuffers.clear();
+        set({ liveAnswers: {}, pendingSends: {} });
         streamingBuffer.clear();
         latencyPaint.clear();
         set({
@@ -2586,25 +2698,27 @@ export const useMessagesLoadingOlder = () => useConversationStore((s) => s.messa
 export const useAllMessages = () =>
   useConversationStore(
     useShallow((s) => {
+      const messages = s.messages.filter((message) => message.conversationId === s.currentConversationId);
       // Combine messages with optimistic messages, dedupe by ID / temp content match
       if (s.optimisticMessages.length === 0) {
-        return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
+        return messages.length === 0 ? EMPTY_MESSAGES : messages;
       }
 
-      const seenIds = new Set(s.messages.map((m) => m.id));
+      const seenIds = new Set(messages.map((m) => m.id));
       const newOptimistic = s.optimisticMessages.filter((m) => {
+        if (m.conversationId !== s.currentConversationId) return false;
         if (seenIds.has(m.id)) return false;
         if (m.id.startsWith('temp-') && m.conversationType === 'user') {
-          return !s.messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
+          return !messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
         }
         return true;
       });
 
       if (newOptimistic.length === 0) {
-        return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
+        return messages.length === 0 ? EMPTY_MESSAGES : messages;
       }
 
-      return newOptimistic.reduce(insertMessageChronologically, s.messages);
+      return newOptimistic.reduce(insertMessageChronologically, messages);
     }),
   );
 
@@ -2692,7 +2806,8 @@ export const useDisplayMessages = () =>
       // Filter: for AI messages with a questionMessageId, only show the active branch
       // Also hide all AI siblings when streaming a new regeneration for that question
       return combined.filter((msg) => {
-        if (msg.id === s.streamingMessageId) return false;
+        if (msg.conversationId !== s.currentConversationId) return false;
+        if (msg.id === s.streamingMessageId || s.liveAnswers[streamKey(msg.conversationId, msg.id)]) return false;
         if (msg.conversationType !== 'ai' || !msg.questionMessageId) return true;
         // Hide old AI answers while regenerating/streaming a new one for the same question
         if (s.streamingQuestionMessageId === msg.questionMessageId) return false;
@@ -2716,5 +2831,23 @@ if (typeof window !== 'undefined') {
     if (selectedModelId === previousDefaultId) {
       setSelectedModelId(null);
     }
+  });
+}
+
+const liveBuffers = new LiveStreamBuffers((key, chunks) => {
+  useConversationStore.setState((state) => {
+    const answer = state.liveAnswers[key];
+    return answer ? { liveAnswers: { ...state.liveAnswers, [key]: applyLiveChunks(answer, chunks) } } : {};
+  });
+}, (conversationId) => {
+  void useConversationStore.getState().recoverLiveAnswers(conversationId).catch(() => toast.error(translateConversation('input.recoveryFailed')));
+});
+function finishLiveAnswer(conversationId: string, messageId: string) {
+  const key = streamKey(conversationId, messageId);
+  liveBuffers.finish(key);
+  useConversationStore.setState((state) => {
+    const liveAnswers = { ...state.liveAnswers };
+    delete liveAnswers[key];
+    return { liveAnswers };
   });
 }

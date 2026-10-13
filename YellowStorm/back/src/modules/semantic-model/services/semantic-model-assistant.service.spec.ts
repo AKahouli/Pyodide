@@ -278,6 +278,31 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/1 records have fields too long/);
   });
 
+  it('says which record the search named, and through which links each record was found', async () => {
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'found', modeUsed: 'hybrid', index: { state: 'queued', fallback: { indexId: 'old', sameData: false } },
+        concepts: [{ conceptId: 'c-k', key: 'contract', label: 'Contract' }], unknownConcepts: [],
+        anchors: [{ entityId: 'cust-1', label: 'Carrefour', conceptLabel: 'Customer', linkedCount: 40 }],
+        seeds: [{ entityId: 'k-1', conceptId: 'c-k', conceptLabel: 'Contract', label: 'CT003', keyFields: {}, snippet: 'Type: Contract',
+          matchClass: 'linked', matchedIn: 'link', rank: 1, diagnostics: {}, provenance: [],
+          via: { entityId: 'cust-1', label: 'Carrefour', conceptLabel: 'Customer', links: 1, path: [{ relation: 'has_contract', direction: 'outgoing' }] } }],
+        hasMore: true, coverage: { expectedCount: 10, indexedCount: 10, exactOnlyCount: 0 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'contrats de Carrefour', concepts: ['Contract'] });
+    expect(result).toMatchObject({
+      foundThrough: [{ entityId: 'cust-1', concept: 'Customer', name: 'Carrefour', linkedRecords: 40 }],
+      records: [{ entityId: 'k-1', match: 'linked', matchedIn: 'link',
+        via: { entityId: 'cust-1', concept: 'Customer', name: 'Carrefour', links: 1, path: [{ relation: 'has_contract', direction: 'outgoing' }] } }],
+      completeness: { complete: false, reasons: ['more_results', 'index_not_ready'] },
+    });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/Found through Customer "Carrefour".*40 record\(s\).*linked_to=\[\{relation, record_ids: \["cust-1"\]\}\]/);
+    expect(notes).toMatch(/index of earlier data was searched/);
+  });
+
   it('reports concepts the model does not hold as not represented', async () => {
     const graphSearch = {
       search: jest.fn().mockResolvedValue({
@@ -416,6 +441,66 @@ describe('SemanticModelAssistantService', () => {
     expect(notes).toMatch(/out of 6 readable records/);
     expect(notes).toMatch(/filters\[0\] \(Status eq\) 0; filters\[1\] \(Amount gt\) 3/);
     expect(notes).toMatch(/"Payée", "payee"/);
+  });
+
+  it('walks several links: groups by start record overlap, and an empty walk says whether its start matched', async () => {
+    const graphSearch = {
+      traverseRecords: jest.fn()
+        .mockResolvedValueOnce({
+          status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1', concept: { label: 'Fait' },
+          total: 4, hiddenRecords: 0, unparsable: {}, appliedQuery: {}, groupsOverlap: true, bucketsTruncated: false,
+          buckets: [{ 'start.name': 'Alice', entityIds: { 'start.name': 'corr:alice' }, count: 3 }, { 'start.name': 'Bob', entityIds: { 'start.name': 'corr:bob' }, count: 3 }],
+        })
+        .mockResolvedValueOnce({
+          status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1', concept: { label: 'Fait' },
+          total: 0, hiddenRecords: 0, unparsable: {}, appliedQuery: {}, records: [], returned: 0, offset: 0, nextOffset: null,
+          diagnostics: { readableRecords: 4, checks: [{ part: 'path', field: 'path', op: 'reached_by', matches: 0 }], startRecords: 0,
+            start: { readableRecords: 4, checks: [{ part: 'filters[0]', field: 'Domaine', op: 'eq', matches: 0, didYouMean: ['acme.com'] }] } },
+        }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const grouped = await service.traverseRecords('user-1', 'model-1', {
+      start: { concept: 'Correspondant' }, steps: [{ relation: 'désigne' }, { relation: 'a pour participant' }, { relation: 'énonce' }],
+      groupBy: [{ field: 'name', step: 0 }],
+    });
+    expect(graphSearch.traverseRecords).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ environment: 'production', groupBy: [{ field: 'name', step: 0 }] }));
+    expect(grouped).toMatchObject({ total: 4, groups: [{ count: 3 }, { count: 3 }], completeness: { complete: true } });
+    expect(grouped.notes.join(' ')).toMatch(/counts in each of their groups/);
+    const empty = await service.traverseRecords('user-1', 'model-1', {
+      start: { concept: 'Correspondant', filters: [{ field: 'Domaine', op: 'eq', value: 'acme.cmo' }] }, steps: [{ relation: 'désigne' }],
+    });
+    const notes = empty.notes.join(' ');
+    expect(notes).toMatch(/No start record matches/);
+    expect(notes).toMatch(/"acme.com"/);
+  });
+
+  it('connects two records by their shortest chains, and says when "not connected" is not a proof', async () => {
+    const graphSearch = {
+      connectRecords: jest.fn()
+        .mockResolvedValueOnce({
+          status: 'connected', links: 2, maxLinks: 4, searchedLinks: 2, truncated: false, dataRevisionId: 'dr-1',
+          paths: [{ records: ['a', 'p', 'm'], steps: [
+            { fromEntityId: 'a', relationId: 'r-des', relationKey: 'designates', direction: 'incoming', toEntityId: 'p' },
+            { fromEntityId: 'p', relationId: 'r-part', relationKey: 'has_participant', direction: 'incoming', toEntityId: 'm' }] }],
+          records: [{ entityId: 'a', conceptId: 'c', conceptLabel: 'Correspondant', label: 'Alice', keyFields: {} },
+            { entityId: 'p', conceptId: 'p', conceptLabel: 'Participation', label: 'M1 Alice', keyFields: {} },
+            { entityId: 'm', conceptId: 'm', conceptLabel: 'Message', label: 'Contrat', keyFields: {} }],
+        })
+        .mockResolvedValueOnce({ status: 'not_connected', maxLinks: 4, searchedLinks: 4, truncated: true, dataRevisionId: 'dr-1', paths: [], records: [] })
+        .mockResolvedValueOnce({ status: 'not_connected', maxLinks: 4, searchedLinks: 4, truncated: false, dataRevisionId: 'dr-1', paths: [], records: [] }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const linked = await service.connectRecords('user-1', 'model-1', { fromRecordId: 'a', toRecordId: 'm' });
+    expect(graphSearch.connectRecords).toHaveBeenCalledWith('user-1', 'model-1', { fromEntityId: 'a', toEntityId: 'm', environment: 'production' });
+    expect(linked).toMatchObject({ status: 'connected', links: 2, completeness: { complete: true },
+      paths: [{ records: [{ name: 'Alice' }, { name: 'M1 Alice' }, { name: 'Contrat', concept: 'Message' }],
+        steps: [{ relation: 'designates', direction: 'incoming' }, { relation: 'has_participant' }] }] });
+    const cut = await service.connectRecords('user-1', 'model-1', { fromRecordId: 'a', toRecordId: 'z' });
+    expect(cut.completeness).toMatchObject({ complete: false, reasons: ['search_cut'] });
+    expect(cut.notes[0]).toMatch(/a connection may exist/);
+    const none = await service.connectRecords('user-1', 'model-1', { fromRecordId: 'a', toRecordId: 'z' });
+    expect(none.completeness.complete).toBe(true);
+    expect(none.notes[0]).toMatch(/No chain of at most 4 links .* higher max_links/);
   });
 
   it('hands back what is wrong in a query so the assistant can fix it', async () => {

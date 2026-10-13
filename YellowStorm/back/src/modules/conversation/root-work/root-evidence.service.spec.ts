@@ -63,4 +63,11 @@ describe('Root evidence current access', () => {
       await expect(setup({ source }).service.resolve('conversation', 'child', 'evidence', 'owner')).rejects.toThrow('location');
     }
   });
+
+  it('classifies a registered web source after authorization independently of message metadata', async () => {
+    const h = setup({ type: 'web', source: 'https://source.test/page?token=private#fragment' });
+    expect(await h.service.resolve('conversation', 'child', 'evidence', 'owner')).toMatchObject({ sourceKind: 'web', url: 'https://source.test/page' });
+    h.results.authorizeResult.mockRejectedValue(new Error('revoked'));
+    await expect(h.service.resolve('conversation', 'child', 'evidence', 'owner')).rejects.toThrow('revoked');
+  });
 });

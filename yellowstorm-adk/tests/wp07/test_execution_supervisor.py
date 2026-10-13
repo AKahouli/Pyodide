@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import text
@@ -74,7 +74,10 @@ async def test_settlement_waits_for_runner_and_durable_sink_even_after_stream_se
 
 
 @pytest.mark.asyncio
-async def test_owner_loss_stops_and_joins_runner_without_stale_settlement(guarded_native):
+async def test_owner_loss_stops_and_joins_runner_without_stale_settlement(guarded_native, monkeypatch):
+    from src.root_runtime import execution_supervisor
+    logger = Mock()
+    monkeypatch.setattr(execution_supervisor, 'logger', logger)
     service, _session, grant, engine = guarded_native
     supervisor = BackgroundInvocationSupervisor(owner_check_seconds=.02)
     started, joined = asyncio.Event(), asyncio.Event()
@@ -95,6 +98,10 @@ async def test_owner_loss_stops_and_joins_runner_without_stale_settlement(guarde
     await asyncio.wait_for(handle.task, 5)
     assert joined.is_set() and handle.status == 'outcome_unknown' and supervisor.active == {}
     settle.assert_not_awaited()
+    logger.warning.assert_called_once_with('job.execution.outcome_unknown', run_id=grant.execution_id,
+        job_id=grant.execution_id, conversation_id=grant.conversation_id,
+        job_kind='root_background', reason_code='ownership_lost')
+    logger.error.assert_not_called()
 
 
 @pytest.mark.asyncio

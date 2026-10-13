@@ -181,6 +181,43 @@ describe('CreateEditAgentDialog', () => {
       enable_temporary_child_agents: false, instruction: 'Keep instruction', model: 'model-1',
     })));
   });
+  describe('generative UI toggle', () => {
+    const savedAgent = (genUiEnabled?: boolean) => ({
+      id: 'a1', name: 'Agent', slug: 'agent', agentType: { id: 'type-1', name: 'Type' }, role: 'role', description: '',
+      temperature: 0.5, instruction: '', ignorePrePrompt: false, genUiEnabled, knowledgeBases: [], tools: [],
+      isDefault: false, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '',
+    });
+
+    it('is on for a new agent and sent with the payload', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<CreateEditAgentDialog open onOpenChange={vi.fn()} agent={null} onSave={onSave} saving={false} />);
+      const toggle = await screen.findByLabelText('createEdit.fields.genUiEnabled');
+      expect(toggle).toBeChecked();
+
+      await user.type(await screen.findByLabelText('createEdit.fields.name'), 'New Agent');
+      await user.click(toggle);
+      expect(toggle).not.toBeChecked();
+    });
+
+    it('shows the saved value of an existing agent and saves a change', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<CreateEditAgentDialog open onOpenChange={vi.fn()} agent={savedAgent(false)} onSave={onSave} saving={false} />);
+      const toggle = await screen.findByLabelText('createEdit.fields.genUiEnabled');
+      expect(toggle).not.toBeChecked();
+
+      await user.click(toggle);
+      await user.click(screen.getByRole('button', { name: 'createEdit.actions.saveChanges' }));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ genUiEnabled: true })));
+    });
+
+    it('treats an agent without the field as off', async () => {
+      render(<CreateEditAgentDialog open onOpenChange={vi.fn()} agent={savedAgent(undefined)} onSave={vi.fn()} saving={false} />);
+      expect(await screen.findByLabelText('createEdit.fields.genUiEnabled')).not.toBeChecked();
+    });
+  });
+
   it('uses the wide agent editor layout', async () => {
     render(
       <CreateEditAgentDialog

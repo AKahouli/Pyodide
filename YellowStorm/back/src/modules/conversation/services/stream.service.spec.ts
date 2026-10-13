@@ -43,6 +43,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       isGrpcAvailable: true,
+      conversationService: { getConversationDocument: jest.fn().mockResolvedValue({}) },
       chatbotClient: { RunAgentTeam: jest.fn().mockReturnValue(call) },
       activeCalls: new Map(),
       activeStreams: new Map(),
@@ -55,6 +56,7 @@ describe('StreamService guardrail metadata buffering', () => {
       activeConversationExecutions: new Set(),
       configService: { get: jest.fn((_key: string, fallback: unknown) => fallback) },
       messageService: {
+        findById: jest.fn().mockResolvedValue({ conversationId: 'conversation-1', conversationType: 'ai', createdAt: '2026-10-10T10:00:00.000Z' }),
         claimStreamExecution,
         renewStreamExecution: jest.fn().mockResolvedValue(true),
         releaseStreamExecution,
@@ -584,6 +586,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const releaseStreamExecution = jest.fn().mockResolvedValue(undefined);
     Object.assign(service as object, {
       isGrpcAvailable: true,
+      conversationService: { getConversationDocument: jest.fn().mockResolvedValue({}) },
       activeStreams: new Map(),
       activeConversationExecutions: new Set(),
       bootstrapCancelRequested: new Set(),
@@ -597,10 +600,11 @@ describe('StreamService guardrail metadata buffering', () => {
         get: jest.fn((key: string, fallback: unknown) => (key === 'conversation.maxConcurrentStreams' ? 5 : fallback)),
       },
       messageService: {
+        findById: jest.fn().mockResolvedValue({ conversationId: 'conversation-1', conversationType: 'ai', createdAt: '2026-10-10T10:00:00.000Z' }),
         claimStreamExecution: jest.fn().mockResolvedValue(true),
         renewStreamExecution: jest.fn().mockResolvedValue(false),
         releaseStreamExecution,
-        markStreamFailed: jest.fn(),
+        markStreamFailed: jest.fn().mockResolvedValue(undefined),
       },
       logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
       streamGateway: { broadcastToConversation: jest.fn().mockResolvedValue(undefined) },
@@ -626,7 +630,7 @@ describe('StreamService guardrail metadata buffering', () => {
       ),
     ).rejects.toThrow('lease was lost');
 
-    expect((service as any).buildAgentExecutionRequest).toHaveBeenCalledWith('user-1', 'conversation-1', expect.objectContaining({ playbookHandoffId: 'handoff-1' }), undefined, undefined, expect.objectContaining({ requestId: 'request-1' }), 'conversation-1', '507f1f77bcf86cd799439011');
+    expect((service as any).buildAgentExecutionRequest).toHaveBeenCalledWith('user-1', 'conversation-1', expect.objectContaining({ playbookHandoffId: 'handoff-1' }), undefined, undefined, expect.objectContaining({ requestId: 'request-1' }), 'conversation-1', '507f1f77bcf86cd799439011', '507f1f77bcf86cd799439011', undefined, undefined, expect.any(Object));
     expect(executeGrpcStream).not.toHaveBeenCalled();
     expect(releaseStreamExecution).toHaveBeenCalledWith('507f1f77bcf86cd799439011', expect.any(String));
   });
@@ -635,6 +639,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       isGrpcAvailable: true,
+      conversationService: { getConversationDocument: jest.fn().mockResolvedValue({}) },
       configService: { get: jest.fn().mockReturnValue(undefined) },
       chatbotClient: {
         RunSingleAgent: jest.fn(() => {
@@ -655,6 +660,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       isGrpcAvailable: true,
+      conversationService: { getConversationDocument: jest.fn().mockResolvedValue({}) },
       configService: { get: jest.fn().mockReturnValue(undefined) },
       chatbotClient: { RunSingleAgent: jest.fn().mockReturnValue(call) },
     });
@@ -865,6 +871,67 @@ describe('StreamService guardrail metadata buffering', () => {
         messageId: 'message-1',
         streamExecutionLeaseId: 'lease-1',
         components: expect.arrayContaining([expect.objectContaining({ id: 'text-1', type: 'text' }), expect.objectContaining({ id: 'tool-1', type: 'toolActivity' }), expect.objectContaining({ id: 'citation-1', type: 'citation' }), expect.objectContaining({ id: 'activity-1', type: 'agentActivity' })]),
+      }),
+    );
+  });
+
+  it('streams only appended agent reasoning while persisting the full detail', async () => {
+    const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
+    const completeAIMessage = jest.fn().mockResolvedValue(undefined);
+    const broadcastToConversation = jest.fn().mockResolvedValue(undefined);
+    const streamKey = 'user-1:conversation-1:message-1';
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      chatbotClient: { RunAgentTeam: jest.fn().mockReturnValue(call) },
+      activeCalls: new Map(),
+      activeStreams: new Map([['user-1', new Set(['conversation-1'])]]),
+      componentBuffers: new Map([[streamKey, new Map()]]),
+      streamRevisions: new Map([[streamKey, 0]]),
+      streamUsage: new Map([[streamKey, { inputTokens: 0, outputTokens: 0, model: '' }]]),
+      streamExecutionLeases: new Map([[streamKey, 'lease-1']]),
+      streamTerminalCoordinators: new Map(),
+      bootstrapCancelRequested: new Set(),
+      activeConversationExecutions: new Set(),
+      configService: { get: jest.fn() },
+      messageService: { completeAIMessage },
+      usageService: { recordUsage: jest.fn().mockResolvedValue(undefined) },
+      responseReliabilityService: { schedule: jest.fn().mockResolvedValue(undefined) },
+      streamGateway: { broadcastToConversation },
+      logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
+    });
+
+    const execution = (service as any).executeGrpcStream('user-1', 'conversation-1', 'message-1', streamKey, {}, 10_000, ['user-1']);
+    const emitActivity = (action: string, detail: string) => call.emit('data', {
+      action,
+      component: { id: 'activity-1', type: 'agentActivity', data: { summary: detail, detail, status: 'completed' } },
+    });
+    emitActivity('add', 'The');
+    emitActivity('update', 'The user');
+    emitActivity('update', 'The user wants');
+    // A rewritten snapshot is not an extension: it must go out as a full replacement.
+    emitActivity('update', 'Rewritten thought');
+
+    const frames = broadcastToConversation.mock.calls
+      .map(([, event]) => event.data)
+      .filter((data) => data.component?.id === 'activity-1');
+    expect(frames.map((frame) => [frame.revision, frame.action])).toEqual([[1, 'add'], [2, 'update'], [3, 'update'], [4, 'update']]);
+    expect(frames[0].component.data).toMatchObject({ summary: 'The', detail: 'The' });
+    expect(frames[1].component.data).toMatchObject({ summary: 'The user', detailDelta: ' user', detailOffset: 3 });
+    expect(frames[1].component.data).not.toHaveProperty('detail');
+    expect(frames[2].component.data).toMatchObject({ detailDelta: ' wants', detailOffset: 8 });
+    expect(frames[3].component.data).toMatchObject({ detail: 'Rewritten thought' });
+    expect(frames[3].component.data).not.toHaveProperty('detailDelta');
+
+    // The snapshot used by fetchActiveStream recovery keeps the full cumulative text.
+    expect(service.getActiveStreamSnapshot('conversation-1')?.components).toEqual([
+      expect.objectContaining({ id: 'activity-1', data: expect.objectContaining({ detail: 'Rewritten thought' }) }),
+    ]);
+
+    call.emit('end');
+    await execution;
+    expect(completeAIMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [expect.objectContaining({ id: 'activity-1', data: expect.objectContaining({ detail: 'Rewritten thought', summary: 'Rewritten thought' }) })],
       }),
     );
   });
@@ -1081,6 +1148,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       isGrpcAvailable: true,
+      conversationService: { getConversationDocument: jest.fn().mockResolvedValue({}) },
       chatbotClient: { RunAgentTeam: jest.fn().mockReturnValue(call) },
       activeCalls: new Map(),
       activeStreams: new Map(),
@@ -1093,6 +1161,7 @@ describe('StreamService guardrail metadata buffering', () => {
       activeConversationExecutions: new Set(),
       configService: { get: jest.fn((_key: string, fallback: unknown) => fallback) },
       messageService: {
+        findById: jest.fn().mockResolvedValue({ conversationId: 'conversation-1', conversationType: 'ai', createdAt: '2026-10-10T10:00:00.000Z' }),
         claimStreamExecution,
         renewStreamExecution: jest.fn().mockResolvedValue(true),
         releaseStreamExecution,
@@ -1364,7 +1433,7 @@ describe('StreamService guardrail metadata buffering', () => {
         errorCode: ErrorCode.CHAT_STREAM_FAILED,
       }),
     });
-    expect((service as any).activeStreams.get('user-1')).toContain('conversation-1');
+    expect((service as any).activeStreams.get('user-1')).toContain('user-1:conversation-1:message-1');
     expect(releaseStreamExecution).not.toHaveBeenCalled();
 
     finishErrorBroadcast();

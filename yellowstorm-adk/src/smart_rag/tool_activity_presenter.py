@@ -62,11 +62,6 @@ class ToolPresentation:
 
 _TOOL_STYLES: dict[str, tuple[str, str]] = {
     "run_code": ("runCode", "run_code"),
-    "code_interpreter_sandbox_create": ("createSandbox", "generic"),
-    "code_interpreter_file_find": ("findFiles", "file"),
-    "code_interpreter_file_list": ("findFiles", "file"),
-    "code_interpreter_shell_exec": ("runCommand", "run_code"),
-    "code_interpreter_send_file_to_user": ("sendFile", "file"),
     "perform_document_search": ("searchKnowledge", "search"),
     "perform_web_search": ("searchWeb", "web"),
     "perform_standard_search": ("search", "search"),

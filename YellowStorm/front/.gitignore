@@ -40,3 +40,6 @@ vitest-report.xml
 vitest.config.ts.timestamp-*.mjs
 vite.err.log
 vite.out.log
+
+# Generated OpenUI system prompt (node scripts/generate-openui-prompt.mjs)
+scripts/generated/

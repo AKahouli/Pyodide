@@ -29,7 +29,7 @@ export interface StreamHeartbeatEvent {
 
 export interface StreamStartEvent {
   type: 'stream_start';
-  data: { conversationId: string; messageId: string };
+  data: { conversationId: string; messageId: string; createdAt?: string; questionMessageId?: string; agentId?: string; agentName?: string };
 }
 
 export interface StreamChunkEvent {

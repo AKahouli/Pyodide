@@ -1,24 +1,46 @@
-import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions, mappingFileCap, mappingRecordCap } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
+import { pickArchiveLimits, type ArchiveReadLimits } from '../domain/semantic-data-connection.types';
 import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { logDomainEvent } from '@modules/logger/logger.service';
+import { graphExposureOf } from '../domain/semantic-graph-exposure';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
-import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
-import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { derivationsRefreshedWith, type RuntimeDerivation } from '../domain/semantic-derived-source.types';
+import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticGraphSearchService } from './semantic-graph-search.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { graphExport, graphFieldKey, graphRecordValues, graphWindowOutline, searchGraphValues, type ExportFieldChoice } from '../domain/graph-outline';
 import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
+import { identityIssue, labelFieldIssue, mappingIssues, ModelIssueException, relationRuleIssue, type ModelCheckIssue } from '../domain/semantic-model-check';
 import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
+
+/** Records the graph view reads by default, and the most it may ask for (the runtime enforces the same bounds). */
+const DEFAULT_GRAPH_WINDOW = 2000;
+const MAX_GRAPH_WINDOW = 5000;
+/** How many links away from a focused record the graph view may read (the runtime enforces the same bound). */
+const MAX_FOCUS_DEPTH = 8;
+
+export interface GraphOutlineQuery {
+  dataRevisionId?: string;
+  limit?: number;
+  conceptId?: string;
+  /** A record to read with its neighbours, instead of the first records of the data. */
+  focus?: string;
+  /** With `focus`: how many links away to read, closest first and within `limit`; 1 (the record's neighbours) when absent. */
+  depth?: number;
+}
 
 /** A concept refresh reads one concept's sources again; the runtime keeps every other concept's data in use. */
 /** Bumped when a fix makes earlier concept-refresh requests worth sending again (they were refused). */
@@ -86,10 +108,55 @@ type RelationRuleRow =Pick<RelationResolutionRule,
   'relationId' | 'sourceAttribute' | 'targetAttribute' | 'strategy'>;
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
+const CHECK_MIME_TYPES: Record<string, string> = {
+  csv: 'text/csv',
+  excel_sheet: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  document: 'application/pdf',
+};
+
+/**
+ * The model check names no file: one stand-in per mapping carries the mapping's own rules to the runtime,
+ * so nothing is listed or fetched while someone edits the model.
+ */
+function checkFile(mapping: MappingRow): WorkspaceDocumentResponse {
+  return {
+    id: mapping.documentId || `mapping:${mapping.id}`,
+    originalName: mapping.sheetName || mapping.id,
+    mimeType: CHECK_MIME_TYPES[mapping.assetKind] ?? 'application/octet-stream',
+    size: 0,
+    contentHash: mapping.validatedSourceVersion ?? undefined,
+  } as unknown as WorkspaceDocumentResponse;
+}
 const MAX_REFRESH_SOURCES = 25;
+const RELATION_SPEC_CODES = new Set(['duplicate_relation_id', 'unknown_relation_endpoint', 'invalid_matching_strategy', 'invalid_cardinality']);
 /** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
 const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-8';
+
+/** Fields of a mapping aimed at an attribute the concept no longer has. */
+function staleFieldIssues(mapping: MappingRow, node: NodeTypeRow): ModelCheckIssue[] {
+  return mappingIssues(mapping, node).filter((issue) => issue.code === 'mapping_attribute_missing');
+}
+
+/** The mapping without its stale fields: they are reported by the check, never a reason to read nothing. */
+function withoutStaleFields(mapping: MappingRow, node: NodeTypeRow): MappingRow {
+  const known = new Set((node.attributes ?? []).map((attribute) => attribute.key));
+  const fields = mapping.fieldMappings ?? [];
+  const kept = fields.filter((field) => field.mode === 'ignore' || known.has(field.targetAttribute));
+  return kept.length === fields.length ? mapping : { ...mapping, fieldMappings: kept };
+}
+
+function scopeKeyOf(scope: PopulationRefreshScope): string {
+  return scope.kind === 'model' ? 'model' : scope.kind === 'concept' ? 'concept' : 'mapping';
+}
+
+/** "Concept: reason; ..." of the mappings a run left out, for the refusal and the log. */
+function skippedSummary(skipped: { mappingId: string; reason: string }[], nodes: NodeTypeRow[], mappings: MappingRow[]): string {
+  return skipped.map((item) => {
+    const concept = nodes.find((node) => node.id === mappings.find((mapping) => mapping.id === item.mappingId)?.conceptId)?.label;
+    return concept ? `${concept}: ${item.reason}` : item.reason;
+  }).join('; ');
+}
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -104,6 +171,7 @@ export class SemanticPopulationRefreshService {
     private readonly aiExtractionAgent: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
     private readonly derivedSources?: SemanticDerivedSourceService,
+    @Optional() private readonly graphSearch?: SemanticGraphSearchService,
   ) {}
 
   private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
@@ -208,6 +276,7 @@ export class SemanticPopulationRefreshService {
     let page;
     try {
       page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
+        await this.allowedWorkspaces(userId, model.id),
         { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId, filters: query.filters || undefined });
     } catch (error) {
       if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
@@ -238,7 +307,8 @@ export class SemanticPopulationRefreshService {
   async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
+    const records = await this.runtime.getBoundRecords(model.id, userId, limit,
+      await this.allowedWorkspaces(userId, model.id), conceptId, dataRevisionId);
     const entities = records.entities;
     const [nodes, sources] = await Promise.all([
       this.database.query<NodeTypeRow>(
@@ -330,7 +400,6 @@ export class SemanticPopulationRefreshService {
         resolvedRelations: records.counts.relationships,
         unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
         ambiguousRelations: 0,
-        conflicts: 0,
       },
     };
   }
@@ -536,10 +605,24 @@ export class SemanticPopulationRefreshService {
     };
   }
 
+  /**
+   * The workspaces the person may read among this model's sources, computed on every call:
+   * the runtime hides any record read from a workspace outside it (and never answers an
+   * unscoped read). Delegated to the one authorization policy of the graph reads. Missing
+   * authorization wiring fails closed: no scope, no data.
+   */
+  private allowedWorkspaces(userId: string, modelId: string): Promise<string[]> {
+    if (!this.graphSearch) {
+      return Promise.reject(new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Source authorization is not available'));
+    }
+    return this.graphSearch.allowedWorkspaceIds(userId, modelId);
+  }
+
   async boundGraph(userId: string, modelId: string, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId);
+    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId,
+      await this.allowedWorkspaces(userId, model.id));
     const conceptById = new Map(graph.specification.concepts.map((concept) => [concept.conceptId, concept]));
     const relationLabels = new Map(graph.specification.relations.map((relation) => [relation.relationId, relation.label]));
     return {
@@ -569,11 +652,107 @@ export class SemanticPopulationRefreshService {
     };
   }
 
+  /** The scoped graph read lately, per person, model, revision and allowed workspaces: the outline, a record and a search read it in turn. */
+  private readonly graphCache = new Map<string, { at: number; graph: Promise<RuntimeBoundGraph> }>();
+
+  private async cachedGraph(userId: string, modelId: string, roles: Array<'owner' | 'editor' | 'viewer'>, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, roles);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    // The scope is computed before any cache lookup, so a revoked workspace leaves the cache on
+    // its next read: the key changes and the scoped read runs again.
+    const allowedWorkspaceIds = await this.allowedWorkspaces(userId, model.id);
+    const scopeKey = JSON.stringify([...allowedWorkspaceIds].sort());
+    const key = `${userId}|${model.id}|${dataRevisionId ?? 'current'}|${scopeKey}`;
+    // A named revision never changes; "the current one" may move on, so it is read again sooner.
+    const ttl = dataRevisionId ? 5 * 60_000 : 30_000;
+    const now = Date.now();
+    for (const [cached, entry] of this.graphCache) if (now - entry.at > 5 * 60_000) this.graphCache.delete(cached);
+    let entry = this.graphCache.get(key);
+    if (!entry || now - entry.at > ttl) {
+      entry = { at: now, graph: this.runtime.getBoundGraph(model.id, userId, dataRevisionId, allowedWorkspaceIds) };
+      entry.graph.catch(() => this.graphCache.delete(key));
+      this.graphCache.delete(key);
+      this.graphCache.set(key, entry);
+      while (this.graphCache.size > 6) this.graphCache.delete(this.graphCache.keys().next().value!);
+    }
+    return { model, graph: await entry.graph };
+  }
+
+  /**
+   * A bounded part of the data graph, without values: what the graph view draws and counts. At most `limit` records
+   * (shared among the concepts, or all of one concept), or one record with the records within `depth` links of it (closest
+   * first, within `limit`); `truncated` and `totals` tell
+   * what the person may see beyond it. The scope is computed on every read and the runtime reads only what it allows.
+   */
+  async graphOutline(userId: string, modelId: string, query: GraphOutlineQuery = {}) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const window = await this.runtime.getBoundGraphWindow(model.id, userId, await this.allowedWorkspaces(userId, model.id), {
+      dataRevisionId: query.dataRevisionId,
+      nodeLimit: Math.min(Math.max(Math.trunc(query.limit ?? DEFAULT_GRAPH_WINDOW) || DEFAULT_GRAPH_WINDOW, 1), MAX_GRAPH_WINDOW),
+      conceptId: query.conceptId,
+      focusIds: query.focus ? [query.focus] : undefined,
+      // Only a read around a record goes deeper than one link; 1 is the runtime's default and is not sent.
+      ...(query.focus && query.depth ? { depth: Math.min(Math.max(Math.trunc(query.depth) || 1, 1), MAX_FOCUS_DEPTH) } : {}),
+    });
+    return graphWindowOutline(window);
+  }
+
+  /** One record's values, read when someone opens it: the record alone, not the graph around it. */
+  async graphRecord(userId: string, modelId: string, recordId: string, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const window = await this.runtime.getBoundGraphWindow(model.id, userId, await this.allowedWorkspaces(userId, model.id), {
+      dataRevisionId, nodeLimit: 1, focusIds: [recordId], neighbours: false,
+    });
+    const record = graphRecordValues(window, recordId);
+    if (!record) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This record is not in the data graph');
+    return record;
+  }
+
+  /** Records whose values hold the words typed. */
+  async searchGraph(userId: string, modelId: string, query: string, dataRevisionId?: string, limit = 8) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    return { hits: searchGraphValues(graph, query, limit) };
+  }
+
+  /**
+   * The whole data graph for a standalone file, each field kept, cut or left out as chosen. Only owners and editors
+   * may take the data out of the app, and each export is recorded in the model's history.
+   */
+  async exportGraph(user: { id: string; name: string }, modelId: string,
+    input: { dataRevisionId?: string; fields?: Record<string, Record<string, ExportFieldChoice>>; shortenTo?: number }) {
+    const { model, graph } = await this.cachedGraph(user.id, modelId, ['owner', 'editor'], input.dataRevisionId);
+    const shortenTo = Math.min(Math.max(Math.trunc(input.shortenTo ?? 200) || 200, 20), 100_000);
+    const choices: Record<string, Record<string, ExportFieldChoice>> = {};
+    for (const [concept, fields] of Object.entries(input.fields ?? {})) {
+      if (!fields || typeof fields !== 'object') continue;
+      choices[concept] = Object.fromEntries(Object.entries(fields).filter(([, choice]) => choice === 'full' || choice === 'short' || choice === 'exclude'));
+    }
+    const content = graphExport(graph, choices, shortenTo);
+    const exportedAt = new Date().toISOString();
+    await this.database.transaction((client) => this.models.audit(client, model.id, model.currentDraftVersionId, user.id, 'graph.exported', {
+      dataRevisionId: content.dataRevisionId, records: content.records.length, links: content.links.length, shortenTo,
+      excluded: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'exclude').map(([field]) => `${concept}.${field}`)),
+      full: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'full').map(([field]) => `${concept}.${field}`)),
+    }));
+    return { ...content, modelName: model.name, exportedBy: user.name, exportedAt, shortenTo };
+  }
+
   /**
    * Everything a run would read, without starting it: the specification and the fingerprint that decides
    * whether a run is new. A viewer may plan (to learn whether the data is current); only editors may run.
+   *
+   * With `collect` (the model check) a rule a run refuses on is recorded as an issue and planning goes on, so
+   * every problem is found at once; nothing is listed, fetched or sent to the runtime. Without it the first
+   * issue of a rule is thrown, as a run needs.
    */
-  private async planRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput, access: 'run' | 'read') {
+  private async planRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput, access: 'run' | 'read',
+    collect?: ModelCheckIssue[]) {
+    const refuse = (issue: ModelCheckIssue): void => {
+      if (!collect) throw new ModelIssueException([issue]);
+      collect.push(issue);
+    };
     const model = access === 'run'
       ? await this.models.requireActiveRole(userId, modelId, ['owner', 'editor'])
       : await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -617,7 +796,9 @@ export class SemanticPopulationRefreshService {
     ]);
     const homeWorkspaceId = links.find((link) => link.role === 'origin')?.workspaceId;
     if (!homeWorkspaceId) {
-      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID, 'The model has no origin workspace');
+      const message = 'The model has no origin workspace';
+      if (collect) throw new ModelIssueException([{ severity: 'error', code: 'no_origin_workspace', message }]);
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID, message);
     }
     if (scope.kind === 'concept' && !nodes.some((node) => node.id === scope.conceptId)) {
       throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found');
@@ -627,61 +808,106 @@ export class SemanticPopulationRefreshService {
     const usableMappings: MappingRow[] = [];
     const skipped: { mappingId: string; reason: string }[] = [];
     let waitingFiles = 0;
+    const archives = await this.archiveConnections(model.id);
+    // An archive's connection says how much of it is read, and whether the runtime also copies its e-mails and
+    // attachments into the workspace. Only what was set travels, so other sources keep their fingerprint.
+    const withIndexing = <T extends { source: { assetId: string } }>(entry: T): T => {
+      const archive = archives.get(entry.source.assetId);
+      if (!archive) return entry;
+      return { ...entry, source: { ...entry.source,
+        ...(archive.indexInWorkspace ? { indexInWorkspace: true } : {}),
+        ...(Object.keys(archive.limits).length ? { archiveLimits: archive.limits } : {}) } };
+    };
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
         if (!node) {
-          throw new BadRequestException(
-            ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-            'The mapped concept is not present in the current draft',
-          );
+          throw new ModelIssueException([{
+            severity: 'warning', code: 'mapping_concept_missing', conceptId: mapping.conceptId, mappingId: mapping.id,
+            message: 'The mapped concept is not present in the current draft',
+          }]);
         }
-        if (mapping.scope === 'workspace') {
+        // Fields aimed at an attribute the concept no longer has are left out of the source (nothing could hold
+        // them); the check still reports them, so a mapping is never dropped whole for a field it cannot fill.
+        // A run asked for this one mapping is refused instead: it is exactly what the person pointed at.
+        const stale = staleFieldIssues(mapping, node);
+        if (scope.kind === 'mapping' && stale.length) throw new ModelIssueException(stale);
+        if (collect && inRun(mapping)) collect.push(...stale);
+        if (collect) {
+          sources.push({ ...await this.populationSource(mapping, node, checkFile(mapping), labelFields.get(mapping.conceptId)), mappingId: mapping.id });
+        } else if (mapping.scope === 'workspace') {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
+          // A mapping may read only its first files (in the stable order the runtime sees), never more than the admin allows.
+          const maxFiles = mappingFileCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRunSources);
+          for (const file of files.readable.slice(0, maxFiles)) sources.push(withIndexing(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId))));
           waitingFiles += files.waiting.length;
         } else {
-          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
+          sources.push(withIndexing(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId))));
         }
         usableMappings.push(mapping);
       } catch (error) {
         if (scope.kind === 'mapping') throw error;
+        if (collect && inRun(mapping)) {
+          collect.push(...(error instanceof ModelIssueException ? error.issues : [{
+            severity: 'warning' as const, code: 'mapping_skipped', conceptId: mapping.conceptId, mappingId: mapping.id, message: (error as Error).message,
+          }]));
+        }
         if (inRun(mapping)) skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
       }
     }
     const manual = wholeModel
-      ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
+      ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes, Boolean(collect))
       : null;
     if (manual) sources.push(...manual.sources);
     // Concepts made from another concept's records, when that concept is read by this run.
-    const derivations = wholeModel && this.derivedSources
+    const modelDerivations = wholeModel && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
         new Set(sources.map((source) => source.conceptId)), identityRules,
         effectiveAiSettings(await this.adminAiSettings()), labelFields)
       : [];
-    const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
+    // A concept refresh makes again only the concepts made from it (or itself, when it is made from another);
+    // the other derived concepts stay as they are in the data in use but still belong to the specification.
+    const derivations = scope.kind === 'concept' ? derivationsRefreshedWith(modelDerivations, scope.conceptId) : modelDerivations;
+    const derivedConceptIds = new Set(modelDerivations.map((derivation) => derivation.conceptId));
     // Every concept a run fills needs the field that names its records, chosen by a person.
     for (const conceptId of new Set([...usableMappings.map((mapping) => mapping.conceptId), ...derivedConceptIds])) {
       const node = nodes.find((candidate) => candidate.id === conceptId);
-      const field = labelFields.get(conceptId);
-      if (node && (!field || !(node.attributes ?? []).some((attribute) => attribute.key === field))) {
-        throw new BadRequestException(
-          ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-          `Choose the field that names each ${node.label} record (its label). Open Review to choose it.`,
-        );
-      }
+      const refused = node && labelFieldIssue(node, labelFields.get(conceptId));
+      if (refused) refuse(refused);
     }
     // A concept made from another one alone is refreshed from that concept's records in use.
     const madeFromAnother = scope.kind === 'concept' && derivations.some((derivation) => derivation.conceptId === scope.conceptId);
-    if (!sources.filter(inRun).length && !madeFromAnother) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
+    const refused = !sources.filter(inRun).length && !madeFromAnother;
+    // A mapping left out of a run is a handled failure: say which and why, in the log and in the refusal.
+    if (skipped.length && !collect) {
+      logDomainEvent(refused ? 'error' : 'warn', 'semantic.population.sources_skipped', {
+        scope: scopeKeyOf(scope), reason_code: refused ? 'refused' : 'partial', count: skipped.length,
+        detail: skippedSummary(skipped, nodes, mappings).slice(0, 500),
+      });
     }
-    // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
-    const limits = await this.adminRunLimits();
+    if (refused) {
+      const why = skipped.length ? `: ${skippedSummary(skipped, nodes, mappings)}` : '';
+      refuse({ severity: 'error', code: 'no_usable_source', message: `No usable source in the selected scope${why}`,
+        ...(skipped.length ? { params: { skipped: skipped.length } } : {}) });
+    }
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint. The save, projection and
+    // index build limits travel too but stay out of the fingerprint: how a run is written, how its graph is loaded, or
+    // how the search index of its data is built, never changes what it builds.
+    const { purgeTimeoutSeconds: _purgeTime, saveBatchRows, saveStatementSeconds, projectionBatchRows, embeddingBatchSize,
+      embeddingParallelCalls, embeddingTimeoutSeconds, indexReadPageRows, ...limits } = await this.adminRunLimits();
+    const saveLimits: Partial<RunLimits> = {
+      ...(saveBatchRows !== undefined ? { saveBatchRows } : {}),
+      ...(saveStatementSeconds !== undefined ? { saveStatementSeconds } : {}),
+      ...(projectionBatchRows !== undefined ? { projectionBatchRows } : {}),
+      ...(embeddingBatchSize !== undefined ? { embeddingBatchSize } : {}),
+      ...(embeddingParallelCalls !== undefined ? { embeddingParallelCalls } : {}),
+      ...(embeddingTimeoutSeconds !== undefined ? { embeddingTimeoutSeconds } : {}),
+      ...(indexReadPageRows !== undefined ? { indexReadPageRows } : {}),
+    };
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
-    if (sources.filter(inRun).length > maxRunSources) {
+    if (!collect && sources.filter(inRun).length > maxRunSources) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         `A run can read at most ${maxRunSources} files; map a folder instead of the whole workspace, or raise the limit in Admin > Semantic models`,
@@ -692,8 +918,17 @@ export class SemanticPopulationRefreshService {
       .filter((id) => !scopedConceptIds.has(id) && !derivedConceptIds.has(id)));
     const concepts = nodes
       .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id) || derivedConceptIds.has(node.id))
-      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
+      .flatMap((node) => {
+        try {
+          return [this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id))];
+        } catch (error) {
+          if (!collect || !(error instanceof ModelIssueException)) throw error;
+          collect.push(...error.issues);
+          return [];
+        }
+      });
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
+    const filledBySource = (id: string) => scopedConceptIds.has(id) || derivedConceptIds.has(id);
     const relations: RelationSpec[] = [];
     const relationBindings: { relationId: string; referenceField: string; targetField: string }[] = [];
     for (const relation of relationRows.filter(
@@ -710,7 +945,7 @@ export class SemanticPopulationRefreshService {
         matchingStrategy: rule?.strategy ?? 'normalized',
       });
       if (rule) {
-        const derivedField = (conceptId: string, attribute: string) => derivations.some((derivation) =>
+        const derivedField = (conceptId: string, attribute: string) => modelDerivations.some((derivation) =>
           derivation.conceptId === conceptId && derivation.fieldMappings.some((field) => field.targetAttribute === attribute));
         const sourceFieldMapped = derivedField(relation.sourceNodeTypeId, rule.sourceAttribute) || sources.some((source) => {
           if (source.conceptId !== relation.sourceNodeTypeId) return false;
@@ -722,35 +957,27 @@ export class SemanticPopulationRefreshService {
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.targetAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.targetAttribute);
         });
-        const sourceType = nodes.find((node) => node.id === relation.sourceNodeTypeId)
-          ?.attributes.find((attribute) => attribute.key === rule.sourceAttribute)?.type;
-        const targetType = nodes.find((node) => node.id === relation.targetNodeTypeId)
-          ?.attributes.find((attribute) => attribute.key === rule.targetAttribute)?.type;
-        if (!sourceFieldMapped || !targetFieldMapped || !sourceType || sourceType !== targetType) {
-          // Say which side is wrong, in the words of the model; Review lists it with a way to fix it.
-          const node = (id: string) => nodes.find((candidate) => candidate.id === id);
-          const fieldName = (id: string, key: string) => node(id)?.attributes.find((attribute) => attribute.key === key)?.label || key;
-          const side = !sourceType ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is no longer a field of'] as const
-            : !targetType ? [relation.targetNodeTypeId, rule.targetAttribute, 'is no longer a field of'] as const
-              : !sourceFieldMapped ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is not filled by any source of'] as const
-                : !targetFieldMapped ? [relation.targetNodeTypeId, rule.targetAttribute, 'is not filled by any source of'] as const
-                  : null;
-          throw new BadRequestException(
-            ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-            side
-              ? `Link "${relation.key}" matches records on "${fieldName(side[0], side[1])}", which ${side[2]} ${node(side[0])?.label ?? ''}. Open Review to fix it.`
-              : `Link "${relation.key}" matches a ${sourceType} field with a ${targetType} field. Open Review to fix it.`,
-          );
+        const refused = relationRuleIssue({ relation, rule, sourceFieldMapped, targetFieldMapped }, nodes);
+        if (refused) {
+          refuse(refused);
+          continue;
         }
         relationBindings.push({
           relationId: relation.id,
           referenceField: rule.sourceAttribute,
           targetField: rule.targetAttribute,
         });
+      } else if (collect && filledBySource(relation.sourceNodeTypeId) && filledBySource(relation.targetNodeTypeId)) {
+        // Not refused by a run, but no record will be linked: say so.
+        collect.push({
+          severity: 'warning', code: 'relation_without_rule', relationId: relation.id, params: { relation: relation.key },
+          message: `Link "${relation.key}" has no matching rule, so no records will be linked by it.`,
+        });
       }
     }
-    if (!concepts.length) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected scope has no mapped concepts');
+    // In a check, "nothing to build from" is said once, and not again for concepts already refused above.
+    if (!concepts.length && !collect?.some((issue) => issue.code === 'no_identity' || issue.code === 'no_usable_source')) {
+      refuse({ severity: 'error', code: 'no_usable_source', reason: 'no_concepts', message: 'The selected scope has no mapped concepts' });
     }
     // A relationship an expanding derived source links its records by, removed since, links nothing.
     for (const derivation of derivations) {
@@ -770,7 +997,15 @@ export class SemanticPopulationRefreshService {
       ).values(), ...(manual ? [{ workspaceId: homeWorkspaceId, assetId: manual.assetId }] : [])],
     };
     const issues = this.specifications.validate(draft);
-    if (issues.length) {
+    if (issues.length && collect) {
+      // A scope with no concept at all is already said; its specification would only repeat it.
+      if (concepts.length) {
+        collect.push(...issues.map((issue) => ({
+          severity: 'error' as const, code: issue.code, message: issue.message,
+          ...(RELATION_SPEC_CODES.has(issue.code) ? { relationId: issue.targetId } : { conceptId: issue.targetId }),
+        })));
+      }
+    } else if (issues.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, issues[0]?.message ?? 'The population specification is invalid');
     }
     const snapshot = this.specifications.buildSnapshot(draft);
@@ -780,10 +1015,12 @@ export class SemanticPopulationRefreshService {
     const { specHash, ...specification } = snapshot;
     const scopeKey = scope.kind === 'model' ? 'model' : scope.kind === 'concept' ? `concept:${scope.conceptId}` : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
-    const runtimeSources = JSON.parse(JSON.stringify(sources.filter(inRun))) as typeof sources;
+    const runtimeSources = JSON.parse(JSON.stringify(
+      sources.filter((source) => inRun(source) && (!collect || inScope.has(source.conceptId))),
+    )) as typeof sources;
     // The AI agent's effective model is part of revision identity, so an admin
     // changing it produces a new revision instead of reusing persisted rows.
-    const aiExtraction = await this.aiExtractionIdentity(runtimeSources, derivations);
+    const aiExtraction = collect ? null : await this.aiExtractionIdentity(runtimeSources, derivations);
     const populationExecutionFingerprint = this.specifications.hashCanonical({
       specHash,
       sources: runtimeSources.map((source) => ({
@@ -800,6 +1037,8 @@ export class SemanticPopulationRefreshService {
         ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
         // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
+        // Only present when a mapping sets its own reading limits.
+        ...('readLimits' in source && source.readLimits ? { readLimits: source.readLimits } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -808,7 +1047,9 @@ export class SemanticPopulationRefreshService {
       ...(derivations.length ? { derivations } : {}),
       ...(Object.keys(limits).length ? { limits } : {}),
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
+    // The fields each concept shows in the graph: it shapes the graph only, so it is in neither the specification nor the fingerprint.
+    const graphExposure = graphExposureOf(nodes);
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles, graphExposure };
   }
 
   /**
@@ -820,12 +1061,37 @@ export class SemanticPopulationRefreshService {
     return { homeWorkspaceId: plan.homeWorkspaceId, specHash: plan.specHash, specification: plan.specification, executionFingerprint: plan.populationExecutionFingerprint };
   }
 
+  /**
+   * What a build of the draft would send, planned in check mode: the back end's issues, and the body for the
+   * runtime's check (null when planning cannot go on). Reads the model only; the caller is a reader of it.
+   */
+  async checkPlan(userId: string, modelId: string) {
+    const issues: ModelCheckIssue[] = [];
+    try {
+      const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read', issues);
+      return {
+        model: plan.model,
+        issues,
+        request: {
+          specification: plan.specification,
+          sources: plan.runtimeSources,
+          relationBindings: plan.relationBindings,
+          derivations: plan.derivations,
+          limits: plan.limits,
+        },
+      };
+    } catch (error) {
+      if (error instanceof ModelIssueException) return { model: null, issues: [...issues, ...error.issues], request: null };
+      throw error;
+    }
+  }
+
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, saveLimits, populationExecutionFingerprint, skipped, waitingFiles, graphExposure }
       = await this.planRefresh(userId, modelId, input, 'run');
     // Forgotten only once the run is known to start, so a refused run keeps the readings.
     const rereadAt = input.rereadDocuments
-      ? (await this.runtime.forgetDocumentReadings(model.id, userId), new Date().toISOString())
+      ? (await this.runtime.forgetDocumentReadings(model.id, userId, scope.kind === 'concept' ? scope.conceptId : undefined), new Date().toISOString())
       : undefined;
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
@@ -851,6 +1117,9 @@ export class SemanticPopulationRefreshService {
         sources: runtimeSources,
         relationBindings,
         ...(derivations.length ? { derivations } : {}),
+        // Only present when a concept hides or cuts a field, so other models keep their key. The runtime
+        // builds the graph with it, so a run asked with another exposure is another run.
+        ...(Object.keys(graphExposure).length ? { graphExposure } : {}),
         // The same run again must not be taken for the one already done: its readings are gone.
         ...(rereadAt ? { rereadAt } : {}),
       }))
@@ -870,7 +1139,9 @@ export class SemanticPopulationRefreshService {
         relationBindings,
         ...(derivations.length ? { derivations } : {}),
         aiExtraction,
-        ...(Object.keys(limits).length ? { limits } : {}),
+        ...(Object.keys(limits).length || Object.keys(saveLimits).length ? { limits: { ...limits, ...saveLimits } } : {}),
+        // Always sent ({} shows every field), so a graph built with an exposure is rebuilt when it is removed.
+        graphExposure,
       },
     }, idempotencyKey);
     return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };
@@ -885,7 +1156,8 @@ export class SemanticPopulationRefreshService {
     const build: RequestPopulationRefreshInput = { purpose: 'build', scope: { kind: 'model' } };
     // Check that a build can start before clearing anything, so a refused run never leaves the model empty.
     await this.planRefresh(userId, modelId, build, 'run');
-    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading) });
+    const timeoutSeconds = (await this.adminRunLimits()).purgeTimeoutSeconds ?? DEFAULT_RUN_LIMITS.purgeTimeoutSeconds;
+    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading), timeoutSeconds });
     return { ...await this.requestRefresh(userId, modelId, build), cleared };
   }
 
@@ -895,28 +1167,46 @@ export class SemanticPopulationRefreshService {
     return this.runtime.getGraphStatus(model.id, userId);
   }
 
-  /** Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made. */
+  /**
+   * Rebuild the model's graphs from the records and links already stored: no source is read and no AI call is made.
+   * The graphs show the fields the draft's concepts expose (see {@link graphExposureOf}).
+   */
   async reprojectGraphs(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor']);
-    return this.runtime.reprojectModelGraphs(model.id, userId);
+    const nodes = model.currentDraftVersionId
+      ? (await this.database.query<NodeTypeRow>(
+        'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        [model.currentDraftVersionId],
+      )).rows
+      : [];
+    return this.runtime.reprojectModelGraphs(model.id, userId, graphExposureOf(nodes));
   }
 
   /**
    * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
    * have today (design, mappings and source file versions) with the one of the active data.
    */
-  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+  /**
+   * ``waitingFiles``: files the mappings select that are not indexed yet. A run reads the indexed ones
+   * only, so "current" is current for those: the others join the data once they are indexed.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string; waitingFiles?: number }> {
     let fingerprint: string;
+    let waitingFiles = 0;
     try {
-      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+      const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+      fingerprint = plan.populationExecutionFingerprint;
+      waitingFiles = plan.waitingFiles;
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
       throw error;
     }
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
-    if (!active) return { state: 'never_run' };
-    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
+    const active = await this.runtime.getBoundRecords(model.id, userId, 1,
+      await this.allowedWorkspaces(userId, model.id)).catch(() => null);
+    const waiting = waitingFiles > 0 ? { waitingFiles } : {};
+    if (!active) return { state: 'never_run', ...waiting };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated', ...waiting };
   }
 
   private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {
@@ -924,12 +1214,7 @@ export class SemanticPopulationRefreshService {
     const keyComponents = identityFields.filter((field) => knownKeys.has(field));
     // Records typed by hand need no key: the runtime falls back to each record's own id.
     if (!keyComponents.length && manualOnly && node.attributes?.length) keyComponents.push(node.attributes[0].key);
-    if (!keyComponents.length) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        `Concept "${node.label}" has no usable identity fields`,
-      );
-    }
+    if (!keyComponents.length) throw new ModelIssueException([identityIssue(node)]);
     return {
       conceptId: node.id,
       key: node.key,
@@ -958,8 +1243,26 @@ export class SemanticPopulationRefreshService {
    * Records entered by hand on the draft (including records migrated from the legacy pipeline) as one
    * immutable runtime snapshot. The snapshot id hashes its content, so unchanged records reuse it.
    */
-  private async manualSource(modelId: string, versionId: string, workspaceId: string, nodes: NodeTypeRow[]) {
+  private async manualSource(modelId: string, versionId: string, workspaceId: string, nodes: NodeTypeRow[], dry = false) {
     const withFields = new Map(nodes.filter((node) => node.attributes?.length).map((node) => [node.id, node]));
+    if (dry) {
+      // The model check only needs to know which concepts hold typed records: no snapshot is stored.
+      const typed = await this.database.query<{ nodeTypeId: string }>(
+        `SELECT DISTINCT node_type_id AS "nodeTypeId" FROM semantic_model.records
+         WHERE model_id=$1 AND version_id=$2 AND status='active'`,
+        [modelId, versionId],
+      ).then((result) => result.rows.filter((row) => withFields.has(row.nodeTypeId)));
+      if (!typed.length) return null;
+      const assetId = 'manual:check';
+      return { assetId, sources: typed.map(({ nodeTypeId }) => ({
+        sourceKind: 'manual' as const,
+        conceptId: nodeTypeId,
+        source: { workspaceId, assetId, snapshotId: 'mcheck' },
+        options: {},
+        columnMapping: Object.fromEntries(withFields.get(nodeTypeId)!.attributes.map((attribute) => [attribute.key, attribute.key])),
+        mappingVersion: 'mcheck',
+      })) };
+    }
     const [records, recordRelations] = await Promise.all([
       this.database.query<{ id: string; nodeTypeId: string; label: string; values: Record<string, unknown> }>(
         `SELECT id, node_type_id AS "nodeTypeId", label, values FROM semantic_model.records
@@ -1047,10 +1350,10 @@ export class SemanticPopulationRefreshService {
       [modelId],
     );
     if (result.rows.length > MAX_REFRESH_SOURCES) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        `Whole-model refresh supports at most ${MAX_REFRESH_SOURCES} sources; refresh a single mapping instead`,
-      );
+      throw new ModelIssueException([{
+        severity: 'error', code: 'too_many_mappings', params: { max: MAX_REFRESH_SOURCES },
+        message: `Whole-model refresh supports at most ${MAX_REFRESH_SOURCES} sources; refresh a single mapping instead`,
+      }]);
     }
     return result.rows;
   }
@@ -1068,6 +1371,18 @@ export class SemanticPopulationRefreshService {
   }
 
   /** Readable files of a workspace mapping, listed at run time. */
+  /** The mail archives whose data source asks for their e-mails to be indexed in the workspace too. */
+  /** Per archive file, what its connection chose: read time and memory never above the admin's. */
+  private async archiveConnections(modelId: string): Promise<Map<string, { indexInWorkspace: boolean; limits: ArchiveReadLimits }>> {
+    const result = await this.database.query<{ documentId: string; indexInWorkspace: boolean | null; limits: unknown }>(
+      `SELECT document_id AS "documentId", (config->>'indexInWorkspace')::boolean AS "indexInWorkspace", config->'limits' AS limits
+       FROM semantic_model.data_connections WHERE model_id=$1 AND kind='mail_archive'`, [modelId]);
+    const admin = { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() };
+    const ceilings = { archiveTimeoutSeconds: admin.archiveTimeoutSeconds, parserMemoryMb: admin.parserMemoryMb };
+    return new Map(result.rows.map((row) => [row.documentId,
+      { indexInWorkspace: row.indexInWorkspace === true, limits: pickArchiveLimits(row.limits, ceilings) }]));
+  }
+
   private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
     const all = await this.documents.listAllInWorkspace(workspaceId);
     return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
@@ -1077,8 +1392,9 @@ export class SemanticPopulationRefreshService {
    * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
    * listed a moment ago, so they are read as they are now rather than checked against a saved version.
    */
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
-    this.assertUsable(mapping);
+  private async populationSource(declared: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
+    this.assertUsable(declared);
+    const mapping = withoutStaleFields(declared, node);
     const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))
@@ -1090,37 +1406,10 @@ export class SemanticPopulationRefreshService {
         'The mapped source changed since this mapping was validated',
       );
     }
-    const knownAttributes = new Set((node.attributes ?? []).map((attribute) => attribute.key));
     const activeMappings = (mapping.fieldMappings ?? []).filter((field) => field.mode !== 'ignore');
-    if (activeMappings.some((field) => !knownAttributes.has(field.targetAttribute))) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'The mapping targets an attribute that is not present in the current draft',
-      );
-    }
-    const allowedModes = mapping.assetKind === 'document'
-      ? new Set(['extract', 'metadata', 'constant', 'computed'])
-      : new Set(['direct', 'extract', 'constant', 'computed']);
-    if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'The mapping contains a field mode unsupported by its source kind',
-      );
-    }
-    const mappedAttributes = new Set(activeMappings.map((field) => field.targetAttribute));
-    if (mappedAttributes.size !== activeMappings.length) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'A concept attribute can only be mapped once per source',
-      );
-    }
-    const identityFields = new Set(mapping.identityFields ?? []);
-    if ([...identityFields].some((field) => !mappedAttributes.has(field))) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'The mapping must populate every identity field',
-      );
-    }
+    // What a mapping must meet to be read lives in the model check's rules; a run refuses at the first.
+    const refused = mappingIssues(mapping, node);
+    if (refused.length) throw new ModelIssueException(refused);
     const source = {
       workspaceId: mapping.workspaceId,
       assetId: file ? file.id : mapping.documentId,
@@ -1174,15 +1463,8 @@ export class SemanticPopulationRefreshService {
       if (field.mode === 'extract' && field.sourceField) fieldExtractions[field.targetAttribute] = cellExtraction(field, attributes.get(field.targetAttribute));
       if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
-    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length
-        && !Object.keys(fieldExtractions).length && !Object.keys(fieldRecipes).length)
-      || [...identityFields].some((field) => !mappedAttributes.has(field))) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'The mapping must directly map every identity field',
-      );
-    }
     const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
+    const maxRecords = mappingRecordCap(mapping.aiSettings, { ...DEFAULT_RUN_LIMITS, ...await this.adminRunLimits() }.maxRecordsPerSource);
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
@@ -1199,16 +1481,15 @@ export class SemanticPopulationRefreshService {
       ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
       ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
+      // Only sent when the mapping reads fewer records than the admin allows, so other sheets keep their fingerprint.
+      ...(maxRecords !== undefined ? { readLimits: { maxRecords } } : {}),
       mappingVersion,
     };
   }
 }
 
 /** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
-export function graphPropertyKey(field: string): string {
-  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
-  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
-}
+export const graphPropertyKey = graphFieldKey;
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
 export { aiFieldHints };

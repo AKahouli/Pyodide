@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from src.semantic_model import attribute_extractor
-from src.semantic_model.attribute_extractor import AttributeExtractionAgent
+from src.semantic_model.attribute_extractor import AttributeExtractionAgent, LiteLLM, normalize_text
 
 
 def request() -> dict[str, Any]:
@@ -32,7 +32,7 @@ def request() -> dict[str, Any]:
 
 
 class StubLlm:
-    """Mirrors semantica's LiteLLM.generate_structured(prompt) -> dict."""
+    """Implements the generate_structured(prompt) -> dict contract NodeExtractor expects."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
@@ -125,3 +125,36 @@ def test_records_are_only_returned_when_asked(monkeypatch: pytest.MonkeyPatch):
     install_stub(monkeypatch, payload([{"label": "CNT-1", "attributes": [
         {"key": "contract_number", "value": "CNT-1", "evidenceReferences": ["section:7/block:9"]}]}]))
     assert "records" not in AttributeExtractionAgent().extract(request())
+
+
+def test_normalize_text_folds_typographic_punctuation_and_whitespace():
+    assert normalize_text(
+        "\u201cCNT\u20132026\u20130041\u201d\tcustomer  id\u2014note\u2026\r\n\r\n\r\nnext\r") \
+        == '"CNT-2026-0041" customer id--note...\n\nnext'
+
+
+def test_generate_structured_extracts_json_from_prose(monkeypatch: pytest.MonkeyPatch):
+    class FakeMessage:
+        content = 'Here you go: {"extractions": []}'
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResponse:
+        choices = [FakeChoice()]
+
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+
+    client = LiteLLM(model="openai/gpt-4o", api_key="k", api_base="http://x", timeout=30)
+
+    assert client.generate_structured("prompt") == {"extractions": []}
+    assert captured["model"] == "openai/gpt-4o"
+    assert captured["api_base"] == "http://x"
+    assert captured["timeout"] == 30
+    assert captured["messages"][0]["content"].endswith("Return the response as valid JSON only.")

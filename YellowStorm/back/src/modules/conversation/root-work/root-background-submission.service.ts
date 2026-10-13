@@ -30,13 +30,49 @@ export class RootBackgroundSubmissionService {
   }
 
   async status(parentId: string, childId: string) {
+    const { parent, actorId, job } = await this.inspect(parentId, childId);
+    await this.results.authorizeBackgroundExecution(parent.conversationId, childId, actorId);
+    return { executionId: childId, status: job!.status, resultRef: childId };
+  }
+
+  private async inspect(parentId: string, childId?: string) {
     const parent = await this.work.getExecution(parentId);
     const actorId = parent?.resultPayload?.nativeState?.actorId;
-    const job = await this.jobs.getJob(childId);
-    if (!parent || parent.role !== 'root' || parent.depth !== 0 || !actorId || !job
-      || job.parentExecutionId !== parentId || job.conversationEpoch !== parent.conversationEpoch) throw denied();
+    if (!parent || parent.role !== 'root' || parent.depth !== 0 || !actorId || !parent.rootAgentId
+      || !['running', 'waiting'].includes(parent.status)
+      || parent.resultPayload?.nativeState?.rootContext.background_enabled !== true) throw denied();
+    const pool = await this.resolver.resolveForActor(parent.rootAgentId, actorId, parent.conversationId,
+      parent.resultPayload?.nativeState?.rootContext.governance_revision ?? null);
+    if (!pool.policy.background.enabled || pool.rootSnapshotDigest !== parent.resultPayload?.nativeState?.scope.immutableSnapshotRef) throw denied();
+    const job = childId ? await this.jobs.getJob(childId) : null;
+    if (childId && (!job || job.conversationId !== parent.conversationId || job.actorId !== actorId
+      || job.conversationEpoch !== parent.conversationEpoch)) throw denied();
+    return { parent, actorId, job };
+  }
+
+  async list(parentId: string) {
+    const { parent, actorId } = await this.inspect(parentId);
+    const snapshot = await this.jobs.publicSnapshot(parent.conversationId, actorId);
+    if (snapshot.epoch !== parent.conversationEpoch || snapshot.rootAgentId !== parent.rootAgentId) throw denied();
+    const jobs = snapshot.jobs.slice(0, 20);
+    for (const job of jobs) await this.results.authorizeBackgroundExecution(parent.conversationId, job.executionId, actorId);
+    await this.inspect(parentId);
+    return { jobs: jobs.map(({ executionId, status, role, nativeState }) => ({ executionId, status, role,
+      task: ['library_worker', 'temporary_worker'].includes(role) ? nativeState?.admittedRequest?.task?.slice(0, 240) ?? '' : '' })) };
+  }
+
+  async result(parentId: string, childId: string, offset: number) {
+    const { parent, actorId } = await this.inspect(parentId, childId);
+    const result = await this.results.getResult(parent.conversationId, childId, actorId);
+    await this.inspect(parentId, childId);
+    return { executionId: childId, text: result.text.slice(offset, offset + 8000),
+      nextOffset: offset + 8000 < result.text.length ? offset + 8000 : null };
+  }
+
+  async cancel(parentId: string, childId: string) {
+    const { parent, actorId } = await this.inspect(parentId, childId);
     await this.results.authorizeBackgroundExecution(parent.conversationId, childId, actorId);
-    return { executionId: childId, status: job.status, resultRef: childId };
+    return this.jobs.cancel(parent.conversationId, actorId, childId, parent.conversationEpoch);
   }
 
   async submit(parentId: string, request: RootBackgroundSubmissionDto) {

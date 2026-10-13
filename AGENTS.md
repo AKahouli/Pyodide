@@ -96,3 +96,19 @@ Every subagent call carries: goal, acceptance criteria, repository area, changed
 - Verification run and outcome (never claim a check that did not run).
 - Gate results, or why a gate was skipped or blocked.
 - Remaining risks or follow-ups.
+
+
+## Unified Logging & Observability
+
+For every runtime change, assess its observability impact. Follow  `docs/observability/logging-contract.md`
+
+- Use only the shared Yellowmind observability SDK / platform logger. Do not add `console.*`, `print()` diagnostics, custom handlers, custom sinks, direct Loki calls, or operational DB logging.
+- New application instrumentation must use a registered `event_name` from `contracts/observability/log-events.v1.json`. Register a genuinely new event centrally before using it; never invent dynamic event names.
+- Instrument terminal outcomes for changed HTTP/RPC, dependency, MCP/tool, LLM, job, stream, retry/fallback, and long-running execution boundaries when operationally relevant. A handled/returned failure is still a failure and must not become invisible.
+- Keep one detailed error owner. Log the detailed exception/stack at the originating boundary; upstream layers emit concise correlated outcomes instead of duplicating the same error.
+- Preserve trusted `trace_id`, `request_id`, authenticated user context, and relevant `workspace_id` / `conversation_id` / `run_id` / `job_id` / `agent_id`. Propagate existing context across boundaries; do not fabricate replacement IDs or perform lookups only for logging.
+- Never log credentials, tokens, authorization/cookies, full prompts/responses/documents, raw request/response objects, SQL parameters, signed URLs, or arbitrary object graphs. Prefer IDs, counts, status, duration, provider/model, attempt, and bounded error metadata.
+- Logging must never add remote/database I/O to a business path, wait for delivery, or use unbounded buffering. Do not build expensive diagnostic payloads before the severity gate.
+- Do not log per token/chunk/row/vector/heartbeat on high-frequency paths; use terminal summaries or metrics.
+- Add/update tests for new failure paths, context propagation, severity/event correctness, and redaction. Run `node scripts/observability/check-policy.mjs`; when observability contracts/SDKs change also run `node scripts/observability/run-gates.mjs --suite unit`.
+- `legacy.log` is migration compatibility only. New features should use registered domain events.

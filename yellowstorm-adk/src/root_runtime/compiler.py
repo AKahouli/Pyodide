@@ -53,6 +53,34 @@ def attach_root_input_control(agent, scope, version: int = 0) -> None:
     from src.guardrails.tool_registry import tool_policy
     request_input.metadata = tool_policy(request_input.name)
     agent.tools = [*agent.tools, request_input]
+    agent.instruction += (
+        '\nThis invocation owns only the current user request. Other requests in conversation history '
+        'may be waiting or running independently. For an unrelated new question, answer that question '
+        'directly; never request the missing inputs of an earlier request, duplicate its clarification, '
+        'or resume/change it implicitly. A bound native continuation supplies the answers for its own '
+        'request. Tailor next-step suggestions to the current answer, not to an unrelated pending task. '
+        'Before asking for input, check the established conversation facts and your exposed tools. '
+        'Retrieve information you can obtain yourself; do not ask the user to supply it unnecessarily. '
+        'State reasonable assumptions for optional preferences. When an essential choice is missing, '
+        'use adk_request_input with a concise question and response_schema before dispatching work. '
+        'Use human-readable title and description on fields. For suggested answers with custom text, '
+        'you MUST put two or three concrete examples on EACH relevant string field in response_schema; '
+        'listing alternatives only in message or description does not render choice buttons. '
+        'For example: {"type":"string","title":"Time horizon","description":"Choose a horizon; '
+        'one week is a useful starting point for this comparison.","examples":["Next trading day","1 week","1 month"],"maxLength":200}. '
+        'Use maxLength up to 200 for short custom answers; use maxLength 2000 only for substantial pasted text. '
+        'Introduce the request in message with one helpful sentence followed by the essential question. '
+        'Recommend one choice with a reason without selecting it. '
+        'Use enum only for genuinely restricted choices. Request only essential fields, preserve earlier answers, '
+        'and distinguish chart interval from historical lookback. If required data cannot be retrieved, '
+        'explain the exact capability gap and offer a useful alternative. It binds the answer to this request and tracks '
+        'waiting/resolution. Reserve present_choices for optional conversational shortcuts, '
+        'not a replacement for a required clarification. Other chat requests may continue while waiting. '
+        'End every user-facing answer with one concise, specific next step or up to two ways to go further. '
+        'Use present_choices for actionable follow-up suggestions when exposed, including a custom answer; '
+        'otherwise write the suggestion naturally. Suggestions are optional: never launch extra work without '
+        'the user choosing it, never promise unavailable capabilities, and keep them outside an exact-format deliverable.'
+    )
 
 
 @dataclass
@@ -86,13 +114,32 @@ async def compile_worker(
     """
     if scope.role not in {ExecutionRole.LIBRARY_WORKER, ExecutionRole.TEMPORARY_WORKER} or scope.depth != 1 or not scope.parent_execution_id:
         raise ValueError("Worker compilation requires a depth-one leaf execution scope")
+    worker_config = dict(agent_config)
+    if 'skills' in worker_config:
+        worker_config['skills'] = [skill for skill in worker_config['skills'] or []
+            if str(skill.get('name', '') if isinstance(skill, dict) else getattr(skill, 'name', ''))
+            not in ('mono-agent-work-orchestration', 'smart-navigation-search')]
     agent, toolkit = await factory(
-        agent_config, agent_name, normalized_name, "", False, citation_manager
+        worker_config, agent_name, normalized_name, "", False, citation_manager
     )
     if agent is None:
         raise RuntimeError(f"Failed to compile worker agent: {agent_name}")
+    agent.instruction += (
+        "\n\nYou are a depth-one leaf worker executing the supplied delegated_task. "
+        "Complete this bounded assignment yourself using your exposed research or analysis tools. "
+        "Root conversation orchestration skills do not apply to this role: do not load them or "
+        "plan delegation/background work. Load any relevant retrieval skill at most once, then "
+        "perform the work using its instructions already in your history. Do not ask the user "
+        "questions or offer navigation choices; report missing inputs to the root instead. Return the requested "
+        "result and sources, or a concrete blocker if the required capability is unavailable."
+    )
     from src.root_runtime.leaf_tools import install_leaf_tool_gate
+    from src.root_runtime.worker_execution import install_worker_execution
+    install_worker_execution(agent, scope)
     install_leaf_tool_gate(agent)
+    from src.skills.runtime import limit_loaded_skill_activation
+    from src.guardrails.adapters.google_adk import append_callback
+    agent.before_model_callback = append_callback(agent.before_model_callback, limit_loaded_skill_activation)
     from src.root_runtime.evidence_capture import install_evidence_capture
     install_evidence_capture(agent, scope)
     return CompiledWorker(agent=agent, toolkit=toolkit, scope=scope)

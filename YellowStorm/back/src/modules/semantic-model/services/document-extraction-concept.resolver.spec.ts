@@ -98,6 +98,24 @@ describe('DocumentExtractionConceptResolver', () => {
     expect(agentTasks.runSingleAgentTask).not.toHaveBeenCalled();
   });
 
+  it('fills metadata fields with the document name, workspace id or document id', async () => {
+    const { resolver } = build('');
+    const result = await resolver.preview({
+      ...input,
+      concept: { ...input.concept, attributes: [
+        ...input.concept.attributes,
+        { key: 'workspace', label: 'Workspace', type: 'text' as const, required: false },
+        { key: 'doc', label: 'Document', type: 'text' as const, required: false }] },
+      fieldMappings: [
+        { sourceField: 'document_name', targetAttribute: 'source_document', mode: 'metadata' },
+        { sourceField: 'workspace_id', targetAttribute: 'workspace', mode: 'metadata' },
+        { sourceField: 'document_id', targetAttribute: 'doc', mode: 'metadata' }],
+      identityFields: ['source_document'],
+    });
+
+    expect(result.entities[0].values).toMatchObject({ source_document: 'Sony_Master_Contract.pdf', workspace: 'workspace-1', doc: 'document-1' });
+  });
+
   it('rejects evidence returned for another document', async () => {
     const { resolver, nativeSearch, agentTasks } = build(JSON.stringify({ fields: [
       { targetAttribute: 'contract_number', value: 'SONY-2026-MSA-01', reference: 'section-1', confidence: 1 },

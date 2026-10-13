@@ -9,23 +9,28 @@ input order. Failures raise; nothing is silently skipped.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
 
 from .documents import FIELD_POLICY_VERSION, SERIALIZER_VERSION
+from .settings import IndexBuildSettings
 
-# The column type in migration 022; another size needs its own storage.
-STORAGE_DIMENSION = 2560
+# Must match the halfvec(...) width of the embedding columns in the migrations;
+# another size needs its own storage.
+STORAGE_DIMENSION = int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", "2560"))
 # Qwen3-Embedding is trained with an instruction on the query side only.
 QUERY_INSTRUCTION = ("Instruct: Given a search request, retrieve the business records "
                      "that match it\nQuery: ")
 DOCUMENT_PREFIX = ""
+# What the whole embedding call may take beyond httpx's per-phase timeout.
+CALL_DEADLINE_MARGIN_SECONDS = 5.0
 
 
 class EmbeddingError(RuntimeError):
@@ -45,14 +50,44 @@ class EmbeddingProfile:
     dimension: int
     timeout_seconds: float = 30.0
     batch_size: int = 32
+    # Embedding calls in flight at once while an index is built. Like the two above, a performance
+    # knob: none of the three enters a fingerprint.
+    parallel_calls: int = 1
+
+    def with_build(self, build: "IndexBuildSettings | None") -> "EmbeddingProfile":
+        """This profile with the administrator's build knobs over the environment's (same fingerprints)."""
+        if build is None:
+            return self
+        return replace(
+            self,
+            batch_size=build.embedding_batch_size or self.batch_size,
+            parallel_calls=build.embedding_parallel_calls or self.parallel_calls,
+            timeout_seconds=float(build.embedding_timeout_seconds or self.timeout_seconds))
+
+    def _named(self, serializer: str | None) -> str:
+        body: dict[str, Any] = {"provider": "litellm", "model": self.model, "dimension": self.dimension,
+                                "distance": "cosine", "documentPrefix": DOCUMENT_PREFIX,
+                                "queryInstruction": QUERY_INSTRUCTION}
+        if serializer is not None:
+            body.update({"serializer": serializer, "fieldPolicy": FIELD_POLICY_VERSION})
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()[:32]
 
     @property
     def fingerprint(self) -> str:
-        body = json.dumps({"provider": "litellm", "model": self.model, "dimension": self.dimension,
-                           "distance": "cosine", "documentPrefix": DOCUMENT_PREFIX,
-                           "queryInstruction": QUERY_INSTRUCTION, "serializer": SERIALIZER_VERSION,
-                           "fieldPolicy": FIELD_POLICY_VERSION}, sort_keys=True)
-        return "emb:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+        """Names an index generation: the vectors' space and the search text format."""
+        return "emb:" + self._named(SERIALIZER_VERSION)
+
+    @property
+    def vector_fingerprint(self) -> str:
+        """Names the vectors' space only: two generations with it compare their vectors, and a
+        text embedded once is reused by any later text format (the embedding cache's key)."""
+        return "vec:" + self._named(None)
+
+    @property
+    def cache_fingerprints(self) -> list[str]:
+        """Cache keys whose vectors this profile reuses: its own, then those cached before the
+        cache was keyed by vector space (the gs-doc-v2 generations), for the same text."""
+        return [self.vector_fingerprint, "emb:" + self._named("gs-doc-v2")]
 
 
 def profile_from_env() -> EmbeddingProfile | None:
@@ -65,9 +100,10 @@ def profile_from_env() -> EmbeddingProfile | None:
         base_url=base_url,
         api_key=os.environ.get("SEMANTIC_EMBEDDING_API_KEY", ""),
         model=model,
-        dimension=int(os.environ.get("SEMANTIC_EMBEDDING_DIMENSION", str(STORAGE_DIMENSION))),
+        dimension=STORAGE_DIMENSION,
         timeout_seconds=float(os.environ.get("SEMANTIC_EMBEDDING_TIMEOUT_SECONDS", "30")),
         batch_size=max(1, min(128, int(os.environ.get("SEMANTIC_EMBEDDING_BATCH_SIZE", "32")))),
+        parallel_calls=max(1, min(16, int(os.environ.get("SEMANTIC_EMBEDDING_PARALLEL_CALLS", "4")))),
     )
 
 
@@ -90,8 +126,12 @@ async def embed(profile: EmbeddingProfile, texts: list[str], *, query: bool = Fa
     owned = client is None
     client = client or httpx.AsyncClient(timeout=profile.timeout_seconds)
     try:
-        response = await client.post(f"{profile.base_url}/v1/embeddings", json=body, headers=headers)
-    except httpx.TimeoutException as exc:
+        # httpx's timeout bounds each phase (connect, write, each read), not the call: a response that
+        # trickles in could hold a build for good. The whole call is bounded too.
+        response = await asyncio.wait_for(
+            client.post(f"{profile.base_url}/v1/embeddings", json=body, headers=headers),
+            timeout=profile.timeout_seconds + CALL_DEADLINE_MARGIN_SECONDS)
+    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
         raise EmbeddingError("embedding_timeout", retryable=True) from exc
     except httpx.HTTPError as exc:
         raise EmbeddingError("embedding_unreachable", retryable=True) from exc

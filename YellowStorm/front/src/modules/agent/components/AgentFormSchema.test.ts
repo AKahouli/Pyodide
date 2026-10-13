@@ -12,6 +12,8 @@ describe('AgentFormSchema', () => {
 
     expect(parsed.isActive).toBe(true);
     expect(parsed.ignorePrePrompt).toBe(false);
+    expect(parsed.genUiEnabled).toBe(true);
+    expect(defaultFormValues.genUiEnabled).toBe(true);
     expect(parsed.temperature).toBe(0);
     expect(parsed.tools).toEqual([]);
     expect(parsed.knowledgeBases).toEqual([]);

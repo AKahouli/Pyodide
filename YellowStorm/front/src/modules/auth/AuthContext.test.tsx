@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, getAccessToken, setAccessToken } from '@/lib/api';
+// Read the token through the same mocked barrel AuthContext binds to; a
+// direct store import can resolve to a second module instance.
 import { AuthProvider } from './AuthContext';
 import type { User } from './types';
 import { useAuth } from './useAuth';
@@ -20,6 +22,13 @@ const authApiMock = vi.hoisted(() => ({
 
 const notificationsServiceMock = vi.hoisted(() => ({
   reconnectWithNewToken: vi.fn(),
+}));
+
+const restoreSessionMock = vi.hoisted(() => ({ restoreSessionFromCookie: vi.fn() }));
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  restoreSessionFromCookie: restoreSessionMock.restoreSessionFromCookie,
 }));
 
 vi.mock('./api', () => authApiMock);
@@ -56,6 +65,7 @@ describe('AuthProvider', () => {
   const testPassword = String.fromCharCode(80, 97, 115, 115, 119, 48, 114, 100, 33);
   beforeEach(() => {
     localStorage.clear();
+    setAccessToken(null); // memory store is shared across tests in this file
     vi.clearAllMocks();
 
     authApiMock.getRegistrationStatus.mockResolvedValue({ enabled: true });
@@ -69,6 +79,7 @@ describe('AuthProvider', () => {
       user: baseUser,
     });
     authApiMock.logout.mockResolvedValue(undefined);
+    restoreSessionMock.restoreSessionFromCookie.mockResolvedValue(null);
   });
 
   it('logs in and persists token/user in localStorage', async () => {
@@ -85,12 +96,45 @@ describe('AuthProvider', () => {
     expect(authApiMock.login).toHaveBeenCalledWith({ email: 'user@example.com', password: testPassword });
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.email).toBe('user@example.com');
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBe('access-token');
+    // The access token stays in memory only - never in web storage.
+    expect(getAccessToken()).toBe('access-token');
+    expect(localStorage.getItem('yellostorm_access_token')).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBe(JSON.stringify(baseUser));
   });
 
+  it('restores the session from the refresh cookie on boot', async () => {
+    restoreSessionMock.restoreSessionFromCookie.mockResolvedValue('cookie-token');
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+    // The store write itself is runCoordinatedRefresh's job (mocked away
+    // here, covered in client.refreshBudget.test.ts).
+    expect(result.current.user?.email).toBe(baseUser.email);
+  });
+
+  it('stays a guest when the refresh cookie is absent', async () => {
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(restoreSessionMock.restoreSessionFromCookie).toHaveBeenCalledTimes(1);
+    expect(authApiMock.getCurrentUser).not.toHaveBeenCalled();
+  });
+
+  it('marks auth temporarily unavailable when cookie restore fails transiently', async () => {
+    restoreSessionMock.restoreSessionFromCookie.mockRejectedValue(new Error('network down'));
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthTemporarilyUnavailable).toBe(true);
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(getAccessToken()).toBeNull();
+  });
+
   it('clears local auth data on logout even if API logout fails', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'old-token');
+    setAccessToken('old-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     authApiMock.logout.mockRejectedValueOnce(new Error('network fail'));
 
@@ -106,7 +150,7 @@ describe('AuthProvider', () => {
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
+    expect(getAccessToken()).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
   });
 
@@ -130,7 +174,7 @@ describe('AuthProvider', () => {
   });
 
   it('clears data-plane grants on definitive bootstrap denial', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'stale-token');
+    setAccessToken('stale-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     authApiMock.getCurrentUser.mockRejectedValue({ statusCode: 401, code: 'ERR_1001' });
 
@@ -140,12 +184,12 @@ describe('AuthProvider', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.isAuthenticated).toBe(false);
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
+    expect(getAccessToken()).toBeNull();
     expect(dataGrantsMock.clearDataGrants).toHaveBeenCalled();
   });
 
   it('updates mounted auth state when the shared client loses the session', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
@@ -157,7 +201,7 @@ describe('AuthProvider', () => {
   });
 
   it('revalidates an authenticated session when the tab regains focus', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
@@ -169,7 +213,7 @@ describe('AuthProvider', () => {
   });
 
   it('does not restore auth when a stale focus revalidation finishes after auth loss', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
@@ -230,7 +274,7 @@ describe('AuthProvider', () => {
   it('replaces a stale local user with registrationApproval from getCurrentUser on refresh', async () => {
     const staleUser = { ...baseUser, status: 'inactive' as const, registrationApproval: 'pending' as const };
     const rejectedUser = { ...baseUser, status: 'inactive' as const, registrationApproval: 'rejected' as const };
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(staleUser));
     authApiMock.getCurrentUser.mockResolvedValue(rejectedUser);
 
@@ -243,7 +287,7 @@ describe('AuthProvider', () => {
   });
 
   it('preserves credentials and exposes a retryable state on transient bootstrap failure', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     authApiMock.getCurrentUser.mockRejectedValue({ code: 'ERR_NETWORK', statusCode: 0 });
 
@@ -253,12 +297,12 @@ describe('AuthProvider', () => {
     expect(result.current.isAuthTemporarilyUnavailable).toBe(true);
     expect(result.current.isAuthenticated).toBe(false);
     // Credentials must survive a transient failure (F02).
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBe('access-token');
+    expect(getAccessToken()).toBe('access-token');
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBe(JSON.stringify(baseUser));
   });
 
   it('recovers authentication when retryRecovery succeeds after a transient failure', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    setAccessToken('access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     authApiMock.getCurrentUser.mockRejectedValueOnce({ statusCode: 503, code: 'ERR_1008' });
 

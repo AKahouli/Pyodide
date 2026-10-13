@@ -106,12 +106,11 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
         <div><h2 className='text-xl font-semibold'>{t('dataPreview.title')}</h2><p className='text-sm text-muted-foreground'>{t('dataPreview.description')}</p></div>
         <Button variant='outline' onClick={() => void preview.refetch()} disabled={preview.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${preview.isFetching ? 'animate-spin' : ''}`} />{t('dataPreview.refresh')}</Button>
       </div>
-      {preview.data && <div className='grid grid-cols-2 gap-2 md:grid-cols-5'>
+      {preview.data && <div className='grid grid-cols-2 gap-2 md:grid-cols-4'>
         <Summary value={preview.data.summary.entities} label={t('dataPreview.entities')} />
         <Summary value={preview.data.summary.resolvedRelations} label={t('dataPreview.resolved')} good />
         <Summary value={preview.data.summary.unresolvedRelations} label={t('dataPreview.unresolved')} />
         <Summary value={preview.data.summary.ambiguousRelations} label={t('dataPreview.ambiguous')} warn />
-        <Summary value={preview.data.summary.conflicts} label={t('dataPreview.conflicts')} warn />
       </div>}
       <div className='grid gap-3 rounded-2xl border bg-background p-4 md:grid-cols-[1fr_14rem_8rem_auto] md:items-end'>
         <div className='space-y-1.5'><Label htmlFor='semantic-data-search'>{t('dataPreview.search')}</Label><div className='relative'><Search className='absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' /><Input id='semantic-data-search' className='pl-9' value={search} onChange={(event) => setSearch(event.target.value)} /></div></div>

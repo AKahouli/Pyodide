@@ -1350,6 +1350,7 @@ export interface AgentResponse {
   model?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  genUiEnabled?: boolean;
   knowledgeBases: string[];
   tools: string[];
   skills?: string[];
@@ -1391,6 +1392,7 @@ export interface CreateAgentRequest {
   model?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
+  genUiEnabled?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
   skills?: string[];
@@ -1418,6 +1420,7 @@ export interface UpdateAgentRequest {
   model?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
+  genUiEnabled?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
   skills?: string[];

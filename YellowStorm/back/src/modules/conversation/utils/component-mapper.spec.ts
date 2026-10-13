@@ -321,6 +321,17 @@ describe('component-mapper chart extraction', () => {
       prefix: 'Results:', suffix: 'Outlook.', evidenceOrigin: 'page_content',
     } });
   });
+
+  it('maps a cited semantic model record, even beside empty default branches', () => {
+    expect(extractComponentData({ citation: { parent_id: 'text-1', web_source: null, record_source: {
+      type: 'record', reference: '[3]', model_id: 'm-1', model_name: 'Mails', data: 'published', data_revision_id: 'rev-1',
+      entity_id: 'e-1', concept: 'Contract', name: 'CT001', key_fields: { id: 'CT001' }, field: 'Body', quote: 'ends on 31/12/2025',
+    } } })).toEqual({ type: 'citation', data: {
+      parentId: 'text-1', sourceKind: 'record', sourceType: 'record', reference: '[3]', modelId: 'm-1', modelName: 'Mails',
+      data: 'published', dataRevisionId: 'rev-1', entityId: 'e-1', concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' },
+      field: 'Body', quote: 'ends on 31/12/2025', source: 'CT001',
+    } });
+  });
 });
 
 describe('component-mapper choice extraction', () => {

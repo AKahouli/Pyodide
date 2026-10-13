@@ -4,6 +4,7 @@ import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { deriveAgentSlug } from '@common/utils/slugify';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
+import { appendGenUiOutputFormat } from './prompts/gen-ui-output-format';
 import { MONO_AGENT_SLUG as MONO_AGENT_TYPE_SLUG, RootPolicyService } from './services/root-policy.service';
 import type { RootExecutionPolicy } from './interfaces/root-execution-policy.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -29,6 +30,7 @@ import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
+import { ConnectorCitationMode } from '../connector/connector.types';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
@@ -79,6 +81,17 @@ export function semanticModelChatActionKeys(connector: IConnectorResponse, selec
     .filter((action) => action.isEnabled !== false && (action.safety ?? 'read') === 'read')
     .map((action) => action.key)
     .filter((key) => !selected || selected.has(key)));
+}
+
+/**
+ * The semantic connector's results name records the answer can cite: its actions left without a citation mode get
+ * record_evidence, so the runtime numbers the records each result lists (citationSources) and the chat can open them.
+ */
+export function markRecordCitations(binding: Record<string, unknown>): void {
+  const actions = Array.isArray(binding.actions) ? binding.actions as Array<Record<string, unknown>> : [];
+  for (const action of actions) {
+    if (!action.citation_mode || action.citation_mode === ConnectorCitationMode.NONE) action.citation_mode = ConnectorCitationMode.RECORD_EVIDENCE;
+  }
 }
 
 export interface PlaybookPlannerAgentConfig {
@@ -895,8 +908,17 @@ export class AgentService {
         : [];
       if (semanticFixedParamKeys.length) {
         for (const binding of connectorBindings) {
-          if (binding.connector_id === semanticSearchConnectorId) this.hideFixedParamsFromModel(binding, semanticFixedParamKeys);
+          if (binding.connector_id !== semanticSearchConnectorId) continue;
+          this.hideFixedParamsFromModel(binding, semanticFixedParamKeys);
         }
+      }
+      // Records read from a semantic model are citable whether or not the chat is pinned to one model.
+      const semanticConnectorSlug = this.configService.get<string>('semanticModel.searchConnectorSlug', '') ?? '';
+      for (const binding of connectorBindings) {
+        const connectorId = String(binding.connector_id ?? '');
+        const isSemantic = connectorId === semanticSearchConnectorId
+          || (semanticConnectorSlug !== '' && connectorsMap.get(connectorId)?.slug === semanticConnectorSlug);
+        if (isSemantic) markRecordCitations(binding);
       }
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
@@ -956,6 +978,8 @@ export class AgentService {
         });
         prompt += membersContext;
       }
+      // Generative UI: the agent's own prompt stays in the DB, only the output-format block is added here.
+      prompt = appendGenUiOutputFormat(prompt, agent.genUiEnabled);
       const grpcAgent: IGrpcAgent = {
         id: agent.id,
         name: agent.name,
@@ -964,6 +988,7 @@ export class AgentService {
         agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        connector_bindings: connectorBindings,
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
@@ -1011,6 +1036,7 @@ export class AgentService {
         connectorBindingCount: connectorBindings.length,
         promptLength: grpcAgent.prompt.length,
         ignorePrePrompt: agent.ignorePrePrompt,
+        genUiEnabled: agent.genUiEnabled === true,
         isDefault: agent.isDefault,
       });
 
@@ -1669,6 +1695,8 @@ export class AgentService {
       reasoningEffort: dto.reasoning_effort || undefined,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
+      // Product default: generative UI is ON for newly created agents (the column default is OFF).
+      genUiEnabled: dto.genUiEnabled ?? true,
       knowledgeBases: dto.knowledgeBases ?? [],
       tools: dto.tools ?? [],
       skills: dto.skills ?? [],
@@ -1716,6 +1744,7 @@ export class AgentService {
     if ('reasoning_effort' in dto) patch.reasoningEffort = dto.reasoning_effort || null;
     if (dto.instruction !== undefined) patch.instruction = dto.instruction;
     if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
+    if (dto.genUiEnabled !== undefined) patch.genUiEnabled = dto.genUiEnabled;
     if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
     if (dto.max_temporary_child_agents !== undefined) patch.max_temporary_child_agents = dto.max_temporary_child_agents;
     if (dto.rootExecutionPolicy !== undefined) {
@@ -1889,6 +1918,7 @@ export class AgentService {
       reasoning_effort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      genUiEnabled: (d.genUiEnabled as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as { toString(): string }[]) || []).map((id) =>
         id.toString(),
       ),
@@ -1961,6 +1991,7 @@ export class AgentService {
       reasoningEffort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      genUiEnabled: (d.genUiEnabled as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as { toString(): string }[]) || []).map((id) =>
         id.toString(),
       ),

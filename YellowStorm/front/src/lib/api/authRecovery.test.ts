@@ -25,6 +25,9 @@ describe('isTransientAuthFailure', () => {
     expect(isTransientAuthFailure({ code: 'ERR_1130', statusCode: 503 })).toBe(true);
     expect(isTransientAuthFailure({ statusCode: 500 })).toBe(true);
     expect(isTransientAuthFailure({ statusCode: 429 })).toBe(true);
+    expect(isTransientAuthFailure({ code: 'ERR_1007', statusCode: 429 })).toBe(true);
+    // A throttled /auth/refresh must never be treated as a definitive logout.
+    expect(isDefinitiveAuthFailure({ code: 'ERR_1007', statusCode: 429 })).toBe(false);
     expect(isTransientAuthFailure({ statusCode: 502 })).toBe(true);
   });
 

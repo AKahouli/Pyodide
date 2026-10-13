@@ -10,8 +10,8 @@
     "postbuild": "node scripts/copy-runtime-protos.cjs",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
+    "start:dev": "nest start --watch --watchAssets",
+    "start:debug": "nest start --debug --watch --watchAssets",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
@@ -36,7 +36,8 @@
     "release": "commit-and-tag-version",
     "release:patch": "commit-and-tag-version --release-as patch",
     "db:verify": "node --env-file=.env -r ts-node/register scripts/migrate/verify-postgres-state.ts",
-    "db:record-applied": "node --env-file=.env -r ts-node/register scripts/migrate/record-applied-migrations.ts"
+    "db:record-applied": "node --env-file=.env -r ts-node/register scripts/migrate/record-applied-migrations.ts",
+    "start:dev:pretty": "nest start --watch --watchAssets 2>&1 | node ../../scripts/observability/pretty.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",

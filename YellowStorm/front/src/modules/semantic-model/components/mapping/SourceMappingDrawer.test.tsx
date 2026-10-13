@@ -10,6 +10,7 @@ import { readAllWith, withMode } from './FieldMappingList';
 const api = vi.hoisted(() => ({
   listSourceMappings: vi.fn(), profileSourceAsset: vi.fn(), createSourceMapping: vi.fn(), previewSourceMapping: vi.fn(), analyzeSourceAsset: vi.fn(),
   previewComputedField: vi.fn(), previewSheetFields: vi.fn(), getExtractionDefaults: vi.fn(), listMappingPresets: vi.fn(), lastUsedMapping: vi.fn(),
+  listDataConnections: vi.fn(), createDataConnection: vi.fn(), updateDataConnection: vi.fn(),
 }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 vi.mock('@/modules/agent', () => ({ useAgents: () => [], useAgentStore: { getState: () => ({ isInitialized: true, isLoading: false, fetchAgents: vi.fn() }) } }));
@@ -46,8 +47,18 @@ function renderDrawer(value: SourceMappingTarget = target()) {
   return { invalidate };
 }
 
+/** Opens every folded part and field, as a person reading the whole editor. */
+async function openAll() {
+  await screen.findByRole('region', { name: 'mapping.cell.fieldsTitle' });
+  for (let round = 0; round < 4; round++) {
+    const folded = screen.queryAllByRole('button', { expanded: false });
+    if (!folded.length) return;
+    folded.forEach((button) => fireEvent.click(button));
+  }
+}
+
 /** The row of one field in the shared field list. */
-const fieldRow = (label: string) => screen.getByText(label, { selector: 'span.truncate' }).closest('div.space-y-2') as HTMLElement;
+const fieldRow = (label: string) => within(screen.getByRole('region', { name: 'mapping.cell.fieldsTitle' })).getByText(label, { selector: 'span.truncate' }).closest('div.space-y-2') as HTMLElement;
 
 describe('Sheet mapping with the document field mapping', () => {
   beforeEach(() => {
@@ -71,6 +82,7 @@ describe('Sheet mapping with the document field mapping', () => {
     const switched: SourceMappingTarget = { workspaceId: 'workspace-1', documentId: 'document-2', documentName: 'mails3.xlsx', assetKind: 'excel_sheet', conceptId: 'concept-1', replaces: mapping };
     render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={switched} onClose={vi.fn()} onSaved={onSaved} /></QueryClientProvider>);
     expect(await screen.findByText('mapping.switch.title')).toBeInTheDocument();
+    await openAll();
     await screen.findByText('Référence', { selector: 'span.truncate' });
     fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
     await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
@@ -98,8 +110,33 @@ describe('Sheet mapping with the document field mapping', () => {
     ]);
   });
 
+  it('opens with every part folded, each title saying what it holds, and no archive part for a spreadsheet', async () => {
+    renderDrawer();
+    const fields = await screen.findByRole('region', { name: 'mapping.cell.fieldsTitle' });
+    expect(within(fields).getByRole('button', { expanded: false })).toHaveTextContent('derived.fieldsSummary');
+    expect(within(screen.getByRole('region', { name: 'mapping.identity' })).getByRole('button', { expanded: false })).toHaveTextContent('ID');
+    expect(screen.queryByText('mapping.cell.columnFor')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'mapping.pane.archiveTitle' })).not.toBeInTheDocument();
+  });
+
+  it('lets a mail archive mapping choose to also index the archive in its workspace, saved at once', async () => {
+    api.listDataConnections.mockResolvedValue([{ id: 'c-1', kind: 'mail_archive', name: 'mails2.zip', workspaceId: 'workspace-1', documentId: 'document-1',
+      indexInWorkspace: false, limits: { maxArchiveMb: 50 }, ceilings: { archiveTimeoutSeconds: 900, parserMemoryMb: 512 }, available: true, createdAt: '' }]);
+    api.updateDataConnection.mockResolvedValue({});
+    renderDrawer({ ...target(), mimeType: 'application/zip' });
+    const pane = await screen.findByRole('region', { name: 'mapping.pane.archiveTitle' });
+    // toLocaleString() groups with a comma or a (narrow) space per runner locale.
+    expect(within(pane).getByRole('button', { expanded: false })).toHaveTextContent(/mapping\.pane\.archiveOff · settings\.runLimits\.maxArchiveEmails 50[,\s]000 · settings\.runLimits\.maxArchiveMb 50/);
+    fireEvent.click(within(pane).getByRole('button', { expanded: false }));
+    fireEvent.click(await within(pane).findByRole('checkbox', { name: 'dataSources.dialog.indexLabel' }));
+    await waitFor(() => expect(api.updateDataConnection).toHaveBeenCalledWith('model-1', 'c-1', { indexInWorkspace: true }));
+    expect(within(pane).getByLabelText('settings.runLimits.maxArchiveMb')).toHaveValue(50);
+    expect(api.createSourceMapping).not.toHaveBeenCalled();
+  });
+
   it('saves an old mapping exactly as it was, and refreshes the data preview', async () => {
     const { invalidate } = renderDrawer();
+    await openAll();
     await screen.findByText('Référence', { selector: 'span.truncate' });
     fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
     await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
@@ -109,8 +146,24 @@ describe('Sheet mapping with the document field mapping', () => {
     expect(useSemanticModelEditorStore.getState().graph?.revision).toBe(0);
   });
 
+  it("saves the sheet's own record limit without AI, refusing more than the admin allows", async () => {
+    api.getExtractionDefaults.mockResolvedValue({ aiSettings: { maxBlocks: 400, maxCharacters: 60000, longDocumentCharacters: 30000, blocksPerField: 8 }, configured: {},
+      sourceCeilings: { maxRecordsPerSource: 5000, maxRunSources: 5000 } });
+    renderDrawer();
+    await openAll();
+    const limit = await screen.findByLabelText('mapping.readLimits.maxRecords');
+    expect(limit).toHaveAttribute('placeholder', '5000');
+    fireEvent.change(limit, { target: { value: '9000' } });
+    expect(screen.getByRole('button', { name: 'mapping.save' })).toBeDisabled();
+    fireEvent.change(limit, { target: { value: '50' } });
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(api.createSourceMapping.mock.calls[0][1].aiSettings).toEqual({ maxRecords: 50 });
+  });
+
   it('shows the document field mapping for every concept field, with the sheet modes', async () => {
     renderDrawer();
+    await openAll();
     await screen.findByText('Référence', { selector: 'span.truncate' });
     expect(screen.getByText('mapping.cell.fieldsTitle')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'mapping.readAll.label' })).toBeInTheDocument();
@@ -145,6 +198,8 @@ describe('Sheet mapping with the document field mapping', () => {
       rows: [{ rowNumber: 2, values: { message_id: 'M1', corps: BODY } }, { rowNumber: 3, values: { message_id: 'M2', corps: 'Réf: CMD-7' } }],
     });
     // The value found on the shown row, the cell it was found in, and every picked row's result.
+    await screen.findByText('mapping.cell.resultTitle');
+    await openAll();
     expect(await screen.findAllByText('CMD-42')).not.toHaveLength(0);
     expect(screen.getByLabelText('mapping.cell.cellOf').querySelector('mark')?.textContent).toBe('CMD-42');
     expect(screen.getByText('mapping.cell.resultTitle')).toBeInTheDocument();
@@ -169,6 +224,8 @@ describe('Sheet mapping with the document field mapping', () => {
     // The item is not a column: the column it is split from is sent, with how to split it.
     expect(api.previewSheetFields.mock.calls[0][1]).toEqual(expect.objectContaining({
       rows: [{ rowNumber: 2, values: { to: 'a@x.fr; b@y.fr' } }], expand: { field: 'to', split: 'auto' } }));
+    await screen.findByText('mapping.cell.resultTitle');
+    await openAll();
     expect(await screen.findByText('derived.expand.row.found')).toBeInTheDocument();
     expect(screen.getAllByText(/derived\.expand\.row\.itemOf/)).toHaveLength(2);
     expect(within(fieldRow('ID')).getByRole('combobox', { name: 'mapping.cell.columnFor' })).toHaveTextContent('derived.expand.item');
@@ -179,17 +236,20 @@ describe('Sheet mapping with the document field mapping', () => {
 
     // Turned off, a field still reading the item blocks saving.
     fireEvent.click(screen.getByRole('switch', { name: 'derived.expand.row.label' }));
-    expect(await screen.findByText('derived.expand.row.itemWithoutExpand')).toBeInTheDocument();
+    expect(await screen.findAllByText('derived.expand.row.itemWithoutExpand')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'mapping.save' })).toBeDisabled();
   });
 
   it('reads every field with rules in one click, and directly again', async () => {
     renderDrawer();
+    await openAll();
     await screen.findByText('Référence', { selector: 'span.truncate' });
     fireEvent.click(within(screen.getByRole('group', { name: 'mapping.readAll.label' })).getByRole('button', { name: /mapping\.strategy\.rules_then_ai/ }));
     expect(within(fieldRow('ID')).getByRole('combobox', { name: 'mapping.strategyFor' })).toHaveTextContent('mapping.strategy.rules_then_ai');
-    expect(screen.getByText('mapping.cell.aiEstimate')).toBeInTheDocument();
-    // AI is slow and costly: the rows are only read with it on request.
+    // What a run costs in AI is in sight beside Save.
+    expect(screen.getByText('derived.aiFooter')).toBeInTheDocument();
+    // AI is slow and costly: turning it on does not read the rows by itself.
+    api.previewSheetFields.mockClear();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
     expect(api.previewSheetFields).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByRole('group', { name: 'mapping.readAll.label' })).getByRole('button', { name: /mapping\.cell\.readAllDirect/ }));
