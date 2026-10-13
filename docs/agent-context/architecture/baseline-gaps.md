@@ -61,13 +61,12 @@ invent rationale from code alone (per [change control](change-control.md)).
 
 ## Non-gaps (deliberately out of scope for this baseline)
 
-- Pre-existing unrelated worktree deletions (`.gitignore` tweak, removed
-  `YellowStorm/back/docs/*` audit/migration notes, removed QA png) are not part
-  of this task and were left untouched. Note: the uncommitted deletion of
-  `YellowStorm/back/docs/migrations/conversation-postgres-phase-1.md` leaves the
-  existing Conversation index row in `docs/agent-context/README.md` dangling;
-  restoring or re-linking it is out of scope for this baseline and left for its
-  owning task.
+- Superseded `YellowStorm/back/docs/*` audit/migration notes and the tracked QA
+  png were removed in a follow-up docs cleanup (`c866c8866`); the Conversation
+  index row now points to [Persistence](../backend/persistence.md). The still-live
+  `age-graph-storage.md` deletion was reverted — its AGE two-layer content matches
+  current code and has no replacement reference yet. Unlinked `docs/` session
+  scratch reports were removed in `739c5ec4b`.
 - SDLC native checkpoint tools (`sdlc_checkpoint`/`sdlc_prepare`/`sdlc_diff`)
   are not installed in this session; goal/criteria/ownership/verification are
   recorded in the task log and this report instead.
