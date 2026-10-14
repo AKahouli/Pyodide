@@ -261,7 +261,11 @@ export async function openHarness(directory, options = {}) {
           const current = fileHash(file);
           if (current && task.reads[file] !== current) throw new Error(`Read the existing target before editing: ${file}`);
           const claim = query('SELECT task FROM claims WHERE path=?').get(file);
-          if (claim && claim.task !== task.id) throw new Error(`File ${file} belongs to task ${claim.task}; use disjoint files or another worktree.`);
+          if (claim && claim.task !== task.id) {
+            const previous = taskById(claim.task);
+            if (previous && !alive(previous.owner.pid) && !previous.inFlight) throw new Error(`File ${file} belongs to task ${claim.task}, whose process has stopped. Call sdlc_release(taskID: "${claim.task}", files: ["${file}"]), then Read and prepare again.`);
+            throw new Error(`File ${file} belongs to task ${claim.task}; coordinate with its live owner or resume its interrupted edit.`);
+          }
           task.prepared[file] = { expected: fileHash(file), evidence, reuseDecision: input.reuseDecision, newCodeReason: input.newCodeReason ?? '' };
           const baseline = query('SELECT fingerprint FROM baselines WHERE task=? AND path=?').get(task.id, file);
           if (baseline && current !== (task.files[file] ?? baseline.fingerprint)) task.reviewGaps = [...new Set([...(task.reviewGaps ?? []), file])];
@@ -326,10 +330,30 @@ export async function openHarness(directory, options = {}) {
     park(sessionID, status = 'waiting') {
       transaction(() => { const task = owned(sessionID); if (!terminal.has(task.status) && task.status !== 'ready') task.status = status; save(task); });
     },
+    release(sessionID, taskID, filenames) {
+      return transaction(() => {
+        const requester = owned(sessionID);
+        const task = taskById(taskID);
+        if (!task || task.root !== root || task.branch !== identity().branch) throw new Error('Claim task is missing or belongs to another worktree/branch.');
+        if (task.id === requester.id) throw new Error('This task owns the claim; complete or cancel it to release its files.');
+        if (alive(task.owner.pid) || task.inFlight) throw new Error('Claim owner is live or has an interrupted edit; resume or coordinate with that task first.');
+        const files = filenames.map(relative);
+        if (!files.length) throw new Error('Name the exact stale claim files to release.');
+        for (const file of files) {
+          if (query('SELECT task FROM claims WHERE path=?').get(file)?.task !== task.id) throw new Error(`File ${file} is not claimed by task ${task.id}.`);
+        }
+        for (const file of files) query('DELETE FROM claims WHERE path=? AND task=?').run(file, task.id);
+        task.prepared = {};
+        task.reviewGaps = [...new Set([...(task.reviewGaps ?? []), ...files])];
+        task.recovery = { ...(task.recovery ?? {}), releasedClaims: [...new Set([...(task.recovery?.releasedClaims ?? []), ...files])], needsReconciliation: true };
+        save(task);
+        return { released: files, previousTask: task.id, action: 'Read current files and call sdlc_prepare for the requesting task before editing.' };
+      });
+    },
     resume(sessionID, taskID) {
       return transaction(() => {
         const provisional = owned(sessionID);
-        if (provisional.goal && provisional.id !== taskID) throw new Error('This session already owns another task; open a fresh session to resume.');
+        if (provisional.goal && provisional.id !== taskID && !terminal.has(provisional.status)) throw new Error('This session has an unfinished task; complete or cancel it before resuming another task.');
         const task = taskById(taskID);
         if (!task || terminal.has(task.status)) throw new Error('Checkpoint is missing or already finished.');
         if (task.root !== root || task.branch !== identity().branch) throw new Error('Checkpoint belongs to a different worktree/branch.');
@@ -343,11 +367,11 @@ export async function openHarness(directory, options = {}) {
         task.reads = {};
         task.prepared = {};
         task.status = 'active';
-        task.recovery = { previousSession, interruptedOperation: task.inFlight, needsReconciliation: Object.entries(task.files).some(([file, expected]) => fileHash(file) !== expected) };
+        task.recovery = { ...(task.recovery ?? {}), previousSession, interruptedOperation: task.inFlight ?? task.recovery?.interruptedOperation ?? null, needsReconciliation: Boolean(task.recovery?.needsReconciliation || Object.entries(task.files).some(([file, expected]) => fileHash(file) !== expected)) };
         task.inFlight = null;
         if (task.qa) task.qa = { ...task.qa, runtimeVerified: false };
         query('INSERT INTO sessions(id,task) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET task=excluded.task').run(sessionID, task.id);
-        if (provisional.id !== task.id) query('DELETE FROM tasks WHERE id=?').run(provisional.id);
+        if (provisional.id !== task.id && !provisional.goal) query('DELETE FROM tasks WHERE id=?').run(provisional.id);
         save(task);
         return summary(task);
       });

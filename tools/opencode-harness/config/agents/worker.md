@@ -11,6 +11,7 @@ permission:
   sdlc_checkpoint: allow
   sdlc_prepare: allow
   sdlc_resume: allow
+  sdlc_release: allow
   sdlc_diff: allow
   read:
     "*": allow

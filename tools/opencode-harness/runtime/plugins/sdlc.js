@@ -111,13 +111,18 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         execute: async (args, context) => report(harness.prepare(context.sessionID, args)),
       }),
       sdlc_resume: tool({
-        description: 'List unfinished tasks in this exact worktree/branch or transfer one parked/interrupted task to this fresh session. Never guess among multiple tasks. Transfer invalidates context-read receipts and checks changed input fingerprints.',
+        description: 'List unfinished tasks or transfer one parked/interrupted task to this session. A current task must first be completed or cancelled. Never guess among multiple tasks. Transfer invalidates context-read receipts and checks changed input fingerprints.',
         args: { taskID: z.string().optional() },
         execute: async (args, context) => {
           const result = args.taskID ? harness.resume(context.sessionID, args.taskID) : harness.list(context.sessionID);
           if (args.taskID) resumeNotices.delete(context.sessionID);
           return report(result);
         },
+      }),
+      sdlc_release: tool({
+        description: 'Release exact file claims from a dead task process without taking over its goal. Refuses live owners and interrupted edits; preserves the old task for later reconciliation. Re-read files and prepare before editing.',
+        args: { taskID: z.string(), files: strings },
+        execute: async (args, context) => report(harness.release(context.sessionID, args.taskID, args.files)),
       }),
       sdlc_diff: tool({
         description: 'Read the task-scoped baseline diff for one owned file, excluding pre-existing changes. Local baselines are not copied into experience memory. Output is bounded; request individual files.',

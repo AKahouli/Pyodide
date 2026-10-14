@@ -6,6 +6,7 @@
 - External SDK/library/CLI behavior unresolved locally: use Context7 and its skill. Code investigations reuse current graph evidence or `get_minimal_context_tool` with the absolute worktree root. Load `crg-navigation` when needed; keep queries minimal/bounded. Skip graph for prose/git chores.
 - Automatic health/recall needs no duplicate startup calls. Graph/Hindsight failures or pending checks never block coding: use source/tests and Git docs/checkpoints, report once or on status changes, refresh after recovery. Storage/ownership failures still block native edits. Report missing/stale SDLC tools; plugin installations require a full host restart.
 - With SDLC active, checkpoint intent, read routed docs/code and prepare exact targets with a reuse decision before native edits. Save task IDs, check inputs and milestones before replies/resume. Unrelated work uses `newTask: true`; corrections reopen the same task. Native permissions govern shell commands; don't bypass guards through shell writes.
+- A cancelled/completed task can resume a parked task in the same chat. For a file claim left by a stopped process, use `sdlc_release(taskID, files)` on the exact file and then re-read/re-prepare; live owners or interrupted edits require coordination or resume. A cancelled task needs a new checkpoint generation before further edits.
 
 ## Autonomy and background handoff
 

@@ -157,6 +157,14 @@ one selection request, never a guessed task. **resume task TASK_ID** or
 `sdlc_resume(taskID)` selects explicitly. Ordinary new requests never attach an
 unrelated checkpoint. An active old process must interrupt/park its task before
 transfer; dead processes can be recovered. The old session loses edit ownership.
+After completing or cancelling the current task, `sdlc_resume(taskID)` can transfer
+another task within the same session. The finished checkpoint remains available
+for review. To keep the current goal and release only a dead process's stale file
+claim, use `sdlc_release(taskID, files)` with exact paths. It refuses live owners
+and interrupted edits, preserves the old checkpoint with a review gap, and still
+requires current Read evidence plus `sdlc_prepare` before editing.
+If the current task was cancelled, start a new task checkpoint for the intended
+goal before preparing edits; releasing a stale claim does not reopen it.
 Starting a new session does not itself start execution without a user request.
 
 Recovery clears prior read receipts and prepared edit permissions. Previously
