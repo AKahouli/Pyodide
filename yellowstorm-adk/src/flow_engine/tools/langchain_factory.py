@@ -727,6 +727,16 @@ def create_langchain_tools(
                 )
             )
 
+    # --- Image generation ---
+    if "generate_image" in tool_names:
+        from src.smart_rag.tools.native_tool_registry import resolve_native_tools
+
+        for native_tool in resolve_native_tools(
+            [config for config in tool_configs if isinstance(config, dict) and config.get("name") == "generate_image"],
+            runtime_context=agent_params,
+        ):
+            tools.append(StructuredTool.from_function(coroutine=native_tool, func=None))
+
     # --- Plan generator ---
     if "plan" in tool_names:
         tools.append(_create_plan_tool())

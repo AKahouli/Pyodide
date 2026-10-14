@@ -327,6 +327,8 @@ export const API_ENDPOINTS = {
       `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
     citationUrl: (conversationId: string, messageId: string) =>
       `/conversations/${conversationId}/messages/${messageId}/citations/url`,
+    generatedImageUrl: (conversationId: string, messageId: string, documentId: string) =>
+      `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/generated-images/${encodeURIComponent(documentId)}/url`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints

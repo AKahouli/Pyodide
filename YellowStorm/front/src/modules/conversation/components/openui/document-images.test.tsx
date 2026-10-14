@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CitationData } from '@/components/ai-elements/ai-message-content';
-import { fetchRootEvidence, getCitationViewUrl } from '../../api';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { fetchRootEvidence, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
 import { renderPdfImage } from './pdf-image';
 import OpenUiRenderer from './OpenUiRenderer';
 import { mapImageSources } from './document-images';
 
-vi.mock('../../api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn() }));
+vi.mock('../../api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn(), getGeneratedImageUrl: vi.fn() }));
 vi.mock('./pdf-image', () => ({ renderPdfImage: vi.fn() }));
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrlLoader: vi.fn(), getMimeTypeFromFilename: () => 'application/pdf', useFileViewerDisplayMode: () => 'sidebar',
@@ -32,6 +33,44 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('OpenUI document images', () => {
+  it('renders stable generated images in ordinary Markdown with preview and download links', async () => {
+    const source = 'generated-image:0123456789abcdef01234567';
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/generated.png', fileName: 'generated.png', mimeType: 'image/png' });
+    vi.mocked(fetch).mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    const parts = [{ type: 'text' as const, content: `![Generated landscape](${source})` }];
+    const view = render(<AIMessageContent parts={parts} isStreaming citationScope={scope} />);
+    expect(getGeneratedImageUrl).not.toHaveBeenCalled();
+    view.rerender(<AIMessageContent parts={parts} isStreaming={false} citationScope={scope} />);
+    expect(await screen.findByRole('img', { name: 'Generated landscape' })).toHaveAttribute('src', 'blob:document-image');
+    expect(screen.getByRole('link', { name: 'openui.image.preview' })).toHaveAttribute('href', 'blob:document-image');
+    expect(screen.getByRole('link', { name: 'openui.image.download' })).toHaveAttribute('download');
+  });
+  it('resolves generated images only after completion and resolves again after reload', async () => {
+    const id = '0123456789abcdef01234567';
+    const props = { content: `root = Image("Generated landscape", "generated-image:${id}")`, onAction: vi.fn(), citationScope: scope };
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/generated.png', fileName: 'generated.png', mimeType: 'image/png' });
+    vi.mocked(fetch).mockImplementation(async () => new Response(new Uint8Array([1, 2]), { headers: { 'content-type': 'image/png' } }));
+    const view = render(<OpenUiRenderer {...props} isStreaming />);
+    expect(getGeneratedImageUrl).not.toHaveBeenCalled();
+    view.rerender(<OpenUiRenderer {...props} isStreaming={false} />);
+    expect(await screen.findByRole('img', { name: 'Generated landscape' })).toHaveClass('object-contain', 'h-auto');
+    expect(getGeneratedImageUrl).toHaveBeenCalledWith('conversation', 'answer', id, expect.any(AbortSignal));
+    expect(screen.getByText('openui.image.generated')).toBeInTheDocument();
+    view.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:document-image');
+    render(<OpenUiRenderer {...props} isStreaming={false} />);
+    await screen.findByRole('img', { name: 'Generated landscape' });
+    expect(getGeneratedImageUrl).toHaveBeenCalledTimes(2);
+    expect(getCitationViewUrl).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a generated image is denied', async () => {
+    vi.mocked(getGeneratedImageUrl).mockRejectedValue(new Error('Denied'));
+    render(<OpenUiRenderer content={'root = Image("Generated", "generated-image:0123456789abcdef01234567")'} isStreaming={false} onAction={vi.fn()} citationScope={scope} />);
+    await screen.findByRole('alert');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
   it('renders the cited PDF region without cropping and signs it again when the answer remounts', async () => {
     const figureCitation = { ...citation, highlightBBox: [120, 210, 350, 120] as [number, number, number, number] };
     const props = { content: figure, isStreaming: false, onAction: vi.fn(), citations: [figureCitation], citationScope: scope };

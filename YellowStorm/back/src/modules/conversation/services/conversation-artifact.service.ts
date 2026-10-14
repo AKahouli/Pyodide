@@ -1,4 +1,10 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { ModelsService } from '../../models/models.service';
+import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
+import { AgentService } from '../../agent/agent.service';
+import { ToolService } from '../../tool/tool.service';
+import { GenerateConversationImageDto } from '../dto/generate-conversation-image.dto';
 import { DocumentService } from '../../document/document.service';
 import { NotFoundException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -21,7 +27,93 @@ export class ConversationArtifactService {
     private readonly rootEvidence?: RootEvidenceService,
     @Optional() private readonly governedRuntime?: GovernedConversationRuntimeService,
     @Optional() private readonly imageDownloader?: GuardedUrlDownloaderService,
+    @Optional() private readonly models?: ModelsService,
+    @Optional() private readonly imageGateway?: LiteLLMConnectionService,
+    @Optional() @Inject(forwardRef(() => AgentService)) private readonly agents?: AgentService,
+    @Optional() private readonly tools?: ToolService,
   ) {}
+
+  async generateImage(request: GenerateConversationImageDto, signal?: AbortSignal): Promise<{
+    imageSource: string; fileName: string; mimeType: string; generated: true;
+  }> {
+    const conversation = await this.conversationService.getConversationDocument(request.conversationId);
+    const member = conversation.isGroup && conversation.members?.some(item => item.userId === request.userId);
+    if (conversation.createdBy !== request.userId && !member) {
+      throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    }
+    if (conversation.runtimeMode === 'governed') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image generation is unavailable in governed conversations');
+    }
+    const agent = (await this.agents?.findByIds([request.agentId], request.userId))?.[0];
+    const tool = (await this.tools?.findAllActive())?.find(item => item.name === 'generate_image'
+      && agent && (agent.tools.includes(item.id) || item.defaultAgentTypes.includes(agent.agentType.slug)));
+    const configuredModel = tool?.attributes.find(item => item.name === 'model')?.value ?? 'gpt-image-2.5-flare';
+    if (!agent?.isActive || !tool || configuredModel !== request.model) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image generation is not enabled for this agent');
+    }
+    const model = await this.models?.findById(request.model);
+    if (!model?.isActive || !(model.type === 'image_generation' || model.types.includes('image_generation'))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Select an active image generation model');
+    }
+    const client = this.imageGateway?.getHttpClient();
+    if (!client || !this.documentService.isAvailable()) {
+      throw new ServiceUnavailableException(undefined, 'Image generation unavailable');
+    }
+    const size = { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' }[request.aspectRatio];
+    let encoded: unknown;
+    try {
+      const response = await client.post<{ data?: { b64_json?: unknown }[] }>('/v1/images/generations', {
+        model: request.model, prompt: request.prompt, n: 1, size, user: request.userId,
+      }, { signal, timeout: 180_000, maxContentLength: 28 * 1024 * 1024, maxBodyLength: 64 * 1024 });
+      encoded = response.data.data?.[0]?.b64_json;
+    } catch {
+      // Provider errors may include credentials or signed URLs. Keep them out of the stream.
+      throw new ServiceUnavailableException(undefined, 'Image generation failed; please try again');
+    }
+    if (typeof encoded !== 'string' || encoded.length > 28 * 1024 * 1024
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image model returned invalid image data');
+    }
+    const bytes = Buffer.from(encoded, 'base64');
+    const mimeType = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? 'image/png'
+      : bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255])) ? 'image/jpeg'
+      : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : '';
+    if (!mimeType || bytes.length > 20 * 1024 * 1024) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image model returned an unsupported image');
+    }
+    signal?.throwIfAborted();
+    const workspaceId = await this.conversationService.ensureSystemWorkspace(conversation.createdBy, request.conversationId);
+    const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[mimeType];
+    const fileName = `generated-${randomUUID()}.${extension}`;
+    signal?.throwIfAborted();
+    const document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, request.userId,
+      bytes, fileName, mimeType, undefined, undefined, false);
+    return { imageSource: `generated-image:${document.id}`, fileName, mimeType, generated: true };
+  }
+
+  async resolveGeneratedImage(conversationId: string, messageId: string, documentId: string): Promise<{
+    url: string; fileName: string; mimeType: string;
+  }> {
+    if (!/^[a-f0-9]{24}$/.test(documentId)) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    const message = await this.messageService.getMessageDocument(messageId);
+    const source = `generated-image:${documentId}`;
+    const programs = [message.content, ...(message.components ?? []).map(component => component.data.content)];
+    if (message.conversationId.toString() !== conversationId || message.conversationType !== 'ai'
+      || !programs.some(content => typeof content === 'string' && content.includes(source))) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    }
+    const conversation = await this.conversationService.getConversationDocument(conversationId);
+    if (!conversation.systemWorkspaceId || conversation.runtimeMode === 'governed') {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    }
+    const document = await this.workspaceDocumentService.findById(conversation.systemWorkspaceId, documentId);
+    if (document.isFolder || !document.path || !document.originalName.startsWith('generated-')
+        || !['image/png', 'image/jpeg', 'image/webp'].includes(document.mimeType)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    }
+    return { url: await this.documentService.generateSasUrl(document.path, { expiryMinutes: 10, checkExists: true }),
+      fileName: document.originalName, mimeType: document.mimeType };
+  }
 
   async resolveSlideImage(conversationId: string, messageId: string, url: string): Promise<{ dataUrl: string }> {
     const message = await this.messageService.getMessageDocument(messageId);

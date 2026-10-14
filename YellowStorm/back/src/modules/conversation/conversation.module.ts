@@ -36,6 +36,7 @@ import { AuthModule } from '../auth/auth.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { ModelsModule } from '../models/models.module';
+import { ToolModule } from '../tool/tool.module';
 import { LoggerModule } from '../logger';
 import { UsageModule } from '../usage';
 import { AgentModule } from '../agent/agent.module';
@@ -94,7 +95,7 @@ import { ConversationUsageAccountingService } from './services/conversation-usag
 import { ConversationNameService } from './services/conversation-name.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
+  imports: [ToolModule, ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
   controllers: [
     RootInputController,
     RootWorkPublicController,

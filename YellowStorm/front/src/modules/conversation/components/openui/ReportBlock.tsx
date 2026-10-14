@@ -1,5 +1,5 @@
 import './devtools-off';
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
 import { createLibrary, Renderer, type DefinedComponent, type ParseResult } from '@openuidev/react-lang';
@@ -10,6 +10,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { reportPanelStore } from './report-panel-store';
 import type { OpenUiCitationScope } from './citations';
 import { SlideExportMenu } from './SlideExportMenu';
+import { loadGeneratedImage } from './document-images';
 
 /**
  * Two reasons the thesys `Report` needs a provider: it is an artifact component (a chip in the chat
@@ -73,6 +74,29 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
   const library = presentation ? openUiPresentationLibrary : openUiReportLibrary;
   const activeId = useStore(reportPanelStore, (state) => state.activeDetailedViewId);
   const exportMenuNode = useStore(reportPanelStore, (state) => state._exportMenuNode);
+  const generatedSources = [...new Set([...program.matchAll(/"generated-image:[a-f\d]{24}"/g)].map((match) => JSON.parse(match[0]) as string))];
+  const imageKey = JSON.stringify([program, citationScope]);
+  const [resolved, setResolved] = useState<{ key: string; program: string; failed?: boolean }>({ key: '', program: '' });
+  useEffect(() => {
+    if (!generatedSources.length || isStreaming) return;
+    const controller = new AbortController();
+    const urls: string[] = [];
+    void (async () => {
+      if (!citationScope) throw new Error('Missing image scope');
+      let response = program;
+      for (const source of generatedSources) {
+        const blob = await loadGeneratedImage(source, citationScope, controller.signal);
+        controller.signal.throwIfAborted();
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        response = response.replaceAll(JSON.stringify(source), JSON.stringify(url));
+      }
+      setResolved({ key: imageKey, program: response });
+    })().catch(() => { if (!controller.signal.aborted) setResolved({ key: imageKey, program: '', failed: true }); });
+    return () => { controller.abort(); urls.forEach((url) => URL.revokeObjectURL(url)); };
+  }, [imageKey, isStreaming]);
+  const needsImages = generatedSources.length > 0;
+  const imageReady = !needsImages || (!isStreaming && resolved.key === imageKey && !resolved.failed);
   // The panel portals the report out of this block's tree: if the block goes away (message unmounted by a
   // reload or list virtualization) while its report is open, the panel would be left empty, so close it.
   useEffect(() => () => {
@@ -85,7 +109,8 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>
-            <Renderer response={program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
+            {imageReady ? <Renderer response={needsImages ? resolved.program : program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
+              : <div role={resolved.key === imageKey && resolved.failed ? 'alert' : 'status'} className='rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground'>{t(resolved.key === imageKey && resolved.failed ? 'openui.image.unavailable' : 'openui.image.loading')}</div>}
           </ReportScopeContext.Provider>
         </DetailedViewContext.Provider>
       </ChatProvider>

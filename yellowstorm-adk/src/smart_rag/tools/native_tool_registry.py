@@ -7,6 +7,7 @@ from src.smart_rag.tools.utilities.owner_validation import create_request_owner_
 from src.smart_rag.tools.utilities.present_choices import present_choices
 from src.smart_rag.tools.utilities.render_chart import render_chart
 from src.smart_rag.tools.utilities.run_code import create_run_code_tool
+from src.smart_rag.tools.utilities.generate_image import create_generate_image_tool
 from src.guardrails.tool_registry import tool_policy
 
 
@@ -17,6 +18,7 @@ NATIVE_TOOL_REGISTRY: dict[str, Any] = {
 }
 
 RUNTIME_NATIVE_TOOL_FACTORIES = {
+    "generate_image": create_generate_image_tool,
     "save_file_to_workspace": create_save_file_to_workspace,
     "run_code": create_run_code_tool,
     "request_owner_validation": create_request_owner_validation_tool,
@@ -75,7 +77,11 @@ def resolve_native_tools(
             name = getattr(config, "name", None)
             enabled = getattr(config, "enabled", True)
             description = getattr(config, "description", None)
-        tool = get_native_tool(name, runtime_context) if enabled and isinstance(name, str) else None
+        tool_context = runtime_context
+        if name == "generate_image":
+            model = config.get("model") if isinstance(config, dict) else getattr(config, "custom_params", {}).get("model")
+            tool_context = {**(runtime_context or {}), **({"image_generation_model": model} if model else {})}
+        tool = get_native_tool(name, tool_context) if enabled and isinstance(name, str) else None
         if tool is not None and name not in resolved_names:
             resolved.append(_configured_native_tool(tool, description.strip() if isinstance(description, str) else None))
             resolved_names.add(name)

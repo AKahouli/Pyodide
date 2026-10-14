@@ -17,6 +17,74 @@ describe('ConversationArtifactService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  describe('generated images', () => {
+    const id = '1234567890abcdef12345678';
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+    const post = jest.fn();
+    const agents = { findByIds: jest.fn() };
+    const tools = { findAllActive: jest.fn() };
+    const models = { findById: jest.fn() };
+    const workspaces = { uploadSmallFile: jest.fn(), findById: jest.fn() };
+    const conversations = { getConversationDocument: jest.fn(), ensureSystemWorkspace: jest.fn() };
+    const generator = new ConversationArtifactService(messageService as never, documentService as never,
+      conversations as never, workspaces as never, undefined, undefined, undefined,
+      models as never, { getHttpClient: () => ({ post }) } as never, agents as never, tools as never);
+    const request = { conversationId: 'c', userId: 'u', agentId: 'a', model: 'gpt-image-2.5-flare',
+      prompt: 'A mountain', aspectRatio: 'landscape' as const };
+    beforeEach(() => {
+      conversations.getConversationDocument.mockResolvedValue({ createdBy: 'u', systemWorkspaceId: 'w' });
+      conversations.ensureSystemWorkspace.mockResolvedValue('w');
+      agents.findByIds.mockResolvedValue([{ isActive: true, tools: ['t'], agentType: { slug: 'mono' } }]);
+      tools.findAllActive.mockResolvedValue([{ id: 't', name: 'generate_image', attributes: [], defaultAgentTypes: [] }]);
+      models.findById.mockResolvedValue({ isActive: true, type: 'image_generation', types: [] });
+      post.mockResolvedValue({ data: { data: [{ b64_json: png.toString('base64') }] } });
+      workspaces.uploadSmallFile.mockResolvedValue({ id });
+      workspaces.findById.mockResolvedValue({ originalName: 'generated-test.png', path: 'stored/image.png', mimeType: 'image/png' });
+      messageService.getMessageDocument.mockResolvedValue({ conversationId: 'c', conversationType: 'ai',
+        content: `Image("AI generated", "generated-image:${id}")` });
+    });
+    it('generates one catalog-backed image and stores it without indexing or leaking bytes', async () => {
+      expect(await generator.generateImage(request)).toMatchObject({ imageSource: `generated-image:${id}`, generated: true });
+      expect(post).toHaveBeenCalledWith('/v1/images/generations', expect.objectContaining({ model: request.model,
+        n: 1, size: '1536x1024' }), expect.objectContaining({ timeout: 180000 }));
+      expect(workspaces.uploadSmallFile).toHaveBeenCalledWith('w', 'u', png, expect.any(String), 'image/png', undefined, undefined, false);
+    });
+    it('rejects inaccessible conversations, unassigned tools and inactive models before spending', async () => {
+      conversations.getConversationDocument.mockResolvedValueOnce({ createdBy: 'other' });
+      await expect(generator.generateImage(request)).rejects.toThrow('not found');
+      tools.findAllActive.mockResolvedValueOnce([]);
+      await expect(generator.generateImage(request)).rejects.toThrow('not enabled');
+      models.findById.mockResolvedValueOnce({ isActive: false });
+      await expect(generator.generateImage(request)).rejects.toThrow('active image');
+      expect(post).not.toHaveBeenCalled();
+    });
+    it('sanitizes provider failures and rejects non-image bytes', async () => {
+      post.mockRejectedValueOnce(new Error('secret gateway details'));
+      await expect(generator.generateImage(request)).rejects.toThrow('Image generation failed; please try again');
+      post.mockResolvedValueOnce({ data: { data: [{ b64_json: Buffer.from('not an image').toString('base64') }] } });
+      await expect(generator.generateImage(request)).rejects.toThrow('unsupported image');
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+    });
+    it('reauthorizes image storage on reload and refuses cross-message references', async () => {
+      documentService.generateSasUrl.mockResolvedValue('https://storage.test/fresh');
+      expect(await generator.resolveGeneratedImage('c', 'm', id)).toEqual({ url: 'https://storage.test/fresh',
+        fileName: 'generated-test.png', mimeType: 'image/png' });
+      expect(workspaces.findById).toHaveBeenCalledWith('w', id);
+      await expect(generator.resolveGeneratedImage('other', 'm', id)).rejects.toThrow('not found');
+      await expect(generator.resolveGeneratedImage('c', 'm', '000000000000000000000000')).rejects.toThrow('not found');
+    });
+    it('forwards cancellation to the provider and never publishes an aborted result', async () => {
+      const controller = new AbortController();
+      post.mockImplementationOnce(async () => {
+        controller.abort();
+        return { data: { data: [{ b64_json: png.toString('base64') }] } };
+      });
+      await expect(generator.generateImage(request, controller.signal)).rejects.toThrow();
+      expect(post).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.objectContaining({ signal: controller.signal }));
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+    });
+  });
+
   it('uses the canonical Wikimedia image host only after checking the original saved URL', async () => {
     const downloader = { assertUrlIsSafe: jest.fn(), download: jest.fn().mockResolvedValue({ data: Buffer.from('image'), headers: { 'content-type': 'image/jpeg' } }) };
     const exporter = new ConversationArtifactService(messageService as never, documentService as never, conversationService as never, workspaceDocumentService as never, undefined, undefined, downloader as never);

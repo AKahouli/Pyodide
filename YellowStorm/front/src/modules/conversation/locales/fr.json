@@ -1,4 +1,7 @@
 {
+  "openui.image.generated": "Générée par IA",
+  "openui.image.preview": "Aperçu de l’image",
+  "openui.image.download": "Télécharger l’image",
   "input.stopFailed": "Impossible d’arrêter cette réponse. Elle continue ; réessayez.",
   "input.runningReplies": "Réponses en cours : {{count}}. Vous pouvez envoyer un autre message.",
   "input.recoveryFailed": "Impossible d’actualiser les réponses en cours. Rouvrez cette conversation pour réessayer.",

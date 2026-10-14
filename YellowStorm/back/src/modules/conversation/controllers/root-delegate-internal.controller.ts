@@ -1,4 +1,5 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
@@ -17,6 +18,9 @@ import { RootBackgroundSubmissionDto } from '../dto/root-background-submission.d
 import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 import { RootJobResultDto } from '../dto/root-work-public.dto';
 import { RootConversationReplyService } from '../root-work/root-conversation-reply.service';
+import { ConversationArtifactService } from '../services/conversation-artifact.service';
+import { GenerateConversationImageDto } from '../dto/generate-conversation-image.dto';
+import { RateLimit } from '../../rate-limiter/decorators/rate-limit.decorator';
 
 @ApiTags('Root work internal')
 @Public()
@@ -26,7 +30,20 @@ export class RootDelegateInternalController {
   constructor(private readonly definitions: RootDelegateDefinitionService,
     private readonly temporary: RootTemporaryDefinitionService, private readonly fanout: RootFanoutService,
     private readonly background: RootBackgroundLifecycleService, private readonly backgroundSubmission: RootBackgroundSubmissionService,
-    private readonly conversationReplies: RootConversationReplyService) {}
+    private readonly conversationReplies: RootConversationReplyService,
+    private readonly artifacts: ConversationArtifactService) {}
+
+  @Post('images/generate')
+  @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'conversation-image-generation' })
+  async generateImage(@Body() request: GenerateConversationImageDto, @Req() incoming: Request,
+    @Res({ passthrough: true }) response: Response) {
+    const controller = new AbortController();
+    const abort = () => { if (!response.writableEnded) controller.abort(); };
+    incoming.once('aborted', abort);
+    response.once('close', abort);
+    try { return await this.artifacts.generateImage(request, controller.signal); }
+    finally { incoming.off('aborted', abort); response.off('close', abort); }
+  }
 
   @Post(':executionId/conversation-replies/:messageId/cancel')
   cancelConversationReply(@Param('executionId') executionId: string, @Param('messageId') messageId: string) {

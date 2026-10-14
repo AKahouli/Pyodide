@@ -9,6 +9,7 @@ import { downloadBlob } from '../../utils/docx-export';
 import { exportSlides, SlideExportError, type SlideExportFormat } from './slide-export';
 import { fetchSlideExportImage } from '../../api';
 import type { OpenUiCitationScope } from './citations';
+import { GENERATED_IMAGE_REFERENCE, loadGeneratedImage } from './document-images';
 
 export function SlideExportMenu({ program, isStreaming, citationScope }: Readonly<{ program: string; isStreaming: boolean; citationScope?: OpenUiCitationScope }>) {
   const { t } = useModuleTranslation('conversation');
@@ -23,7 +24,16 @@ export function SlideExportMenu({ program, isStreaming, citationScope }: Readonl
     setBusy(true);
     try {
       const mode = theme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme === 'dark' ? 'dark' : 'light';
-      const fallback = citationScope ? (url: string, signal: AbortSignal) => fetchSlideExportImage(citationScope.conversationId, citationScope.messageId, url, signal) : undefined;
+      const fallback = citationScope ? async (url: string, signal: AbortSignal) => {
+        if (!GENERATED_IMAGE_REFERENCE.test(url)) return fetchSlideExportImage(citationScope.conversationId, citationScope.messageId, url, signal);
+        const blob = await loadGeneratedImage(url, citationScope, signal);
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      } : undefined;
       const result = await exportSlides(program, format, mode, controller.signal, fallback);
       if (!controller.signal.aborted) { downloadBlob(result.blob, result.filename); showSuccess(t('openui.slides.export.ready')); }
     } catch (error) {

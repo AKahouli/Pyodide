@@ -280,6 +280,11 @@ export async function getCitationViewUrl(conversationId: string, messageId: stri
   return response.data.data;
 }
 
+export async function getGeneratedImageUrl(conversationId: string, messageId: string, documentId: string, signal?: AbortSignal): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.generatedImageUrl(conversationId, messageId, documentId), undefined, { signal });
+  return response.data.data;
+}
+
 export async function fetchComposerSuggestions(partialText: string, signal?: AbortSignal): Promise<{ content: string }> {
   const response = await apiClient.post<ApiResponse<{ content: string }>>(API_ENDPOINTS.conversations.composerSuggestions, { partialText }, { signal });
   return response.data.data;

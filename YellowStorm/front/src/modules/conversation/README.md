@@ -78,6 +78,31 @@ No new service or schema is introduced.
 Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `render-mode.ts` and
 `scripts/generate-openui-prompt.mjs`; focused coverage is in `ReportPanel.test.tsx` and `report-program.test.ts`.
 
+### Generated images in OpenUI
+
+In Admin → Tools, create the active native tool `generate_image` with a string `model`
+attribute set to `gpt-image-2.5-flare`, then select it in the agent editor's Tools tab.
+Generative UI controls presentation independently of this tool assignment. The model must
+be active and classified `image_generation` in the catalog. The agent's chat model stays selected
+for reasoning; the tool invokes the image model through the existing LiteLLM connection.
+The internal generation route checks conversation membership and the accessible active agent's
+tool/model configuration before spending. It generates one image, validates bounded raster bytes,
+and stores it in the conversation system workspace without indexing. Governed conversations
+are currently excluded. Cancellation aborts the provider request and prevents publication before upload.
+
+The configured `generate_image` tool returns a persistent `generated-image:<24hex documentId>`
+source. OpenUI image fields accept this source in images, galleries, cards and slide backgrounds.
+Resolution waits until answer completion, then calls the authenticated message-scoped
+`POST /conversations/:conversationId/messages/:messageId/generated-images/:documentId/url`.
+Only the returned authorized image URL is fetched, without credentials or referrer; a bounded
+20 MiB raster response becomes a temporary browser blob URL. Reload resolves a fresh URL, and
+unmount revokes the blob and cancels pending generated-image requests. Failed access has the
+existing localized retry state. The image is labelled AI generated and keeps its proportions.
+Ordinary Markdown answers also accept `![Description](generated-image:<documentId>)` after
+stream completion. Generated images expose preview in a separate tab and a blob download link.
+PDF/PPTX export resolves stable generated sources through the same authorized endpoint before
+the standalone slide renderer runs; a failed image prevents exporting an incomplete deck.
+
 ### OpenUI document images
 
 Agents with Generative UI enabled are instructed to obtain relevant images from their available tools

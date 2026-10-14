@@ -5,6 +5,9 @@ import { useFileViewerStore } from '@/modules/file-viewer/store';
 import OpenUiRenderer from './OpenUiRenderer';
 import { ReportPanelSidebar } from './ReportPanelSidebar';
 import { initialState, reportPanelStore } from './report-panel-store';
+import { loadGeneratedImage } from './document-images';
+
+vi.mock('./document-images', async (original) => ({ ...await original<typeof import('./document-images')>(), loadGeneratedImage: vi.fn() }));
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: vi.fn(),
@@ -45,6 +48,20 @@ afterEach(() => {
 });
 
 describe('report in an OpenUI answer', () => {
+  it('resolves a generated slide background before showing its preview and releases it on unmount', async () => {
+    vi.mocked(loadGeneratedImage).mockResolvedValue(new Blob(['image'], { type: 'image/png' }));
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-slide');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const view = mount('root = Presentation({title: "Generated deck"}, [s1])\ns1 = Slide("s1", MinimalTitle("Generated cover", "", "", {imageUrl: "", name: "", role: ""}, "title-top", "generated-image:0123456789abcdef01234567"))', { citationScope: scope });
+    await screen.findByRole('button', { name: /view/i });
+    expect(loadGeneratedImage).toHaveBeenCalledWith('generated-image:0123456789abcdef01234567', scope, expect.any(AbortSignal));
+    fireEvent.click(viewButton());
+    await screen.findByTestId('report-panel');
+    await waitFor(() => expect(document.querySelector('[style*="blob:generated-slide"]')).not.toBeNull());
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith('blob:generated-slide');
+    create.mockRestore(); revoke.mockRestore();
+  });
   it('clears the artifact owner when an open presentation unmounts', async () => {
     const view = mount('root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", MinimalTitle("Japan"))');
     await screen.findByRole('button', { name: /view/i });

@@ -13,6 +13,19 @@ export class SlideExportError extends Error {
 const WIDTH = 1920;
 const HEIGHT = 1080;
 
+/** Resolve persistent generated assets before the standalone slide renderer sees them. */
+export async function resolveGeneratedSlideImages(program: string, signal: AbortSignal, resolve?: (source: string, signal: AbortSignal) => Promise<string>): Promise<string> {
+  const references = [...new Set([...program.matchAll(/"generated-image:[a-f\d]{24}"/g)].map((match) => JSON.parse(match[0]) as string))];
+  if (references.length && !resolve) throw new SlideExportError('images');
+  let result = program;
+  for (const source of references) {
+    const image = await abortable(resolve!(source, signal), signal);
+    if (!image.startsWith('data:image/')) throw new SlideExportError('images');
+    result = result.replaceAll(JSON.stringify(source), JSON.stringify(image));
+  }
+  return result;
+}
+
 /** Release the export stage even when a browser/library operation never settles. */
 export async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
@@ -86,13 +99,19 @@ export async function packageSlideImages(images: string[], title: string, format
 }
 
 /** Inline public images explicitly: capture libraries otherwise silently replace failed/CORS images with blanks. */
-async function inlineImages(stage: HTMLElement, signal: AbortSignal, fallback?: (url: string, signal: AbortSignal) => Promise<string>): Promise<void> {
+export async function inlineImages(stage: HTMLElement, signal: AbortSignal, fallback?: (url: string, signal: AbortSignal) => Promise<string>): Promise<void> {
   const assets = new Map<string, Promise<string>>();
   const inline = (url: string): Promise<string> => {
     if (!assets.has(url)) assets.set(url, (async () => {
       try {
         const parsed = new URL(url, location.href);
         if (!['http:', 'https:', 'data:', 'blob:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('Invalid image URL');
+        // Already embedded assets need no fetch (connect-src may correctly exclude data:).
+        if (parsed.protocol === 'data:') {
+          if (!/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(url)
+              || url.length > 4 * Math.ceil(20 * 1024 * 1024 / 3) + 64) throw new SlideExportError('images');
+          return url;
+        }
         if (parsed.hostname === 'thumb.wikimedia.org') {
           parsed.hostname = 'upload.wikimedia.org';
           for (const key of [...parsed.searchParams.keys()]) if (key === '_' || key.startsWith('utm_')) parsed.searchParams.delete(key);
@@ -145,6 +164,8 @@ export async function exportSlides(program: string, format: SlideExportFormat, m
   const root = createRoot(stage);
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
   try {
+    if (/"generated-image:[a-f\d]{24}"/.test(program)) program = await resolveGeneratedSlideImages(program, deadline, fallback);
+    deadline.throwIfAborted();
     (window as unknown as Record<string, unknown>)['thesys-print-ready'] = 'false';
     flushSync(() => root.render(<ThemeProvider mode={mode} cssSelector='[data-slide-export]'><Presentation response={printProgram(program, title, metadata.subtitle)} preview={false} mode='print' /></ThemeProvider>));
     await abortable(new Promise<void>((resolve, reject) => {

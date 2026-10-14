@@ -1004,7 +1004,9 @@ export class AgentService {
         agent_params: {
           params: {
             user_id: userId,
-
+            agent_id: agent.id,
+            ...(runtimeContext?.conversationId ? { conversation_id: runtimeContext.conversationId } : {}),
+            ...this.imageGenerationParams(agentTools),
             connector_bindings_json: JSON.stringify(connectorBindings),
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
@@ -1255,6 +1257,9 @@ export class AgentService {
           agent_params: {
             params: {
               user_id: userId,
+              agent_id: agent.id,
+              ...(runtimeContext?.conversationId ? { conversation_id: runtimeContext.conversationId } : {}),
+              ...this.imageGenerationParams(agentTools),
               enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
               document_tree_injection_enabled: String(documentTreeSettings.enabled),
@@ -2138,6 +2143,14 @@ export class AgentService {
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
     return this.getConnectorRuntime().toGrpcSkill(skill);
+  }
+
+  /** Carry image model selection through the fixed native Tool protobuf fields. */
+  private imageGenerationParams(tools: IToolResponse[]): Record<string, string> {
+    const imageTool = tools.find((tool) => tool.name === 'generate_image');
+    if (!imageTool) return {};
+    const model = imageTool.attributes?.find((attribute) => attribute.name === 'model')?.value;
+    return { image_generation_model: typeof model === 'string' && model.trim() ? model.trim() : 'gpt-image-2.5-flare' };
   }
 
   /**

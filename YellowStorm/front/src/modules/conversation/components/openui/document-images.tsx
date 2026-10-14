@@ -4,12 +4,53 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SingleInlineCitation, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useModuleTranslation } from '@/modules/localization';
-import { fetchRootEvidence, getCitationViewUrl } from '../../api';
+import { fetchRootEvidence, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
 import { OpenUiCitationContext, type OpenUiCitationScope } from './citations';
 import type { StockComponent } from './inline-text';
 
 const IMAGE_FIELDS = new Set(['src', 'imageSrc', 'bgImageSrc', 'imagesSrc']);
 const DOCUMENT_REFERENCE = /^\[(\d+)\]$/;
+export const GENERATED_IMAGE_REFERENCE = /^generated-image:([a-f\d]{24})$/;
+
+export async function loadGeneratedImage(source: string, scope: OpenUiCitationScope, signal?: AbortSignal): Promise<Blob> {
+  const id = GENERATED_IMAGE_REFERENCE.exec(source)?.[1];
+  if (!id) throw new Error('Invalid generated image reference');
+  const location = await getGeneratedImageUrl(scope.conversationId, scope.messageId, id, signal);
+  if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(location.mimeType)) throw new Error('Unsupported generated image');
+  const response = await fetch(location.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+  const { readImage } = await import('./slide-export');
+  return readImage(response, signal ?? new AbortController().signal);
+}
+
+export function GeneratedImage({ source, alt, scope, streaming = false }: { source: string; alt: string; scope?: OpenUiCitationScope; streaming?: boolean }) {
+  const { t } = useModuleTranslation('conversation');
+  const key = JSON.stringify([source, scope?.conversationId, scope?.messageId]);
+  const [state, setState] = useState<{ key: string; url?: string; failed?: boolean }>({ key: '' });
+  useEffect(() => {
+    if (streaming || !scope) return;
+    const controller = new AbortController();
+    let url: string | undefined;
+    void loadGeneratedImage(source, scope, controller.signal).then((blob) => {
+      if (controller.signal.aborted) return;
+      url = URL.createObjectURL(blob); setState({ key, url });
+    }).catch(() => { if (!controller.signal.aborted) setState({ key, failed: true }); });
+    return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [source, scope?.conversationId, scope?.messageId, streaming]);
+  const ready = !streaming && state.key === key && state.url;
+  return <span className='inline-flex max-w-full flex-col gap-2'>
+    {ready ? <><img src={state.url} alt={alt} className='h-auto max-h-96 w-auto max-w-full rounded-lg object-contain' /><GeneratedImageLinks url={state.url!} /></>
+      : <span role={state.failed || !scope ? 'alert' : 'status'}>{t(state.failed || !scope ? 'openui.image.unavailable' : 'openui.image.loading')}</span>}
+  </span>;
+}
+
+function GeneratedImageLinks({ url }: { url: string }) {
+  const { t } = useModuleTranslation('conversation');
+  return <span className='inline-flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
+    <span>{t('openui.image.generated')}</span>
+    <a href={url} target='_blank' rel='noreferrer' className='underline'>{t('openui.image.preview')}</a>
+    <a href={url} download='generated-image.png' className='underline'>{t('openui.image.download')}</a>
+  </span>;
+}
 
 /** Only image fields are rewritten; citation markers in captions and other prose stay intact. */
 export function mapImageSources(value: unknown, replace: (source: string) => string, field = ''): unknown {
@@ -55,7 +96,7 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
     const { t } = useModuleTranslation('conversation');
     const references = new Set<string>();
     mapImageSources(args.props, (source) => {
-      const reference = DOCUMENT_REFERENCE.exec(source)?.[1];
+      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) ? source : undefined);
       if (reference) references.add(reference);
       return source;
     });
@@ -67,18 +108,21 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
     useEffect(() => {
       if (references.size === 0 || streaming) return;
       let disposed = false;
+      const controller = new AbortController();
       const urls = new Map<string, string>();
       setState({ key: requestKey, urls: new Map() });
       void Promise.allSettled([...references].map(async (reference) => {
+        if (!scope) throw new Error('Missing image scope');
         const citation = byReference.get(reference);
-        if (!citation || !scope) throw new Error('Unknown document citation');
-        const blob = await loadDocumentImage(citation, scope);
+        const blob = GENERATED_IMAGE_REFERENCE.test(reference) ? await loadGeneratedImage(reference, scope, controller.signal)
+          : citation ? await loadDocumentImage(citation, scope) : await Promise.reject(new Error('Unknown document citation'));
         if (!disposed) urls.set(reference, URL.createObjectURL(blob));
       })).then((results) => {
         if (!disposed) setState({ key: requestKey, urls, error: results.some((result) => result.status === 'rejected') });
       });
       return () => {
         disposed = true;
+        controller.abort();
         urls.forEach((url) => URL.revokeObjectURL(url));
       };
       // requestKey includes scope, references and all source metadata; streamed prose does not refetch images.
@@ -88,7 +132,7 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
     const failed = state.key === requestKey && state.error;
     const ready = !streaming && state.key === requestKey && state.urls.size === references.size && !failed;
     const props = mapImageSources(args.props, (source) => {
-      const reference = DOCUMENT_REFERENCE.exec(source)?.[1];
+      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) ? source : undefined);
       return reference ? state.urls.get(reference) ?? '' : source;
     }) as typeof args.props;
     return (
@@ -110,6 +154,8 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
           </div>
         )}
         <div className='flex flex-wrap items-center gap-1 text-xs text-muted-foreground'>
+          {[...references].filter((reference) => GENERATED_IMAGE_REFERENCE.test(reference)).map((reference) => state.key === requestKey && state.urls.get(reference)
+            ? <GeneratedImageLinks key={reference} url={state.urls.get(reference)!} /> : <span key={reference}>{t('openui.image.generated')}</span>)}
           {citations.map((citation, index) => citation && <span key={index} className='inline-flex items-center gap-1'>
             <span>{citation.fileName || citation.source.split('/').at(-1)}{citation.page ? ` · ${t('openui.image.page', { page: citation.page })}` : ''}</span>
             <SingleInlineCitation citation={citation} citationScope={scope} />

@@ -94,6 +94,12 @@ export class MessageController {
     return this.conversationArtifactService.resolveSlideImage(conversationId, messageId, dto.url);
   }
 
+  @Post(':messageId/generated-images/:documentId/url')
+  getGeneratedImageUrl(@Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string, @Param('documentId') documentId: string) {
+    return this.conversationArtifactService.resolveGeneratedImage(conversationId, messageId, documentId);
+  }
+
   @Post(':messageId/artifacts/:artifactId/url')
   async getArtifactDownloadUrl(
     @Param('conversationId') conversationId: string,

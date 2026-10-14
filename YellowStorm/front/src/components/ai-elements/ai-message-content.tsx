@@ -7,7 +7,7 @@ import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
 import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -43,6 +43,8 @@ import { formatLabel } from './format-label';
 // Charts are a lazy boundary: recharts (~heavy) must not load with the
 // conversation route, only when a chart part actually renders (Phase 7).
 const ChartPartRenderer = lazy(() => import('./chart-part-renderer').then((m) => ({ default: m.ChartPartRenderer })));
+const GeneratedImage = lazy(() => import('@/modules/conversation/components/openui/document-images').then((m) => ({ default: m.GeneratedImage })));
+const isGeneratedImage = (source: string) => /^generated-image:[a-f\d]{24}$/.test(source);
 
 // ============================================================================
 // Message Content Part Types
@@ -341,7 +343,7 @@ const AIMessagePart = memo(
         // Anchor ids must be globally unique across messages: scope them by the
         // owning message id plus the part index.
         const outlineKey = onOutlineHeadings ? `${citationScope?.messageId ?? 'msg'}-${partIndex}`.replace(/[^a-zA-Z0-9_-]/g, '-') : undefined;
-        return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
+        return <TextPartRenderer content={part.content} showCursor={part.showCursor} isStreaming={isStreaming} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
       }
       case 'code':
         return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} isStreaming={isStreaming} />;
@@ -715,7 +717,7 @@ const MarkdownSegment = memo(
       onSegmentHeadings?.(slot, collectedRef.current);
     }, [content, outlineKey, onSegmentHeadings, slot]);
     return (
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeMathCitationPlugins : rehypeMathPlugins} components={componentsForRender}>
+      <ReactMarkdown urlTransform={(url, key) => key === 'src' && isGeneratedImage(url) ? url : defaultUrlTransform(url)} remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeMathCitationPlugins : rehypeMathPlugins} components={componentsForRender}>
         {content}
       </ReactMarkdown>
     );
@@ -730,7 +732,7 @@ const MarkdownSegment = memo(
     prev.onSegmentHeadings === next.onSegmentHeadings,
 );
 
-const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
+const TextPartRenderer = ({ content, showCursor, isStreaming = false, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; isStreaming?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // Owned unused evidence stays in the conversation's Sources menu rather than
@@ -767,9 +769,11 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 
   // Build components with cite handler for inline citations
   const componentsWithCite = useMemo(() => {
-    if (!hasInline) return markdownComponents;
     return {
       ...markdownComponents,
+      img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => typeof src === 'string' && isGeneratedImage(src)
+        ? <Suspense fallback={null}><GeneratedImage source={src} alt={alt ?? ''} scope={citationScope} streaming={isStreaming} /></Suspense>
+        : <img {...props} src={src} alt={alt} />,
       cite: ({ node, ...props }: any) => {
         const ref = props['data-citation-ref'] as string | undefined;
         if (ref == null) return null;
@@ -778,7 +782,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
         return <SingleInlineCitation citation={c} citationScope={citationScopeRef.current} />;
       },
     };
-  }, [hasInline]);
+  }, [hasInline, citationScope?.conversationId, citationScope?.messageId, isStreaming]);
 
   // Hot-tail split: the stable prefix re-parses only when a block boundary
   // completes; the tail re-parses per drain tick but stays bounded by the
