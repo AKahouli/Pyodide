@@ -87,7 +87,7 @@ function PendingInputForm({ root, input, conversationId, onSubmitted, scope, inp
       </label>}
       <div className='flex flex-wrap items-center gap-3'>
         <Button type='submit' disabled={isLoading} aria-busy={isLoading}>
-          {isLoading && <Loader2 className='mr-2 size-4 animate-spin motion-reduce:animate-none' aria-hidden='true' />}
+          {isLoading && <Loader2 className='me-2 size-4 animate-spin motion-reduce:animate-none' aria-hidden='true' />}
           {t(isLoading ? 'rootInput.sending' : 'rootInput.continue')}
         </Button>
         <span className='text-xs text-muted-foreground'>{t('rootInput.otherRequests')}</span>

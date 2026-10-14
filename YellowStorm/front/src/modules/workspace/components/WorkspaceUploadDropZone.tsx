@@ -122,10 +122,10 @@ export function WorkspaceUploadDropZone() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align='center'>
             <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-              <FileUp className='mr-2 h-4 w-4' /> Importer un document
+              <FileUp className='me-2 h-4 w-4' /> Importer un document
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => openLink('')}>
-              <Link2 className='mr-2 h-4 w-4' /> Ajouter un lien
+              <Link2 className='me-2 h-4 w-4' /> Ajouter un lien
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -238,7 +238,7 @@ export function LogsPage() {
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
         <Button onClick={fetchLogs} variant='outline'>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -257,12 +257,12 @@ export function LogsPage() {
           <Button onClick={() => setAutoRefresh(!autoRefresh)} variant={autoRefresh ? 'default' : 'outline'} size='sm'>
             {autoRefresh ? (
               <>
-                <Pause className='mr-1 h-4 w-4' />
+                <Pause className='me-1 h-4 w-4' />
                 {t('logs.actions.live')}
               </>
             ) : (
               <>
-                <Play className='mr-1 h-4 w-4' />
+                <Play className='me-1 h-4 w-4' />
                 {t('logs.actions.live')}
               </>
             )}
@@ -306,7 +306,7 @@ export function LogsPage() {
               </Label>
               <div className='relative'>
                 <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-                <Input id='message-search' placeholder={t('logs.filters.searchPlaceholder')} className='pl-9' value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
+                <Input id='message-search' placeholder={t('logs.filters.searchPlaceholder')} className='ps-9' value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
               </div>
             </div>
             <div className='flex gap-2 flex-wrap'>
@@ -349,7 +349,7 @@ export function LogsPage() {
               <Button onClick={handleSearch}>{t('logs.filters.search')}</Button>
               {hasActiveFilters && (
                 <Button variant='ghost' onClick={clearFilters}>
-                  <X className='mr-1 h-4 w-4' />
+                  <X className='me-1 h-4 w-4' />
                   {t('logs.filters.clear')}
                 </Button>
               )}
@@ -376,7 +376,7 @@ export function LogsPage() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant='outline' className='w-[180px] justify-start'>
-                        <Calendar className='mr-2 h-4 w-4' />
+                        <Calendar className='me-2 h-4 w-4' />
                         {startDate ? startDate.toLocaleDateString() : t('logs.filters.selectDate')}
                       </Button>
                     </PopoverTrigger>
@@ -398,7 +398,7 @@ export function LogsPage() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant='outline' className='w-[180px] justify-start'>
-                        <Calendar className='mr-2 h-4 w-4' />
+                        <Calendar className='me-2 h-4 w-4' />
                         {endDate ? endDate.toLocaleDateString() : t('logs.filters.selectDate')}
                       </Button>
                     </PopoverTrigger>
@@ -432,7 +432,7 @@ export function LogsPage() {
               <CardTitle>{t('logs.table.title')}</CardTitle>
               <CardDescription>
                 {loading ? t('logs.table.loading') : t('logs.table.total', { count: total })}
-                {autoRefresh && <span className='ml-2 text-green-500'>{t('logs.table.liveUpdates')}</span>}
+                {autoRefresh && <span className='ms-2 text-green-500'>{t('logs.table.liveUpdates')}</span>}
               </CardDescription>
             </div>
           </div>
@@ -486,7 +486,7 @@ export function LogsPage() {
                           </TableCell>
                           <TableCell>
                             <Badge className={`${style.className} text-xs`}>{log.level}</Badge>
-                            {log._fromBuffer && <span className='ml-1 text-xs text-muted-foreground'>{t('logs.table.buffer')}</span>}
+                            {log._fromBuffer && <span className='ms-1 text-xs text-muted-foreground'>{t('logs.table.buffer')}</span>}
                           </TableCell>
                           <TableCell className='hidden md:table-cell'>
                             <span className='text-sm font-mono'>{log.context || '-'}</span>

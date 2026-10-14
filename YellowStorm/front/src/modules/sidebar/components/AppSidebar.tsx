@@ -162,7 +162,7 @@ export const AppSidebar = memo(function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className='gap-1 p-2'>
-        {showHistory && !collapsed && <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild><NavLink to='/chats'><span>{t('recentChats.allChats')}</span><ArrowRight aria-hidden className='ml-auto size-4' /></NavLink></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
+        {showHistory && !collapsed && <SidebarMenu><SidebarMenuItem><SidebarMenuButton asChild><NavLink to='/chats'><span>{t('recentChats.allChats')}</span><ArrowRight aria-hidden className='ms-auto size-4' /></NavLink></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
         {/* Above the SidebarRail hit-strip so the trigger stays clickable when collapsed. */}
         <div className={`relative z-30 mt-1 flex items-center gap-1 border-t border-sidebar-border pt-2 ${!isMobile && state === 'collapsed' ? 'flex-col' : ''}`}>
           <ProfileMenu />

@@ -38,7 +38,7 @@ export function QuestionChoices({ pendingQuestion, disabled = false, onSelect }:
                 disabled={disabled || answered !== null}
                 aria-pressed={selected}
                 className={cn(
-                  'h-auto min-h-9 gap-1.5 whitespace-normal px-3 py-2 text-left transition-colors',
+                  'h-auto min-h-9 gap-1.5 whitespace-normal px-3 py-2 text-start transition-colors',
                   answered !== null && !selected && 'opacity-50',
                 )}
                 title={option.description}

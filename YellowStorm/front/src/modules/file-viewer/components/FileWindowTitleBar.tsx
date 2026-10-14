@@ -34,7 +34,7 @@ export function FileWindowTitleBar() {
       {...dragHandleProps}
       className="flex items-center justify-between h-10 px-3 border-b bg-muted/50 select-none shrink-0"
     >
-      <span className="text-sm font-medium truncate mr-2">
+      <span className="text-sm font-medium truncate me-2">
         {activeTab?.fileName ?? t('window.title')}
       </span>
       <div

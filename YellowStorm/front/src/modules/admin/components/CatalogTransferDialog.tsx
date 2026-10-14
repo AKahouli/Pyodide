@@ -204,7 +204,7 @@ export function CatalogTransferDialog({
             onClick={mode === 'export' ? handleExport : handleImport}
             disabled={working || (mode === 'import' ? !file : scope === 'selected' && !selectedIds.length)}
           >
-            {working ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : mode === 'export' ? <Download className='mr-2 h-4 w-4' /> : <Upload className='mr-2 h-4 w-4' />}
+            {working ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : mode === 'export' ? <Download className='me-2 h-4 w-4' /> : <Upload className='me-2 h-4 w-4' />}
             {mode === 'export' ? t('catalogTransfer.exportAction') : t('catalogTransfer.importAction')}
           </Button>
         </DialogFooter>

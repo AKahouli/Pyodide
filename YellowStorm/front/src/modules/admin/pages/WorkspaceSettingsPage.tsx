@@ -224,12 +224,12 @@ export function WorkspaceSettingsPage() {
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {extensions.map((entry) => (
-                      <Badge key={entry} variant="secondary" className="gap-1 pr-1">
+                      <Badge key={entry} variant="secondary" className="gap-1 pe-1">
                         {entry}
                         <button
                           type="button"
                           onClick={() => removeExtension(entry)}
-                          className="ml-1 rounded p-0.5 hover:bg-muted-foreground/20"
+                          className="ms-1 rounded p-0.5 hover:bg-muted-foreground/20"
                           aria-label={t('workspaceSettings.actions.remove', { value: entry })}
                         >
                           <X className="h-3 w-3" />
@@ -254,7 +254,7 @@ export function WorkspaceSettingsPage() {
 
               <div className="flex justify-end">
                 <Button type="button" onClick={() => void handleSave()} disabled={saving || extensions.length === 0}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                   {saving ? t('workspaceSettings.actions.saving') : t('workspaceSettings.actions.save')}
                 </Button>
               </div>

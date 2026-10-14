@@ -54,7 +54,7 @@ export function RecentConnectorsMenu({ connectors, loading, onSelectConnector, o
   return (
     <PromptInputActionMenuSub>
       <PromptInputActionMenuSubTrigger>
-        <Cable className='mr-2 size-4' /> {t('input.connectors') || 'Connectors'}
+        <Cable className='me-2 size-4' /> {t('input.connectors') || 'Connectors'}
       </PromptInputActionMenuSubTrigger>
       <PromptInputActionMenuSubContent className='min-w-64'>
         <DropdownMenuLabel className='text-xs font-normal text-muted-foreground'>

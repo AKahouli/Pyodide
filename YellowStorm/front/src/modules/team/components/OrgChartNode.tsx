@@ -83,7 +83,7 @@ export const OrgChartNode = memo(function OrgChartNode({
             window.dispatchEvent(event);
           }}
         >
-          <Trash2 className='mr-2 h-4 w-4' />
+          <Trash2 className='me-2 h-4 w-4' />
           {t('node.removeFromTeam')}
         </ContextMenuItem>
       </ContextMenuContent>

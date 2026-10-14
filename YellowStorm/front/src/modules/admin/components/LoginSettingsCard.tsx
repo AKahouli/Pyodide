@@ -83,7 +83,7 @@ export function LoginSettingsCard() {
         {!canManage && <p className="text-xs text-muted-foreground">{t('system.login.readOnly')}</p>}
         {canManage && (
           <Button type="button" onClick={() => void save()} disabled={loading || saving}>
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {saving && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
             {t(saving ? 'system.login.actions.saving' : 'system.login.actions.save')}
           </Button>
         )}

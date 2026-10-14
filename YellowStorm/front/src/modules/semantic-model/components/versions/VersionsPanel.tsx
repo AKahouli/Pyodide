@@ -38,7 +38,7 @@ export function VersionsPanel({ modelId, canEdit, canPublish, publishBlockedReas
       <h3 className='text-sm font-semibold'>{t('versionChanges.ifYouPublish')}</h3>
       <ChangeList comparison={publishChanges.data} loading={publishChanges.isLoading} failed={publishChanges.isError} />
     </section>}
-    {canEdit&&<Button className={publishBlockedReason?'mb-2 w-full':'mb-5 w-full'} onClick={() => setConfirmOpen(true)} disabled={!canPublish||Boolean(publishBlockedReason)} title={publishBlockedReason??undefined}><Send className='mr-2 h-4 w-4' />{t('versions.publish')}</Button>}
+    {canEdit&&<Button className={publishBlockedReason?'mb-2 w-full':'mb-5 w-full'} onClick={() => setConfirmOpen(true)} disabled={!canPublish||Boolean(publishBlockedReason)} title={publishBlockedReason??undefined}><Send className='me-2 h-4 w-4' />{t('versions.publish')}</Button>}
     {canEdit&&publishBlockedReason&&<p className='mb-5 text-xs text-destructive' role='status'>{publishBlockedReason}</p>}
     {list.length > 1 && <section className='mb-5 rounded-xl border p-3' aria-label={t('versionChanges.compareTitle')}>
       <h3 className='flex items-center gap-2 text-sm font-semibold'><GitCompare className='h-4 w-4' />{t('versionChanges.compareTitle')}</h3>
@@ -48,7 +48,7 @@ export function VersionsPanel({ modelId, canEdit, canPublish, publishBlockedReas
       </div>
       {left && right && left === right ? <p className='mt-2 text-xs text-muted-foreground'>{t('versionChanges.sameVersion')}</p> : <ChangeList comparison={comparison.data} loading={comparison.isLoading} failed={comparison.isError} />}
     </section>}
-    {versions.isLoading ? <Loader2 className='mx-auto h-5 w-5 animate-spin' /> : <div className='space-y-3'>{list.map((version) => <div key={version.id} className='rounded-xl border p-3'><div className='flex items-center justify-between'><p className='text-sm font-semibold'>{t('versions.number',{number:version.versionNumber})}</p><Badge variant={version.status === 'published' ? 'default':'secondary'}>{t(`status.${version.status}`)}</Badge></div><p className='mt-2 text-xs text-muted-foreground'>{new Intl.DateTimeFormat(language,{dateStyle:'medium',timeStyle:'short'}).format(new Date(version.createdAt))}</p>{draft && version.id !== draft.id && <Button className='mt-3 w-full' size='sm' variant='ghost' onClick={() => { setLeft(version.id); setRight(draft.id); }}><GitCompare className='mr-2 h-3.5 w-3.5' />{t('versionChanges.compareWithDraft')}</Button>}{canEdit&&version.status === 'published' && <Button className='mt-2 w-full' size='sm' variant='outline' onClick={() => void semanticModelApi.restore(modelId,version.id).then(async () => { await versions.refetch(); onPublished(); showSuccess(t('versions.restored')); })}><RotateCcw className='mr-2 h-3.5 w-3.5' />{t('versions.restore')}</Button>}</div>)}</div>}
+    {versions.isLoading ? <Loader2 className='mx-auto h-5 w-5 animate-spin' /> : <div className='space-y-3'>{list.map((version) => <div key={version.id} className='rounded-xl border p-3'><div className='flex items-center justify-between'><p className='text-sm font-semibold'>{t('versions.number',{number:version.versionNumber})}</p><Badge variant={version.status === 'published' ? 'default':'secondary'}>{t(`status.${version.status}`)}</Badge></div><p className='mt-2 text-xs text-muted-foreground'>{new Intl.DateTimeFormat(language,{dateStyle:'medium',timeStyle:'short'}).format(new Date(version.createdAt))}</p>{draft && version.id !== draft.id && <Button className='mt-3 w-full' size='sm' variant='ghost' onClick={() => { setLeft(version.id); setRight(draft.id); }}><GitCompare className='me-2 h-3.5 w-3.5' />{t('versionChanges.compareWithDraft')}</Button>}{canEdit&&version.status === 'published' && <Button className='mt-2 w-full' size='sm' variant='outline' onClick={() => void semanticModelApi.restore(modelId,version.id).then(async () => { await versions.refetch(); onPublished(); showSuccess(t('versions.restored')); })}><RotateCcw className='me-2 h-3.5 w-3.5' />{t('versions.restore')}</Button>}</div>)}</div>}
     <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
       <DialogContent>
         <DialogHeader>
@@ -58,7 +58,7 @@ export function VersionsPanel({ modelId, canEdit, canPublish, publishBlockedReas
         {latestPublished && <div className='max-h-72 overflow-y-auto'><ChangeList comparison={publishChanges.data} loading={publishChanges.isLoading} failed={publishChanges.isError} /></div>}
         <DialogFooter>
           <Button variant='outline' onClick={() => setConfirmOpen(false)}>{t('action.cancel')}</Button>
-          <Button onClick={() => void publish()}><Send className='mr-2 h-4 w-4' />{t('versionChanges.confirmPublish')}</Button>
+          <Button onClick={() => void publish()}><Send className='me-2 h-4 w-4' />{t('versionChanges.confirmPublish')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

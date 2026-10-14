@@ -163,7 +163,7 @@ export function ManageSkillCategoriesDialog({ open, onOpenChange, onCategoriesCh
               />
               <div className='flex justify-end'>
                 <Button size='sm' onClick={handleCreate} disabled={saving || !newName.trim()}>
-                  {saving ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Plus className='mr-2 h-4 w-4' />}
+                  {saving ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <Plus className='me-2 h-4 w-4' />}
                   Add
                 </Button>
               </div>
@@ -198,11 +198,11 @@ export function ManageSkillCategoriesDialog({ open, onOpenChange, onCategoriesCh
                           />
                           <div className='flex justify-end gap-2'>
                             <Button variant='outline' size='sm' onClick={cancelEdit} disabled={saving}>
-                              <X className='mr-1 h-4 w-4' />
+                              <X className='me-1 h-4 w-4' />
                               Cancel
                             </Button>
                             <Button size='sm' onClick={() => handleUpdate(cat.id)} disabled={saving || !editName.trim()}>
-                              {saving ? <Loader2 className='mr-1 h-4 w-4 animate-spin' /> : <Check className='mr-1 h-4 w-4' />}
+                              {saving ? <Loader2 className='me-1 h-4 w-4 animate-spin' /> : <Check className='me-1 h-4 w-4' />}
                               Save
                             </Button>
                           </div>

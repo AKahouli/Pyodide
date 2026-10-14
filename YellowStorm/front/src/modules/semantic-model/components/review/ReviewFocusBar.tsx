@@ -28,12 +28,12 @@ export function ReviewFocusBar({ item, items, onOpen, onBack, onClose }: Readonl
     {fixed ? <CheckCircle2 className='h-4 w-4 shrink-0 text-emerald-600' /> : <ListChecks className='h-4 w-4 shrink-0 text-primary' />}
     <p className='min-w-0 flex-1'>
       <span className='font-medium'>{fixed ? t('reviewFocus.fixed') : t('reviewFocus.fixing', { position: index + 1, total: route.length })}</span>
-      <span className='ml-1.5 break-words text-muted-foreground'>{reviewItemText(item, translate)}</span>
+      <span className='ms-1.5 break-words text-muted-foreground'>{reviewItemText(item, translate)}</span>
       {!fixed && <span className='mt-0.5 block break-words text-xs'>{reviewFixText(item, translate)}</span>}
     </p>
     <div className='flex items-center gap-1'>
       {previous && <Button variant='ghost' size='sm' className='h-8 px-2' onClick={() => onOpen(previous)} aria-label={t('reviewFocus.previous')} title={reviewItemText(previous, translate)}><ChevronLeft className='h-4 w-4' /></Button>}
-      {next && <Button variant='ghost' size='sm' className='h-8 px-2' onClick={() => onOpen(next)} title={reviewItemText(next, translate)}>{t('reviewFocus.next')}<ChevronRight className='ml-1 h-4 w-4' /></Button>}
+      {next && <Button variant='ghost' size='sm' className='h-8 px-2' onClick={() => onOpen(next)} title={reviewItemText(next, translate)}>{t('reviewFocus.next')}<ChevronRight className='ms-1 h-4 w-4' /></Button>}
       <Button variant='outline' size='sm' className='h-8' onClick={onBack}>{t('reviewFocus.back')}</Button>
       <Button variant='ghost' size='icon' className='h-8 w-8' onClick={onClose} aria-label={t('reviewFocus.close')}><X className='h-4 w-4' /></Button>
     </div>

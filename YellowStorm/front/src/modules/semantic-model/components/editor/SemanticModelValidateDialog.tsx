@@ -109,7 +109,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
                     <span id={`run-${value}-hint`} className="mt-0.5 block text-xs text-muted-foreground">{t(`run.mode.${value}.hint`)}</span>
                   </span>
                 </label>
-                {selected && value !== "graph" && <div className="mt-3 space-y-2 pl-6">
+                {selected && value !== "graph" && <div className="mt-3 space-y-2 ps-6">
                   {value === "scratch" && <div role="alert" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
                     <p className="text-destructive">{t("rebuild.removed")}</p>
                     <p className="text-muted-foreground">{t("rebuild.kept")}</p>
@@ -130,7 +130,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("action.cancel")}</Button>
           <Button variant={mode === "scratch" ? "destructive" : "default"} onClick={start} disabled={busy}>
-            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+            {busy ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Play className="me-2 h-4 w-4" />}
             {t(`run.mode.${mode}.action`)}
           </Button>
         </DialogFooter>

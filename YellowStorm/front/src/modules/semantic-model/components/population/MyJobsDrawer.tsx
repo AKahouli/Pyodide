@@ -33,8 +33,8 @@ export function MyJobsButton({ modelId, queueLabel = false }: Readonly<{ modelId
   const summary = useMyJobs({ modelId, view: 'active', page: 1, limit: 20 }, false);
   return <>
     <Button variant='outline' size='sm' onClick={() => setOpen(true)} aria-haspopup='dialog'>
-      <ListOrdered aria-hidden className='mr-1.5 h-4 w-4' />{t(queueLabel ? 'myJobs.viewQueue' : 'myJobs.title')}
-      {Boolean(summary.data?.activeCount) && <Badge variant='secondary' className='ml-2 tabular-nums'>{summary.data?.activeCount}</Badge>}
+      <ListOrdered aria-hidden className='me-1.5 h-4 w-4' />{t(queueLabel ? 'myJobs.viewQueue' : 'myJobs.title')}
+      {Boolean(summary.data?.activeCount) && <Badge variant='secondary' className='ms-2 tabular-nums'>{summary.data?.activeCount}</Badge>}
     </Button>
     {open && <MyJobsDrawer initialModelId={modelId} onClose={() => setOpen(false)} />}
   </>;
@@ -73,7 +73,7 @@ export function MyJobsDrawer({ initialModelId, onClose }: Readonly<{ initialMode
   return <>
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent className='flex w-full flex-col gap-0 p-0 sm:max-w-xl'>
-        <SheetHeader className='border-b px-5 py-4 text-left'>
+        <SheetHeader className='border-b px-5 py-4 text-start'>
           <SheetTitle>{t('myJobs.title')}</SheetTitle>
           <SheetDescription>{t('myJobs.hint')}</SheetDescription>
         </SheetHeader>
@@ -89,13 +89,13 @@ export function MyJobsDrawer({ initialModelId, onClose }: Readonly<{ initialMode
           <div className='flex flex-wrap items-center justify-between gap-2'>
             <Tabs value={view} onValueChange={(value) => { setView(value as 'active' | 'history'); setPage(1); }}>
               <TabsList aria-label={t('myJobs.views')}><TabsTrigger value='active'>{t('myJobs.active')}
-                {query.data && <span className='ml-1.5 tabular-nums'>{query.data.activeCount}</span>}
+                {query.data && <span className='ms-1.5 tabular-nums'>{query.data.activeCount}</span>}
               </TabsTrigger><TabsTrigger value='history'>{t('myJobs.history')}</TabsTrigger></TabsList>
             </Tabs>
             {view === 'active' && queuedCount > 0 && editable && <Button variant='outline' size='sm' disabled={busy || query.isError}
               onClick={() => setBulk({ modelId: modelId === 'all' ? undefined : modelId,
                 label: models.find((model) => model.id === modelId)?.name ?? t('myJobs.allModels'), count: queuedCount })}>
-              <Trash2 aria-hidden className='mr-1.5 h-4 w-4' />{t('myJobs.removeAll')}
+              <Trash2 aria-hidden className='me-1.5 h-4 w-4' />{t('myJobs.removeAll')}
             </Button>}
           </div>
         </div>
@@ -161,7 +161,7 @@ function MyJobRow({ job, busy, onRemove, onStop, onOpenModel }: Readonly<{
         {job.state === 'failed' && <p className='mt-2 break-words text-xs text-destructive'>{errorText(job.errorCode, t as Parameters<typeof errorText>[1])}</p>}
       </div>
       {job.canManage && active && job.state !== 'cancel_requested' && <Button variant='outline' size='sm' className='shrink-0' disabled={busy || saving} onClick={queued ? onRemove : onStop}>
-        {queued ? <Trash2 aria-hidden className='mr-1.5 h-4 w-4' /> : <StopCircle aria-hidden className='mr-1.5 h-4 w-4' />}{t(queued ? 'myJobs.removeQueued' : 'runStop.stop')}
+        {queued ? <Trash2 aria-hidden className='me-1.5 h-4 w-4' /> : <StopCircle aria-hidden className='me-1.5 h-4 w-4' />}{t(queued ? 'myJobs.removeQueued' : 'runStop.stop')}
       </Button>}
     </div>
   </li>;

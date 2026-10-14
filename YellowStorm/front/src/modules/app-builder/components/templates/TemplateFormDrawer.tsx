@@ -160,7 +160,7 @@ export function TemplateFormDrawer({
           className='flex w-full flex-col gap-0 p-0 sm:max-w-lg'
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <SheetHeader className='space-y-1.5 border-b p-5 text-left'>
+          <SheetHeader className='space-y-1.5 border-b p-5 text-start'>
             <SheetTitle className='text-base font-semibold'>
               {isEdit ? t('templates.editTitle') : t('templates.createTitle')}
             </SheetTitle>
@@ -237,7 +237,7 @@ export function TemplateFormDrawer({
                     >
                       {zipValidated ? (
                         <>
-                          <CheckCircle2 className='mr-2 size-4 text-ok' aria-hidden />
+                          <CheckCircle2 className='me-2 size-4 text-ok' aria-hidden />
                           {t('templates.validationConfirmed')}
                         </>
                       ) : (
@@ -275,7 +275,7 @@ export function TemplateFormDrawer({
                 type='submit'
                 disabled={busy || (isEdit ? !title.trim() || !categoryId : !canSubmitCreate)}
               >
-                {busy ? <Loader2 className='mr-2 size-4 animate-spin' aria-hidden /> : null}
+                {busy ? <Loader2 className='me-2 size-4 animate-spin' aria-hidden /> : null}
                 {isEdit ? t('templates.save') : t('templates.create')}
               </Button>
             </SheetFooter>

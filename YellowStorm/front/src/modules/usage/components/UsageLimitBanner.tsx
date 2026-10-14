@@ -40,7 +40,7 @@ export function UsageLimitBanner() {
           <p className='text-sm text-muted-foreground'>{t('usage.banner.resetsOn', { date: formattedDate, time: formattedTime })}</p>
         </div>
         <Button onClick={() => navigate('/upgrade')} size='sm' variant='outline' className='mt-2'>
-          <Sparkles className='h-4 w-4 mr-2' />
+          <Sparkles className='h-4 w-4 me-2' />
           {t('usage.banner.upgradeCta')}
         </Button>
       </div>

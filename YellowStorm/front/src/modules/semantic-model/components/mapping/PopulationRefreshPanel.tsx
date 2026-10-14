@@ -60,8 +60,8 @@ export function PopulationRefreshPanel({ modelId, mappings, canEdit, onAccepted,
     <div className='flex flex-col justify-between gap-3 sm:flex-row sm:items-center'>
       <div><h3 className='font-semibold'>{t('populationRefresh.title')}</h3><p className='text-xs text-muted-foreground'>{t('populationRefresh.description')}</p></div>
       <div className='flex flex-wrap items-center gap-2'>
-        <Button disabled={!canEdit || run.isPending || jobActive || !mappings.length} onClick={() => run.mutate()}>{run.isPending || jobActive ? <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' /> : <Play className='mr-1.5 h-3.5 w-3.5' />}{t('populationRefresh.prepare')}</Button>
-        {onOpenGraph && <Button variant='outline' onClick={onOpenGraph}><Network className='mr-1.5 h-4 w-4' />{t('dataWorkflow.dataGraph')}</Button>}
+        <Button disabled={!canEdit || run.isPending || jobActive || !mappings.length} onClick={() => run.mutate()}>{run.isPending || jobActive ? <Loader2 className='me-1.5 h-3.5 w-3.5 animate-spin' /> : <Play className='me-1.5 h-3.5 w-3.5' />}{t('populationRefresh.prepare')}</Button>
+        {onOpenGraph && <Button variant='outline' onClick={onOpenGraph}><Network className='me-1.5 h-4 w-4' />{t('dataWorkflow.dataGraph')}</Button>}
       </div>
     </div>
     {!mappings.length && <p className='mt-3 text-xs text-amber-700 dark:text-amber-400'>{t('dataWorkflow.noReadySources')}</p>}

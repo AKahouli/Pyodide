@@ -167,7 +167,7 @@ export function WorkspaceHubPage() {
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             <Button onClick={() => openCreateModal()} className="shadow-sm">
-              <Plus className="mr-1.5 h-4 w-4" />
+              <Plus className="me-1.5 h-4 w-4" />
               {t('hub.create')}
             </Button>
           </div>
@@ -238,7 +238,7 @@ export function WorkspaceHubPage() {
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('hub.error.description')}</p>
               </div>
               <Button variant="outline" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
-                <RefreshCw className="mr-2 h-4 w-4" />
+                <RefreshCw className="me-2 h-4 w-4" />
                 {t('hub.error.retry')}
               </Button>
             </div>
@@ -254,12 +254,12 @@ export function WorkspaceHubPage() {
               </p>
               {filters.hasActiveFilters ? (
                 <Button variant="outline" size="sm" onClick={filters.clearAll}>
-                  <X className="mr-1.5 h-3.5 w-3.5" />
+                  <X className="me-1.5 h-3.5 w-3.5" />
                   {t('hub.filters.clearAll')}
                 </Button>
               ) : (
                 <Button size="sm" onClick={() => openCreateModal()}>
-                  <Plus className="mr-1.5 h-4 w-4" />
+                  <Plus className="me-1.5 h-4 w-4" />
                   {t('hub.create')}
                 </Button>
               )}
@@ -310,9 +310,9 @@ export function WorkspaceHubPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeleting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="me-2 h-4 w-4 animate-spin" />
               ) : (
-                <Trash2 className="mr-2 h-4 w-4" />
+                <Trash2 className="me-2 h-4 w-4" />
               )}
               {isDeleting ? t('hub.delete.deleting') : t('hub.delete.confirm')}
             </AlertDialogAction>

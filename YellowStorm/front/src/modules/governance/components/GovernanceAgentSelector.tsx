@@ -45,7 +45,7 @@ export function GovernanceAgentSelector({ selectedAgentIds, onChange }: Readonly
 function AgentOption({ agent, isSelected, onSelect }: Readonly<{ agent: Agent; isSelected: boolean; onSelect: () => void }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   return (
-    <Button type='button' variant={isSelected ? 'default' : 'ghost'} className='h-auto justify-start px-3 py-2 text-left' onClick={onSelect}>
+    <Button type='button' variant={isSelected ? 'default' : 'ghost'} className='h-auto justify-start px-3 py-2 text-start' onClick={onSelect}>
       <span className='min-w-0'>
         <span className='block truncate font-medium'>{agent.name}</span>
         <span className='block truncate text-xs opacity-80'>{agent.agentType.name} · {agent.isActive ? t('scopeShell.agents.active') : t('scopeShell.agents.inactive')}</span>

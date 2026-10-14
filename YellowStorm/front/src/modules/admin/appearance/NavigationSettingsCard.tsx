@@ -170,14 +170,14 @@ export function NavigationSettingsCard() {
             <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'><ListTree className='h-5 w-5' /></div>
             <div className='space-y-1'><CardTitle>{t('appearance.navigation.title')}</CardTitle><CardDescription>{t('appearance.navigation.description')}</CardDescription></div>
           </div>
-          <Button type='button' onClick={() => void save()} disabled={!dirty || loading || saving}><Save className='mr-2 h-4 w-4' />{saving ? t('appearance.navigation.saving') : t('appearance.navigation.save')}</Button>
+          <Button type='button' onClick={() => void save()} disabled={!dirty || loading || saving}><Save className='me-2 h-4 w-4' />{saving ? t('appearance.navigation.saving') : t('appearance.navigation.save')}</Button>
         </div>
       </CardHeader>
       <CardContent className='space-y-3 p-0'>
         <div className='flex flex-wrap gap-2 px-4 pt-4'>
-          <Button type='button' variant='outline' onClick={addGroup} disabled={loading}><Plus className='mr-2 h-4 w-4' />{t('appearance.navigation.addSubmenu')}</Button>
-          <Button type='button' variant='outline' onClick={addItem} disabled={loading || availableTargets.length === 0}><Plus className='mr-2 h-4 w-4' />{t('appearance.navigation.addItem')}</Button>
-          <Button type='button' variant='ghost' onClick={() => { setSettings(structuredClone(DEFAULT_NAVIGATION_SETTINGS)); setDirty(true); }} disabled={loading}><RotateCcw className='mr-2 h-4 w-4' />{t('appearance.navigation.reset')}</Button>
+          <Button type='button' variant='outline' onClick={addGroup} disabled={loading}><Plus className='me-2 h-4 w-4' />{t('appearance.navigation.addSubmenu')}</Button>
+          <Button type='button' variant='outline' onClick={addItem} disabled={loading || availableTargets.length === 0}><Plus className='me-2 h-4 w-4' />{t('appearance.navigation.addItem')}</Button>
+          <Button type='button' variant='ghost' onClick={() => { setSettings(structuredClone(DEFAULT_NAVIGATION_SETTINGS)); setDirty(true); }} disabled={loading}><RotateCcw className='me-2 h-4 w-4' />{t('appearance.navigation.reset')}</Button>
         </div>
 
         {loading ? <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p> : (
@@ -195,7 +195,7 @@ export function NavigationSettingsCard() {
               return (
                 <div key={node.id} className={cn('border-t first:border-t-0', draggedId === node.id && 'opacity-40')} draggable onDragStart={() => setDraggedId(node.id)} onDragEnd={() => setDraggedId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedId) changeNodes(moveBefore(settings.nodes, draggedId, node.id)); setDraggedId(null); }}>
                   <div className='grid min-h-12 grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_6.5rem] items-center gap-2 px-4 py-1.5'>
-                    <button type='button' className='flex min-w-0 items-center gap-2 text-left' style={{ paddingLeft: `${Math.min(depth, 3) * 18}px` }} aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : node.id)}>
+                    <button type='button' className='flex min-w-0 items-center gap-2 text-start' style={{ paddingLeft: `${Math.min(depth, 3) * 18}px` }} aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : node.id)}>
                       <GripVertical className='size-4 shrink-0 cursor-grab text-muted-foreground' aria-hidden='true' />
                       <ChevronDown className={cn('size-4 shrink-0 transition-transform', !expanded && '-rotate-90')} />
                       <span className='truncate text-sm font-medium'>{node.labels.en}</span>

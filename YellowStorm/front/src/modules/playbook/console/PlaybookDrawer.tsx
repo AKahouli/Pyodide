@@ -58,7 +58,7 @@ export function PlaybookDrawer({
               <p className="text-xs leading-relaxed">
                 {vm.purpose}
                 {vm.purposeIsDerived && (
-                  <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
+                  <span className="ms-1.5 inline-flex items-center gap-0.5 rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
                     <Sparkles className="h-2.5 w-2.5" aria-hidden />
                     {t('console.drawer.autoPurpose')}
                   </span>
@@ -104,7 +104,7 @@ export function PlaybookDrawer({
           {vm.failure?.message && (
             <div>
               <h3 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('console.drawer.lastError')}</h3>
-              <p className="border-l-2 border-fail pl-2 font-mono text-[11px] leading-relaxed text-muted-foreground">{vm.failure.message}</p>
+              <p className="border-l-2 border-fail ps-2 font-mono text-[11px] leading-relaxed text-muted-foreground">{vm.failure.message}</p>
             </div>
           )}
 
@@ -168,11 +168,11 @@ export function PlaybookDrawer({
         <Separator />
         <div className="sticky bottom-0 flex items-center gap-2 bg-background/95 p-3 backdrop-blur">
           <Button size="sm" onClick={() => actions.onRun(vm)}>
-            <Play className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <Play className="me-1.5 h-3.5 w-3.5" aria-hidden />
             {t('console.drawer.runNow')}
           </Button>
           <Button variant="outline" size="sm" onClick={() => actions.onEditCanvas(vm)}>
-            <Workflow className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            <Workflow className="me-1.5 h-3.5 w-3.5" aria-hidden />
             {t('console.drawer.openCanvas')}
           </Button>
           <span className="flex-1" />

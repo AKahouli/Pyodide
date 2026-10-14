@@ -1,0 +1,13 @@
+{
+  "service.toasts.connecting": "جارٍ الاتصال بخدمات الإشعارات الفورية",
+  "service.toasts.connected": "تم الاتصال بخدمات الإشعارات الفورية",
+  "service.toasts.connectionFailed": "فشل الاتصال بالخدمات الفورية",
+  "service.toasts.tooManyTabs": "عدد كبير جدًا من علامات التبويب المفتوحة",
+  "service.toasts.tooManyTabsDescription": "يرجى إغلاق بعض علامات التبويب وتحديث هذه الصفحة.",
+  "context.errors.connectionError": "خطأ في الاتصال",
+  "context.errors.tooManyTabs": "عدد كبير جدًا من علامات التبويب المفتوحة",
+  "context.errors.fetchFailed": "فشل جلب الإشعارات",
+  "context.errors.markReadFailed": "فشل وضع علامة مقروء على الإشعارات",
+  "context.errors.markAllReadFailed": "فشل وضع علامة مقروء على جميع الإشعارات",
+  "context.errors.deleteFailed": "فشل حذف الإشعار"
+}

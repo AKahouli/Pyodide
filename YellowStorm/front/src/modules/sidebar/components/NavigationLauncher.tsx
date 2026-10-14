@@ -60,7 +60,7 @@ export function NavigationLauncher({ settings, items, language, mobile, onNewCon
                 {section.items.map((item) => {
                   const Icon = NAVIGATION_TARGET_ICONS[item.targetKey!];
                   const itemLabel = navigationLabel(item.labels, language);
-                  return <button key={item.id} type='button' className='group flex min-h-20 flex-col items-start justify-between rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' onClick={() => launch(item)}><Icon className='size-5 text-primary transition-transform group-hover:scale-110' /><span className='mt-3 text-sm font-medium leading-tight'>{itemLabel}</span></button>;
+                  return <button key={item.id} type='button' className='group flex min-h-20 flex-col items-start justify-between rounded-lg border bg-background p-3 text-start transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' onClick={() => launch(item)}><Icon className='size-5 text-primary transition-transform group-hover:scale-110' /><span className='mt-3 text-sm font-medium leading-tight'>{itemLabel}</span></button>;
                 })}
               </div>
             </section>

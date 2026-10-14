@@ -27,9 +27,9 @@ export function CheckBadge({ issues, onOpen, className }: Readonly<{
     </button>
     {/* Touches the badge (padding, not margin) so the pointer can travel into the list. */}
     <span role='tooltip' className='absolute left-1/2 top-full z-50 hidden -translate-x-1/2 pt-1.5 group-hover/check:block group-focus-within/check:block'>
-      <span className='block w-64 space-y-1 rounded-xl border bg-popover p-2 text-left text-xs text-popover-foreground shadow-xl'>
+      <span className='block w-64 space-y-1 rounded-xl border bg-popover p-2 text-start text-xs text-popover-foreground shadow-xl'>
         {sorted.slice(0, SHOWN).map((issue, index) => <button key={`${issue.code}-${issue.fieldId ?? ''}-${index}`} type='button' onClick={(event) => { event.stopPropagation(); onOpen?.(issue); }}
-          className='flex w-full gap-1.5 rounded-lg p-1.5 text-left hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
+          className='flex w-full gap-1.5 rounded-lg p-1.5 text-start hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
           {issue.severity === 'error' ? <AlertCircle className='mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive' aria-hidden /> : <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600' aria-hidden />}
           <span className='min-w-0 whitespace-normal break-words'>{issueText(translate, issue)}</span>
         </button>)}

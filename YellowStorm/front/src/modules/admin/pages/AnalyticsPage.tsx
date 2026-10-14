@@ -102,7 +102,7 @@ export function AnalyticsPage() {
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
         <Button onClick={fetchAnalytics} variant='outline'>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -171,15 +171,15 @@ export function AnalyticsPage() {
       <Tabs defaultValue='users' className='space-y-4'>
         <TabsList>
           <TabsTrigger value='users'>
-            <Users className='h-4 w-4 mr-2' />
+            <Users className='h-4 w-4 me-2' />
             {t('analytics.tabs.users')}
           </TabsTrigger>
           <TabsTrigger value='conversations'>
-            <MessageSquare className='h-4 w-4 mr-2' />
+            <MessageSquare className='h-4 w-4 me-2' />
             {t('analytics.tabs.conversations')}
           </TabsTrigger>
           <TabsTrigger value='quality'>
-            <ThumbsUp className='h-4 w-4 mr-2' />
+            <ThumbsUp className='h-4 w-4 me-2' />
             {t('analytics.tabs.quality')}
           </TabsTrigger>
         </TabsList>

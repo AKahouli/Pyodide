@@ -553,7 +553,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
                 <PromptInputActionMenuContent>
                   {!attachmentsDisabled && <PromptInputActionAddAttachments />}
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
-                    <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
+                    <Pencil className='me-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>
                   {!governedMode && <RecentConnectorsMenu
                     connectors={connectors}
@@ -584,7 +584,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
                />}
               {extraTools}
             </PromptInputTools>
-            <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
+            <div className='ms-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
               <Usage />
 
               {requireContent

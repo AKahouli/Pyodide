@@ -94,6 +94,7 @@ export function LocalizationProvider({ children }: LocalizationProviderProps) {
 
   useEffect(() => {
     document.documentElement.lang = language;
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
   }, [language]);
 
   const changeLanguage = useCallback(

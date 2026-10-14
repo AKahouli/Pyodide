@@ -36,7 +36,7 @@ export function ReportPanelSidebar({ resetKey }: Readonly<{ resetKey?: string }>
       className='fixed inset-0 z-50 flex flex-col bg-background md:static md:z-auto md:h-full md:w-[44rem] md:max-w-[55%] md:shrink-0 md:border-l'
     >
       <div className='flex h-10 shrink-0 items-center justify-between border-b bg-muted/50 px-3'>
-        <span className='mr-2 truncate text-sm font-medium'>{t('openui.report.panelTitle')}</span>
+        <span className='me-2 truncate text-sm font-medium'>{t('openui.report.panelTitle')}</span>
         <Button variant='ghost' size='icon' className='h-6 w-6' onClick={close} aria-label={t('openui.report.close')}>
           <X className='h-3.5 w-3.5' />
         </Button>

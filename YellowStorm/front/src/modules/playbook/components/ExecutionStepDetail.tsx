@@ -160,7 +160,7 @@ function RemediationItemRow({
       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{text}</p>
       <div className="mt-2 flex justify-end">
         <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply} disabled={disabled}>
-          <CheckSquare className="mr-1 h-3 w-3" />
+          <CheckSquare className="me-1 h-3 w-3" />
           {t('detail.remediation.apply')}
         </Button>
       </div>
@@ -227,7 +227,7 @@ function ArtifactListItem({
       <div className="flex shrink-0 items-center gap-1">
         {onInspect && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
-            <Eye className="mr-1 h-3 w-3" />
+            <Eye className="me-1 h-3 w-3" />
             {t('artifacts.view' as any)}
           </Button>
         )}
@@ -238,7 +238,7 @@ function ArtifactListItem({
             className="h-7 px-2 text-xs"
             onClick={handleDownload}
           >
-            <Download className="mr-1 h-3 w-3" />
+            <Download className="me-1 h-3 w-3" />
             {t('artifacts.download' as any)}
           </Button>
         )}
@@ -1264,7 +1264,7 @@ export function ExecutionStepDetail({
                 {t('detail.badges.stale')}
               </span>
             )}
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="ms-auto flex items-center gap-1.5">
               <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.executionModeUsed')}</span>
               <Badge variant="outline" className="h-7 text-xs">
                 {t(getExecutionModeLabelKey(executionStepMode) as any)}
@@ -1278,12 +1278,12 @@ export function ExecutionStepDetail({
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" className="h-7 w-[220px] justify-between text-xs">
-                        <span className="truncate text-left">
+                        <span className="truncate text-start">
                           {selectedStepExecution
                             ? `${t('detail.evaluation.attempt')} ${selectedStepExecution.attemptNumber ?? '-'} | ${new Date(selectedStepExecution.completedAt || selectedStepExecution.startedAt || Date.now()).toLocaleString()}`
                             : t('detail.results.stepExecutionPlaceholder')}
                         </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
+                        <ChevronDown className="ms-2 h-4 w-4 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-[380px] p-1">
@@ -1299,7 +1299,7 @@ export function ExecutionStepDetail({
                           >
                             <button
                               type="button"
-                              className="min-w-0 flex-1 text-left"
+                              className="min-w-0 flex-1 text-start"
                               onClick={() => setSelectedStepExecutionId(entry.id)}
                             >
                               <div className="truncate text-sm">
@@ -1324,34 +1324,34 @@ export function ExecutionStepDetail({
               <DropdownMenuContent align="end">
                 {execution && step.status === 'completed' && (
                   <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
-                    <FileText className="mr-2 h-4 w-4" />
+                    <FileText className="me-2 h-4 w-4" />
                     {t('detail.actions.saveReplay')}
                   </DropdownMenuItem>
                 )}
                 {execution && onRequestRunEvaluation && (
                   <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
-                    <FileText className="mr-2 h-4 w-4" />
+                    <FileText className="me-2 h-4 w-4" />
                     {t('detail.actions.runReplayEvaluation')}
                   </DropdownMenuItem>
                 )}
                 {execution && step.status === 'completed' && !!step.output && (
                   <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
-                    <FileText className="mr-2 h-4 w-4" />
+                    <FileText className="me-2 h-4 w-4" />
                     {t('detail.actions.saveOutputFormat')}
                   </DropdownMenuItem>
                 )}
                 {canDownload && (
                   <>
                     <DropdownMenuItem onClick={handleDownloadHtml}>
-                      <FileText className="mr-2 h-4 w-4" />
+                      <FileText className="me-2 h-4 w-4" />
                       {t('detail.actions.downloadHtml')}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={handleDownloadPdf}>
-                      <Download className="mr-2 h-4 w-4" />
+                      <Download className="me-2 h-4 w-4" />
                       {t('detail.actions.downloadPdf')}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => void handleCopyToClipboard()}>
-                      <ClipboardCopy className="mr-2 h-4 w-4" />
+                      <ClipboardCopy className="me-2 h-4 w-4" />
                       {t('detail.actions.copyToClipboard')}
                     </DropdownMenuItem>
                   </>
@@ -1378,7 +1378,7 @@ export function ExecutionStepDetail({
         {step.status === 'completed' && hasReplayBaseline && (
           <div className="mb-3 flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => execution && traceReplayExecution(execution.id)} disabled={isRunningEvaluation}>
-              <RotateCcw className="mr-1 h-4 w-4" />
+              <RotateCcw className="me-1 h-4 w-4" />
               {t('detail.actions.traceReplay')}
             </Button>
             <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.traceReplayHint')}</span>
@@ -1403,15 +1403,15 @@ export function ExecutionStepDetail({
                 {canDownload && (
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
-                      <FileText className="mr-1 h-4 w-4" />
+                      <FileText className="me-1 h-4 w-4" />
                       {t('detail.actions.downloadHtml')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
-                      <Download className="mr-1 h-4 w-4" />
+                      <Download className="me-1 h-4 w-4" />
                       {t('detail.actions.downloadPdf')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
-                      {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
+                      {copiedToClipboard ? <ClipboardCheck className="me-1 h-4 w-4" /> : <ClipboardCopy className="me-1 h-4 w-4" />}
                       {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
                     </Button>
                   </div>
@@ -1497,7 +1497,7 @@ export function ExecutionStepDetail({
                 {((selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0) || inputPortEntries.length > 0) && (
                   <Collapsible defaultOpen className="rounded-lg border">
                     <CollapsibleTrigger asChild>
-                      <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-left">
+                      <Button variant="ghost" className="flex w-full items-center justify-between rounded-lg px-4 py-2 text-start">
                         <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.sectionTitle')}</span>
                         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                       </Button>
@@ -1801,7 +1801,7 @@ export function ExecutionStepDetail({
                     <div className="rounded bg-background p-3">
                       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.missingPoints')}</div>
                       {semanticMatchToDisplay.missingPoints?.length ? (
-                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                        <ul className="mt-2 list-disc space-y-1 ps-5 text-sm">
                           {semanticMatchToDisplay.missingPoints.map((item, index) => (
                             <li key={`missing-${index}`}>{item}</li>
                           ))}
@@ -1813,7 +1813,7 @@ export function ExecutionStepDetail({
                     <div className="rounded bg-background p-3">
                       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.changedPoints')}</div>
                       {semanticMatchToDisplay.changedPoints?.length ? (
-                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                        <ul className="mt-2 list-disc space-y-1 ps-5 text-sm">
                           {semanticMatchToDisplay.changedPoints.map((item, index) => (
                             <li key={`changed-${index}`}>{item}</li>
                           ))}
@@ -1918,7 +1918,7 @@ export function ExecutionStepDetail({
                   onClick={handleRunAdvisorEvaluation}
                   disabled={!canRunAdvisorEvaluation || stepJudgeStatus === 'evaluating'}
                 >
-                  {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 me-1 animate-spin" />}
                   {stepJudgeStatus === 'evaluating' ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
                 </Button>
               </div>
@@ -1964,7 +1964,7 @@ export function ExecutionStepDetail({
             {advisorAutopilotActive && (
               <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
                 <Collapsible defaultOpen={false} className="rounded-md border bg-background">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start">
                     <div>
                       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                         {t('detail.autopilot.appliedOptimizations')}
@@ -2032,8 +2032,8 @@ export function ExecutionStepDetail({
                                 disabled={reapplyingIndex === idx}
                                 onClick={() => void handleReapplyOptimization(idx, 'after')}
                               >
-                                {reapplyingIndex === idx && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                                <RotateCcw className="mr-1 h-3 w-3" />
+                                {reapplyingIndex === idx && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
+                                <RotateCcw className="me-1 h-3 w-3" />
                                 {t('detail.autopilot.reapply')}
                               </Button>
                               <Button
@@ -2070,7 +2070,7 @@ export function ExecutionStepDetail({
                       <p className="text-xs text-destructive/90">{missingAdvisorTaskTitles.join(', ')}</p>
                       <div>
                         <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight}>
-                          {runningAdvisorPreflight && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {runningAdvisorPreflight && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                           {t('detail.judge.missingEvaluationRunCta')}
                         </Button>
                       </div>
@@ -2109,17 +2109,17 @@ export function ExecutionStepDetail({
                   {canApplyAdvisorChanges ? (
                     <>
                       <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {remediationLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.previewChanges')}
                       </Button>
                       {hasScriptReplacementCandidate && (
                         <Button size="sm" variant="outline" onClick={() => void handlePreviewScriptReplacement()} disabled={scriptPreviewLoading}>
-                          {scriptPreviewLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {scriptPreviewLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                           {t('detail.remediation.previewScriptReplacement')}
                         </Button>
                       )}
                       <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {remediationLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.applyToCurrentPlaybook')}
                       </Button>
                     </>
@@ -2177,7 +2177,7 @@ export function ExecutionStepDetail({
                             <AlertCircle className="h-4 w-4" />
                             <AlertTitle>{t('detail.remediation.scriptWarnings')}</AlertTitle>
                             <AlertDescription>
-                              <ul className="list-disc space-y-1 pl-4">
+                              <ul className="list-disc space-y-1 ps-4">
                                 {scriptPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
                               </ul>
                             </AlertDescription>
@@ -2189,7 +2189,7 @@ export function ExecutionStepDetail({
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setScriptPreviewOpen(false)}>{t('detail.remediation.cancel')}</Button>
                       <Button onClick={() => void handleApplyScriptReplacement()} disabled={!scriptPreview || scriptPreview.validation.status !== 'passed' || scriptApplyLoading}>
-                        {scriptApplyLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {scriptApplyLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                         {t('detail.remediation.applyScriptReplacement')}
                       </Button>
                     </DialogFooter>
@@ -2197,7 +2197,7 @@ export function ExecutionStepDetail({
                 </Dialog>
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
                     <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                       <span>{t('detail.judge.remediationSuggestions')}</span>
                       <span>{t('detail.judge.remediationSummary', { count: remediationCount })}</span>
@@ -2264,11 +2264,11 @@ export function ExecutionStepDetail({
                 {canApplyAdvisorChanges && execution && (
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {remediationLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                       {t('detail.judge.previewChanges')}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {remediationLoading && <Loader2 className="me-1 h-3 w-3 animate-spin" />}
                       {t('detail.judge.applyToCurrentPlaybook')}
                     </Button>
                   </div>
@@ -2280,7 +2280,7 @@ export function ExecutionStepDetail({
 
           <TabsContent value="traces" className="space-y-4">
             <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.toolTrace')}</div>
                 <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
@@ -2319,7 +2319,7 @@ export function ExecutionStepDetail({
             </Collapsible>
 
             <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.reasoning.title')}</div>
                 <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
@@ -2352,7 +2352,7 @@ export function ExecutionStepDetail({
             </Collapsible>
 
             <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.replayDiff')}</div>
                 <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
@@ -2430,7 +2430,7 @@ export function ExecutionStepDetail({
             </Collapsible>
 
             <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.llmPrompts')}</div>
                 <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
@@ -2439,7 +2439,7 @@ export function ExecutionStepDetail({
                   <div className="space-y-3">
                     {promptTraceItems.map((item, index) => (
                       <Collapsible key={`llm-prompt-${index}`} defaultOpen={false} className="rounded-lg border bg-muted/30 px-4">
-                        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-left">
+                        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-start">
                           <div className="flex flex-wrap items-center gap-2 text-sm">
                             <span className="font-medium">{index + 1}.</span>
                             <span className="rounded bg-muted px-1.5 py-0.5 text-xs">

@@ -52,7 +52,7 @@ export function DeleteDraftAppButton({ sessionId }: { sessionId: string }) {
         <AlertDialogFooter>
           <AlertDialogCancel>{t('card.cancel')}</AlertDialogCancel>
           <AlertDialogAction disabled={isDeleting} onClick={handleDelete}>
-            {isDeleting && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+            {isDeleting && <Loader2 className='me-2 h-4 w-4 animate-spin' />}
             {t('card.deleteDraft')}
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -143,7 +143,7 @@ export function SettingsFormSection({ form, currentSettings, isSaving, hasChange
           <Button type='submit' disabled={isSaving || !hasChanges} className='h-10 sm:h-9'>
             {isSaving ? (
               <>
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                <Loader2 className='me-2 h-4 w-4 animate-spin' />
                 {t('settings.actions.saving')}
               </>
             ) : currentSettings ? (

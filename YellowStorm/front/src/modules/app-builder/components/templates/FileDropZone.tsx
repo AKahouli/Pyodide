@@ -93,7 +93,7 @@ export function FileDropZone({
             />
           </div>
         ) : value ? (
-          <div className='flex items-center gap-3 text-left'>
+          <div className='flex items-center gap-3 text-start'>
             <span className='flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
               {kind === 'image' ? <ImageOff className='size-5' aria-hidden /> : <FileArchive className='size-5' aria-hidden />}
             </span>

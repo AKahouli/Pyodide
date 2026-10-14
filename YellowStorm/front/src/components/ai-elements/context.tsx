@@ -311,6 +311,6 @@ const TokensWithCost = ({ tokens, costText }: { tokens?: number; costText?: stri
       : new Intl.NumberFormat('en-US', {
           notation: 'compact',
         }).format(tokens)}
-    {costText ? <span className='ml-2 text-muted-foreground'>• {costText}</span> : null}
+    {costText ? <span className='ms-2 text-muted-foreground'>• {costText}</span> : null}
   </span>
 );

@@ -40,7 +40,7 @@ export function StepBlock({ step, tools }: StepBlockProps) {
         aria-expanded={open}
         aria-controls={panelId}
         className={cn(
-          'group/step inline-flex items-center gap-2 truncate text-left text-sm transition-colors',
+          'group/step inline-flex items-center gap-2 truncate text-start text-sm transition-colors',
           activity === 'error' ? 'text-fail' : 'text-foreground',
         )}
       >
@@ -65,7 +65,7 @@ export function StepBlock({ step, tools }: StepBlockProps) {
       {tools.length > 0 && (
         <div className='flex'>
           <div className='w-6 shrink-0 self-stretch'>
-            <div className='ml-2 h-full border-l border-dashed border-muted-foreground/30' />
+            <div className='ms-2 h-full border-l border-dashed border-muted-foreground/30' />
           </div>
           <div
             id={panelId}

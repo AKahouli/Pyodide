@@ -919,7 +919,7 @@ export function SemanticModelEditorPage() {
         <Button size="icon" variant="ghost" asChild aria-label={t("editor.back")}>
           <Link to="/semantic-models"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
-        <div className="mr-1 min-w-0">
+        <div className="me-1 min-w-0">
           <h1 className="max-w-48 truncate text-sm font-semibold sm:max-w-80">{model.data?.name}</h1>
           <p className="hidden text-[11px] text-muted-foreground sm:block">
             {t(model.data?.kind === "workspace_default" ? "editor.automaticModel" : "editor.designedModel")}
@@ -929,7 +929,7 @@ export function SemanticModelEditorPage() {
           <Save className={`h-3.5 w-3.5 ${saveStatus === "saving" ? "animate-pulse text-primary" : saveStatus === "conflict" || saveStatus === "error" ? "text-destructive" : "text-muted-foreground"}`} />
           <span className="hidden md:inline">{statusLabel}</span>
           {(saveStatus === "error" || saveStatus === "offline") && (
-            <button type="button" className="ml-1 font-semibold text-primary underline-offset-2 hover:underline" onClick={retrySave}>{t("action.retry")}</button>
+            <button type="button" className="ms-1 font-semibold text-primary underline-offset-2 hover:underline" onClick={retrySave}>{t("action.retry")}</button>
           )}
         </div>
         {canEdit && onCanvas && <div className='hidden items-center sm:flex'>
@@ -945,13 +945,13 @@ export function SemanticModelEditorPage() {
           {freshnessState && freshnessState !== 'not_runnable' && <> · <span title={t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint')}
             className={freshnessState === 'outdated' ? 'font-medium text-amber-700 dark:text-amber-400' : freshnessState === 'current' ? 'text-emerald-700 dark:text-emerald-400' : undefined}>
             <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
-            <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
+            <span className='ms-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
         </p>
         {modelId && <GraphStatusTooltip modelId={modelId} />}
         <div className="flex shrink-0 items-center gap-1.5">
-          {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
+          {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='me-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
           {onCanvas && <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost' aria-label={t('designer.data')} title={t('designer.data')}><Table2 className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('designer.data')}</span><ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
+            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost' aria-label={t('designer.data')} title={t('designer.data')}><Table2 className='h-4 w-4 xl:me-1.5' /><span className='hidden xl:inline'>{t('designer.data')}</span><ChevronDown className='ms-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align='end' onCloseAutoFocus={(event) => event.preventDefault()}>
               <DropdownMenuItem onSelect={() => setMode('records')}><Table2 className='h-4 w-4' />{t('mode.records')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={openGraphViewer}><Network className='h-4 w-4' />{t('dataWorkflow.dataGraph')}</DropdownMenuItem>
@@ -960,11 +960,11 @@ export function SemanticModelEditorPage() {
           </DropdownMenu>}
           {suggestionList.length > 0 && <Button variant='ghost' size='sm' onClick={() => (suggestionsOpen ? setSuggestionsOpen(false) : openSuggestions())}>
             {t('assistantSources.toolbar')}
-            {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
+            {pendingSuggestions > 0 && <span className='ms-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
           </Button>}
           <Button variant='ghost' size='sm' className={mode === 'health' ? 'bg-muted' : undefined} aria-pressed={mode === 'health'} title={t('health.button')} onClick={() => (mode === 'health' ? setMode('structure') : openReview())}>
             <HeartPulse className='h-4 w-4 lg:hidden' /><span className='hidden lg:inline'>{t('health.button')}</span>
-            {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('health.badge', { count: reviewCount })}>{reviewCount}</span>}
+            {reviewCount > 0 && <span className='ms-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('health.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
           <Button variant='ghost' size='sm' className={runHistoryOpen ? 'bg-muted' : undefined} aria-pressed={runHistoryOpen} onClick={() => (runHistoryOpen ? setRunHistoryOpen(false) : openRunHistory())} aria-label={t('runHistory.title')} title={t('runHistory.title')}><ListOrdered className='h-4 w-4' /></Button>
@@ -977,7 +977,7 @@ export function SemanticModelEditorPage() {
             aria-label={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
             title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
             onClick={() => (runPanelOpen ? closeRunPanel() : openRunStatus())}>
-            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:mr-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:mr-1.5' />}
+            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:me-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:me-1.5' />}
             <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? 'runStatus.index' : 'runStatus.last')}</span>
           </Button>}
           {/* While the model is busy (a data update in any phase, or its search index being built) the button is Stop, not Run. */}
@@ -987,7 +987,7 @@ export function SemanticModelEditorPage() {
                 <Button variant='outline' size='sm' aria-label={t('runStop.stop')}
                   disabled={populationJobId ? runStopRequested || !runStoppable : stoppingIndex}
                   onClick={() => setConfirmStop(populationJobId ? 'run' : 'index')}>
-                  {(populationJobId ? runStopRequested : stoppingIndex) ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+                  {(populationJobId ? runStopRequested : stoppingIndex) ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='me-1.5 h-4 w-4' />}
                   {(populationJobId ? runStopRequested : stoppingIndex) ? t('runStop.stopping') : t('runStop.stop')}
                 </Button>
               </span></TooltipTrigger>
@@ -997,7 +997,7 @@ export function SemanticModelEditorPage() {
             {indexStalled && <TooltipProvider><Tooltip>
               <TooltipTrigger asChild><span>
                 <Button variant='outline' size='sm' aria-label={t('runStop.restart')} disabled={restartingIndex} onClick={() => void restartIndex()}>
-                  {restartingIndex ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <RotateCcw className='mr-1.5 h-4 w-4' />}
+                  {restartingIndex ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <RotateCcw className='me-1.5 h-4 w-4' />}
                   {restartingIndex ? t('runStop.restarting') : t('runStop.restart')}
                 </Button>
               </span></TooltipTrigger>
@@ -1009,9 +1009,9 @@ export function SemanticModelEditorPage() {
             title={checkBlock ?? (freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined)}
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
             className={freshnessState === 'outdated' || freshnessState === 'never_run' ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
-            <Play className='mr-1.5 h-4 w-4' />
+            <Play className='me-1.5 h-4 w-4' />
             {/* The status line is hidden on narrower screens; the dot keeps telling whether the data is current. */}
-            {freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first mr-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
+            {freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first me-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
             {freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
           </Button>}
           {canEdit && <Button size='sm' className='relative' onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())}

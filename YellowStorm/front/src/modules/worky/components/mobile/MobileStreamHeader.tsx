@@ -40,7 +40,7 @@ export function MobileStreamHeader({
         type="button"
         onClick={onBack}
         aria-label={t('header.back')}
-        className="-ml-1 shrink-0 text-muted-foreground"
+        className="-ms-1 shrink-0 text-muted-foreground"
       >
         <ChevronLeft className="size-6" />
       </button>

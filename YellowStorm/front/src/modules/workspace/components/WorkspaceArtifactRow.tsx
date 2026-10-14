@@ -47,9 +47,9 @@ export function WorkspaceArtifactRow({ artifact, canWrite, onChanged }: Props) {
     : t('artifacts.selectedPages', { pages: artifact.primarySource.selection.pages.join(', ') });
 
   return (
-    <div className='ml-10 flex items-center gap-3 rounded-md border-l-2 border-primary/20 py-2 pl-5 pr-1 hover:bg-accent/40'>
+    <div className='ms-10 flex items-center gap-3 rounded-md border-l-2 border-primary/20 py-2 ps-5 pe-1 hover:bg-accent/40'>
       {isActive ? <Loader2 className='h-4 w-4 shrink-0 animate-spin text-primary' /> : <GitBranch className='h-4 w-4 shrink-0 text-primary' />}
-      <button type='button' className='min-w-0 flex-1 text-left' onClick={() => artifact.status === 'ready' && navigate(`/workspace/${artifact.workspaceId}/artifacts/${artifact.id}`)} disabled={artifact.status !== 'ready'}>
+      <button type='button' className='min-w-0 flex-1 text-start' onClick={() => artifact.status === 'ready' && navigate(`/workspace/${artifact.workspaceId}/artifacts/${artifact.id}`)} disabled={artifact.status !== 'ready'}>
         <span className='block truncate text-sm font-medium'>{artifact.name}</span>
         <span className='block text-xs text-muted-foreground'>{t('artifacts.type')}{' · '}{selection}</span>
       </button>
@@ -58,12 +58,12 @@ export function WorkspaceArtifactRow({ artifact, canWrite, onChanged }: Props) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild><Button variant='ghost' size='icon' disabled={busy} aria-label={t('artifacts.actions')}><MoreVertical className='h-4 w-4' /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align='end'>
-            {artifact.status === 'ready' && <DropdownMenuItem onClick={() => navigate(`/workspace/${artifact.workspaceId}/artifacts/${artifact.id}`)}><ExternalLink className='mr-2 h-4 w-4' />{t('artifacts.open')}</DropdownMenuItem>}
-            {canWrite && artifact.status === 'ready' && <DropdownMenuItem onClick={() => void run(() => cloneWorkspaceArtifact(artifact.workspaceId, artifact.id), 'artifacts.cloneSuccess')}><Copy className='mr-2 h-4 w-4' />{t('artifacts.clone')}</DropdownMenuItem>}
-            {canWrite && artifact.status === 'failed' && <DropdownMenuItem onClick={() => void run(() => retryWorkspaceArtifact(artifact.workspaceId, artifact.id), 'artifacts.retrySuccess')}><RefreshCw className='mr-2 h-4 w-4' />{t('artifacts.retry')}</DropdownMenuItem>}
-            {canWrite && <DropdownMenuItem onClick={() => { setName(artifact.name); setRenameOpen(true); }}><Pencil className='mr-2 h-4 w-4' />{t('artifacts.rename')}</DropdownMenuItem>}
+            {artifact.status === 'ready' && <DropdownMenuItem onClick={() => navigate(`/workspace/${artifact.workspaceId}/artifacts/${artifact.id}`)}><ExternalLink className='me-2 h-4 w-4' />{t('artifacts.open')}</DropdownMenuItem>}
+            {canWrite && artifact.status === 'ready' && <DropdownMenuItem onClick={() => void run(() => cloneWorkspaceArtifact(artifact.workspaceId, artifact.id), 'artifacts.cloneSuccess')}><Copy className='me-2 h-4 w-4' />{t('artifacts.clone')}</DropdownMenuItem>}
+            {canWrite && artifact.status === 'failed' && <DropdownMenuItem onClick={() => void run(() => retryWorkspaceArtifact(artifact.workspaceId, artifact.id), 'artifacts.retrySuccess')}><RefreshCw className='me-2 h-4 w-4' />{t('artifacts.retry')}</DropdownMenuItem>}
+            {canWrite && <DropdownMenuItem onClick={() => { setName(artifact.name); setRenameOpen(true); }}><Pencil className='me-2 h-4 w-4' />{t('artifacts.rename')}</DropdownMenuItem>}
             {canWrite && <DropdownMenuSeparator />}
-            {canWrite && <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setDeleteOpen(true)}><Trash2 className='mr-2 h-4 w-4' />{t('artifacts.delete')}</DropdownMenuItem>}
+            {canWrite && <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setDeleteOpen(true)}><Trash2 className='me-2 h-4 w-4' />{t('artifacts.delete')}</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

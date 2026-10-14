@@ -360,7 +360,7 @@ function HealthCheckCard({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-right">
+            <div className="text-end">
               {detail.responseTime !== undefined && (
                 <span className="text-xs text-muted-foreground block">
                   {detail.responseTime}ms
@@ -605,7 +605,7 @@ export function HealthSection() {
           <CardContent className="p-6 text-center text-muted-foreground">
             <p>{t('health.loadError')}</p>
             <Button variant="outline" className="mt-4" onClick={refreshAll}>
-              <RefreshCw className="mr-2 h-4 w-4" />
+              <RefreshCw className="me-2 h-4 w-4" />
               {t('health.actions.retry')}
             </Button>
           </CardContent>
@@ -629,7 +629,7 @@ export function HealthSection() {
           onClick={refreshAll}
           disabled={isLoading}
         >
-          <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`me-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           {t('health.actions.refresh')}
         </Button>
       </div>

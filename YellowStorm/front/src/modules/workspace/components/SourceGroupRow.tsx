@@ -28,7 +28,7 @@ export function SourceGroupRow({
           aria-label={label}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className='flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm'
+          className='flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-start text-sm'
         >
           <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
           <IndexingStatusDot status={status} />
@@ -62,7 +62,7 @@ export function SourceGroupRow({
             type='button'
             aria-label={`delete ${label}`}
             onClick={onDelete}
-            className='mr-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive'
+            className='me-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive'
           >
             <Trash2 className='h-4 w-4' />
           </button>

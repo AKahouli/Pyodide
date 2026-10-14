@@ -315,7 +315,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
             <div className="space-y-3" role="radiogroup" aria-label={t('triggers.automated.title')}>
               <button
                 type="button"
-                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-left hover:border-primary/40 ${
+                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-start hover:border-primary/40 ${
                   automatedTriggerType === 'none' ? 'border-primary bg-primary/5' : ''
                 }`}
                 onClick={() => handleAutomatedTriggerChange('none')}
@@ -333,7 +333,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
 
               <button
                 type="button"
-                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-left hover:border-primary/40 ${
+                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-start hover:border-primary/40 ${
                   automatedTriggerType === 'schedule' ? 'border-primary bg-primary/5' : ''
                 }`}
                 onClick={() => handleAutomatedTriggerChange('schedule')}
@@ -351,7 +351,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
 
               <button
                 type="button"
-                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-left hover:border-primary/40 ${
+                className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-start hover:border-primary/40 ${
                   automatedTriggerType === 'mail' ? 'border-primary bg-primary/5' : ''
                 }`}
                 onClick={() => handleAutomatedTriggerChange('mail')}
@@ -509,7 +509,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                       <span className="font-medium text-emerald-700 dark:text-emerald-300">{t('triggers.mailConfig.subscriptionActive')}</span>
                     </div>
                     {mailTrigger.config.subscriptionExpiresAt && (
-                      <div className="text-muted-foreground pl-4">
+                      <div className="text-muted-foreground ps-4">
                         {t('triggers.mailConfig.subscriptionExpiresAt', {
                           value: new Date(mailTrigger.config.subscriptionExpiresAt).toLocaleString(),
                         })}
@@ -647,7 +647,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
             <Button
               type="button"
               variant="destructive"
-              className="mr-auto"
+              className="me-auto"
               onClick={() => setShowConfirmDialog(true)}
               disabled={triggerSaving}
             >

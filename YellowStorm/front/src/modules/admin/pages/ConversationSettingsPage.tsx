@@ -270,7 +270,7 @@ export function ConversationSettingsPage() {
               {validationError && <Alert variant="destructive"><AlertDescription>{t('conversationSettings.validation.bounds')}</AlertDescription></Alert>}
               <div className="flex justify-end">
                 <Button type="button" onClick={() => void save()} disabled={saving}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                   {saving ? t('conversationSettings.actions.saving') : t('conversationSettings.actions.save')}
                 </Button>
               </div>

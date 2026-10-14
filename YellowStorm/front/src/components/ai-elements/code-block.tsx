@@ -34,7 +34,7 @@ const lineNumberTransformer: ShikiTransformer = {
       type: 'element',
       tagName: 'span',
       properties: {
-        className: ['inline-block', 'min-w-10', 'mr-4', 'text-right', 'select-none', 'text-muted-foreground'],
+        className: ['inline-block', 'min-w-10', 'me-4', 'text-end', 'select-none', 'text-muted-foreground'],
       },
       children: [{ type: 'text', value: String(line) }],
     });
@@ -132,7 +132,7 @@ export const CodeBlock = ({ code, language, showLineNumbers = false, isStreaming
 
   return (
     <CodeBlockContext.Provider value={{ code }}>
-      <div className={cn('group relative w-full overflow-hidden rounded-md border bg-background text-foreground', className)} {...props}>
+      <div dir='ltr' className={cn('group relative w-full overflow-hidden rounded-md border bg-background text-foreground text-start', className)} {...props}>
         {showHighlighted ? (
           <div className='relative'>
             <div

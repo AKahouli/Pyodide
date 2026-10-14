@@ -64,7 +64,7 @@ export function UiTargetAction({ target, onOpen, onNavigate, onSend }: Readonly<
     <Button
       type='button'
       variant='ghost'
-      className='group/action h-auto min-h-11 w-full justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-left shadow-sm hover:border-primary/40 hover:bg-accent'
+      className='group/action h-auto min-h-11 w-full justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-start shadow-sm hover:border-primary/40 hover:bg-accent'
       onClick={onOpen}>
       <span className='flex min-w-0 items-center gap-3'>
         <span className='grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground group-hover/action:text-foreground'><Icon className='size-4' /></span>

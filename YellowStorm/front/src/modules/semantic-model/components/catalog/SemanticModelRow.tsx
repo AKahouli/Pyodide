@@ -61,8 +61,8 @@ export function SemanticModelRow({ model }: Readonly<{ model: SemanticModel }>) 
           <p>{t('catalog.workspaceCount', { count: model.workspaceCount ?? 0 })}</p>
           <p className='mt-1'>{t('catalog.structureSummary', { concepts: model.nodeCount ?? 0, links: model.relationCount ?? 0 })}</p>
         </TableCell>
-        <TableCell className='hidden text-right tabular-nums sm:table-cell' title={t('catalog.recordsHint')}>{model.recordCount ?? 0}</TableCell>
-        <TableCell className='pr-4'>
+        <TableCell className='hidden text-end tabular-nums sm:table-cell' title={t('catalog.recordsHint')}>{model.recordCount ?? 0}</TableCell>
+        <TableCell className='pe-4'>
           <div className='flex items-center justify-end gap-1'>
             <Button asChild variant='ghost' size='icon'><Link to={`/semantic-models/${model.id}`} aria-label={t('catalog.openNamed', { name: model.name })} title={t('catalog.open')}><ArrowRight aria-hidden className='h-4 w-4' /></Link></Button>
             <DropdownMenu>

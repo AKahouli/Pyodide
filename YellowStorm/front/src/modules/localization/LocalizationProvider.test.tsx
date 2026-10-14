@@ -27,14 +27,21 @@ vi.mock('react-i18next', () => ({ I18nextProvider: ({ children }: { children: Re
 describe('LocalizationProvider document language', () => {
   beforeEach(() => {
     document.documentElement.lang = 'en';
+    document.documentElement.dir = 'ltr';
     i18nMock.language = 'fr-FR';
   });
 
   it('normalizes the initial language and keeps the document in sync', () => {
     render(<LocalizationProvider><div>content</div></LocalizationProvider>);
     expect(document.documentElement.lang).toBe('fr');
+    expect(document.documentElement.dir).toBe('ltr');
 
     act(() => i18nMock.emit('languageChanged', 'en-US'));
     expect(document.documentElement.lang).toBe('en');
+    expect(document.documentElement.dir).toBe('ltr');
+
+    act(() => i18nMock.emit('languageChanged', 'ar'));
+    expect(document.documentElement.lang).toBe('ar');
+    expect(document.documentElement.dir).toBe('rtl');
   });
 });

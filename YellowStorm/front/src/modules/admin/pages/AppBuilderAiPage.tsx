@@ -182,7 +182,7 @@ export function AppBuilderAiPage() {
         <AlertCircle className='h-8 w-8' />
         <p>{error}</p>
         <Button variant='outline' onClick={() => void load()}>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {t('appBuilderAi.actions.refresh')}
         </Button>
       </div>
@@ -213,7 +213,7 @@ export function AppBuilderAiPage() {
         </div>
         <div className='flex items-center gap-3 rounded-lg border px-4 py-3'>
           <Sparkles className='h-4 w-4 text-violet-600' />
-          <div className='mr-2'>
+          <div className='me-2'>
             <p className='text-sm font-medium'>{t('appBuilderAi.killSwitch.label')}</p>
             <p className='text-xs text-muted-foreground'>{t('appBuilderAi.killSwitch.hint')}</p>
           </div>
@@ -295,7 +295,7 @@ export function AppBuilderAiPage() {
               </SelectContent>
             </Select>
             <Button variant='outline' size='sm' onClick={() => void load()}>
-              <RefreshCw className='mr-2 h-3.5 w-3.5' />
+              <RefreshCw className='me-2 h-3.5 w-3.5' />
               {t('appBuilderAi.actions.refresh')}
             </Button>
           </div>
@@ -304,7 +304,7 @@ export function AppBuilderAiPage() {
             <CardContent className='p-0'>
               <div className='overflow-x-auto'>
                 <table className='w-full text-sm'>
-                  <thead className='border-b bg-muted/40 text-left text-muted-foreground'>
+                  <thead className='border-b bg-muted/40 text-start text-muted-foreground'>
                     <tr>
                       <th className='px-4 py-3 font-medium'>{t('appBuilderAi.table.user')}</th>
                       <th className='px-4 py-3 font-medium'>{t('appBuilderAi.table.offer')}</th>
@@ -602,7 +602,7 @@ export function AppBuilderAiPage() {
                   .finally(() => setSaving(false));
               }}
             >
-              {saving ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}
+              {saving ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}
               {t('appBuilderAi.actions.save')}
             </Button>
           </DialogFooter>
@@ -664,7 +664,7 @@ export function AppBuilderAiPage() {
           </div>
           <DialogFooter>
             <Button disabled={saving} onClick={() => void saveOffer()}>
-              {saving ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}
+              {saving ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}
               {t('appBuilderAi.actions.save')}
             </Button>
           </DialogFooter>

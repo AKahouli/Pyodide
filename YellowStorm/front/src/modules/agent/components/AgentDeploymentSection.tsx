@@ -242,7 +242,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
           <div className="flex items-start justify-between gap-4 p-4">
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-start"
               aria-expanded={isPaneOpen("embed")}
               onClick={() => togglePane("embed")}
             >
@@ -271,7 +271,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
               {isEmbedEnabled && agentId && (
                 <Button type="button" size="sm" onClick={() => void handleGenerate("embed")} disabled={readOnly || isGenerating}>
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  <Sparkles className="me-1.5 h-3.5 w-3.5" />
                   {t("createEdit.actions.generateDeploymentSnippet")}
                 </Button>
               )}
@@ -293,7 +293,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
           <div className="flex items-start justify-between gap-4 p-4">
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-start"
               aria-expanded={isPaneOpen("rest")}
               onClick={() => togglePane("rest")}
             >
@@ -322,7 +322,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
 
               {isRestEnabled && agentId && (
                 <Button type="button" size="sm" onClick={() => void handleGenerate("rest")} disabled={readOnly || isGenerating}>
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  <Sparkles className="me-1.5 h-3.5 w-3.5" />
                   {t("createEdit.actions.generateDeploymentSnippet")}
                 </Button>
               )}

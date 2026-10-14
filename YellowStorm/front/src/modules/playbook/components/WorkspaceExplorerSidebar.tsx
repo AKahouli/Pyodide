@@ -478,7 +478,7 @@ export function WorkspaceExplorerSidebar() {
       <div key={doc.id}>
         <div
           className={cn(
-            'group flex items-center gap-1 py-1.5 pr-2 rounded-md transition-colors cursor-grab',
+            'group flex items-center gap-1 py-1.5 pe-2 rounded-md transition-colors cursor-grab',
             hoveredItemId === doc.id && 'bg-muted/50',
             selectedItems.includes(doc.id) && 'bg-muted',
             currentFolderId === doc.id && 'bg-muted/50',
@@ -722,7 +722,7 @@ export function WorkspaceExplorerSidebar() {
             placeholder={t('workspaceExplorer.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-8 h-8 text-sm"
+            className="ps-8 h-8 text-sm"
           />
         </div>
       </div>

@@ -144,7 +144,7 @@ export function ChoiceTabsQuestions({ questions, onSubmitAll, submittedInteracti
         );
       })()}
       <div className={cn('flex flex-wrap items-center justify-end gap-2 border-t pt-3')}>
-        <p className='mr-auto text-xs text-muted-foreground'>{t('choice.tabsProgress', { current: questions.filter((q) => submittedInteractions?.has(q.componentId) || answeredByComponentId.get(q.componentId)).length, total: questions.length })}</p>
+        <p className='me-auto text-xs text-muted-foreground'>{t('choice.tabsProgress', { current: questions.filter((q) => submittedInteractions?.has(q.componentId) || answeredByComponentId.get(q.componentId)).length, total: questions.length })}</p>
         {activeIndex > 0 && <Button type='button' variant='outline' onClick={() => setPage(activeIndex - 1)} disabled={disabled}>{t('choice.back')}</Button>}
         {activeIndex < questions.length - 1
           ? <Button type='button' onClick={() => setPage(activeIndex + 1)} disabled={disabled || !activeAnswered}>{t('choice.next')}</Button>

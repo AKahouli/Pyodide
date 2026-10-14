@@ -1,0 +1,50 @@
+{
+  "button": {
+    "groups": "المجموعات",
+    "manage": "إدارة المجموعات"
+  },
+  "page": {
+    "title": "المجموعات",
+    "subtitle": "أنشئ مجموعات من الأشخاص لمشاركة مساحات العمل معهم دفعة واحدة.",
+    "newGroup": "مجموعة جديدة",
+    "emptyState": "ليس لديك أي مجموعات بعد.",
+    "createFirst": "أنشئ مجموعتك الأولى",
+    "memberCount_zero": "{{count}} أعضاء",
+    "memberCount_one": "{{count}} عضو",
+    "memberCount_two": "{{count}} عضوان",
+    "memberCount_few": "{{count}} أعضاء",
+    "memberCount_many": "{{count}} عضو",
+    "memberCount_other": "{{count}} عضو",
+    "noDescription": "لا يوجد وصف",
+    "deleteDialog": {
+      "title": "حذف المجموعة",
+      "description": "حذف \"{{name}}\"؟ تحتفظ مساحات العمل المشتركة مسبقًا مع أعضائه بإمكانية الوصول.",
+      "cancel": "إلغاء",
+      "confirm": "حذف"
+    }
+  },
+  "dialog": {
+    "createTitle": "إنشاء مجموعة",
+    "editTitle": "تعديل المجموعة",
+    "nameLabel": "الاسم",
+    "namePlaceholder": "مثل: فريق التسويق",
+    "descriptionLabel": "الوصف",
+    "descriptionPlaceholder": "اختياري",
+    "membersLabel": "الأعضاء",
+    "searchPlaceholder": "البحث عن مستخدمين عبر البريد الإلكتروني",
+    "noMembers": "لا يوجد أعضاء بعد.",
+    "cancel": "إلغاء",
+    "save": "حفظ",
+    "create": "إنشاء"
+  },
+  "store": {
+    "errors": {
+      "fetchFailed": "فشل تحميل المجموعات."
+    },
+    "toasts": {
+      "created": "تم إنشاء المجموعة \"{{name}}\"",
+      "updated": "تم تحديث المجموعة \"{{name}}\"",
+      "deleted": "تم حذف المجموعة \"{{name}}\""
+    }
+  }
+}

@@ -88,7 +88,7 @@ export function PlaybookTriggerNode({ data: rawData, selected }: NodeProps) {
                         top: 0,
                       }}
                     />
-                    <div className="pr-6">
+                    <div className="pe-6">
                       <PortLabel
                         name={port.name}
                         kind={port.artifactKind}

@@ -54,7 +54,7 @@ export function ConversationContextPanel({ conversationId, creatorId }: Readonly
   const visibleWidth = Math.min(width, maxWidth);
   const content = (
     <Tabs value={panel || 'outline'} onValueChange={(value) => setPanel(value === 'work' ? 'work' : 'outline')} className='h-full min-h-0 gap-0'>
-      <div className='flex h-14 shrink-0 items-center gap-2 border-b px-3 pr-12'>
+      <div className='flex h-14 shrink-0 items-center gap-2 border-b px-3 pe-12'>
         <TabsList aria-label={t('contextPanel.title')}>
           <TabsTrigger value='outline'>{t('outline.title')}</TabsTrigger>
           <TabsTrigger value='work'>{t('contextPanel.work')}</TabsTrigger>

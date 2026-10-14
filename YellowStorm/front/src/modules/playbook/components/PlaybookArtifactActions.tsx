@@ -42,11 +42,11 @@ export function PlaybookArtifactActions({ executionId, artifactId, filename, mim
   const actions = (
     <div className="flex shrink-0 flex-wrap items-center gap-1">
       <Button variant="ghost" size="sm" disabled={Boolean(loading)} onClick={() => void run('view')} aria-label={`${t('artifacts.view' as any)} ${filename}`}>
-        {loading === 'view' ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Eye className="mr-1 h-3.5 w-3.5" />}
+        {loading === 'view' ? <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" /> : <Eye className="me-1 h-3.5 w-3.5" />}
         {t('artifacts.view' as any)}
       </Button>
       <Button variant="ghost" size="sm" disabled={Boolean(loading)} onClick={() => void run('download')} aria-label={`${t('artifacts.download' as any)} ${filename}`}>
-        {loading === 'download' ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+        {loading === 'download' ? <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" /> : <Download className="me-1 h-3.5 w-3.5" />}
         {t('artifacts.download' as any)}
       </Button>
     </div>

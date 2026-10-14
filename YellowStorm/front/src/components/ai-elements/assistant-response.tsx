@@ -108,14 +108,14 @@ export function AssistantActivity({ components, isStreaming, labels }: Readonly<
   return (
     <section className='mb-3 rounded-xl border bg-muted/25 px-3 py-3' aria-label={labels.title}>
       <p className='mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'>{labels.title}</p>
-      <div className='space-y-2 border-l border-border pl-3'>
+      <div className='space-y-2 border-l border-border ps-3'>
         {visibleItems.map((item) => {
           const status = !isStreaming && item.status === 'running' ? 'completed' : item.status;
           const Icon = status === 'running' ? Loader2 : status === 'completed' ? Check : status === 'failed' ? AlertCircle : Circle;
           const KindIcon = item.kind === 'tool' ? Wrench : Brain;
           return (
             <div key={item.key} className='flex min-w-0 items-center gap-2 text-xs'>
-              <Icon className={cn('-ml-[1.05rem] size-3.5 shrink-0 bg-background', status === 'running' ? 'animate-spin text-primary' : status === 'failed' ? 'text-destructive' : 'text-muted-foreground')} aria-hidden='true' />
+              <Icon className={cn('-ms-[1.05rem] size-3.5 shrink-0 bg-background', status === 'running' ? 'animate-spin text-primary' : status === 'failed' ? 'text-destructive' : 'text-muted-foreground')} aria-hidden='true' />
               <KindIcon className='size-3.5 shrink-0 text-muted-foreground' aria-hidden='true' />
               <span className='min-w-0 flex-1 break-words text-foreground'>{item.label || labels.reasoning}</span>
               <span className='shrink-0 text-[10px] text-muted-foreground'>{labels.status[status]}</span>
@@ -130,7 +130,7 @@ export function AssistantActivity({ components, isStreaming, labels }: Readonly<
 export function AssistantMarkdown({ className, ...props }: ComponentProps<typeof Streamdown>) {
   return (
     <Streamdown
-      className={cn('min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5', className)}
+      className={cn('min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:ps-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:ps-5', className)}
       {...props}
     />
   );

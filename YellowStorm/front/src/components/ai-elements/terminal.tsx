@@ -29,7 +29,7 @@ export type TerminalProps = HTMLAttributes<HTMLDivElement> & {
 
 export const Terminal = ({ output, isStreaming = false, autoScroll = true, onClear, className, children, ...props }: TerminalProps) => (
   <TerminalContext.Provider value={{ output, isStreaming, autoScroll, onClear }}>
-    <div className={cn('flex flex-col overflow-hidden rounded-lg border bg-zinc-950 text-zinc-100', className)} {...props}>
+    <div dir='ltr' className={cn('flex flex-col overflow-hidden rounded-lg border bg-zinc-950 text-zinc-100 text-start', className)} {...props}>
       {children ?? (
         <>
           <TerminalHeader>
@@ -159,7 +159,7 @@ export const TerminalContent = ({ className, children, ...props }: TerminalConte
       {children ?? (
         <pre className='whitespace-pre-wrap break-words'>
           <Ansi>{output}</Ansi>
-          {isStreaming && <span className='ml-0.5 inline-block h-4 w-2 animate-pulse bg-zinc-100' />}
+          {isStreaming && <span className='ms-0.5 inline-block h-4 w-2 animate-pulse bg-zinc-100' />}
         </pre>
       )}
     </div>

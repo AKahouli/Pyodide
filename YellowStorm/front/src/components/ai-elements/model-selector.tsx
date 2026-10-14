@@ -67,4 +67,4 @@ export const ModelSelectorLogoGroup = ({ className, ...props }: ModelSelectorLog
 
 export type ModelSelectorNameProps = ComponentProps<'span'>;
 
-export const ModelSelectorName = ({ className, ...props }: ModelSelectorNameProps) => <span className={cn('flex-1 truncate text-left', className)} {...props} />;
+export const ModelSelectorName = ({ className, ...props }: ModelSelectorNameProps) => <span className={cn('flex-1 truncate text-start', className)} {...props} />;

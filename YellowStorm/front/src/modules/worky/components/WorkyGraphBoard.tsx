@@ -196,13 +196,13 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
   return (
     <div data-testid='worky-graph-board' className={cn('relative flex h-full min-h-0 flex-1 flex-col bg-background', expanded && 'fixed inset-0 z-[100] h-dvh w-screen')}>
       <header className='flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2'>
-        <strong className='mr-auto text-sm'>{t('graph.title')}</strong>
+        <strong className='me-auto text-sm'>{t('graph.title')}</strong>
         <label className='relative min-w-40 flex-1 sm:max-w-64'>
           <Search className='pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' aria-hidden />
-          <input className='h-9 w-full rounded-md border border-border bg-background pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('graph.search')} aria-label={t('graph.search')} />
+          <input className='h-9 w-full rounded-md border border-border bg-background ps-8 pe-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('graph.search')} aria-label={t('graph.search')} />
           {query && <button type='button' className='absolute right-2 top-1/2 -translate-y-1/2' onClick={() => setQuery('')} aria-label={t('graph.clearSearch')}><X className='size-4' /></button>}
           {query && <div className='absolute left-0 right-0 top-10 z-20 max-h-48 overflow-y-auto rounded-md border border-border bg-popover shadow-md'>
-            {matching.length ? matching.slice(0, 12).map((node) => <button type='button' key={node.id} className='block w-full truncate px-3 py-2 text-left text-xs hover:bg-muted focus-visible:bg-muted' onClick={() => { const task = taskById.get(node.id); if (task) openTask(task); setQuery(''); }}>{String(node.data.title)}</button>) : <p className='px-3 py-2 text-xs text-muted-foreground'>{t('graph.noResults')}</p>}
+            {matching.length ? matching.slice(0, 12).map((node) => <button type='button' key={node.id} className='block w-full truncate px-3 py-2 text-start text-xs hover:bg-muted focus-visible:bg-muted' onClick={() => { const task = taskById.get(node.id); if (task) openTask(task); setQuery(''); }}>{String(node.data.title)}</button>) : <p className='px-3 py-2 text-xs text-muted-foreground'>{t('graph.noResults')}</p>}
           </div>}
         </label>
         <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => setAttentionOnly(!attentionOnly)} aria-pressed={attentionOnly}>{t('graph.attention')}</button>

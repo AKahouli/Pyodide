@@ -243,7 +243,7 @@ export function SkillsPage() {
       <div className='flex flex-col items-center justify-center h-96 gap-4'>
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
-        <Button onClick={() => fetchSkills()} variant='outline'><RefreshCw className='mr-2 h-4 w-4' />Retry</Button>
+        <Button onClick={() => fetchSkills()} variant='outline'><RefreshCw className='me-2 h-4 w-4' />Retry</Button>
       </div>
     );
   }
@@ -259,18 +259,18 @@ export function SkillsPage() {
         </div>
         <div className='flex flex-wrap gap-2'>
           <Button onClick={() => fetchSkills()} variant='outline' size='icon' aria-label={t('catalogTransfer.refreshSkills')}><RefreshCw className='h-4 w-4' /></Button>
-          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
-          <Button variant='outline' onClick={handleImportClick} disabled={saving}><Upload className='mr-2 h-4 w-4' />Import .md/.zip</Button>
-          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='mr-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
-          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='mr-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
-          <Button onClick={() => { setEditingSkill(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Skill</Button>
+          <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='me-2 h-4 w-4' />Manage Categories</Button>
+          <Button variant='outline' onClick={handleImportClick} disabled={saving}><Upload className='me-2 h-4 w-4' />Import .md/.zip</Button>
+          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='me-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
+          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='me-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
+          <Button onClick={() => { setEditingSkill(null); setShowDialog(true); }}><Plus className='me-2 h-4 w-4' />Add Skill</Button>
         </div>
       </div>
 
       <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
         <div className='relative w-full sm:max-w-sm'>
           <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-          <Input placeholder='Search skills' value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+          <Input placeholder='Search skills' value={search} onChange={(e) => setSearch(e.target.value)} className='ps-9' />
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
           <SelectTrigger className='w-full sm:w-[220px]'>
@@ -411,7 +411,7 @@ export function SkillsPage() {
                           </Button>
                         </div>
 
-                        <div className='flex items-start gap-3 pl-6 pr-12'>
+                        <div className='flex items-start gap-3 ps-6 pe-12'>
                           <div
                             className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
                             style={{ backgroundColor: skill.color || 'transparent' }}

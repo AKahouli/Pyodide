@@ -30,7 +30,9 @@ const { t } = useModuleTranslation('playbook');
 return <Button>{t('list.createButton')}</Button>;
 ```
 
-Namespaces: `common`, `errors`, `auth` always loaded; module namespaces lazy-loaded on first use. Keys are **flat with dot-notation** (`"store.errors.notFound"`). Adding strings: add to both `en.json` and `fr.json`. Shared strings from `common`; error codes resolved automatically by `getErrorMessage(code)`.
+Namespaces: `common`, `errors`, `auth` always loaded; module namespaces lazy-loaded on first use. Keys are **flat with dot-notation** (`"store.errors.notFound"`). Adding strings: add to `en.json`, `fr.json` and `ar.json`. Shared strings from `common`; error codes resolved automatically by `getErrorMessage(code)`.
+
+**Arabic (ar):** mirror English keys exactly — call sites select plural variants manually, enforced by `locales-parity.test.ts`. Use logical utilities (`ms`/`me`/`ps`/`pe`/`text-start`/`text-end`), never physical `ml`/`mr`/`pl`/`pr`/`text-left`/`text-right`; Arabic sets `dir="rtl"` automatically via `LocalizationProvider`.
 
 ## Notifications (Toasts)
 

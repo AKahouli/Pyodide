@@ -250,18 +250,18 @@ export function ProjectPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align='end'>
                   <DropdownMenuItem className='cursor-pointer' onClick={() => setRenameOpen(true)}>
-                    <Pencil className='mr-2 h-4 w-4' />
+                    <Pencil className='me-2 h-4 w-4' />
                     {t('conversations.rename')}
                   </DropdownMenuItem>
                   <DropdownMenuItem className='cursor-pointer' onClick={() => setShareOpen(true)}>
-                    <Share2 className='mr-2 h-4 w-4' />
+                    <Share2 className='me-2 h-4 w-4' />
                     {t('conversations.share')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className='cursor-pointer text-destructive'
                     onClick={() => setDeleteOpen(true)}
                   >
-                    <Trash2 className='mr-2 h-4 w-4' />
+                    <Trash2 className='me-2 h-4 w-4' />
                     {t('conversations.delete')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -305,7 +305,7 @@ export function ProjectPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t('projects.page.searchPlaceholder')}
-                  className='h-8 pl-8 pr-8 text-sm'
+                  className='h-8 ps-8 pe-8 text-sm'
                 />
                 {search && (
                   <button
@@ -406,9 +406,9 @@ function ConversationCard({
         <button
           type='button'
           onClick={() => navigate(`/conversation/${conversation.id}`)}
-          className='flex w-full flex-col gap-2 p-4 text-left focus:outline-none'
+          className='flex w-full flex-col gap-2 p-4 text-start focus:outline-none'
         >
-          <div className='flex items-center gap-2 min-w-0 pr-8'>
+          <div className='flex items-center gap-2 min-w-0 pe-8'>
             <MessageSquare className='h-4 w-4 shrink-0 text-muted-foreground' />
             <span className='truncate text-sm font-medium'>{conversation.title}</span>
           </div>
@@ -430,18 +430,18 @@ function ConversationCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align='end'>
               <DropdownMenuItem className='cursor-pointer' onClick={() => setRenameOpen(true)}>
-                <Pencil className='mr-2 h-4 w-4' />
+                <Pencil className='me-2 h-4 w-4' />
                 {t('conversations.rename')}
               </DropdownMenuItem>
               <DropdownMenuItem className='cursor-pointer' onClick={handleRemoveFromProject}>
-                <FolderMinus className='mr-2 h-4 w-4' />
+                <FolderMinus className='me-2 h-4 w-4' />
                 {t('conversations.removeFromProject')}
               </DropdownMenuItem>
               <DropdownMenuItem
                 className='cursor-pointer text-destructive'
                 onClick={() => setDeleteOpen(true)}
               >
-                <Trash2 className='mr-2 h-4 w-4' />
+                <Trash2 className='me-2 h-4 w-4' />
                 {t('conversations.delete')}
               </DropdownMenuItem>
             </DropdownMenuContent>

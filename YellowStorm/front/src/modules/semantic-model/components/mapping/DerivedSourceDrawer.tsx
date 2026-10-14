@@ -418,7 +418,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                   return <li key={record.id} className={cn('flex items-center gap-2 px-2 py-1', shown?.id === record.id && 'bg-muted/60')}>
                     <input type='checkbox' checked={checked} disabled={!checked && pickedIds.length >= MAX_RECORDS}
                       aria-label={t('derived.recordFor', { record: record.label || record.id })} onChange={() => togglePicked(record.id)} />
-                    <button type='button' className='min-w-0 flex-1 truncate text-left disabled:opacity-60' disabled={!checked}
+                    <button type='button' className='min-w-0 flex-1 truncate text-start disabled:opacity-60' disabled={!checked}
                       aria-label={t('derived.showRecord', { record: record.label || record.id })} onClick={() => { setShownId(record.id); setHighlight(null); }}>
                       {record.label || record.id}
                     </button>
@@ -431,7 +431,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
                 {live.loading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <Rows className='h-3.5 w-3.5 shrink-0' />}
                 <span className='min-w-0 flex-1 truncate'>{liveSummary}</span>
                 {canRead && <Button type='button' size='sm' variant='ghost' className='h-6 shrink-0 px-1.5 text-[11px]' disabled={live.loading} onClick={() => void readRecords()}>
-                  <RefreshCw className='mr-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('derived.readNow') : t('mapping.live.readAgain')}
+                  <RefreshCw className='me-1 h-3 w-3' />{usesAi && (!live.result || stale) ? t('derived.readNow') : t('mapping.live.readAgain')}
                 </Button>}
               </div>
               {live.error && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{`${t('mapping.previewError')}: ${live.error}`}</p>}
@@ -573,7 +573,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
       </ReadingTextContext.Provider>
       <div className='flex items-center gap-2 border-t p-4'>
         {target.derived && <Button variant='outline' className={DELETE_BUTTON} disabled={busy} onClick={() => remove.mutate()}>
-          <Trash2 className='mr-1.5 h-4 w-4' />{t('derived.remove')}
+          <Trash2 className='me-1.5 h-4 w-4' />{t('derived.remove')}
         </Button>}
         <div className='min-w-0 flex-1 space-y-0.5'>
           {problem && (source || fillsAnother) && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>

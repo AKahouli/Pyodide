@@ -64,14 +64,14 @@ export function WorkspaceSidebar() {
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder={t('sidebar.searchPlaceholder')} value={searchInput} onChange={handleSearch} className="pl-9 h-9" />
+          <Input placeholder={t('sidebar.searchPlaceholder')} value={searchInput} onChange={handleSearch} className="ps-9 h-9" />
         </div>
       </div>
 
       {/* Create button */}
       <div className="shrink-0 px-4 py-2">
         <Button onClick={() => openCreateModal()} className="w-full" size="sm">
-          <Plus className="mr-2 h-4 w-4" />
+          <Plus className="me-2 h-4 w-4" />
           {t('sidebar.create')}
         </Button>
       </div>

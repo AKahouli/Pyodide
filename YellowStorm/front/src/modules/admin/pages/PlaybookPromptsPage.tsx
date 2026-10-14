@@ -706,7 +706,7 @@ export function PlaybookPromptsPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => { void fetchPrompts(); void fetchTemplates(); }}>
-            <RefreshCw className="mr-2 h-4 w-4" />
+            <RefreshCw className="me-2 h-4 w-4" />
             {t('playbook.refresh')}
           </Button>
         </div>
@@ -714,7 +714,7 @@ export function PlaybookPromptsPage() {
 
       {/* Prompts Pane */}
       <Collapsible defaultOpen={false} className="rounded-lg border bg-background">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start">
           <div className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             <span className="text-lg font-semibold">{t('playbook.prompts.title')}</span>
@@ -731,11 +731,11 @@ export function PlaybookPromptsPage() {
                     <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" onClick={handleExportPrompts} disabled={promptItems.length === 0}>
-                        <Download className="mr-2 h-4 w-4" />
+                        <Download className="me-2 h-4 w-4" />
                         {t('playbook.prompts.actions.export')}
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => promptImportInputRef.current?.click()}>
-                        <Upload className="mr-2 h-4 w-4" />
+                        <Upload className="me-2 h-4 w-4" />
                         {t('playbook.prompts.actions.import')}
                       </Button>
                       <input
@@ -746,7 +746,7 @@ export function PlaybookPromptsPage() {
                         onChange={(event) => { void handleImportPrompts(event.target.files?.[0]); }}
                       />
                       <Button variant="outline" size="sm" onClick={startCreatePrompt}>
-                        <Plus className="mr-2 h-4 w-4" />
+                        <Plus className="me-2 h-4 w-4" />
                         {t('playbook.prompts.actions.create')}
                       </Button>
                     </div>
@@ -760,13 +760,13 @@ export function PlaybookPromptsPage() {
                         <div
                           key={item.key}
                           className={cn(
-                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            'group relative rounded-lg border p-3 text-start transition-colors hover:bg-muted/40',
                             selectedPromptKey === item.key && !isCreatingPrompt && 'border-primary bg-primary/5',
                           )}
                         >
                           <button
                             type="button"
-                            className="w-full text-left"
+                            className="w-full text-start"
                             onClick={() => { setIsCreatingPrompt(false); setSelectedPromptKey(item.key); }}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -885,13 +885,13 @@ export function PlaybookPromptsPage() {
                         <Button variant="outline" onClick={cancelCreatePrompt}>{t('playbook.prompts.actions.cancel')}</Button>
                       ) : !promptDraft.isBuiltIn && promptDraft.key ? (
                         <Button variant="destructive" onClick={() => setPromptDeleteDialogOpen(true)}>
-                          <Trash2 className="mr-2 h-4 w-4" />
+                          <Trash2 className="me-2 h-4 w-4" />
                           {t('playbook.prompts.actions.delete')}
                         </Button>
                       ) : null}
                     </div>
                     <Button onClick={() => void handleSavePrompt()} disabled={!promptDraft.key || promptSaving}>
-                      {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                      {promptSaving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                       {isCreatingPrompt ? t('playbook.prompts.actions.createPrompt') : t('playbook.prompts.actions.save')}
                     </Button>
                   </div>
@@ -904,7 +904,7 @@ export function PlaybookPromptsPage() {
 
       {/* Node Templates Pane */}
       <Collapsible defaultOpen={false} className="rounded-lg border bg-background">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start">
           <div className="flex items-center gap-2">
             <LayoutGrid className="h-5 w-5" />
             <span className="text-lg font-semibold">{t('playbook.templates.title')}</span>
@@ -921,11 +921,11 @@ export function PlaybookPromptsPage() {
                     <CardTitle className="flex items-center gap-2"><LayoutGrid className="h-5 w-5" /> {t('playbook.templates.registry')}</CardTitle>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" onClick={handleExportTemplates} disabled={templateItems.length === 0}>
-                        <Download className="mr-2 h-4 w-4" />
+                        <Download className="me-2 h-4 w-4" />
                         {t('playbook.templates.actions.export')}
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => templateImportInputRef.current?.click()}>
-                        <Upload className="mr-2 h-4 w-4" />
+                        <Upload className="me-2 h-4 w-4" />
                         {t('playbook.templates.actions.import')}
                       </Button>
                       <input
@@ -936,7 +936,7 @@ export function PlaybookPromptsPage() {
                         onChange={(event) => { void handleImportTemplates(event.target.files?.[0]); }}
                       />
                       <Button variant="outline" size="sm" onClick={startCreateTemplate}>
-                        <Plus className="mr-2 h-4 w-4" />
+                        <Plus className="me-2 h-4 w-4" />
                         {t('playbook.templates.actions.create')}
                       </Button>
                     </div>
@@ -950,13 +950,13 @@ export function PlaybookPromptsPage() {
                         <div
                           key={item.id}
                           className={cn(
-                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            'group relative rounded-lg border p-3 text-start transition-colors hover:bg-muted/40',
                             selectedTemplateId === item.id && !isCreatingTemplate && 'border-primary bg-primary/5',
                           )}
                         >
                           <button
                             type="button"
-                            className="w-full text-left"
+                            className="w-full text-start"
                             onClick={() => { setIsCreatingTemplate(false); setSelectedTemplateId(item.id); }}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -1207,7 +1207,7 @@ export function PlaybookPromptsPage() {
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.inputPorts')}</label>
                       <Button variant="outline" size="sm" onClick={addInputPort} disabled={templateNodeType === 'iterator'}>
-                        <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
+                        <Plus className="me-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
                     {templateDraft.inputPorts.map((port, index) => (
@@ -1257,7 +1257,7 @@ export function PlaybookPromptsPage() {
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.outputPorts')}</label>
                       <Button variant="outline" size="sm" onClick={addOutputPort} disabled={templateNodeType === 'iterator' || templateNodeType === 'router'}>
-                        <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
+                        <Plus className="me-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
                     {templateNodeType === 'iterator' && (
@@ -1357,7 +1357,7 @@ export function PlaybookPromptsPage() {
                         <Button variant="outline" onClick={cancelCreateTemplate}>{t('playbook.templates.actions.cancel')}</Button>
                       ) : templateDraft.id ? (
                         <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-                          <Trash2 className="mr-2 h-4 w-4" />
+                          <Trash2 className="me-2 h-4 w-4" />
                           {t('playbook.templates.actions.delete')}
                         </Button>
                       ) : null}
@@ -1367,7 +1367,7 @@ export function PlaybookPromptsPage() {
                         onClick={() => void handleSaveTemplate()}
                         disabled={templateSaving || !templateDraft.key || !templateDraft.title}
                       >
-                        {templateSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                        {templateSaving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                         {isCreatingTemplate ? t('playbook.templates.actions.createTemplate') : t('playbook.templates.actions.saveTemplate')}
                       </Button>
                     </div>

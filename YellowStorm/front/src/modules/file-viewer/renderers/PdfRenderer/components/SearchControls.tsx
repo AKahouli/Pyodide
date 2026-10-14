@@ -67,7 +67,7 @@ export function SearchControls({ documentId }: SearchControlsProps) {
       <form onSubmit={handleSubmit} className='flex flex-1 flex-wrap items-center gap-2'>
         <div className='relative flex-1 min-w-55'>
           <SearchIcon className='pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-          <input type='text' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('search.placeholder')} className='h-8 w-full rounded border border-border bg-background pl-8 pr-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40' />
+          <input type='text' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('search.placeholder')} className='h-8 w-full rounded border border-border bg-background ps-8 pe-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40' />
         </div>
 
         <button type='submit' disabled={!canSearch || state.loading} className={`${actionButtonClass} px-3 text-xs font-medium gap-1`}>

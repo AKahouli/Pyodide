@@ -86,7 +86,7 @@ export function UsageSection() {
         <div className='text-center py-8'>
           <p className='text-muted-foreground'>{t('usage.loadError')}</p>
           <Button variant='outline' className='mt-4' onClick={handleRefresh}>
-            <RefreshCw className='h-4 w-4 mr-2' />
+            <RefreshCw className='h-4 w-4 me-2' />
             {t('usage.actions.retry')}
           </Button>
         </div>
@@ -102,7 +102,7 @@ export function UsageSection() {
           <p className='text-sm text-muted-foreground'>{t('usage.description')}</p>
         </div>
         <Button variant='ghost' size='sm' onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCw className={cn('h-4 w-4 mr-2', isRefreshing && 'animate-spin')} />
+          <RefreshCw className={cn('h-4 w-4 me-2', isRefreshing && 'animate-spin')} />
           {t('usage.actions.refresh')}
         </Button>
       </div>
@@ -124,7 +124,7 @@ export function UsageSection() {
         </CardHeader>
         <CardContent>
           <Button variant='outline' size='sm' onClick={closeSettings}>
-            <Zap className='h-4 w-4 mr-2' />
+            <Zap className='h-4 w-4 me-2' />
             {t('usage.plan.upgrade')}
           </Button>
         </CardContent>
@@ -184,7 +184,7 @@ export function UsageSection() {
                 <p className='text-sm text-muted-foreground'>{t('usage.window.resetsIn')}</p>
                 <p className='text-2xl font-bold text-primary'>{formatTimeRemaining()}</p>
               </div>
-              <div className='text-right'>
+              <div className='text-end'>
                 <p className='text-sm text-muted-foreground'>{t('usage.requests.label')}</p>
                 <p className='text-lg font-semibold'>{status.requests.count.toLocaleString()}</p>
               </div>

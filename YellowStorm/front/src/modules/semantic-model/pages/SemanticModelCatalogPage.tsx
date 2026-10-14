@@ -47,13 +47,13 @@ export function SemanticModelCatalogPage() {
       <header className='flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
         <div className='max-w-2xl space-y-2'><h1 className='text-2xl font-semibold tracking-tight sm:text-3xl'>{t('catalog.title')}</h1><p className='text-sm leading-6 text-muted-foreground'>{t('catalog.description')}</p></div>
         <div className='flex flex-wrap items-center gap-2 self-start'><MyJobsButton />
-          <Button onClick={() => setCreateOpen(true)}><Plus className='mr-2 h-4 w-4' />{t('catalog.create')}</Button>
+          <Button onClick={() => setCreateOpen(true)}><Plus className='me-2 h-4 w-4' />{t('catalog.create')}</Button>
         </div>
       </header>
       <section className='space-y-4'>
         <div className='flex flex-wrap items-center justify-between gap-3'>
           <Tabs value={scope} onValueChange={setScope}><TabsList>{(['all','shared'] as const).map((item) => <TabsTrigger key={item} value={item}>{t(`catalog.section.${item}`)}</TabsTrigger>)}</TabsList></Tabs>
-          <div className='relative w-full sm:w-72'><Search aria-hidden className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' /><Input className='pl-9' value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('catalog.search')} aria-label={t('catalog.search')} /></div>
+          <div className='relative w-full sm:w-72'><Search aria-hidden className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' /><Input className='ps-9' value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('catalog.search')} aria-label={t('catalog.search')} /></div>
         </div>
         <div className='flex flex-wrap items-end gap-3'>
           <CatalogFilter label={t('catalog.filter.kind')} value={kind} onChange={setKind} options={[
@@ -65,7 +65,7 @@ export function SemanticModelCatalogPage() {
           <CatalogFilter label={t('catalog.filter.content')} value={content} onChange={setContent} options={[
             ['all', t('catalog.filter.anyContent')], ['records', t('catalog.section.records')], ['attention', t('catalog.section.attention')],
           ]} />
-          {hasActiveFilters && <Button variant='ghost' size='sm' onClick={clearFilters}><X aria-hidden className='mr-1.5 h-4 w-4' />{t('catalog.clearFilters')}</Button>}
+          {hasActiveFilters && <Button variant='ghost' size='sm' onClick={clearFilters}><X aria-hidden className='me-1.5 h-4 w-4' />{t('catalog.clearFilters')}</Button>}
         </div>
         {!query.isLoading && !query.isError && <p className='text-xs text-muted-foreground' role='status'>{t('catalog.modelCount', { count: items.length })}</p>}
         {query.isLoading ? (
@@ -78,7 +78,7 @@ export function SemanticModelCatalogPage() {
             <h2 className='mt-4 text-lg font-semibold'>{t('catalog.errorTitle')}</h2>
             <p className='mt-1 max-w-md text-sm leading-6 text-muted-foreground'>{t('catalog.errorDescription')}</p>
             <Button className='mt-5' variant='outline' disabled={query.isFetching} onClick={() => void query.refetch()}>
-              <RefreshCw className='mr-2 h-4 w-4' />
+              <RefreshCw className='me-2 h-4 w-4' />
               {query.isFetching ? t('catalog.retrying') : t('action.retry')}
             </Button>
           </div>
@@ -89,8 +89,8 @@ export function SemanticModelCatalogPage() {
                 <TableHead scope='col' className='px-4'>{t('catalog.column.model')}</TableHead>
                 <TableHead scope='col' className='hidden w-28 sm:table-cell'>{t('catalog.filter.status')}</TableHead>
                 <TableHead scope='col' className='hidden w-44 xl:table-cell'>{t('catalog.column.knowledge')}</TableHead>
-                <TableHead scope='col' className='hidden w-24 text-right sm:table-cell' title={t('catalog.recordsHint')}>{t('catalog.column.records')}</TableHead>
-                <TableHead scope='col' className='w-24 pr-4 text-right'><span className='sr-only'>{t('catalog.column.actions')}</span></TableHead>
+                <TableHead scope='col' className='hidden w-24 text-end sm:table-cell' title={t('catalog.recordsHint')}>{t('catalog.column.records')}</TableHead>
+                <TableHead scope='col' className='w-24 pe-4 text-end'><span className='sr-only'>{t('catalog.column.actions')}</span></TableHead>
               </TableRow></TableHeader>
               <TableBody>{items.map((model) => <SemanticModelRow key={model.id} model={model} />)}</TableBody>
             </Table>

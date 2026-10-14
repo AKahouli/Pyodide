@@ -163,7 +163,7 @@ export function FilesSheet({ readOnly: _readOnly = false }: { readOnly?: boolean
               {items.length}
             </Badge>
           )}
-          <ButtonGroup className='ml-auto'>
+          <ButtonGroup className='ms-auto'>
             <Button
               type='button'
               variant={viewMode === 'list' ? 'secondary' : 'outline'}
@@ -239,7 +239,7 @@ export function FilesSheet({ readOnly: _readOnly = false }: { readOnly?: boolean
                   type='button'
                   onClick={() => openFile(doc)}
                   className={cn(
-                    'group flex flex-col items-start gap-2 rounded-md border border-border bg-card p-3 text-left transition-colors',
+                    'group flex flex-col items-start gap-2 rounded-md border border-border bg-card p-3 text-start transition-colors',
                     'hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   )}
                 >

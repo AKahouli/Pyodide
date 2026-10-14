@@ -174,7 +174,7 @@ export const RecentChats = memo(function RecentChats({
           {!compact && <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
             {dayLabels[bucket]}
           </div>}
-          <SidebarMenu className='pr-1'>
+          <SidebarMenu className='pe-1'>
             {groupRows.map((row) =>
               row.kind === 'v2' ? (
                 <ConversationItem
@@ -231,7 +231,7 @@ export const RecentChats = memo(function RecentChats({
               className='flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
             >
               <span className='truncate'>{t('recentChats.allChats')}</span>
-              <ArrowRight aria-hidden='true' className='ml-auto h-4 w-4 shrink-0' />
+              <ArrowRight aria-hidden='true' className='ms-auto h-4 w-4 shrink-0' />
             </NavLink>
           </SidebarMenuItem>
         </SidebarMenu>

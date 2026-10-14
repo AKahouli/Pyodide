@@ -87,7 +87,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder={t('create.filterWorkspaces')}
-                className={`${INPUT_COMPACT} pl-8`}
+                className={`${INPUT_COMPACT} ps-8`}
               />
             </div>
             <div className='max-h-52 overflow-y-auto rounded-lg border p-1'>
@@ -103,7 +103,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                       <Checkbox checked={selected.includes(workspace.id)} onCheckedChange={(checked) => toggleSelect(workspace.id, checked)} />
                       <Warehouse className='h-4 w-4 shrink-0 text-blue-500 dark:text-blue-400' />
                       <span className='truncate text-sm'>{workspace.name}</span>
-                      <span className='ml-auto shrink-0 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400'>
+                      <span className='ms-auto shrink-0 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400'>
                         {t('knowledge.sharedBadge')}
                       </span>
                     </label>
@@ -138,7 +138,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
         <DialogFooter>
           <Button variant='outline' onClick={() => { reset(); onOpenChange(false); }}>{t('action.cancel')}</Button>
           <Button onClick={() => void submit()} disabled={!name.trim() || mutation.isPending}>
-            {mutation.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+            {mutation.isPending && <Loader2 className='me-2 h-4 w-4 animate-spin' />}
             {t('create.submit')}
           </Button>
         </DialogFooter>

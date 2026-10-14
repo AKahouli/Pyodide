@@ -36,7 +36,7 @@ export function PlatformCopilotHistoryDialog({
         </DialogHeader>
         <label htmlFor='yellowmind-history-search' className='sr-only'>{t('history.search')}</label>
         <Input id='yellowmind-history-search' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('history.search')} />
-        <div className='min-h-0 flex-1 space-y-2 overflow-y-auto pr-1'>
+        <div className='min-h-0 flex-1 space-y-2 overflow-y-auto pe-1'>
           {loading && <div className='flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin' />{t('history.loading')}</div>}
           {!loading && filtered.length === 0 && <p className='py-8 text-center text-sm text-muted-foreground'>{t('history.empty')}</p>}
           {!loading && filtered.map((conversation) => {
@@ -48,7 +48,7 @@ export function PlatformCopilotHistoryDialog({
                 key={conversation.id}
                 type='button'
                 variant={active ? 'secondary' : 'ghost'}
-                className='h-auto min-h-14 w-full justify-start gap-3 px-3 py-2 text-left'
+                className='h-auto min-h-14 w-full justify-start gap-3 px-3 py-2 text-start'
                 aria-current={active ? 'true' : undefined}
                 onClick={() => { void onSelect(conversation.id).then((selected) => { if (selected) onOpenChange(false); }); }}
               >

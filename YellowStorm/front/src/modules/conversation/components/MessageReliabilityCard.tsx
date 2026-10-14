@@ -84,7 +84,7 @@ export function MessageReliabilityCard({ conversationId, messageId, evaluation, 
     disabled={rerunDisabled}
     aria-label={t('reliability.rerunAria')}
   >
-    {isRerunning && <Loader2 className='mr-1 size-3 animate-spin' aria-hidden='true' />}
+    {isRerunning && <Loader2 className='me-1 size-3 animate-spin' aria-hidden='true' />}
     {t('reliability.rerun')}
   </Button> : null;
   const history = <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} fallbackEvaluation={evaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />;
@@ -139,7 +139,7 @@ function ClaimGroup({ status, claims }: Readonly<{ status: ReliabilityClaimStatu
         <AccordionTrigger className='min-w-0 flex-1 py-3 hover:no-underline'>
           <span className='flex min-w-0 items-center gap-2'>
             <Icon className={cn('size-4 shrink-0', groupStyles[status])} aria-hidden='true' />
-            <span className='text-left'>{t(`reliability.groups.${status}`, { count: claims.length })}</span>
+            <span className='text-start'>{t(`reliability.groups.${status}`, { count: claims.length })}</span>
           </span>
         </AccordionTrigger>
         <ReliabilityInfoTooltip label={t('reliability.info.groupAria', { group: t(`reliability.groups.${status}`, { count: claims.length }) })}>
@@ -239,7 +239,7 @@ function EvaluationDetails({ evaluation }: Readonly<{ evaluation?: ReliabilityEv
         ? t('reliability.summaries.partialSupport')
         : t('reliability.summaries.allSupported');
 
-  return <div className='max-h-96 space-y-3 overflow-y-auto border-t border-border/60 pt-3 pr-1'>
+  return <div className='max-h-96 space-y-3 overflow-y-auto border-t border-border/60 pt-3 pe-1'>
     {evaluation.label ? <div className='rounded-lg bg-muted/50 p-3'>
       <div className='flex items-center gap-1'>
         <p className='text-sm font-medium text-foreground'>{t(`reliability.labels.${evaluation.label}`)}</p>
@@ -353,7 +353,7 @@ function CorrectionOutcomeDetails({ workflow }: Readonly<{ workflow: ResponseCor
       <p className='font-medium text-foreground'>{t('correction.strategy.correctiveReplay')}</p>
       <p className='leading-relaxed'>{t('correction.strategy.correctiveReplayDetail')}</p>
     </> : null}
-    {workflow.status === 'corrected' && workflow.strategy !== 'corrective_replay' && workflow.appliedCorrections?.length ? <ul className='space-y-1.5 border-l border-border pl-3'>
+    {workflow.status === 'corrected' && workflow.strategy !== 'corrective_replay' && workflow.appliedCorrections?.length ? <ul className='space-y-1.5 border-l border-border ps-3'>
       {workflow.appliedCorrections.map((correction, index) => <li key={`${correction.claim}-${index}`}><span className='font-medium text-foreground'>{correction.claim}</span><span className='block leading-relaxed'>{correction.explanation}</span></li>)}
     </ul> : null}
     {workflow.remainingUncertainties?.length ? <p>{t('correction.uncertainties', { count: workflow.remainingUncertainties.length })}</p> : null}
@@ -390,7 +390,7 @@ function AttemptDetails({ attempt, workflow, showWorkflowWarning }: Readonly<{
       <p className='font-medium text-foreground'>{t('correction.strategy.correctiveReplay')}</p>
       <p className='leading-relaxed'>{t('correction.strategy.correctiveReplayDetail')}</p>
     </> : null}
-    {attempt.status === 'accepted' && attempt.strategy !== 'corrective_replay' && attempt.appliedCorrections?.length ? <ul className='space-y-1.5 border-l border-border pl-3'>
+    {attempt.status === 'accepted' && attempt.strategy !== 'corrective_replay' && attempt.appliedCorrections?.length ? <ul className='space-y-1.5 border-l border-border ps-3'>
       {attempt.appliedCorrections.map((correction, index) => <li key={`${correction.claim}-${index}`}><span className='font-medium text-foreground'>{correction.claim}</span><span className='block leading-relaxed'>{correction.explanation}</span></li>)}
     </ul> : null}
     {attempt.remainingUncertainties?.length ? <p>{t('correction.uncertainties', { count: attempt.remainingUncertainties.length })}</p> : null}

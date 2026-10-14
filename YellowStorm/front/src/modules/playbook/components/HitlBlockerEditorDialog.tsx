@@ -78,7 +78,7 @@ export function HitlBlockerEditorDialog({ flowId, nodeId, open, onOpenChange }: 
             {t('common.cancel')}
           </Button>
           <Button type="button" disabled={!description.trim() || isNormalizing || createBlocker.isPending} onClick={() => void handleSave()}>
-            {(isNormalizing || createBlocker.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {(isNormalizing || createBlocker.isPending) && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
             {t('hitl.editor.save')}
           </Button>
         </DialogFooter>

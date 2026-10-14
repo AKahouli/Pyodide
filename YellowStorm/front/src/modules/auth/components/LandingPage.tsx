@@ -80,7 +80,7 @@ export function LandingPage() {
 
             {!loadingProviders && !isApiConfigured() && (
               <div className='space-y-6'>
-                <div className='rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5 text-left backdrop-blur-sm'>
+                <div className='rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5 text-start backdrop-blur-sm'>
                   <div className='flex items-center gap-2.5 text-amber-400 font-semibold mb-2'>
                     <AlertTriangle className='h-5 w-5 shrink-0' />
                     <span>{t('landing.unconfiguredApiTitle')}</span>
@@ -98,8 +98,8 @@ export function LandingPage() {
             {/* No Providers — all auth methods disabled */}
             {!loadingProviders && isApiConfigured() && !hasAnyProvider && (
               <div className='space-y-6'>
-                <div className='space-y-3 text-center md:text-left'>
-                  <h1 className='text-4xl tracking-tight text-center md:text-left'>{t('landing.noProvidersTitle')}</h1>
+                <div className='space-y-3 text-center md:text-start'>
+                  <h1 className='text-4xl tracking-tight text-center md:text-start'>{t('landing.noProvidersTitle')}</h1>
                   <p className='text-sm text-muted-foreground'>
                     {t('landing.noProviders')}
                   </p>
@@ -113,7 +113,7 @@ export function LandingPage() {
             {/* Auth Buttons Stack — only when loaded and providers exist */}
             {!loadingProviders && hasAnyProvider && (
               <div className='space-y-8'>
-                <h1 className='text-4xl tracking-tight text-center md:text-left'>{t('landing.title')}</h1>
+                <h1 className='text-4xl tracking-tight text-center md:text-start'>{t('landing.title')}</h1>
               <div className='space-y-4'>
                 {/* Dynamic OAuth Provider Buttons */}
                 {oauthProviders.map((provider) => (
@@ -145,7 +145,7 @@ export function LandingPage() {
 
             {/* Sign Up Link */}
             {!loadingProviders && registrationEnabled && showClassicAuth && (
-              <div className='text-sm pl-1 text-center'>
+              <div className='text-sm ps-1 text-center'>
                 {t('landing.noAccount')}{' '}
                 <button onClick={() => setActiveModal('register')} className='hover:underline font-medium'>
                   {t('landing.signUp')}
