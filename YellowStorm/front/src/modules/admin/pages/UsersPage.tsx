@@ -169,6 +169,8 @@ export function UsersPage() {
 
   // Invite state
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRoleId, setInviteRoleId] = useState('');
+  const [invitePlanId, setInvitePlanId] = useState('');
   const [inviting, setInviting] = useState(false);
 
   // Plan assignment state
@@ -456,6 +458,9 @@ export function UsersPage() {
 
   const openInviteDialog = () => {
     setInviteEmail('');
+    setInviteRoleId('');
+    // Pre-select the default plan; the Super Admin can change it.
+    setInvitePlanId(plans.find((plan) => plan.isDefault)?.id ?? '');
     setShowInviteDialog(true);
   };
 
@@ -467,12 +472,18 @@ export function UsersPage() {
     setInviting(true);
 
     try {
-      await inviteUser({ email });
+      await inviteUser({
+        email,
+        roleIds: inviteRoleId ? [inviteRoleId] : [],
+        planId: invitePlanId || undefined,
+      });
       toast.success(t('users.toasts.invite.title'), {
         description: t('users.toasts.invite.description', { email }),
       });
       setShowInviteDialog(false);
       setInviteEmail('');
+      setInviteRoleId('');
+      setInvitePlanId('');
     } catch (err) {
       const apiError = err as ApiError;
       toast.error(t('users.toasts.invite.error'), {
@@ -903,21 +914,63 @@ export function UsersPage() {
             <DialogTitle>{t('users.modals.invite.title')}</DialogTitle>
             <DialogDescription>{t('users.modals.invite.description')}</DialogDescription>
           </DialogHeader>
-          <div className='py-4'>
-            <Label htmlFor='invite-email'>{t('users.modals.invite.email.label')}</Label>
-            <Input
-              id='invite-email'
-              type='email'
-              autoComplete='email'
-              className='mt-2'
-              placeholder={t('users.modals.invite.email.placeholder')}
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleInvite();
-              }}
-              disabled={inviting}
-            />
+          <div className='space-y-4 py-4'>
+            <div>
+              <Label htmlFor='invite-email'>{t('users.modals.invite.email.label')}</Label>
+              <Input
+                id='invite-email'
+                type='email'
+                autoComplete='email'
+                className='mt-2'
+                placeholder={t('users.modals.invite.email.placeholder')}
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleInvite();
+                }}
+                disabled={inviting}
+              />
+            </div>
+            <div>
+              <Label htmlFor='invite-plan'>{t('users.modals.invite.plan.label')}</Label>
+              <Select value={invitePlanId} onValueChange={setInvitePlanId} disabled={inviting}>
+                <SelectTrigger id='invite-plan' className='mt-2'>
+                  <SelectValue placeholder={t('users.modals.invite.plan.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {plans.map((plan) => (
+                    <SelectItem key={plan.id} value={plan.id}>
+                      <div className='flex items-center gap-2'>
+                        <span>{plan.name}</span>
+                        {plan.isDefault && (
+                          <Badge variant='secondary' className='text-xs'>
+                            {t('users.modals.invite.plan.defaultBadge')}
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor='invite-role'>{t('users.modals.invite.roles.label')}</Label>
+              <Select
+                value={inviteRoleId}
+                onValueChange={setInviteRoleId}
+                disabled={inviting || roles.length === 0}>
+                <SelectTrigger id='invite-role' className='mt-2'>
+                  <SelectValue placeholder={t('users.modals.invite.roles.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {role.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant='outline' onClick={() => setShowInviteDialog(false)} disabled={inviting}>

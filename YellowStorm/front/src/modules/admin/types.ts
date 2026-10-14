@@ -867,6 +867,10 @@ export interface AssignPlanRequest {
 
 export interface InviteUserRequest {
   email: string;
+  /** Roles granted to the invitee at registration. */
+  roleIds?: string[];
+  /** Plan granted to the invitee at registration. */
+  planId?: string;
 }
 export interface InviteUserResponse {
   message: string;
