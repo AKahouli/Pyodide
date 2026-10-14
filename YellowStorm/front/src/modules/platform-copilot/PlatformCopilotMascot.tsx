@@ -409,13 +409,13 @@ export function PlatformCopilotMascot() {
   const panel = (
     <>
       <header className='min-w-0 shrink-0 border-b bg-card px-4 py-4'>
-        <div className={`flex items-start gap-3 ${useDrawer ? 'pr-10' : ''}`}>
+        <div className={`flex items-start gap-3 ${useDrawer ? 'pe-10' : ''}`}>
           <div className='grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm'><Bot className='size-5' /></div>
           <div className='min-w-0 flex-1'>
             <h2 className='text-base font-semibold leading-5'>{t('title')}</h2>
             <p className='mt-0.5 text-xs text-muted-foreground'>{t('description')}</p>
           </div>
-          <div className='ml-auto flex shrink-0 items-center gap-1'>
+          <div className='ms-auto flex shrink-0 items-center gap-1'>
             <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading || Boolean(pendingHandoff)} onClick={() => { void platformCopilot.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
               <MessageSquarePlus className='size-4' />
             </Button>
@@ -433,7 +433,7 @@ export function PlatformCopilotMascot() {
             <p className='truncate text-xs font-medium'>{contextPlaybook?.name ?? t(getContextLabelKey(pageContext))}</p>
             {selectedTask && <p className='truncate text-[11px] text-muted-foreground'>{t('context.selectedTask', { name: 'title' in selectedTask ? selectedTask.title : selectedTask.label })}</p>}
           </div>
-          <Badge variant='outline' className='ml-auto shrink-0 text-[10px]'>{t('context.live')}</Badge>
+          <Badge variant='outline' className='ms-auto shrink-0 text-[10px]'>{t('context.live')}</Badge>
         </div>
       </header>
       <ChatConversation className='min-h-0 min-w-0 flex-1'>
@@ -447,7 +447,7 @@ export function PlatformCopilotMascot() {
             </div>
           )}
           {messages.map((message) => (
-            <article key={message.id} className={`min-w-0 max-w-full ${message.role === 'user' ? 'ml-8' : 'w-full'}`}>
+            <article key={message.id} className={`min-w-0 max-w-full ${message.role === 'user' ? 'ms-8' : 'w-full'}`}>
               <div className='mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground'>
                 {message.role === 'assistant' && <Bot className='size-3.5' />}
                 {message.role === 'user' ? t('you') : t('assistant')}
@@ -540,7 +540,7 @@ export function PlatformCopilotMascot() {
           hasOpenedRef.current = true;
           openPanel();
         }}>
-          <Sparkles className={compactModelLauncher ? 'h-5 w-5' : 'mr-2 h-5 w-5'} />
+          <Sparkles className={compactModelLauncher ? 'h-5 w-5' : 'me-2 h-5 w-5'} />
           {!compactModelLauncher && t('title')}
         </Button>
       )}

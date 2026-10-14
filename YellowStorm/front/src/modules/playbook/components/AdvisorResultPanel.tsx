@@ -299,7 +299,7 @@ export function AdvisorResultPanel({
       </div>
 
       <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
             <span>{t('detail.judge.issueSections')}</span>
             <span>{t('detail.judge.issueSummary', { count: issueCount })}</span>
@@ -321,7 +321,7 @@ export function AdvisorResultPanel({
       </Collapsible>
 
       <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-start">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
         </CollapsibleTrigger>

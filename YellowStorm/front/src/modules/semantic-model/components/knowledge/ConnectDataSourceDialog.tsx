@@ -97,7 +97,7 @@ export function ConnectDataSourceDialog({ modelId, open, onOpenChange, onShowWor
       </DialogHeader>
       {step === 'kind' ? <div className='grid gap-2 sm:grid-cols-2'>
         {CONNECTORS.map((connector) => <button key={connector.key} type='button' disabled={!connector.ready} onClick={() => pick(connector)}
-          className={cn('flex min-h-20 items-start gap-3 rounded-xl border p-3 text-left transition', connector.ready ? 'hover:border-teal-500 hover:bg-teal-500/5' : 'cursor-not-allowed opacity-60')}>
+          className={cn('flex min-h-20 items-start gap-3 rounded-xl border p-3 text-start transition', connector.ready ? 'hover:border-teal-500 hover:bg-teal-500/5' : 'cursor-not-allowed opacity-60')}>
           <span className='rounded-lg bg-muted p-2'><connector.icon className='h-5 w-5 text-teal-600 dark:text-teal-400' /></span>
           <span className='min-w-0 flex-1'>
             <span className='flex items-center gap-2 text-sm font-medium'>{t(`dataSources.dialog.${connector.key}.title`)}
@@ -116,7 +116,7 @@ export function ConnectDataSourceDialog({ modelId, open, onOpenChange, onShowWor
         {workspaceId && <div className='space-y-1.5 text-sm'>
           <span className='font-medium'>{t('dataSources.dialog.fileLabel')}</span>
           <div className='relative'><Search className='pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' />
-            <Input className={`${INPUT} pl-9`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('dataSources.dialog.searchFiles')} aria-label={t('dataSources.dialog.searchFiles')} /></div>
+            <Input className={`${INPUT} ps-9`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('dataSources.dialog.searchFiles')} aria-label={t('dataSources.dialog.searchFiles')} /></div>
           <div role='radiogroup' aria-label={t('dataSources.dialog.fileLabel')} className='max-h-56 space-y-1 overflow-y-auto rounded-lg border p-1.5'>
             {archives === null ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>
               : archives.length ? archives.map((archive) => <label key={archive.id} className={cn('flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-2 text-xs', documentId === archive.id ? 'bg-teal-500/10' : 'hover:bg-muted/60')}>
@@ -137,8 +137,8 @@ export function ConnectDataSourceDialog({ modelId, open, onOpenChange, onShowWor
         </label>}
       </div>}
       {step === 'mail' && <DialogFooter className='gap-2 sm:justify-between'>
-        <Button variant='ghost' onClick={() => setStep('kind')} disabled={connect.isPending}><ArrowLeft className='mr-1.5 h-4 w-4' />{t('dataSources.dialog.back')}</Button>
-        <Button onClick={() => connect.mutate()} disabled={!documentId || connect.isPending}>{connect.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('dataSources.dialog.submit')}</Button>
+        <Button variant='ghost' onClick={() => setStep('kind')} disabled={connect.isPending}><ArrowLeft className='me-1.5 h-4 w-4' />{t('dataSources.dialog.back')}</Button>
+        <Button onClick={() => connect.mutate()} disabled={!documentId || connect.isPending}>{connect.isPending && <Loader2 className='me-2 h-4 w-4 animate-spin' />}{t('dataSources.dialog.submit')}</Button>
       </DialogFooter>}
     </DialogContent>
   </Dialog>;

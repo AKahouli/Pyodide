@@ -245,7 +245,7 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
       const isKey = folding?.isKey?.(mapping.targetAttribute) ?? false;
       const changed = folding?.changed?.(mapping) ?? false;
       const header = folding && <div className='flex items-center gap-1.5'>
-        <button type='button' className='flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs' aria-expanded={open}
+        <button type='button' className='flex min-w-0 flex-1 items-center gap-1.5 text-start text-xs' aria-expanded={open}
           aria-label={t('mapping.fold.toggle', { field: fieldLabel })} onClick={() => folding.onToggle(mapping.targetAttribute)}>
           {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
           <span className='shrink-0 truncate font-medium'>{fieldLabel}</span>
@@ -278,7 +278,7 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
           {readsColumn && <Select value={mapping.sourceField ?? NO_COLUMN} onValueChange={(value) => update(index, { ...mapping, sourceField: value === NO_COLUMN ? null : value })}>
             <SelectTrigger className={cn(INPUT_COMPACT, 'w-36 text-xs', !mapping.sourceField && 'border-amber-500/60')}
               aria-label={record ? t('derived.sourceFieldFor', { field: fieldLabel }) : t('mapping.cell.columnFor', { field: fieldLabel })}>
-              <Columns className='mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><SelectValue placeholder={record ? t('derived.chooseSourceField') : t('mapping.cell.chooseColumn')} />
+              <Columns className='me-1 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><SelectValue placeholder={record ? t('derived.chooseSourceField') : t('mapping.cell.chooseColumn')} />
             </SelectTrigger>
             <SelectContent>
               {!mapping.sourceField && <SelectItem value={NO_COLUMN}>{record ? t('derived.chooseSourceField') : t('mapping.cell.chooseColumn')}</SelectItem>}

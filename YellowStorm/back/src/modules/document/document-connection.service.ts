@@ -71,6 +71,8 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
     this.azureConfig = {
       connectionString: this.configService.get<string>('storage.azure.connectionString', ''),
       container: this.configService.get<string>('storage.azure.container', 'documents'),
+      useManagedIdentity: this.configService.get<boolean>('storage.azure.useManagedIdentity', false),
+      accountUrl: this.configService.get<string>('storage.azure.accountUrl', ''),
     };
 
     this.reconnectConfig = {

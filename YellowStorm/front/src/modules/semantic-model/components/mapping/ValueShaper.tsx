@@ -252,14 +252,14 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
       {bar && <div role='toolbar' aria-label={t('mapping.rules.take.selection')} className='absolute z-10 flex flex-wrap gap-1 rounded-md border bg-popover p-1 shadow-md' style={{ top: bar.top, left: bar.left }}>
         {location === 'after_label' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('stop_at')}>{t('mapping.rules.take.stopAt')}</Button>}
         {location === 'before_label' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('start_after')}>{t('mapping.rules.take.startAfter')}</Button>}
-        {location !== 'pages' && location !== 'anywhere' && location !== 'heading' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('label')}><Tag className='mr-1 h-3 w-3' />{t('mapping.rules.take.useAsLabel')}</Button>}
-        <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={keepSelection}><Ruler className='mr-1 h-3 w-3' />{t('mapping.rules.take.keepLength')}</Button>
+        {location !== 'pages' && location !== 'anywhere' && location !== 'heading' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('label')}><Tag className='me-1 h-3 w-3' />{t('mapping.rules.take.useAsLabel')}</Button>}
+        <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={keepSelection}><Ruler className='me-1 h-3 w-3' />{t('mapping.rules.take.keepLength')}</Button>
       </div>}
     </div> : <div className='flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-2.5 py-2 text-xs text-muted-foreground'>
       <BookOpen className='h-3.5 w-3.5 shrink-0' />
       <span className='min-w-0 flex-1'>{status ?? t('mapping.rules.take.placeholder')}</span>
       {onRead && <Button type='button' size='sm' variant='outline' className='h-6 px-2 text-[11px]' disabled={pending} onClick={onRead}>
-        {pending && <Loader2 className='mr-1 h-3 w-3 animate-spin' />}{t('mapping.live.readNow')}
+        {pending && <Loader2 className='me-1 h-3 w-3 animate-spin' />}{t('mapping.live.readNow')}
       </Button>}
     </div>}
 

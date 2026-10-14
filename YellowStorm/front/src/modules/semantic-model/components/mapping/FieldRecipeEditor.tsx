@@ -423,7 +423,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
             {join.parts.map((part, index) => {
               const number = index + 1;
               return <li key={index} className='flex items-center gap-1'>
-                <span className='w-4 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground'>{number}</span>
+                <span className='w-4 shrink-0 text-end text-[11px] tabular-nums text-muted-foreground'>{number}</span>
                 {part.kind === 'text'
                   ? <Input className={cn(INPUT_COMPACT, 'w-56 font-mono')} maxLength={MAX_JOIN_TEXT} value={part.value} placeholder={t('mapping.recipe.join.textPlaceholder')}
                     aria-label={t('mapping.recipe.join.textFor', { index: number })}
@@ -443,13 +443,13 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
               </li>;
             })}
           </ol>
-          <div className='flex flex-wrap items-center gap-1.5 pl-5'>
+          <div className='flex flex-wrap items-center gap-1.5 ps-5'>
             <button type='button' className='inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] hover:bg-muted disabled:opacity-40' disabled={join.parts.length >= MAX_JOIN_PARTS}
               onClick={() => setParts([...join.parts, inputFromValue(firstOption ?? FILE_INPUT)])}><Plus className='h-3 w-3' />{t('mapping.recipe.join.addPart')}</button>
             <button type='button' className='inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] hover:bg-muted disabled:opacity-40' disabled={join.parts.length >= MAX_JOIN_PARTS}
               onClick={() => setParts([...join.parts, { kind: 'text', value: '' }])}><Type className='h-3 w-3' />{t('mapping.recipe.join.addText')}</button>
           </div>
-          <div className='flex flex-wrap items-center gap-3 pl-5'>
+          <div className='flex flex-wrap items-center gap-3 ps-5'>
             <label className='flex items-center gap-1.5'>
               <span className='text-muted-foreground'>{t('mapping.recipe.join.separator')}</span>
               <Input className={cn(INPUT_COMPACT, 'w-16 font-mono')} maxLength={MAX_SEPARATOR} value={join.separator ?? ' '} placeholder={t('mapping.recipe.join.separatorNone')}
@@ -473,7 +473,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
           {methods.map((method) =>
             <button key={method} type='button' role='tab' aria-selected={rule.method === method} onClick={() => setMethod(method)}
               className={cn('h-6 rounded-full border px-2.5 text-[11px]', rule.method === method ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-background hover:bg-muted')}>{methodLabel(method)}</button>)}
-          <button type='button' className='ml-auto text-[11px] text-muted-foreground underline' onClick={() => { if (advanced && rule.method === 'regex') setMethod(sheet ? 'whole' : 'split'); setAdvanced(!advanced); }}>
+          <button type='button' className='ms-auto text-[11px] text-muted-foreground underline' onClick={() => { if (advanced && rule.method === 'regex') setMethod(sheet ? 'whole' : 'split'); setAdvanced(!advanced); }}>
             {advanced ? t('mapping.computed.hideAdvanced') : t('mapping.computed.showAdvanced')}
           </button>
         </div>
@@ -513,7 +513,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
         {!available.length && <p className='text-muted-foreground'>{emptyText}</p>}
         {!available.length && source.kind === 'document' && !fromFile && source.readDocuments && <Button type='button' size='sm' variant='outline' className='h-7 text-xs'
           disabled={source.readDocuments.busy || source.readDocuments.disabled} onClick={source.readDocuments.run}>
-          {source.readDocuments.busy ? <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' /> : <Play className='mr-1.5 h-3.5 w-3.5' />}
+          {source.readDocuments.busy ? <Loader2 className='me-1.5 h-3.5 w-3.5 animate-spin' /> : <Play className='me-1.5 h-3.5 w-3.5' />}
           {t('mapping.computed.readDocuments', { count: source.readDocuments.count })}
         </Button>}
         {available.length > 0 && <div className='space-y-1'>
@@ -552,7 +552,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
                 ? <span className='text-amber-700 dark:text-amber-400'>{readingText.reason({ reason: result.reason })}</span>
                 : <span className='font-medium'>{result.value}</span>}
             </div>
-            {steps.length > 0 && <p className='truncate pl-3 text-[11px] text-muted-foreground' aria-label={t('mapping.recipe.stepsFor', { value: result.input ?? '' })}>
+            {steps.length > 0 && <p className='truncate ps-3 text-[11px] text-muted-foreground' aria-label={t('mapping.recipe.stepsFor', { value: result.input ?? '' })}>
               {steps.map((step) => `${t(`mapping.recipe.step.${step.step}`)}: ${step.value ?? t('mapping.recipe.stepNone')}`).join(' → ')}
             </p>}
           </div>;

@@ -126,7 +126,7 @@ export function MoveFileDialog({ open, onOpenChange, files, title }: Props) {
                     key={folder.id}
                     onClick={() => setPickerFolderId(folder.id)}
                     className={cn(
-                      'group w-full flex items-center gap-3 rounded-md px-3 py-2 text-left transition',
+                      'group w-full flex items-center gap-3 rounded-md px-3 py-2 text-start transition',
                       'hover:bg-accent',
                     )}
                   >
@@ -149,7 +149,7 @@ export function MoveFileDialog({ open, onOpenChange, files, title }: Props) {
 
         <DialogFooter className='items-center'>
           {isAlreadyHere && (
-            <p className='mr-auto text-xs text-muted-foreground'>
+            <p className='me-auto text-xs text-muted-foreground'>
               Le fichier est déjà ici.
             </p>
           )}

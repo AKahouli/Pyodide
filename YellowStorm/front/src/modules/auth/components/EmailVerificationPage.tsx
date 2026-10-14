@@ -149,19 +149,19 @@ export function EmailVerificationPage() {
                     <Button onClick={handleResendEmail} disabled={resendStatus === 'sending' || resendStatus === 'sent'} className='w-full' size='lg'>
                       {resendStatus === 'sending' && (
                         <>
-                          <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          <Loader2 className='me-2 h-4 w-4 animate-spin' />
                           {t('verification.error.sending')}
                         </>
                       )}
                       {resendStatus === 'sent' && (
                         <>
-                          <CheckCircle2 className='mr-2 h-4 w-4' />
+                          <CheckCircle2 className='me-2 h-4 w-4' />
                           {t('verification.error.sent')}
                         </>
                       )}
                       {(resendStatus === 'idle' || resendStatus === 'error') && (
                         <>
-                          <Mail className='mr-2 h-4 w-4' />
+                          <Mail className='me-2 h-4 w-4' />
                           {t('verification.error.resend')}
                         </>
                       )}

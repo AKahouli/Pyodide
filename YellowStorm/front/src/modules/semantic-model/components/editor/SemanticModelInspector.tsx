@@ -46,7 +46,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   if (!selectedId||(!node&&!relation)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
   const content = <>
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
-    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
+    <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-me-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
     {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
@@ -79,11 +79,11 @@ function useFocusSection() {
 /** How many records the concept holds in the data in use, and the way to look through them. */
 function RecordsSummary({ count, label, onBrowse }: Readonly<{ count?: number; label: string; onBrowse: () => void }>) {
   const { t } = useModuleTranslation('semantic-model');
-  return <div className='mb-6 flex items-center gap-2 rounded-lg border bg-muted/30 py-1.5 pl-3 pr-1.5'>
+  return <div className='mb-6 flex items-center gap-2 rounded-lg border bg-muted/30 py-1.5 ps-3 pe-1.5'>
     <Table2 className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden />
     <p className='min-w-0 truncate text-sm font-medium'>{count === undefined ? t('records.table.noDataShort') : t('records.table.count', { count })}</p>
     <HelpTip text={t('records.table.summaryHint', { name: label })} />
-    <Button size='sm' variant='ghost' className='ml-auto h-7 shrink-0 px-2 text-xs' onClick={onBrowse}>{t('records.table.browse')}</Button>
+    <Button size='sm' variant='ghost' className='ms-auto h-7 shrink-0 px-2 text-xs' onClick={onBrowse}>{t('records.table.browse')}</Button>
   </div>;
 }
 
@@ -195,7 +195,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,on
       {relations.length ? <div className='space-y-1.5'>{relations.map((relation) => {
         const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId));
         const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label };
-        return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='flex w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
+        return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='flex w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-start text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>
           <span className='min-w-0 flex-1'>{relationSentence(relation, labels, item.id, t as (key: string, options?: Record<string, unknown>) => string)}</span>
           <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden />
         </button>;
@@ -207,7 +207,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,on
     <SettingsPane {...pane('advanced')} title={t('workspaceUi.advanced')} icon={icon(Settings2)} summary={`${t(`category.${item.category}`)} · ${t(`recordPolicy.${item.recordPolicy}`)}`}>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
-    {!locked&&canEdit && <><Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
+    {!locked&&canEdit && <><Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteNode}><Trash2 className='me-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
     </SettingsPane>
   </div>;
 }
@@ -332,7 +332,7 @@ function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddS
           const Icon = mapping.scope === 'workspace' ? FolderOpen : mapping.assetKind === 'document' ? FileText : Sheet;
           const name = mapping.documentName ?? mapping.documentId;
           const detail = [mapping.sheetName, mapping.identityFields.length ? t('mapping.identityShort', { fields: mapping.identityFields.join(', ') }) : ''].filter(Boolean).join(' · ');
-          return <li key={mapping.id} className='flex items-center gap-2 py-1.5 pl-3 pr-1'>
+          return <li key={mapping.id} className='flex items-center gap-2 py-1.5 ps-3 pe-1'>
             <Icon className='h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400' aria-hidden />
             <div className='min-w-0 flex-1' title={[name, detail].filter(Boolean).join('\n')}>
               <p className='truncate text-sm'>{name}</p>
@@ -344,7 +344,7 @@ function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddS
         })}
       </ul>
     ) : !derived.length && <p className='text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
-    {derived.map((source) => <div key={source.id} className='flex items-center gap-2 rounded-lg border border-teal-500/40 py-1.5 pl-3 pr-1'>
+    {derived.map((source) => <div key={source.id} className='flex items-center gap-2 rounded-lg border border-teal-500/40 py-1.5 ps-3 pe-1'>
       <GitMerge className='h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400' aria-hidden />
       <div className='min-w-0 flex-1'>
         <p className='truncate text-sm'>{t('derived.fromConcept', { source: conceptLabel(source.sourceConceptId) })}</p>
@@ -353,10 +353,10 @@ function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddS
       {onDeriveData && <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' aria-label={t('mapping.edit')} title={t('mapping.edit')} onClick={() => onDeriveData({ conceptId, derived: source })}><Pencil className='h-3.5 w-3.5' /></Button>}
     </div>)}
     {onAddSource && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onAddSource(conceptId)}>
-      <Plus className='mr-1.5 h-3.5 w-3.5' />{t('workspaceUi.addSourceShort')}
+      <Plus className='me-1.5 h-3.5 w-3.5' />{t('workspaceUi.addSourceShort')}
     </Button>}
     {onDeriveData && !derived.length && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onDeriveData({ conceptId })}>
-      <GitMerge className='mr-1.5 h-3.5 w-3.5' />{t('derived.add')}
+      <GitMerge className='me-1.5 h-3.5 w-3.5' />{t('derived.add')}
     </Button>}
   </div>;
 }
@@ -385,7 +385,7 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
     <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
       <Field label={t('field.description')}><Textarea className='min-h-[4.5rem] resize-y text-sm' rows={3} value={item.description} onChange={(event) => update({description:event.target.value})} /></Field>
       <div className='flex items-center justify-between gap-3'><Label className='text-sm font-normal'>{t('field.traversable')}</Label><Switch checked={item.traversable} onCheckedChange={(traversable) => update({traversable})} /></div>
-      <Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button>
+      <Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteRelation}><Trash2 className='me-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button>
     </div></details>
   </div>;
 }
@@ -444,14 +444,14 @@ function AttributeEditor({ attributes,onChange,bare }: Readonly<{ attributes: At
             <Asterisk className='h-4 w-4' />
           </button>
         </div>
-        {!open && attribute.description && <p className='truncate pb-0.5 pl-8 pr-2 pt-0.5 text-[11px] text-muted-foreground' title={attribute.description}>{attribute.description}</p>}
-        {open && <div className='space-y-3 pb-2 pl-8 pr-1 pt-2'>
+        {!open && attribute.description && <p className='truncate pb-0.5 ps-8 pe-2 pt-0.5 text-[11px] text-muted-foreground' title={attribute.description}>{attribute.description}</p>}
+        {open && <div className='space-y-3 pb-2 ps-8 pe-1 pt-2'>
           <Field label={t('field.description')} help={t('attributes.descriptionHelp')}><Textarea className='min-h-[3.5rem] resize-y text-sm' rows={2} value={attribute.description ?? ''} placeholder={t('attributes.descriptionPlaceholder')} aria-label={t('attributes.descriptionFor', { name: attribute.label })} onChange={(event) => edit(index, { description: event.target.value })} /></Field>
           <Field label={t('aliases.title')}><AliasChips values={attribute.aliases ?? []} onChange={(aliases) => edit(index, { aliases })} placeholder={t('aliases.fieldPlaceholder', { name: attribute.label })} compact /></Field>
           <FieldGraphPane attribute={attribute} onChange={(next) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? next : item))} />
           {attribute.type === 'text' && <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={attribute.label} onChange={(searchIndex) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? withSearchIndex(item, searchIndex) : item))} />}
           {attribute.type === 'enum' && <Field label={t('attributes.options')}><Input className='h-8 text-sm' defaultValue={attribute.options?.join(', ') ?? ''} onBlur={(event) => edit(index, { options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) })} placeholder={t('attributes.optionsPlaceholder')} aria-label={t('attributes.optionsFor', { name: attribute.label })} /></Field>}
-          <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='mr-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>
+          <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='me-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>
         </div>}
       </li>;
     })}</ul>}
@@ -473,7 +473,7 @@ export function AliasChips({ values, onChange, placeholder, compact = false }: R
     onChange([...values, value]);
   };
   return <div className='flex flex-wrap items-center gap-1.5'>
-    {values.map((value) => <span key={value} className='flex h-7 items-center gap-1 rounded-full bg-muted pl-2.5 pr-1 text-xs'>{value}<button type='button' className='rounded-full p-0.5 hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary' onClick={() => onChange(values.filter((existing) => existing !== value))} aria-label={t('aliases.remove', { name: value })}><X className='h-3 w-3' /></button></span>)}
+    {values.map((value) => <span key={value} className='flex h-7 items-center gap-1 rounded-full bg-muted ps-2.5 pe-1 text-xs'>{value}<button type='button' className='rounded-full p-0.5 hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary' onClick={() => onChange(values.filter((existing) => existing !== value))} aria-label={t('aliases.remove', { name: value })}><X className='h-3 w-3' /></button></span>)}
     <Input className={compact ? 'h-8 min-w-[9rem] flex-1 text-xs' : 'h-9 min-w-[10rem] flex-1 text-sm'} value={draft} placeholder={placeholder} aria-label={placeholder}
       onChange={(event) => setDraft(event.target.value)} onBlur={add}
       onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(); } }} />

@@ -423,7 +423,7 @@ export function PptxRenderer({ tab, isActive, onReady }: Readonly<RendererProps>
           <p className='text-muted-foreground'>{error}</p>
         </div>
         <Button variant='outline' onClick={handleRetry}>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {t('actions.retry')}
         </Button>
       </div>
@@ -459,16 +459,16 @@ export function PptxRenderer({ tab, isActive, onReady }: Readonly<RendererProps>
           </div>
 
           <button className={cn('inline-flex h-8 items-center justify-center rounded-md bg-background px-3 text-[11px] font-medium uppercase tracking-wide shadow-sm ring-1 ring-border transition hover:bg-muted', searchOpen && 'bg-primary text-primary-foreground hover:bg-primary/90')} onClick={() => setSearchOpen((prev) => !prev)} disabled={isLoading}>
-            <Search className='mr-1.5 h-4 w-4' />
+            <Search className='me-1.5 h-4 w-4' />
             {t('pptx.toolbar.search')}
           </button>
 
           <button className='inline-flex h-8 items-center justify-center rounded-md bg-background px-3 text-[11px] font-medium uppercase tracking-wide shadow-sm ring-1 ring-border transition hover:bg-muted disabled:opacity-50' onClick={handleDownload} disabled={isLoading}>
-            <Download className='mr-1.5 h-4 w-4' />
+            <Download className='me-1.5 h-4 w-4' />
             {t('pptx.toolbar.download')}
           </button>
           <button className='inline-flex h-8 items-center justify-center rounded-md bg-background px-3 text-[11px] font-medium uppercase tracking-wide shadow-sm ring-1 ring-border transition hover:bg-muted' onClick={toggleFullscreen}>
-            {isFullscreen ? <Minimize2 className='mr-1.5 h-4 w-4' /> : <Maximize2 className='mr-1.5 h-4 w-4' />}
+            {isFullscreen ? <Minimize2 className='me-1.5 h-4 w-4' /> : <Maximize2 className='me-1.5 h-4 w-4' />}
             {isFullscreen ? t('pptx.toolbar.exitFullscreen') : t('pptx.toolbar.enterFullscreen')}
           </button>
         </div>
@@ -507,7 +507,7 @@ export function PptxRenderer({ tab, isActive, onReady }: Readonly<RendererProps>
       <div ref={scrollRef} className='relative flex-1 overflow-auto bg-muted/30 px-6 py-8 dark:bg-muted/20' onWheel={handleWheel}>
         {showOverlay && (
           <div className='absolute inset-0 z-10 flex items-center justify-center bg-background/60'>
-            <Loader2 className='mr-2 h-5 w-5 animate-spin text-muted-foreground' />
+            <Loader2 className='me-2 h-5 w-5 animate-spin text-muted-foreground' />
             <span className='text-sm text-muted-foreground'>{t('pptx.loading')}</span>
           </div>
         )}

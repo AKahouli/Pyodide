@@ -50,7 +50,7 @@ export function FileMinimizedWindow() {
         </Badge>
       )}
       <div
-        className="flex items-center gap-1 ml-1"
+        className="flex items-center gap-1 ms-1"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <Button

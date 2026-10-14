@@ -102,25 +102,25 @@ function UserAccountMenuItems({
     <>
       {actions.showApprove && (
         <DropdownMenuItem onClick={onApprove}>
-          <UserCheck className='mr-2 h-4 w-4' />
+          <UserCheck className='me-2 h-4 w-4' />
           {t('users.dropdown.approveRegistration')}
         </DropdownMenuItem>
       )}
       {actions.showReject && (
         <DropdownMenuItem onClick={onReject} className='text-destructive'>
-          <UserX className='mr-2 h-4 w-4' />
+          <UserX className='me-2 h-4 w-4' />
           {t('users.dropdown.rejectRegistration')}
         </DropdownMenuItem>
       )}
       {actions.showActivate && (
         <DropdownMenuItem onClick={onActivate}>
-          <UserCheck className='mr-2 h-4 w-4' />
+          <UserCheck className='me-2 h-4 w-4' />
           {t('users.dropdown.activate')}
         </DropdownMenuItem>
       )}
       {actions.showSuspend && (
         <DropdownMenuItem onClick={onSuspend} className='text-destructive'>
-          <UserX className='mr-2 h-4 w-4' />
+          <UserX className='me-2 h-4 w-4' />
           {t('users.dropdown.suspend')}
         </DropdownMenuItem>
       )}
@@ -453,7 +453,7 @@ export function UsersPage() {
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
         <Button onClick={fetchUsers} variant='outline'>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -483,7 +483,7 @@ export function UsersPage() {
               </Label>
               <div className='relative'>
                 <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-                <Input id='search' placeholder={t('users.filters.searchPlaceholder')} className='pl-9' value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
+                <Input id='search' placeholder={t('users.filters.searchPlaceholder')} className='ps-9' value={searchInput} onChange={(e) => setSearchInput(e.target.value)} onKeyDown={handleSearchKeyDown} />
               </div>
             </div>
             <div className='flex gap-2 flex-wrap'>
@@ -521,7 +521,7 @@ export function UsersPage() {
               <Button onClick={handleSearch}>{t('users.filters.search')}</Button>
               {hasActiveFilters && (
                 <Button variant='ghost' onClick={clearFilters}>
-                  <X className='mr-1 h-4 w-4' />
+                  <X className='me-1 h-4 w-4' />
                   {t('users.filters.clear')}
                 </Button>
               )}
@@ -553,7 +553,7 @@ export function UsersPage() {
                   <TableHead className='hidden lg:table-cell'>{t('users.table.columns.plan')}</TableHead>
                   <TableHead className='hidden xl:table-cell'>{t('users.table.columns.roles')}</TableHead>
                   <TableHead className='hidden xl:table-cell'>{t('users.table.columns.lastLogin')}</TableHead>
-                  <TableHead className='text-right'>{t('users.table.columns.actions')}</TableHead>
+                  <TableHead className='text-end'>{t('users.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -625,7 +625,7 @@ export function UsersPage() {
                       <TableCell className='hidden xl:table-cell'>
                         <span className='text-sm text-muted-foreground'>{formatRelativeTime(user.lastLoginAt)}</span>
                       </TableCell>
-                      <TableCell className='text-right'>
+                      <TableCell className='text-end'>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant='ghost' size='icon'>
@@ -636,11 +636,11 @@ export function UsersPage() {
                             <DropdownMenuLabel>{t('users.dropdown.label')}</DropdownMenuLabel>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => openPlanDialog(user)}>
-                              <CreditCard className='mr-2 h-4 w-4' />
+                              <CreditCard className='me-2 h-4 w-4' />
                               {t('users.dropdown.assignPlan')}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openRolesDialog(user)}>
-                              <Shield className='mr-2 h-4 w-4' />
+                              <Shield className='me-2 h-4 w-4' />
                               {t('users.dropdown.manageRoles')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -693,7 +693,7 @@ export function UsersPage() {
             <AlertDialogAction onClick={handleSuspend} disabled={saving} className='bg-destructive hover:bg-destructive/90'>
               {saving ? (
                 <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-2 h-4 w-4 animate-spin' />
                   {t('users.modals.suspend.loading')}
                 </>
               ) : (
@@ -716,7 +716,7 @@ export function UsersPage() {
             <AlertDialogAction onClick={handleActivate} disabled={saving}>
               {saving ? (
                 <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-2 h-4 w-4 animate-spin' />
                   {t('users.modals.activate.loading')}
                 </>
               ) : (
@@ -739,7 +739,7 @@ export function UsersPage() {
             <AlertDialogAction onClick={handleApproveRegistration} disabled={saving}>
               {saving ? (
                 <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-2 h-4 w-4 animate-spin' />
                   {t('users.modals.approveRegistration.loading')}
                 </>
               ) : (
@@ -762,7 +762,7 @@ export function UsersPage() {
             <AlertDialogAction onClick={handleRejectRegistration} disabled={saving} className='bg-destructive hover:bg-destructive/90'>
               {saving ? (
                 <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-2 h-4 w-4 animate-spin' />
                   {t('users.modals.rejectRegistration.loading')}
                 </>
               ) : (
@@ -809,7 +809,7 @@ export function UsersPage() {
             <Button onClick={handleAssignPlan} disabled={saving || !selectedPlanId}>
               {saving ? (
                 <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-2 h-4 w-4 animate-spin' />
                   {t('users.modals.plan.loading')}
                 </>
               ) : (

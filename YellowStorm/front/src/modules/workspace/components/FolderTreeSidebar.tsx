@@ -126,11 +126,11 @@ export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, 
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end'>
                 <DropdownMenuItem onClick={() => onRenameFolder?.(node.id)}>
-                  <Edit2 className='h-4 w-4 mr-2' />
+                  <Edit2 className='h-4 w-4 me-2' />
                   {t('folder.rename')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onDeleteFolder?.(node.id)} className='text-destructive'>
-                  <Trash2 className='h-4 w-4 mr-2' />
+                  <Trash2 className='h-4 w-4 me-2' />
                   {t('folder.delete')}
                 </DropdownMenuItem>
               </DropdownMenuContent>

@@ -111,7 +111,7 @@ export default function MaintenancePage() {
 
         {/* Message from admin */}
         {maintenance?.message && (
-          <div className='bg-muted/50 border rounded-lg p-4 text-left'>
+          <div className='bg-muted/50 border rounded-lg p-4 text-start'>
             <p className='text-sm'>{maintenance.message}</p>
           </div>
         )}

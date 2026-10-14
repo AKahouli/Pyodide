@@ -207,7 +207,7 @@ export function DefaultAgentsPage() {
         <AlertCircle className='h-12 w-12 text-destructive' />
         <p className='text-muted-foreground'>{error}</p>
         <Button onClick={() => fetchAgents()} variant='outline'>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -227,7 +227,7 @@ export function DefaultAgentsPage() {
           </Button>
           {canCreateDefaultAgents && (
             <Button onClick={openCreate}>
-              <Plus className='mr-2 h-4 w-4' />
+              <Plus className='me-2 h-4 w-4' />
               {t('defaultAgents.actions.add')}
             </Button>
           )}
@@ -236,7 +236,7 @@ export function DefaultAgentsPage() {
 
       <div className='relative max-w-sm'>
         <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-        <Input placeholder={t('defaultAgents.search.placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} className='pl-9' />
+        <Input placeholder={t('defaultAgents.search.placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} className='ps-9' />
       </div>
 
       <Card>
@@ -262,7 +262,7 @@ export function DefaultAgentsPage() {
                   <TableHead className='hidden lg:table-cell'>{t('defaultAgents.table.columns.creativity')}</TableHead>
                   <TableHead className='hidden lg:table-cell'>{t('defaultAgents.table.columns.model')}</TableHead>
                   <TableHead>{t('defaultAgents.table.columns.active')}</TableHead>
-                  <TableHead className='text-right'>{t('defaultAgents.table.columns.actions')}</TableHead>
+                  <TableHead className='text-end'>{t('defaultAgents.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -296,7 +296,7 @@ export function DefaultAgentsPage() {
                       <TableCell>
                         <Switch checked={agent.isActive} disabled={!canManageDefaultAgents} onCheckedChange={() => handleToggleActive(agent)} />
                       </TableCell>
-                      <TableCell className='text-right'>
+                      <TableCell className='text-end'>
                         <div className='flex justify-end gap-1'>
                           <Button variant='ghost' size='icon' onClick={() => openEdit(agent)}>
                             {canManageDefaultAgents ? <Pencil className='h-4 w-4' /> : <Eye className='h-4 w-4' />}

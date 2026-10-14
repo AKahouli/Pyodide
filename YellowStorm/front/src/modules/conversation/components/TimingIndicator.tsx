@@ -242,7 +242,7 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
                   <span className="text-muted-foreground">{t(labelKey)}</span>
                   <span>{formatLatencyValue(latencyMetrics[key] as number | undefined)}</span>
                   {key === 'backendPreAdkMs' && backendBreakdown && (
-                    <div className="col-span-2 ml-3 border-l border-border pl-2">
+                    <div className="col-span-2 ms-3 border-l border-border ps-2">
                       {BACKEND_PRE_ADK_CHILD_ROWS.map(({ key: childKey, labelKey: childLabelKey }) => (
                         <div key={childKey} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                           <span className="text-muted-foreground/80">
@@ -255,7 +255,7 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
                     </div>
                   )}
                   {key === 'adkPreProviderMs' && breakdown && (
-                    <div className="col-span-2 ml-3 border-l border-border pl-2">
+                    <div className="col-span-2 ms-3 border-l border-border ps-2">
                       {ADK_PRE_PROVIDER_CHILD_ROWS.map(({ key: childKey, labelKey: childLabelKey }) => (
                         <div key={childKey} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                           <span className="text-muted-foreground/80">
@@ -264,7 +264,7 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
                           </span>
                           <span className="text-muted-foreground">{formatLatencyValue(breakdown[childKey])}</span>
                           {childKey === 'sessionRunnerSetupMs' && breakdown.sessionRunnerSetupBreakdown && (
-                            <div className="col-span-2 ml-3 border-l border-border pl-2">
+                            <div className="col-span-2 ms-3 border-l border-border ps-2">
                               {SESSION_RUNNER_SETUP_CHILD_ROWS.map(({ key: nestedKey, labelKey: nestedLabelKey }) => (
                                 <div key={nestedKey} className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                                   <span className="text-muted-foreground/80">

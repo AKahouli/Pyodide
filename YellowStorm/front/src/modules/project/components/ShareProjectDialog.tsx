@@ -170,7 +170,7 @@ export function ShareProjectDialog({ open, onOpenChange, project }: ShareProject
     <Dialog open={open} onOpenChange={(next) => !next && closeModal()}>
       <DialogContent className='w-[95vw] max-w-2xl p-0 gap-0 max-h-[80vh] flex flex-col'>
         <DialogHeader className='p-4 pb-3 border-b'>
-          <DialogTitle className='text-base pr-8'>
+          <DialogTitle className='text-base pe-8'>
             {t('sharing.share')} &quot;{project.name}&quot;
           </DialogTitle>
         </DialogHeader>

@@ -336,11 +336,11 @@ const renderRow = useCallback(
       <div ref={tableScrollRef} className='h-full w-full overflow-auto'>
         <div className='min-w-max'>
           <div className='sticky top-0 z-20 grid border-b border-border bg-muted/70 text-xs font-semibold text-muted-foreground backdrop-blur' style={{ gridTemplateColumns: columnTemplate }}>
-            <div className='sticky left-0 z-30 border-r border-border px-3 py-2 text-left'>#</div>
+            <div className='sticky left-0 z-30 border-r border-border px-3 py-2 text-start'>#</div>
             {Array.from({ length: selectedSheet.columnCount }).map((_, index) => {
               const columnLabel = getColumnLabel(index + 1);
               return (
-                <div key={`header-${columnLabel}`} className='border-l border-border px-3 py-2 text-left'>
+                <div key={`header-${columnLabel}`} className='border-l border-border px-3 py-2 text-start'>
                   {columnLabel}
                 </div>
               );
@@ -365,7 +365,7 @@ const renderRow = useCallback(
           <p className='text-muted-foreground'>{error}</p>
         </div>
         <Button variant='outline' onClick={handleRetry}>
-          <RefreshCw className='mr-2 h-4 w-4' />
+          <RefreshCw className='me-2 h-4 w-4' />
           {t('actions.retry')}
         </Button>
       </div>
@@ -409,29 +409,29 @@ const renderRow = useCallback(
             </form>
           ) : (
             <Button variant='outline' size='sm' onClick={() => setSearchOpen(true)}>
-              <Search className='mr-2 h-4 w-4' />
+              <Search className='me-2 h-4 w-4' />
               {t('excel.toolbar.search')}
             </Button>
           )}
           <Button variant='outline' size='sm' onClick={handleFullscreenToggle} disabled={!selectedSheet}>
             {isFullscreen ? (
               <>
-                <Minimize2 className='mr-2 h-4 w-4' />
+                <Minimize2 className='me-2 h-4 w-4' />
                 {t('excel.toolbar.exitFullscreen')}
               </>
             ) : (
               <>
-                <Maximize2 className='mr-2 h-4 w-4' />
+                <Maximize2 className='me-2 h-4 w-4' />
                 {t('excel.toolbar.enterFullscreen')}
               </>
             )}
           </Button>
           <Button variant='outline' size='sm' onClick={handleRetry} disabled={isLoading}>
-            <RefreshCw className='mr-2 h-4 w-4' />
+            <RefreshCw className='me-2 h-4 w-4' />
             {t('excel.toolbar.reload')}
           </Button>
           <Button variant='default' size='sm' onClick={handleDownload}>
-            <Download className='mr-2 h-4 w-4' />
+            <Download className='me-2 h-4 w-4' />
             {t('excel.toolbar.download')}
           </Button>
         </div>

@@ -51,23 +51,23 @@ export function RowActions({ vm, actions, className }: { vm: PlaybookVM; actions
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
           <DropdownMenuItem onSelect={() => actions.onOpenTriggers(vm)}>
-            <CalendarClock className="mr-2 h-4 w-4" />
+            <CalendarClock className="me-2 h-4 w-4" />
             {t('card.openTriggers')}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => actions.onIntegration(vm)}>
-            <Link2 className="mr-2 h-4 w-4" />
+            <Link2 className="me-2 h-4 w-4" />
             {t('card.integration.open')}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => actions.onClone(vm)}>
-            <Copy className="mr-2 h-4 w-4" />
+            <Copy className="me-2 h-4 w-4" />
             {t('card.clone')}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => actions.onEditDetails(vm)}>
-            <Pencil className="mr-2 h-4 w-4" />
+            <Pencil className="me-2 h-4 w-4" />
             {t('card.edit')}
           </DropdownMenuItem>
           <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => actions.onDelete(vm)}>
-            <Trash2 className="mr-2 h-4 w-4" />
+            <Trash2 className="me-2 h-4 w-4" />
             {t('card.delete')}
           </DropdownMenuItem>
         </DropdownMenuContent>

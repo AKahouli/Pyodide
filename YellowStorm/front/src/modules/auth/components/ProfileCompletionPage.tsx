@@ -136,7 +136,7 @@ export function ProfileCompletionPage() {
           <AppBrandLogo className='h-12 w-56' />
         </NavLink>
         <Button variant='ghost' size='sm' onClick={handleLogout} className='text-neutral-400 hover:text-white hover:bg-neutral-800'>
-          <LogOut className='h-4 w-4 mr-2' />
+          <LogOut className='h-4 w-4 me-2' />
           {t('profileCompletion.logout')}
         </Button>
       </div>
@@ -281,7 +281,7 @@ export function ProfileCompletionPage() {
                 <Button type='submit' className='w-full' size='lg' disabled={isSubmitting}>
                   {isSubmitting ? (
                     <>
-                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                      <Loader2 className='me-2 h-4 w-4 animate-spin' />
                       {t('profileCompletion.submitting')}
                     </>
                   ) : (

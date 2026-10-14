@@ -23,7 +23,7 @@ export function RowJourney({ concept }: Readonly<{ concept: HealthConcept }>) {
         <span className='h-5 overflow-hidden rounded-md bg-muted' aria-hidden>
           <span className={`block h-full rounded-md ${index === steps.length - 1 ? final : 'bg-muted-foreground/40'}`} style={{ width: `${Math.max(0.6, (step.value / widest) * 100)}%` }} />
         </span>
-        <span className='text-right font-mono text-sm'>{formatNumber(step.value)}</span>
+        <span className='text-end font-mono text-sm'>{formatNumber(step.value)}</span>
       </li>)}
     </ol>
     {journey.rowsRead === null && <p className='mt-3 text-sm text-muted-foreground'>{translate('health.journey.noCounts')}</p>}

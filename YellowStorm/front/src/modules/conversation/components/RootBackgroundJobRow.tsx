@@ -35,7 +35,7 @@ export function RootBackgroundJobRow({ job, conversationId, epoch, onCancelled }
         }}>{t(cancellationRequested ? 'rootWork.cancellationPending' : 'rootWork.stopTask')}</Button>}
     </div>
     {!!job.fanoutItems?.length && <p className='text-muted-foreground'>{t('rootWork.progress', { completed: job.fanoutItems.filter((item) => item.status === 'completed').length, total: job.fanoutItems.length })}</p>}
-    {!!job.fanoutItems?.length && <ul className='max-h-48 space-y-1 overflow-y-auto pl-3'>
+    {!!job.fanoutItems?.length && <ul className='max-h-48 space-y-1 overflow-y-auto ps-3'>
       {job.fanoutItems.map((item, index) => <li key={item.executionId} className='break-words'>
         {item.label || t('rootWork.item', { number: index + 1 })}: {t(`rootWork.status.${itemStatus(item.status)}`)}
         {item.status === 'completed' && <Button size='sm' variant='link' className='h-8 px-2' disabled={loadingResult} aria-busy={loadingResult}

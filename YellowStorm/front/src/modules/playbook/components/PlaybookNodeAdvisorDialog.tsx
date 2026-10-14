@@ -44,13 +44,13 @@ export function PlaybookNodeAdvisorDialog({
         </DialogHeader>
         {loading ? (
           <div className="flex items-center justify-center py-10 text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="me-2 h-4 w-4 animate-spin" />
             <span>{t('nodeAdvisor.loading')}</span>
           </div>
         ) : suggestions.length === 0 ? (
           <div className="py-10 text-sm text-muted-foreground">{t('nodeAdvisor.empty')}</div>
         ) : (
-          <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+          <div className="max-h-[65vh] space-y-3 overflow-y-auto pe-1">
             {suggestions.map((suggestion) => {
               const applyEnabled = canApplySuggestion(suggestion);
               return (

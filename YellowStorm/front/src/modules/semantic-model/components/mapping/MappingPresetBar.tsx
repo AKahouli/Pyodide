@@ -165,7 +165,7 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
           {canEdit && <>
             <DropdownMenuLabel className='text-[11px] font-medium text-muted-foreground'>{t('mapping.presets.lastUsed')}</DropdownMenuLabel>
             {last ? <DropdownMenuItem className='text-xs' onSelect={() => apply(last, lastName)}>
-              <History className='mr-2 h-3.5 w-3.5 shrink-0' /><span className='truncate'>{lastName}</span>
+              <History className='me-2 h-3.5 w-3.5 shrink-0' /><span className='truncate'>{lastName}</span>
             </DropdownMenuItem> : <p className='px-2 py-1 text-[11px] text-muted-foreground'>{t('mapping.presets.noLastUsed')}</p>}
             <DropdownMenuSeparator />
           </>}
@@ -180,7 +180,7 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
           />}
           <div className='min-h-0 flex-1 overflow-y-auto'>
           {shownPresets.map((preset) => <DropdownMenuItem key={preset.id} className='items-start text-xs' onSelect={() => apply(preset, preset.name, preset.id)}>
-            {applied?.presetId === preset.id ? <Check className='mr-2 mt-0.5 h-3.5 w-3.5 shrink-0' /> : <span className='mr-2 w-3.5 shrink-0' />}
+            {applied?.presetId === preset.id ? <Check className='me-2 mt-0.5 h-3.5 w-3.5 shrink-0' /> : <span className='me-2 w-3.5 shrink-0' />}
             <span className='min-w-0'>
               <span className='block truncate'>{preset.name}</span>
               {preset.description && <span className='block truncate text-[11px] text-muted-foreground'>{preset.description}</span>}
@@ -192,13 +192,13 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
         </DropdownMenuContent>
       </DropdownMenu>
       {applied && modified && <span className='rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-300'>{t('mapping.presets.modified')}</span>}
-      {applied && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={undo}><Undo2 className='mr-1 h-3 w-3' />{t('mapping.presets.undo')}</Button>}
-      {canEdit && <div className='ml-auto flex items-center gap-1'>
+      {applied && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={undo}><Undo2 className='me-1 h-3 w-3' />{t('mapping.presets.undo')}</Button>}
+      {canEdit && <div className='ms-auto flex items-center gap-1'>
         {appliedPreset && modified && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={update.isPending}
           onClick={() => update.mutate(appliedPreset)}>{t('mapping.presets.update', { name: appliedPreset.name })}</Button>}
         <Popover open={saveOpen} onOpenChange={openSave}>
           <PopoverTrigger asChild>
-            <Button type='button' size='sm' variant='outline' className='h-7 px-2 text-xs'><BookmarkPlus className='mr-1 h-3.5 w-3.5' />{t('mapping.presets.save')}</Button>
+            <Button type='button' size='sm' variant='outline' className='h-7 px-2 text-xs'><BookmarkPlus className='me-1 h-3.5 w-3.5' />{t('mapping.presets.save')}</Button>
           </PopoverTrigger>
           <PopoverContent align='end' className='w-80 space-y-4 p-4'>
             <form className='space-y-3' onSubmit={(event) => { event.preventDefault(); if (name.trim()) save.mutate(sameName?.id); }}>
@@ -206,14 +206,14 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
               <Input className={INPUT_COMPACT} value={name} maxLength={80} autoFocus placeholder={t('mapping.presets.name')} aria-label={t('mapping.presets.name')} onChange={(event) => setName(event.target.value)} />
               <Input className={INPUT_COMPACT} value={description} maxLength={500} placeholder={t('mapping.presets.description')} aria-label={t('mapping.presets.description')} onChange={(event) => setDescription(event.target.value)} />
               <Button type='submit' size='sm' className='h-8 w-full text-xs' disabled={!name.trim() || save.isPending}>
-                {save.isPending && <Loader2 className='mr-1 h-3 w-3 animate-spin' />}
+                {save.isPending && <Loader2 className='me-1 h-3 w-3 animate-spin' />}
                 {sameName ? t('mapping.presets.replace', { name: sameName.name }) : t('mapping.presets.saveButton')}
               </Button>
             </form>
             {presets.length > 0 && <div className='space-y-2 border-t pt-4'>
               <SectionHeader title={t('mapping.presets.presets')} count={presets.length} />
               <ul className={cn(ROW_LIST, 'max-h-40 overflow-y-auto')}>
-                {presets.map((preset) => <li key={preset.id} className='flex items-center gap-1 py-1 pl-2.5 pr-1 text-xs'>
+                {presets.map((preset) => <li key={preset.id} className='flex items-center gap-1 py-1 ps-2.5 pe-1 text-xs'>
                   <span className='min-w-0 flex-1 truncate'>{preset.name}</span>
                   {confirmDelete === preset.id
                     ? <Button type='button' size='sm' variant='destructive' className='h-6 px-2 text-[11px]' disabled={remove.isPending} onClick={() => remove.mutate(preset)}>{t('mapping.presets.confirmDelete')}</Button>

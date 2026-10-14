@@ -218,7 +218,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                   <Label className="text-sm font-semibold">{t('newConversation.groupDialog.membersLabel')}</Label>
                   <Badge variant="secondary" className="text-xs">{members.length}</Badge>
                 </div>
-                <div className='max-h-48 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                <div className='max-h-48 overflow-y-auto space-y-2 pe-2 custom-scrollbar'>
                   {members.map((member) => {
                     const displayName = member.userId === user?.id 
                             ? t('newConversation.groupDialog.you') 
@@ -291,7 +291,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                                     type="button"
                                     variant="ghost"
                                     size="icon"
-                                    className="h-5 w-5 opacity-0 group-hover/job:opacity-100 transition-opacity ml-1"
+                                    className="h-5 w-5 opacity-0 group-hover/job:opacity-100 transition-opacity ms-1"
                                     onClick={() => {
                                       setEditingJobId(member.userId);
                                       setJobInput(member.job || '');
@@ -311,7 +311,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                           type='button'
                           variant='ghost'
                           size='icon'
-                          className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ml-2 transition-colors'
+                          className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ms-2 transition-colors'
                           onClick={() => handleRemoveMember(member.userId)}
                           aria-label={t('newConversation.groupDialog.removeMember')}
                           title={t('newConversation.groupDialog.removeMember')}
@@ -332,7 +332,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                       <Mail className="h-4 w-4 text-muted-foreground" />
                       <Label className="text-sm font-semibold">{t('newConversation.groupDialog.statusGuest')}s / {t('newConversation.groupDialog.invitedLabel')}</Label>
                     </div>
-                    <div className='max-h-32 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                    <div className='max-h-32 overflow-y-auto space-y-2 pe-2 custom-scrollbar'>
                       {invitedUsers.map((invited) => (
                         <div key={invited.email} className='flex items-center justify-between p-2.5 bg-muted/20 rounded-lg border border-dashed border-border/60'>
                           <div className='flex items-center gap-3'>
@@ -367,7 +367,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                       <Link2 className="h-4 w-4 text-muted-foreground" />
                       <Label className="text-sm font-semibold">{t('newConversation.groupDialog.publicLinksLabel')}</Label>
                     </div>
-                    <div className='max-h-32 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                    <div className='max-h-32 overflow-y-auto space-y-2 pe-2 custom-scrollbar'>
                       {publicLinks.map((link) => (
                         <div key={link.id} className='flex items-center justify-between p-2.5 bg-card border rounded-lg shadow-sm'>
                           <div className='flex flex-col overflow-hidden'>
@@ -382,7 +382,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                             type='button'
                             variant='ghost'
                             size='icon'
-                            className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ml-2'
+                            className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ms-2'
                             aria-label={t('newConversation.groupDialog.revokeLink')}
                             title={t('newConversation.groupDialog.revokeLink')}
                             onClick={() => handleRevokePublicLink(link.id)}
@@ -404,7 +404,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                       <Bot className="h-4 w-4 text-muted-foreground" />
                       <Label className="text-sm font-semibold">{t('newConversation.groupDialog.sharedAgentsLabel')}</Label>
                     </div>
-                    <div className='max-h-32 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                    <div className='max-h-32 overflow-y-auto space-y-2 pe-2 custom-scrollbar'>
                       {sharedAgents.map((agent) => (
                         <div key={agent.id} className='flex items-center justify-between p-2.5 bg-card border rounded-lg shadow-sm'>
                           <div className='flex items-center gap-3'>
@@ -447,7 +447,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
               <div className='space-y-3 bg-muted/10 p-3 rounded-xl border border-border/50'>
                 <div className="flex items-center justify-between">
                 <Label className="text-sm font-semibold">{t('newConversation.groupDialog.emailsLabel')}</Label>
-                <div className="flex gap-20 pr-12">
+                <div className="flex gap-20 pe-12">
                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Email</span>
                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Role</span>
                 </div>
@@ -487,7 +487,7 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
               
               <div className="flex items-center justify-between pt-1">
                 <Button type='button' variant='secondary' size='sm' onClick={addParticipantField} className='h-8 text-xs font-medium'>
-                  <Plus className='h-3.5 w-3.5 mr-1.5' />
+                  <Plus className='h-3.5 w-3.5 me-1.5' />
                   {t('newConversation.groupDialog.addEmail')}
                 </Button>
                 {hasDuplicates && (

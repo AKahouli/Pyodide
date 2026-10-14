@@ -164,19 +164,19 @@ export const ConversationItem = memo(function ConversationItem({
           </DropdownMenuTrigger>
           <DropdownMenuContent side='right' align='start'>
             <DropdownMenuItem onClick={handleRenameClick} className='cursor-pointer'>
-              <Pencil className='mr-2 h-4 w-4' />
+              <Pencil className='me-2 h-4 w-4' />
               {t('conversations.rename')}
             </DropdownMenuItem>
             {onShare && (
               <DropdownMenuItem onClick={handleShareClick} className='cursor-pointer'>
-                <Share className='mr-2 h-4 w-4' />
+                <Share className='me-2 h-4 w-4' />
                 {t('conversations.share')}
               </DropdownMenuItem>
             )}
             {onMove && (
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className='cursor-pointer'>
-                  <FolderInput className='mr-2 h-4 w-4' />
+                  <FolderInput className='me-2 h-4 w-4' />
                   {t('conversations.moveToProject')}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
@@ -185,7 +185,7 @@ export const ConversationItem = memo(function ConversationItem({
                       className='cursor-pointer'
                       onClick={() => onNewProject()}
                     >
-                      <Plus className='mr-2 h-4 w-4' />
+                      <Plus className='me-2 h-4 w-4' />
                       {t('conversations.newProject')}
                     </DropdownMenuItem>
                   )}
@@ -198,7 +198,7 @@ export const ConversationItem = memo(function ConversationItem({
                         className='cursor-pointer'
                         onClick={() => onMove(p.id)}
                       >
-                        <FolderPlus className='mr-2 h-4 w-4' />
+                        <FolderPlus className='me-2 h-4 w-4' />
                         <span className='truncate'>{p.name}</span>
                       </DropdownMenuItem>
                     ))}
@@ -206,7 +206,7 @@ export const ConversationItem = memo(function ConversationItem({
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem className='cursor-pointer' onClick={() => onMove(null)}>
-                        <FolderMinus className='mr-2 h-4 w-4' />
+                        <FolderMinus className='me-2 h-4 w-4' />
                         {t('conversations.removeFromProject')}
                       </DropdownMenuItem>
                     </>
@@ -215,7 +215,7 @@ export const ConversationItem = memo(function ConversationItem({
               </DropdownMenuSub>
             )}
             <DropdownMenuItem onClick={handleDeleteClick} className='cursor-pointer text-destructive'>
-              <Trash2 className='mr-2 h-4 w-4' />
+              <Trash2 className='me-2 h-4 w-4' />
               {t('conversations.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>

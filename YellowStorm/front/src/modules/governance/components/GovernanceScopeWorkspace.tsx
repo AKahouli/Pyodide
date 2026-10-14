@@ -189,7 +189,7 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
           <h2 className='mt-1 text-2xl font-semibold'>{overview.scope.name}</h2>
           <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
         </div>
-        {nextTab && <Button type='button' className='min-h-11' disabled={isChangingTab || updateScope.isPending} onClick={() => void changeTab(nextTab)}>{isChangingTab ? t('scopeShell.workspace.saving') : t('scopeShell.workspace.next')}<ArrowRight className='ml-1 h-4 w-4' /></Button>}
+        {nextTab && <Button type='button' className='min-h-11' disabled={isChangingTab || updateScope.isPending} onClick={() => void changeTab(nextTab)}>{isChangingTab ? t('scopeShell.workspace.saving') : t('scopeShell.workspace.next')}<ArrowRight className='ms-1 h-4 w-4' /></Button>}
       </div>
       <div className='border-b p-3'>
         <div className='flex min-w-0 flex-wrap gap-2'>
@@ -237,7 +237,7 @@ function OverviewTab({ programId, overview, settingsDraft, onSettingsDraftChange
     <div className='grid gap-3'>
       <section className='flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background p-4'>
         <div><div className='flex flex-wrap items-center gap-2'><h3 className='font-semibold'>{overview.scope.name}</h3><span className='rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary'>{t(`scopeShell.settings.status.${overview.scope.status}`)}</span></div><p className='mt-1 text-sm text-muted-foreground'>{t(`scopeShell.scopeTypes.${overview.scope.type}`)} · {t(`scopeShell.classification.audienceOptions.${classification.audience}`)} · {t(`scopeShell.classification.riskOptions.${classification.riskLevel}`)} · {t(`scopeShell.classification.stageOptions.${classification.stage}`)}</p></div>
-        <Button type='button' size='sm' variant='outline' onClick={() => setShowSettings((value) => !value)}><Pencil className='mr-1 h-3.5 w-3.5' />{showSettings ? t('scopeShell.settings.close') : t('scopeShell.settings.edit')}</Button>
+        <Button type='button' size='sm' variant='outline' onClick={() => setShowSettings((value) => !value)}><Pencil className='me-1 h-3.5 w-3.5' />{showSettings ? t('scopeShell.settings.close') : t('scopeShell.settings.edit')}</Button>
       </section>
       {showSettings && <ScopeSettingsCard programId={programId} overview={overview} draft={settingsDraft} onDraftChange={onSettingsDraftChange} />}
       <div className='grid gap-3 sm:grid-cols-2'>
@@ -400,7 +400,7 @@ function ClassificationSelect({ label, value, options, labelPrefix, onChange }: 
 
 function OverviewCard({ title, children, onClick }: Readonly<{ title: string; children: ReactNode; onClick: () => void }>): JSX.Element {
   return (
-    <button type='button' className='h-full rounded-xl border bg-background p-4 text-left transition hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' onClick={onClick}>
+    <button type='button' className='h-full rounded-xl border bg-background p-4 text-start transition hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' onClick={onClick}>
       <span className='block text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{title}</span>
       <span className='mt-2 block'>{children}</span>
     </button>
@@ -411,7 +411,7 @@ function OverviewRow({ label, value }: Readonly<{ label: ReactNode; value: React
   return (
     <span className='flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0'>
       <span className='text-muted-foreground'>{label}</span>
-      <span className='max-w-[65%] break-words text-right font-medium'>{value}</span>
+      <span className='max-w-[65%] break-words text-end font-medium'>{value}</span>
     </span>
   );
 }
@@ -1035,7 +1035,7 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
           {availableGroups.map((group) => {
             const isSelected = selected.some((item) => item.type === 'group' && item.group.id === group.id);
             return (
-              <button key={`group-${group.id}`} type='button' onClick={() => toggleGroup(group)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
+              <button key={`group-${group.id}`} type='button' onClick={() => toggleGroup(group)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-start text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
                 <span className='min-w-0'>
                   <span className='block truncate font-medium'>{group.name}</span>
                   <span className='block truncate text-xs text-muted-foreground'>{t('scopeShell.access.groupMembers', { count: group.memberCount })}</span>
@@ -1048,7 +1048,7 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
             const isSelected = selected.some((item) => item.type === 'user' && item.user.id === user.id);
             const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
             return (
-              <button key={`user-${user.id}`} type='button' onClick={() => toggleUser(user)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
+              <button key={`user-${user.id}`} type='button' onClick={() => toggleUser(user)} className={cn('flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-start text-sm hover:bg-muted', isSelected && 'bg-primary/10')}>
                 <span className='min-w-0'>
                   <span className='block truncate font-medium'>{fullName || user.email}</span>
                   {fullName && <span className='block truncate text-xs text-muted-foreground'>{user.email}</span>}
@@ -1211,7 +1211,7 @@ function ReviewTab({ programId, memberships, scopeId, overview, onNavigateTab }:
         <Button type='button' onClick={handlePublish} disabled={!canPublish || publishDeployment.isPending || updateScope.isPending}>{t('scopeShell.review.publish')}</Button>
         <Button type='button' variant='outline' onClick={handleReject} disabled={updateScope.isPending}>{t('scopeShell.review.reject')}</Button>
       </div>
-      {!canPublish && disabledReasons.length > 0 && <div className='rounded-xl border border-amber-500/30 bg-amber-500/5 p-4'><p className='text-sm font-semibold'>{t('scopeShell.review.publishBlockedTitle')}</p><ul className='mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground'>{disabledReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>}
+      {!canPublish && disabledReasons.length > 0 && <div className='rounded-xl border border-amber-500/30 bg-amber-500/5 p-4'><p className='text-sm font-semibold'>{t('scopeShell.review.publishBlockedTitle')}</p><ul className='mt-2 list-disc space-y-1 ps-5 text-sm text-muted-foreground'>{disabledReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>}
     </div>
   );
 }

@@ -321,7 +321,7 @@ export function WorkspacePage() {
         <div className='mx-auto flex w-full max-w-7xl items-center gap-3 px-6 py-3'>
           <div className='relative w-64 shrink-0'>
             <Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder='Rechercher dossier ou fichier…' className='pl-9 pr-9 h-9' />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder='Rechercher dossier ou fichier…' className='ps-9 pe-9 h-9' />
             {search && (
               <button onClick={() => setSearch('')} className='absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted'>
                 <X className='h-3.5 w-3.5' />
@@ -546,25 +546,25 @@ function WorkspaceActionsMenu({ workspace, role, onDeleted }: { workspace: Works
         </DropdownMenuTrigger>
         <DropdownMenuContent align='start' className='w-auto'>
           <DropdownMenuItem onClick={() => openSettingsModal(workspace)}>
-            <Settings className='mr-2 h-4 w-4' />
+            <Settings className='me-2 h-4 w-4' />
             Paramètres
           </DropdownMenuItem>
           {canShare && (
             <DropdownMenuItem onClick={() => openShareModal(workspace)}>
-              <Users className='mr-2 h-4 w-4' />
+              <Users className='me-2 h-4 w-4' />
               Partager
             </DropdownMenuItem>
           )}
           {(canDeleteDocs || canDeleteWorkspace) && <DropdownMenuSeparator />}
           {canDeleteDocs && (
             <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteDocs(true)}>
-              <FileX className='mr-2 h-4 w-4' />
+              <FileX className='me-2 h-4 w-4' />
               Supprimer tous les documents
             </DropdownMenuItem>
           )}
           {canDeleteWorkspace && (
             <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteWs(true)}>
-              <Trash2 className='mr-2 h-4 w-4' />
+              <Trash2 className='me-2 h-4 w-4' />
               Supprimer le workspace
             </DropdownMenuItem>
           )}
@@ -686,7 +686,7 @@ function EditableWorkspaceName({ workspace, canEdit }: { workspace: Workspace; c
   }
 
   return (
-    <button type='button' onClick={() => setIsEditing(true)} title='Cliquez pour renommer' className='group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left'>
+    <button type='button' onClick={() => setIsEditing(true)} title='Cliquez pour renommer' className='group inline-flex max-w-full items-center gap-1.5 rounded-sm text-start'>
       <span className='truncate text-xl font-semibold leading-tight tracking-tight group-hover:text-primary transition-colors'>{workspace.name}</span>
       <Pencil className='h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100' />
     </button>
@@ -809,7 +809,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
     <div className={cn('group relative pt-2 transition-transform duration-200', 'hover:-translate-y-0.5', isDragging && 'opacity-50')}>
       <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-card border border-b-0 transition-colors', borderClass)} />
       <div draggable={canWrite} onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', canWrite && 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
-        <button onClick={onOpen} className='w-full text-left p-4 pb-3'>
+        <button onClick={onOpen} className='w-full text-start p-4 pb-3'>
           <div className='flex items-start gap-3'>
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
               <Folder className='h-6 w-6' />
@@ -840,14 +840,14 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end' onClick={(e) => e.stopPropagation()}>
                 <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className='mr-2 h-4 w-4' /> Renommer / éditer
+                  <Pencil className='me-2 h-4 w-4' /> Renommer / éditer
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={onMove}>
-                  <Move className='mr-2 h-4 w-4' /> Déplacer
+                  <Move className='me-2 h-4 w-4' /> Déplacer
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={onDelete}>
-                  <Trash2 className='mr-2 h-4 w-4' /> Supprimer
+                  <Trash2 className='me-2 h-4 w-4' /> Supprimer
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -968,11 +968,11 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
         draggable={canWrite}
         onDragStart={handleDragStart}
         onDragEnd={() => setIsDragging(false)}
-        className={cn('group flex items-center gap-4 rounded-md py-2 pl-2 pr-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}
+        className={cn('group flex items-center gap-4 rounded-md py-2 ps-2 pe-1 transition-colors', 'hover:bg-accent/50', canWrite && 'cursor-grab active:cursor-grabbing', isDragging && 'opacity-50')}
       >
         {artifacts.length > 0 ? <button type='button' onClick={() => setExpanded((value) => !value)} aria-label={expanded ? t('artifacts.collapse') : t('artifacts.expand')}><ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} /></button> : <span className='w-4' />}
         {viewable
-          ? <button type='button' className='flex min-w-0 flex-1 cursor-pointer items-center gap-4 text-left' onClick={handleView}>{primaryContent}</button>
+          ? <button type='button' className='flex min-w-0 flex-1 cursor-pointer items-center gap-4 text-start' onClick={handleView}>{primaryContent}</button>
           : <div className='flex min-w-0 flex-1 items-center gap-4'>{primaryContent}</div>}
 
         <DropdownMenu>
@@ -984,30 +984,30 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
           <DropdownMenuContent align='end'>
             {viewable && (
               <DropdownMenuItem onClick={handleView}>
-                <Eye className='mr-2 h-4 w-4' /> Voir
+                <Eye className='me-2 h-4 w-4' /> Voir
               </DropdownMenuItem>
             )}
             {isStored && (
               <DropdownMenuItem onClick={handleDownload} disabled={isDownloading}>
-                {isDownloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
+                {isDownloading ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <Download className='me-2 h-4 w-4' />}
                 Télécharger
               </DropdownMenuItem>
             )}
             {canWrite && (
               <>
                 <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
-                  {isReindexing ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RefreshCw className='mr-2 h-4 w-4' />}
+                  {isReindexing ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <RefreshCw className='me-2 h-4 w-4' />}
                   Indexer / Réindexer
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setRenameOpen(true)}>
-                  <Pencil className='mr-2 h-4 w-4' /> Renommer
+                  <Pencil className='me-2 h-4 w-4' /> Renommer
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={onMove}>
-                  <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
+                  <ArrowRight className='me-2 h-4 w-4' /> Déplacer dans…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={() => setConfirmDeleteOpen(true)}>
-                  <Trash2 className='mr-2 h-4 w-4' /> Supprimer
+                  <Trash2 className='me-2 h-4 w-4' /> Supprimer
                 </DropdownMenuItem>
               </>
             )}
@@ -1122,7 +1122,7 @@ function WorkspaceContentLoading() {
         <div className='mb-3 h-4 w-20 rounded bg-muted animate-pulse' />
         <div className='space-y-1'>
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className='flex items-center gap-4 rounded-md py-2 pl-2 pr-1'>
+            <div key={i} className='flex items-center gap-4 rounded-md py-2 ps-2 pe-1'>
               <div className='h-5 w-5 shrink-0 rounded bg-muted animate-pulse' />
               <div className={cn('h-3.5 rounded bg-muted animate-pulse', i % 2 === 0 ? 'w-1/2' : 'w-1/3')} />
             </div>

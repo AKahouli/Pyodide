@@ -67,7 +67,7 @@ function ConnectionTables({ modelId, connection, canEdit, onUse, onDragStart, on
         structured: true, mappable: true, mimeType: 'application/zip', sheetName: name,
       };
       return <div key={name} role='group' aria-label={t('dataSources.dragTable', { name: label })} draggable={canEdit} onDragStart={(event) => onDragStart(event, resource)} onDragEnd={onDragEnd}
-        className='flex min-h-11 items-center gap-2 rounded-lg pl-6 pr-1 hover:bg-background'>
+        className='flex min-h-11 items-center gap-2 rounded-lg ps-6 pe-1 hover:bg-background'>
         <Table2 className='h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400' />
         <span className='min-w-0 flex-1'>
           <span className='block truncate text-xs font-medium'>{label}</span>
@@ -105,7 +105,7 @@ export function DataConnectionsSection({ modelId, canEdit, onUse, onDragStart, o
 
   return <section className='mb-6 space-y-2' aria-label={t('dataSources.connections')}>
     <SectionHeader title={t('dataSources.connections')} help={t('dataSources.connectionsHelp')} count={items.length || undefined}>
-      {canEdit && modelId && <Button size='sm' variant='outline' className='ml-auto h-8 gap-1 text-xs' onClick={() => setConnectOpen(true)} title={t('dataSources.connectHint')}><Plus className='h-3.5 w-3.5' />{t('dataSources.connect')}</Button>}
+      {canEdit && modelId && <Button size='sm' variant='outline' className='ms-auto h-8 gap-1 text-xs' onClick={() => setConnectOpen(true)} title={t('dataSources.connectHint')}><Plus className='h-3.5 w-3.5' />{t('dataSources.connect')}</Button>}
     </SectionHeader>
     {connections.isLoading ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>
       : items.length ? items.map((connection) => {

@@ -127,7 +127,7 @@ export function DocxRenderer({ tab, isActive, onReady }: Readonly<RendererProps>
             <p className='text-muted-foreground'>{t('docx.error.description')}</p>
           </div>
           <Button variant='outline' onClick={() => void handleRetry()}>
-            <RefreshCw className='mr-2 h-4 w-4' />
+            <RefreshCw className='me-2 h-4 w-4' />
             {t('actions.retry')}
           </Button>
         </div>

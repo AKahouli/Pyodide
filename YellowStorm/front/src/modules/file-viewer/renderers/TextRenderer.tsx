@@ -104,8 +104,8 @@ const lineNumberTransformer: ShikiTransformer = {
         className: [
           'inline-block',
           'min-w-[3ch]',
-          'mr-6',
-          'text-right',
+          'me-6',
+          'text-end',
           'select-none',
           'text-muted-foreground/50',
         ],
@@ -132,7 +132,7 @@ function plainTextToHtml(text: string): string {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
-    return `<span class="inline-block min-w-[3ch] mr-6 text-right select-none text-muted-foreground/50">${num}</span>${escapedLine}`;
+    return `<span class="inline-block min-w-[3ch] me-6 text-end select-none text-muted-foreground/50">${num}</span>${escapedLine}`;
   });
   return `<pre><code>${escaped.join('\n')}</code></pre>`;
 }
@@ -254,11 +254,11 @@ export function TextRenderer({ tab }: TextRendererInternalProps) {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
-              <RotateCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? 'animate-spin' : ''}`} />
+              <RotateCw className={`h-3.5 w-3.5 me-1.5 ${retrying ? 'animate-spin' : ''}`} />
               {t('actions.retry')}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => closeTab(tab.id)}>
-              <X className="h-3.5 w-3.5 mr-1.5" />
+              <X className="h-3.5 w-3.5 me-1.5" />
               {t('actions.closeTab')}
             </Button>
           </div>

@@ -87,7 +87,7 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
         const picked = item.isFolder ? folders.has(item.id) : documents.has(item.id);
         const expanded = open.has(item.id);
         return <div key={item.id}>
-          <div className='flex min-h-9 items-center gap-1.5 rounded-lg pr-2 text-xs hover:bg-muted/60' style={{ paddingLeft: `${4 + depth * 16}px` }}>
+          <div className='flex min-h-9 items-center gap-1.5 rounded-lg pe-2 text-xs hover:bg-muted/60' style={{ paddingLeft: `${4 + depth * 16}px` }}>
             {item.isFolder
               ? <button type='button' className='flex h-7 w-6 shrink-0 items-center justify-center rounded' onClick={() => toggleOpen(item.id)} aria-label={expanded ? t('knowledge.collapseWorkspace', { name: label }) : t('knowledge.expandWorkspace', { name: label })}>{expanded ? <ChevronDown className='h-3.5 w-3.5' /> : <ChevronRight className='h-3.5 w-3.5' />}</button>
               : <span className='w-6 shrink-0' />}
@@ -115,8 +115,8 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
   ];
   return <div className='space-y-3'>
     <div role='radiogroup' aria-label={t('mapping.coverage')} className='grid gap-2 sm:grid-cols-2'>
-      {[true, false].map((option) => <div key={String(option)} className={`flex items-center gap-1 rounded-lg border pr-1.5 text-sm ${whole === option ? 'border-teal-500 bg-teal-500/10' : 'hover:bg-muted/60'}`}>
-        <label className='flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 pl-3'>
+      {[true, false].map((option) => <div key={String(option)} className={`flex items-center gap-1 rounded-lg border pe-1.5 text-sm ${whole === option ? 'border-teal-500 bg-teal-500/10' : 'hover:bg-muted/60'}`}>
+        <label className='flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 ps-3'>
           <input type='radio' name='workspace-coverage' checked={whole === option} onChange={() => onChange({ whole: option, pick })} />
           <span className='truncate font-medium'>{option ? t('mapping.coverWhole') : t('mapping.coverPicked')}</span>
         </label>

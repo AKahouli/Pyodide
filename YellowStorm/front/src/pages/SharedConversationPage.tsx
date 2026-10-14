@@ -116,7 +116,7 @@ export function SharedConversationPage() {
           </div>
           <Button asChild variant='outline' size='sm'>
             <Link to='/'>
-              <ExternalLink className='h-4 w-4 mr-2' />
+              <ExternalLink className='h-4 w-4 me-2' />
               {t('share.header.openApp', { defaultValue: 'Open app' })}
             </Link>
           </Button>

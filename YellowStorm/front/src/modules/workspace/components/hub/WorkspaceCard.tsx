@@ -80,19 +80,19 @@ export function WorkspaceCard({
       <DropdownMenuContent align="end">
         {canSettings && (
           <DropdownMenuItem onClick={() => onSettings?.(workspace.id)}>
-            <Settings className="mr-2 h-4 w-4" />
+            <Settings className="me-2 h-4 w-4" />
             {t('hub.card.settings')}
           </DropdownMenuItem>
         )}
         {canShare && (
           <DropdownMenuItem onClick={() => onShare?.(workspace.id)}>
-            <Share2 className="mr-2 h-4 w-4" />
+            <Share2 className="me-2 h-4 w-4" />
             {t('hub.card.share')}
           </DropdownMenuItem>
         )}
         {canDelete && (
           <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete?.(workspace)}>
-            <Trash2 className="mr-2 h-4 w-4" />
+            <Trash2 className="me-2 h-4 w-4" />
             {t('hub.card.delete')}
           </DropdownMenuItem>
         )}
@@ -103,7 +103,7 @@ export function WorkspaceCard({
   if (layout === 'list') {
     return (
       <article
-        className="group relative flex w-full cursor-pointer items-center gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 text-left transition hover:border-border hover:bg-accent/30"
+        className="group relative flex w-full cursor-pointer items-center gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 text-start transition hover:border-border hover:bg-accent/30"
       >
         <button
           type="button"
@@ -147,7 +147,7 @@ export function WorkspaceCard({
             )}
           </div>
         </div>
-        <div className="relative z-10 ml-auto shrink-0">{actions ?? (
+        <div className="relative z-10 ms-auto shrink-0">{actions ?? (
           <Layers className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />
         )}</div>
       </article>
@@ -156,7 +156,7 @@ export function WorkspaceCard({
 
   return (
     <article
-      className="group relative flex h-full cursor-pointer flex-col rounded-xl border border-border/60 bg-card p-5 text-left transition hover:border-border hover:shadow-sm"
+      className="group relative flex h-full cursor-pointer flex-col rounded-xl border border-border/60 bg-card p-5 text-start transition hover:border-border hover:shadow-sm"
     >
       <button
         type="button"

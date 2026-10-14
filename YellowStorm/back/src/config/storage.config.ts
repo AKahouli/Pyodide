@@ -8,6 +8,11 @@ export default registerAs('storage', () => ({
   azure: {
     connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING || '',
     container: process.env.AZURE_STORAGE_CONTAINER_NAME || 'documents',
+    // Off by default: existing deployments keep signing with the account key.
+    // On, the connection string is unused — an account with shared-key access
+    // disabled has none — and AZURE_STORAGE_ACCOUNT_URL names the account.
+    useManagedIdentity: process.env.AZURE_STORAGE_USE_MANAGED_IDENTITY === 'true',
+    accountUrl: process.env.AZURE_STORAGE_ACCOUNT_URL ?? '',
   },
 
   s3: {

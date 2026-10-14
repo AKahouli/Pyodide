@@ -212,14 +212,14 @@ export function RootExecutionPolicyFields({
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{row.source}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-end">
                       {row.key.startsWith('a:') && (
                         <Select
                           disabled={readOnly}
                           value={overrideFor(row.agentId)}
                           onValueChange={(v) => setOverride(row.agentId, v as RootConfigurationMode)}
                         >
-                          <SelectTrigger className="ml-auto h-7 w-[180px] text-xs">
+                          <SelectTrigger className="ms-auto h-7 w-[180px] text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

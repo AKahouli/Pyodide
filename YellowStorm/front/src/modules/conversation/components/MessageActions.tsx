@@ -292,7 +292,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                       {citations.map((citation, index) => {
                         const label = getCitationEntryLabel(citation, tCommon('ai.citations.defaultSource'));
                         return (
-                          <button key={`${citation.source}-${index}`} type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent" onClick={() => void handleOpenSource(citation)} title={label}>
+                          <button key={`${citation.source}-${index}`} type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm hover:bg-accent" onClick={() => void handleOpenSource(citation)} title={label}>
                             {isUrlCitation(citation) ? <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                             <span className="min-w-0 flex-1 truncate">{label}</span>
                           </button>
@@ -316,15 +316,15 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem onClick={() => void handleExportDocx()} disabled={isExportingDocx}>
-                    <FileText className="h-3.5 w-3.5 mr-2" />
+                    <FileText className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportDocx')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleExportPdf}>
-                    <FileDown className="h-3.5 w-3.5 mr-2" />
+                    <FileDown className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportPdf')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleExportHtml}>
-                    <Globe className="h-3.5 w-3.5 mr-2" />
+                    <Globe className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportHtml')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -354,7 +354,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
           <DropdownMenuContent align="start">
             {canBranch && (
               <DropdownMenuItem onClick={handleBranch} disabled={isBranching}>
-                {isBranching ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <GitBranch className="h-3.5 w-3.5 mr-2" />}
+                {isBranching ? <Loader2 className="h-3.5 w-3.5 me-2 animate-spin" /> : <GitBranch className="h-3.5 w-3.5 me-2" />}
                 {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
               </DropdownMenuItem>
             )}
@@ -365,19 +365,19 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                 }}
                 disabled={isPreparingHandoff}
               >
-                {isPreparingHandoff ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <Workflow className="h-3.5 w-3.5 mr-2" />}
+                {isPreparingHandoff ? <Loader2 className="h-3.5 w-3.5 me-2 animate-spin" /> : <Workflow className="h-3.5 w-3.5 me-2" />}
                 {isPreparingHandoff ? t('messageActions.playbookPreparing') : t('messageActions.playbookHandoff')}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => setReportOpen(true)}>
-              <Flag className="h-3.5 w-3.5 mr-2" />
+              <Flag className="h-3.5 w-3.5 me-2" />
               {t('messageActions.report')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} conversationUsage={visibleUsage ?? undefined} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
         {visibleUsage && (
-          <span className="ml-auto inline-flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 px-1 text-[11px] font-medium text-muted-foreground sm:w-auto sm:shrink sm:flex-nowrap" aria-label={t('usage.summaryLabel')} data-conversation-usage-summary>
+          <span className="ms-auto inline-flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 px-1 text-[11px] font-medium text-muted-foreground sm:w-auto sm:shrink sm:flex-nowrap" aria-label={t('usage.summaryLabel')} data-conversation-usage-summary>
             <span className="whitespace-nowrap">{formatCompactTokenTotal(visibleUsage.tokens.total, language)}</span>
             {formattedCost && <span className="hidden xl:inline">· {formattedCost}</span>}
             {formattedCarbon && <span className="whitespace-nowrap">· {formattedCarbon}</span>}
@@ -385,7 +385,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
           </span>
         )}
         <div
-          className="ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground min-[1100px]:ml-0"
+          className="ms-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground min-[1100px]:ms-0"
           aria-label={t('messageActions.generationMetadata', {
             date: formattedCreatedAt,
             model: modelName,

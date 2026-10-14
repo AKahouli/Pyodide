@@ -147,7 +147,7 @@ function EditorSection({ title, children, defaultOpen = false, className, resetK
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className={`rounded-xl border bg-card ${className ?? ''}`}>
-        <CollapsibleTrigger className="flex h-auto w-full items-center justify-between rounded-xl px-4 py-3 text-left hover:bg-muted/40">
+        <CollapsibleTrigger className="flex h-auto w-full items-center justify-between rounded-xl px-4 py-3 text-start hover:bg-muted/40">
           <span className="text-sm font-semibold text-foreground">{title}</span>
           <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
         </CollapsibleTrigger>
@@ -1000,7 +1000,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
   const editorBody = (
     <>
-      <DialogHeader className={`border-b px-4 py-3 sm:px-6 sm:py-4 ${docked ? '' : 'pr-12 sm:pr-14'}`}>
+      <DialogHeader className={`border-b px-4 py-3 sm:px-6 sm:py-4 ${docked ? '' : 'pe-12 sm:pe-14'}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
                 {docked ? (
@@ -1024,7 +1024,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                     className="h-7 px-2 text-xs"
                     onClick={() => onViewResults(task.id)}
                   >
-                    <FileText className="mr-1.5 h-3.5 w-3.5" />
+                    <FileText className="me-1.5 h-3.5 w-3.5" />
                     {t('node.viewResults')}
                   </Button>
                 )}
@@ -1050,7 +1050,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                   </span>
                   {saveState === 'failed' && (
                     <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={retrySave}>
-                      <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                      <RotateCcw className="me-1.5 h-3.5 w-3.5" />
                       {t('nodeEditor.saveState.retry')}
                     </Button>
                   )}
@@ -1070,7 +1070,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
               <div className="mx-auto max-w-6xl space-y-4">
                 <div className="flex items-center gap-3">
                   <Button type="button" variant="ghost" size="sm" onClick={() => void closeReferenceSubview()}>
-                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    <ArrowLeft className="me-2 h-4 w-4" />
                     {t('nodeEditor.referenceBack')}
                   </Button>
                   <Badge variant="outline">{t('nodeEditor.replayVersionLabel', { version: editingReplay.validationVersion })}</Badge>
@@ -1120,8 +1120,8 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                             onClick={() => void regenerateReplayOutputFormat()}
                           >
                             {generatingReplayFormatId === editingReplay.id
-                              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                              : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+                              ? <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" />
+                              : <RotateCcw className="me-1.5 h-3.5 w-3.5" />}
                             {t('nodeEditor.referenceGenerateFormat')}
                           </Button>
                         </div>
@@ -1196,7 +1196,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
                 <div className="flex flex-wrap justify-between gap-2">
                   <Button type="button" variant="destructive" onClick={() => void deleteTaskReplay(playbookId!, task.id, editingReplay.id).then(() => handleReplayRemoved(editingReplay.id))}>
-                    <Trash2 className="mr-2 h-4 w-4" />
+                    <Trash2 className="me-2 h-4 w-4" />
                     {t('baselineBadge.remove')}
                   </Button>
                   <Button type="button" onClick={() => void closeReferenceSubview()}>{t('common.save')}</Button>
@@ -1465,14 +1465,14 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                             {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceFromExecution') : t('nodeEditor.evaluationBaselineSelectExecution')}
                           </Button>
                           <Button type="button" variant="outline" size="sm" disabled={creatingEvaluationBaseline || evaluationExecutions.length === 0} onClick={() => void handleCreateBaselineFromCurrentInputs()}>
-                            {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                            {creatingEvaluationBaseline ? <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" /> : null}
                             {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceCurrent') : t('nodeEditor.evaluationBaselineCurrent')}
                           </Button>
                           <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta} onClick={() => setViewBaselineDialogOpen(true)}>
                             {t('nodeEditor.evaluationBaselineView')}
                           </Button>
                           <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta || removingEvaluationBaseline} onClick={() => void handleRemoveBaseline()}>
-                            {removingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                            {removingEvaluationBaseline ? <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" /> : null}
                             {t('nodeEditor.evaluationBaselineRemove')}
                           </Button>
                         </div>
@@ -1542,7 +1542,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                           disabled={replaysLoading || !configurableReplay}
                           onClick={() => configurableReplay && openFormatGuideEditor(configurableReplay)}
                         >
-                          {replaysLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                          {replaysLoading ? <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" /> : null}
                           {t('nodeEditor.replayConfigureReference')}
                         </Button>
                       </div>
@@ -1818,7 +1818,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                               type="button"
                               aria-label={t('nodeEditor.removeRecipient', { email })}
                               onClick={() => removeEmail(email)}
-                              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                              className="ms-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
                             >
                               <span className="text-xs">x</span>
                             </button>
@@ -1920,7 +1920,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setBaselineExecutionDialogOpen(false)}>{t('common.cancel')}</Button>
             <Button type="button" disabled={!selectedBaselineExecutionId || creatingEvaluationBaseline} onClick={() => void handleCreateBaselineFromSelectedExecution()}>
-              {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {creatingEvaluationBaseline ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : null}
               {t('nodeEditor.evaluationBaselineConfirm')}
             </Button>
           </DialogFooter>
@@ -1985,7 +1985,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
               {t('nodeEditor.replayStaleKeep')}
             </Button>
             <Button variant="destructive" onClick={handleRemoveStaleReplay} disabled={removingStaleReplay}>
-              {removingStaleReplay && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {removingStaleReplay && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
               {t('nodeEditor.replayStaleRemove')}
             </Button>
           </AlertDialogFooter>

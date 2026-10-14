@@ -23,7 +23,7 @@ export function SelectedConnectorRepo() {
         <Button
           variant='ghost'
           size='sm'
-          className='h-auto p-0.5 ml-1 hover:bg-transparent'
+          className='h-auto p-0.5 ms-1 hover:bg-transparent'
           onClick={handleClear}
         >
           <X className='h-3.5 w-3.5 text-muted-foreground hover:text-foreground' />

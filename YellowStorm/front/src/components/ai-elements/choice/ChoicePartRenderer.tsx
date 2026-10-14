@@ -133,7 +133,7 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
               return <div key={field.key} className='break-words text-sm leading-relaxed'>
                 {value
                   ? (field.markdown
-                      ? <div className='space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5'><ReactMarkdown>{value}</ReactMarkdown></div>
+                      ? <div className='space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:ps-5 [&_ul]:list-disc [&_ul]:ps-5'><ReactMarkdown>{value}</ReactMarkdown></div>
                       : <p className='whitespace-pre-wrap'>{value}</p>)
                   : <span className='text-muted-foreground'>—</span>}
               </div>;
@@ -153,11 +153,11 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
     <div className={choice.presentation === 'quick_replies' ? 'flex flex-wrap gap-2' : 'flex flex-col gap-2'} role={choice.selectionMode === 'single' ? 'radiogroup' : 'group'}>
       {choice.options.map((option) => {
         const isSelected = selected.includes(option.id);
-        return <div key={option.id} className='flex items-center gap-2'><button type='button' disabled={disabled || option.disabled} onClick={() => toggle(option.id)} role={choice.selectionMode === 'single' ? 'radio' : 'checkbox'} aria-checked={isSelected} data-selected={isSelected} className={cn('min-h-11 flex-1 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}>
+        return <div key={option.id} className='flex items-center gap-2'><button type='button' disabled={disabled || option.disabled} onClick={() => toggle(option.id)} role={choice.selectionMode === 'single' ? 'radio' : 'checkbox'} aria-checked={isSelected} data-selected={isSelected} className={cn('min-h-11 flex-1 rounded-lg border px-3 py-2 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}>
           <span className='font-medium'>{option.label}</span>{option.description && <span className='mt-1 block text-sm text-muted-foreground'>{option.description}</span>}
         </button>{option.url ? <a href={option.url} target='_blank' rel='noopener noreferrer' className='text-sm text-primary underline underline-offset-4'>Open</a> : null}</div>;
       })}
-      {choice.otherOption?.enabled && <button type='button' disabled={disabled} onClick={toggleOther} role={choice.selectionMode === 'single' ? 'radio' : 'checkbox'} aria-checked={otherSelected} data-selected={otherSelected} data-other-option='true' className={cn('min-h-11 rounded-lg border px-3 py-2 text-left font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', otherSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}>
+      {choice.otherOption?.enabled && <button type='button' disabled={disabled} onClick={toggleOther} role={choice.selectionMode === 'single' ? 'radio' : 'checkbox'} aria-checked={otherSelected} data-selected={otherSelected} data-other-option='true' className={cn('min-h-11 rounded-lg border px-3 py-2 text-start font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60', otherSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border hover:bg-muted/60')}>
         {choice.otherOption.label}
       </button>}
     </div>

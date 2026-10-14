@@ -19,7 +19,7 @@ interface Props {
   showReliability: boolean;
 }
 
-const TH_BASE = 'px-2.5 py-2 text-left text-[10.5px] font-medium uppercase tracking-[0.07em] text-muted-foreground';
+const TH_BASE = 'px-2.5 py-2 text-start text-[10.5px] font-medium uppercase tracking-[0.07em] text-muted-foreground';
 const TD_BASE = 'px-2.5 py-[9px] align-middle';
 
 export function PlaybookTable({ vms, sort, dir, onSort, selected, onToggleSelect, actions, showReliability }: Props) {

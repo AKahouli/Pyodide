@@ -111,7 +111,7 @@ export function ConnectorReposDialog({ open, onOpenChange, connector, onReposito
           ) : repos.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">{t('connectors.noRepos') || 'No repositories found'}</div>
           ) : (
-            <ScrollArea className="h-[300px] pr-4">
+            <ScrollArea className="h-[300px] pe-4">
               <div className="space-y-2">
                 {repos.map((repo) => (
                   <div

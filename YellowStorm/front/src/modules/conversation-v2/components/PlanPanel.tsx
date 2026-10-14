@@ -68,7 +68,7 @@ export function PlanPanel({ steps }: PlanPanelProps) {
           type='button'
           onClick={() => setExpanded(true)}
           aria-expanded={false}
-          className='group/plan flex w-full items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2 text-left shadow-sm transition-colors hover:bg-accent/40'
+          className='group/plan flex w-full items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2 text-start shadow-sm transition-colors hover:bg-accent/40'
         >
           <div className='flex min-w-0 flex-1 items-center gap-2'>
             <StepDot status={allDone ? 'completed' : 'running'} />

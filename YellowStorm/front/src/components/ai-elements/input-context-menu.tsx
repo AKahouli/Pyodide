@@ -33,24 +33,24 @@ export function InputContextMenu({ children, onMentionAgent, onCreateAgent }: In
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className='w-48'>
         <ContextMenuItem onSelect={handleCut}>
-          <Scissors className='mr-2 h-4 w-4' />
+          <Scissors className='me-2 h-4 w-4' />
           {tCommon('context.cut')}
         </ContextMenuItem>
         <ContextMenuItem onSelect={handleCopy}>
-          <Copy className='mr-2 h-4 w-4' />
+          <Copy className='me-2 h-4 w-4' />
           {tCommon('context.copy')}
         </ContextMenuItem>
         <ContextMenuItem onSelect={handlePaste}>
-          <ClipboardPaste className='mr-2 h-4 w-4' />
+          <ClipboardPaste className='me-2 h-4 w-4' />
           {tCommon('context.paste')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={onMentionAgent}>
-          <AtSign className='mr-2 h-4 w-4' />
+          <AtSign className='me-2 h-4 w-4' />
           {tCommon('context.mentionAgent')}
         </ContextMenuItem>
         <ContextMenuItem onSelect={onCreateAgent}>
-          <Bot className='mr-2 h-4 w-4' />
+          <Bot className='me-2 h-4 w-4' />
           {tCommon('context.createAgent')}
         </ContextMenuItem>
       </ContextMenuContent>

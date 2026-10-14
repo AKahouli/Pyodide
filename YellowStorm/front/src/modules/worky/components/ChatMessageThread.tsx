@@ -115,7 +115,7 @@ export function ChatMessageThread({
             {threadItems.map((item) => (
               <article
                 key={item.message.id}
-                className={cn('min-w-0 max-w-full', item.message.role === 'owner' ? 'ml-8' : 'w-full')}
+                className={cn('min-w-0 max-w-full', item.message.role === 'owner' ? 'ms-8' : 'w-full')}
                 data-testid={`worky-message-${item.message.role}`}
               >
                 <div className='mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground'>

@@ -104,7 +104,7 @@ export function ManageConnectorsDialog({ open, onOpenChange, connectors, loading
               placeholder={t('connectors.searchPlaceholder') || 'Search connectors'}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className='pl-9'
+              className='ps-9'
             />
           </div>
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -135,7 +135,7 @@ export function ManageConnectorsDialog({ open, onOpenChange, connectors, loading
                 : t('input.noConnectors') || 'No connectors available'}
             </div>
           ) : (
-            <ScrollArea className='h-[440px] pr-3'>
+            <ScrollArea className='h-[440px] pe-3'>
               <div className='space-y-6'>
                 {groups.map((group) => (
                   <section key={group.key} className='space-y-2'>
@@ -182,9 +182,9 @@ export function ManageConnectorsDialog({ open, onOpenChange, connectors, loading
                               ) : (
                                 <Button size='sm' onClick={() => void connect(connector)} disabled={status.connecting}>
                                   {status.connecting ? (
-                                    <Loader2 className='mr-1.5 size-4 animate-spin' />
+                                    <Loader2 className='me-1.5 size-4 animate-spin' />
                                   ) : (
-                                    <Plug className='mr-1.5 size-4' />
+                                    <Plug className='me-1.5 size-4' />
                                   )}
                                   {t('connectors.connect') || 'Connect'}
                                 </Button>

@@ -31,7 +31,7 @@ export function WidgetLivePreview({ settings, title }: WidgetLivePreviewProps) {
             <p className="truncate text-sm font-semibold">{settings.identity.assistantTitle}</p>
             <p className="truncate text-xs opacity-80">{settings.identity.assistantSubtitle}</p>
           </div>
-          {settings.accessibility.enabled && settings.accessibility.showSettingsButton && <span className="ml-auto rounded-md border border-white/30 px-2 py-1 text-xs">{settings.labels.accessibilitySettings}</span>}
+          {settings.accessibility.enabled && settings.accessibility.showSettingsButton && <span className="ms-auto rounded-md border border-white/30 px-2 py-1 text-xs">{settings.labels.accessibilitySettings}</span>}
         </div>
         <div className="space-y-3 p-4" style={{ background: colors.background }}>
           {settings.identity.organizationName && <p className="text-xs font-medium uppercase tracking-wide" style={{ color: colors.mutedText }}>{settings.identity.organizationName}</p>}

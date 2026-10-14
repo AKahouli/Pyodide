@@ -310,7 +310,7 @@ export function SystemPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchStatus} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -436,12 +436,12 @@ export function SystemPage() {
                     <Button
                       variant="outline"
                       className={cn(
-                        'w-full sm:w-[240px] justify-start text-left font-normal',
+                        'w-full sm:w-[240px] justify-start text-start font-normal',
                         !selectedDate && 'text-muted-foreground'
                       )}
                       disabled={saving}
                     >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      <CalendarIcon className="me-2 h-4 w-4" />
                       {selectedDate ? format(selectedDate, 'PPP') : t('system.maintenance.endTime.pickDate')}
                     </Button>
                   </PopoverTrigger>
@@ -514,7 +514,7 @@ export function SystemPage() {
               <Button onClick={handleUpdateSettings} disabled={saving} className="w-full sm:w-auto">
                 {saving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
                     {t('system.maintenance.actions.updating')}
                   </>
                 ) : (
@@ -548,7 +548,7 @@ export function SystemPage() {
                 <Power className="h-4 w-4" />
                 <span className="font-medium">{t('system.maintenance.quickActions.quick30min.title')}</span>
               </div>
-              <span className="text-xs text-muted-foreground text-left">
+              <span className="text-xs text-muted-foreground text-start">
                 {t('system.maintenance.quickActions.quick30min.description')}
               </span>
             </Button>
@@ -567,7 +567,7 @@ export function SystemPage() {
                 <Power className="h-4 w-4" />
                 <span className="font-medium">{t('system.maintenance.quickActions.extended2hrs.title')}</span>
               </div>
-              <span className="text-xs text-muted-foreground text-left">
+              <span className="text-xs text-muted-foreground text-start">
                 {t('system.maintenance.quickActions.extended2hrs.description')}
               </span>
             </Button>
@@ -581,7 +581,7 @@ export function SystemPage() {
                 <RefreshCw className="h-4 w-4" />
                 <span className="font-medium">{t('system.maintenance.quickActions.clear.title')}</span>
               </div>
-              <span className="text-xs text-muted-foreground text-left">
+              <span className="text-xs text-muted-foreground text-start">
                 {t('system.maintenance.quickActions.clear.description')}
               </span>
             </Button>

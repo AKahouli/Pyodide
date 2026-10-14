@@ -460,30 +460,30 @@ function CompactCardBody({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => actions?.onEdit(id)}>
-              <Pencil className="mr-2 h-4 w-4" />
+              <Pencil className="me-2 h-4 w-4" />
               {t('nodeContextMenu.edit')}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={!canExecute} onClick={() => actions?.onExecuteStep(id)}>
-              <Play className="mr-2 h-4 w-4" />
+              <Play className="me-2 h-4 w-4" />
               {t('node.executeStep')}
             </DropdownMenuItem>
             {hasResults && (
               <DropdownMenuItem onClick={onViewResults}>
-                <FileText className="mr-2 h-4 w-4" />
+                <FileText className="me-2 h-4 w-4" />
                 {t('node.viewResults')}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => actions?.onClone(id)}>
-              <Copy className="mr-2 h-4 w-4" />
+              <Copy className="me-2 h-4 w-4" />
               {t('nodeContextMenu.clone')}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => actions?.onToggleEnabled(id)}>
-              <Power className="mr-2 h-4 w-4" />
+              <Power className="me-2 h-4 w-4" />
               {isEnabled ? t('node.disable') : t('node.enable')}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete(id)}>
-              <Trash2 className="mr-2 h-4 w-4" />
+              <Trash2 className="me-2 h-4 w-4" />
               {t('nodeContextMenu.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -1276,7 +1276,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                         <span className="truncate max-w-[80px]">{binding.connectorName || binding.connectorId}</span>
                         <button
                           type="button"
-                          className="ml-0.5 hover:text-red-500 transition-colors"
+                          className="ms-0.5 hover:text-red-500 transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
                             removeToolBindingFromTask(id, binding.id);
@@ -1303,7 +1303,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                         <span className="max-w-[80px] truncate">{binding.skillName || binding.skillId}</span>
                         <button
                           type="button"
-                          className="ml-0.5 transition-colors hover:text-red-500"
+                          className="ms-0.5 transition-colors hover:text-red-500"
                           onClick={(event) => {
                             event.stopPropagation();
                             removeSkillBindingFromTask(id, binding.id);

@@ -313,7 +313,7 @@ export function CollectionSidebar({
     <div className='flex min-h-0 min-w-0 flex-col rounded border'>
       <div className='flex shrink-0 items-center gap-2 border-b px-2 py-1.5 text-xs'>
         <span className='font-medium'>Pages visitées ({pages.length})</span>
-        <button type='button' className='ml-auto underline' onClick={onSelectAll}>Tout</button>
+        <button type='button' className='ms-auto underline' onClick={onSelectAll}>Tout</button>
         <span className='text-muted-foreground'>·</span>
         <button type='button' className='underline' onClick={onSelectNone}>Aucun</button>
       </div>

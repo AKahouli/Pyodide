@@ -33,7 +33,7 @@ function OutlineGroupSection({ group, activeAnchorId, onSelect, questionAriaLabe
               type='button'
               onClick={() => onSelect(`message-${group.questionId}`)}
               aria-label={`${questionAriaLabel}: ${group.questionText}`}
-              className='mb-1 flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/60'
+              className='mb-1 flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-start text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/60'
             >
               <HelpCircle className='mt-0.5 size-3.5 shrink-0 text-muted-foreground' aria-hidden='true' />
               <span className='line-clamp-2 min-w-0'>{group.questionText}</span>
@@ -55,7 +55,7 @@ function OutlineGroupSection({ group, activeAnchorId, onSelect, questionAriaLabe
                   data-active={active || undefined}
                   title={item.text}
                   onClick={() => onSelect(item.id)}
-                  className={cn('w-full truncate rounded-r-md border-l-2 py-1 pr-2 text-left text-xs transition-colors', active ? 'border-l-primary bg-muted/50 font-medium text-foreground' : 'border-l-transparent text-muted-foreground hover:text-foreground')}
+                  className={cn('w-full truncate rounded-r-md border-l-2 py-1 pe-2 text-start text-xs transition-colors', active ? 'border-l-primary bg-muted/50 font-medium text-foreground' : 'border-l-transparent text-muted-foreground hover:text-foreground')}
                   style={{ paddingLeft: `${(item.level - 1) * 10 + 8}px` }}
                 >
                   {item.text}
@@ -110,7 +110,7 @@ export function ConversationOutlineRail({ embedded = false, onSelect }: Readonly
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder={t('outline.searchPlaceholder')}
             aria-label={t('outline.searchPlaceholder')}
-            className='h-8 pl-8 text-xs'
+            className='h-8 ps-8 text-xs'
           />
         </div>
       )}

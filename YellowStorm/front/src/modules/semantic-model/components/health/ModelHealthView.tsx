@@ -159,8 +159,8 @@ function ConceptDetail({ concept, concepts, cause, onCause, canEdit, onAction }:
         <h1 className='text-xl font-semibold'>{concept.label}</h1>
         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[badge].badge}`}>{translate(`health.status.${badge}`)}</span>
         <span className='min-w-0 truncate text-sm text-muted-foreground' title={origin + key}>{origin}{key}</span>
-        <Button variant='ghost' size='sm' className='ml-auto' onClick={() => onAction({ kind: 'view_records', conceptId: concept.conceptId })}>
-          <Table2 className='mr-1.5 h-4 w-4' />{translate('health.seeData')}
+        <Button variant='ghost' size='sm' className='ms-auto' onClick={() => onAction({ kind: 'view_records', conceptId: concept.conceptId })}>
+          <Table2 className='me-1.5 h-4 w-4' />{translate('health.seeData')}
         </Button>
       </div>
       <div className='mt-4'><RowJourney concept={concept} /></div>

@@ -43,7 +43,7 @@ export function SearchableSelect({ options, value, onValueChange, placeholder = 
       <PopoverTrigger asChild>
         <Button ref={triggerRef} id={id} name={name} variant='outline' role='combobox' aria-expanded={open} aria-label={ariaLabel} aria-labelledby={ariaLabelledBy} className='w-full justify-between h-9 font-normal'>
           <span className={cn('truncate', !selectedOption && 'text-muted-foreground')}>{selectedOption ? selectedOption.label : placeholder}</span>
-          <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
+          <ChevronsUpDown className='ms-2 h-4 w-4 shrink-0 opacity-50' />
         </Button>
       </PopoverTrigger>
       <PopoverContent className='p-0' align='start' style={{ width: triggerWidth > 0 ? triggerWidth : undefined }}>
@@ -60,7 +60,7 @@ export function SearchableSelect({ options, value, onValueChange, placeholder = 
                     onValueChange(option.value);
                     setOpen(false);
                   }}>
-                  <Check className={cn('mr-2 h-4 w-4 shrink-0', value === option.value ? 'opacity-100' : 'opacity-0')} />
+                  <Check className={cn('me-2 h-4 w-4 shrink-0', value === option.value ? 'opacity-100' : 'opacity-0')} />
                   <div className='flex flex-col'>
                     <span className='text-sm'>{option.label}</span>
                     {option.description && <span className='text-xs text-muted-foreground'>{option.description}</span>}

@@ -60,6 +60,7 @@ function ColorThemeCard({ label, value, selected, onClick }: ColorThemeCardProps
 const LANGUAGE_KEYS: Record<Language, ModuleTranslationKey<'profile'>> = {
   en: 'appearance.language.options.en',
   fr: 'appearance.language.options.fr',
+  ar: 'appearance.language.options.ar',
 };
 
 export function AppearanceSection() {

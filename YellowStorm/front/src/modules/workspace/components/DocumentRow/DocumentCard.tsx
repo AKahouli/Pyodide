@@ -128,7 +128,7 @@ export const DocumentCard = memo(function DocumentCard({
               </>
             )}
           </div>
-          <div className='flex gap-0.5 shrink-0 ml-auto'>
+          <div className='flex gap-0.5 shrink-0 ms-auto'>
             {document.isFolder && (
               <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleUploadClick} disabled={isUploading}>
                 {isUploading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Upload className='h-3.5 w-3.5' />}
@@ -159,7 +159,7 @@ export const DocumentCard = memo(function DocumentCard({
             </Button>
           </div>
         </div>
-        <div className='flex items-center gap-2 mt-1.5 ml-6 pl-0.5 flex-wrap'>
+        <div className='flex items-center gap-2 mt-1.5 ms-6 ps-0.5 flex-wrap'>
           <span className='text-xs text-muted-foreground'>{document.isFolder ? '-' : formatFileSize(document.size)}</span>
           <Badge variant='outline' className='text-[10px] h-4 px-1.5'>
             {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}

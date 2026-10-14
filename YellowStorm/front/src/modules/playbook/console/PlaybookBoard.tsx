@@ -29,7 +29,7 @@ export function PlaybookBoard({ vms, actions }: { vms: PlaybookVM[]; actions: Pl
                   key={vm.id}
                   type="button"
                   onClick={() => actions.onOpen(vm)}
-                  className="rounded-lg border bg-card p-2.5 text-left shadow-sm transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-ring"
+                  className="rounded-lg border bg-card p-2.5 text-start shadow-sm transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-ring"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0 truncate text-[13px] font-medium" title={vm.name}>{vm.name}</span>

@@ -152,7 +152,7 @@ export function PlaybookStatusActions({
               <button
                 key={task.id}
                 type="button"
-                className="group flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group flex w-full items-start gap-2 rounded-md p-2 text-start hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
                   setReadinessOpen(false);
                   onUnconfiguredTaskSelect?.(task.id);
@@ -172,7 +172,7 @@ export function PlaybookStatusActions({
               <button
                 key={issue.id}
                 type="button"
-                className="group flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group flex w-full items-start gap-2 rounded-md p-2 text-start hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
                   setReadinessOpen(false);
                   onValidationIssueSelect?.(issue);
@@ -216,7 +216,7 @@ export function PlaybookStatusActions({
         title={saveLabel}
       >
         {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : isDirty ? <Save className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-        <span className="ml-1.5 hidden lg:inline">{saveLabel}</span>
+        <span className="ms-1.5 hidden lg:inline">{saveLabel}</span>
       </Button>
 
       {running ? (
@@ -229,7 +229,7 @@ export function PlaybookStatusActions({
           aria-label={isStopping ? t('toolbar.stopping') : t('toolbar.stop')}
         >
           {isStopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-          <span className="ml-1.5 hidden sm:inline">{isStopping ? t('toolbar.stopping') : t('toolbar.stop')}</span>
+          <span className="ms-1.5 hidden sm:inline">{isStopping ? t('toolbar.stopping') : t('toolbar.stop')}</span>
         </Button>
       ) : (
         <Button
@@ -240,7 +240,7 @@ export function PlaybookStatusActions({
           aria-label={t('toolbar.run')}
         >
           <Play className="h-4 w-4" />
-          <span className="ml-1.5 hidden sm:inline">{t('toolbar.run')}</span>
+          <span className="ms-1.5 hidden sm:inline">{t('toolbar.run')}</span>
         </Button>
       )}
     </div>
@@ -375,15 +375,15 @@ export function PlaybookToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          {showExecutionsAction && <DropdownMenuItem onClick={onViewExecutions}><History className="mr-2 h-4 w-4" />{t('toolbar.executions')}</DropdownMenuItem>}
-          {pageMode === 'design' && onOpenFlowSettings && <DropdownMenuItem onClick={onOpenFlowSettings}><Settings2 className="mr-2 h-4 w-4" />{t('flowSettings.title')}</DropdownMenuItem>}
-          {onEvaluation && <DropdownMenuItem onClick={onEvaluation}><BarChart3 className="mr-2 h-4 w-4" />{t('header.evaluation')}</DropdownMenuItem>}
-          {onClone && <DropdownMenuItem onClick={onClone}><Copy className="mr-2 h-4 w-4" />{t('header.clonePlaybook')}</DropdownMenuItem>}
-          {onShare && <DropdownMenuItem onClick={onShare}><Share2 className="mr-2 h-4 w-4" />{t('share.share')}</DropdownMenuItem>}
+          {showExecutionsAction && <DropdownMenuItem onClick={onViewExecutions}><History className="me-2 h-4 w-4" />{t('toolbar.executions')}</DropdownMenuItem>}
+          {pageMode === 'design' && onOpenFlowSettings && <DropdownMenuItem onClick={onOpenFlowSettings}><Settings2 className="me-2 h-4 w-4" />{t('flowSettings.title')}</DropdownMenuItem>}
+          {onEvaluation && <DropdownMenuItem onClick={onEvaluation}><BarChart3 className="me-2 h-4 w-4" />{t('header.evaluation')}</DropdownMenuItem>}
+          {onClone && <DropdownMenuItem onClick={onClone}><Copy className="me-2 h-4 w-4" />{t('header.clonePlaybook')}</DropdownMenuItem>}
+          {onShare && <DropdownMenuItem onClick={onShare}><Share2 className="me-2 h-4 w-4" />{t('share.share')}</DropdownMenuItem>}
           {(onDownloadAllResults || onImport || onExport) && <DropdownMenuSeparator />}
-          {onDownloadAllResults && <DropdownMenuItem onClick={onDownloadAllResults} disabled={!canDownloadAllResults}><Download className="mr-2 h-4 w-4" />{t('execution.downloadAllResults')}</DropdownMenuItem>}
-          {onImport && <DropdownMenuItem onClick={onImport}><Upload className="mr-2 h-4 w-4" />{t('toolbar.import')}</DropdownMenuItem>}
-          {onExport && <DropdownMenuItem onClick={onExport}><Download className="mr-2 h-4 w-4" />{t('toolbar.export')}</DropdownMenuItem>}
+          {onDownloadAllResults && <DropdownMenuItem onClick={onDownloadAllResults} disabled={!canDownloadAllResults}><Download className="me-2 h-4 w-4" />{t('execution.downloadAllResults')}</DropdownMenuItem>}
+          {onImport && <DropdownMenuItem onClick={onImport}><Upload className="me-2 h-4 w-4" />{t('toolbar.import')}</DropdownMenuItem>}
+          {onExport && <DropdownMenuItem onClick={onExport}><Download className="me-2 h-4 w-4" />{t('toolbar.export')}</DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

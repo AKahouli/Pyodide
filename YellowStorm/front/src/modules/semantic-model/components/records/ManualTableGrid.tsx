@@ -63,7 +63,7 @@ const GridRow = memo(function GridRow({ row, index, columns, selected, canEdit, 
       {canEdit && row.record && <input type='checkbox' checked={selected} aria-label={t('manualTable.selectRow', { row: index + 1 })} className='h-4 w-4 cursor-pointer accent-primary'
         onChange={(event) => handlers.select(index, Boolean((event.nativeEvent as MouseEvent).shiftKey))} />}
     </td>
-    <td className='w-12 border-b px-2 text-right text-xs tabular-nums text-muted-foreground'>{index + 1}</td>
+    <td className='w-12 border-b px-2 text-end text-xs tabular-nums text-muted-foreground'>{index + 1}</td>
     {columns.map((column, position) => <td key={column.id} className='border-b p-0'>
       <Cell value={cellText(row, column)} row={index} column={position} name={`${column.label} ${index + 1}`} canEdit={canEdit} handlers={handlers} />
     </td>)}
@@ -143,12 +143,12 @@ export function ManualTableGrid({ columns, rows, selected, canEdit, focusRequest
         <col style={{ width: 40 }} /><col style={{ width: 48 }} />
         {columns.map((column, position) => <col key={column.id} style={{ width: position === 0 ? NAME_WIDTH : FIELD_WIDTH }} />)}
       </colgroup>
-      <thead className='sticky top-0 z-10 bg-muted text-left text-xs font-semibold'>
+      <thead className='sticky top-0 z-10 bg-muted text-start text-xs font-semibold'>
         <tr>
           <th className='border-b px-2 py-2 text-center'>
             {canEdit && <input type='checkbox' checked={allSelected} aria-label={t('manualTable.selectAll')} className='h-4 w-4 cursor-pointer accent-primary' onChange={(event) => onSelectAll(event.target.checked)} />}
           </th>
-          <th className='border-b px-2 py-2 text-right text-muted-foreground'>#</th>
+          <th className='border-b px-2 py-2 text-end text-muted-foreground'>#</th>
           {columns.map((column) => <th key={column.id} className='truncate border-b px-2 py-2' title={column.label}>{column.label}</th>)}
         </tr>
       </thead>

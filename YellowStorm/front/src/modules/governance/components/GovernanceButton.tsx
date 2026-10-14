@@ -25,7 +25,7 @@ export const GovernanceButton = memo(function GovernanceButton({ label }: { labe
         </DropdownMenuTrigger>
         <DropdownMenuContent side='right' align='start'>
           <DropdownMenuItem onClick={goToGovernance} className='cursor-pointer'>
-            <Settings className='mr-2 h-4 w-4' />
+            <Settings className='me-2 h-4 w-4' />
             {t('button.manage')}
           </DropdownMenuItem>
         </DropdownMenuContent>

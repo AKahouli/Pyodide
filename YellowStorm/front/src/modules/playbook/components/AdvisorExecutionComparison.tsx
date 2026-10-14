@@ -146,8 +146,8 @@ function DimensionDelta({
         definition={t(`evaluationWorkspace.dimensionTooltip.${dimension}` as any)}
         className="min-w-0 text-xs font-medium"
       />
-      <span className={cn('text-right font-medium', scoreTone(leftScore))}>{formatPercent(leftScore, unavailableLabel)}</span>
-      <span className={cn('text-right font-medium', scoreTone(rightScore))}>{formatPercent(rightScore, unavailableLabel)}</span>
+      <span className={cn('text-end font-medium', scoreTone(leftScore))}>{formatPercent(leftScore, unavailableLabel)}</span>
+      <span className={cn('text-end font-medium', scoreTone(rightScore))}>{formatPercent(rightScore, unavailableLabel)}</span>
       <span className={cn(
         'inline-flex items-center justify-end gap-1 font-medium',
         delta === null || Math.abs(delta) < 0.5 ? 'text-muted-foreground' : delta > 0 ? 'text-emerald-600' : 'text-rose-600',
@@ -230,8 +230,8 @@ export function AdvisorExecutionComparison({ points, initialExecutionIds }: Read
         <div className="min-w-[540px]">
           <div className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] gap-2 border-b py-3 text-xs font-medium text-muted-foreground">
             <EvaluationDefinitionTooltip label={t('evaluationWorkspace.compare.metric' as any)} definition={t('evaluationWorkspace.tooltip.metric' as any)} />
-            <span className="text-right">{t('evaluationWorkspace.compare.leftColumn' as any)}</span>
-            <span className="text-right">{t('evaluationWorkspace.compare.rightColumn' as any)}</span>
+            <span className="text-end">{t('evaluationWorkspace.compare.leftColumn' as any)}</span>
+            <span className="text-end">{t('evaluationWorkspace.compare.rightColumn' as any)}</span>
             <EvaluationDefinitionTooltip label={t('evaluationWorkspace.compare.change' as any)} definition={t('evaluationWorkspace.tooltip.change' as any)} className="justify-end" />
           </div>
           {ADVISOR_SCORE_DIMENSIONS.map((dimension) => (

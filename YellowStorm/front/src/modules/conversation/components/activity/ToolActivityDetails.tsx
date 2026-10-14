@@ -49,7 +49,7 @@ function ToolPayload({ label, content, language, kind }: Readonly<{ label: strin
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
-        <button type='button' data-tool-payload-trigger={kind} className='group flex min-h-10 w-full items-center gap-2 px-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
+        <button type='button' data-tool-payload-trigger={kind} className='group flex min-h-10 w-full items-center gap-2 px-3 text-start text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
           <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
           {label}
         </button>
@@ -119,7 +119,7 @@ function ToolDetails({ conversationId, messageId, componentId, data, redactSensi
             <span className='shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.toolName')}</span>
             <span data-tool-full-name className='min-w-0 break-words text-sm font-medium text-foreground'>{fullToolName}</span>
           </div>
-          <div data-tool-detail-actions className='ml-auto flex shrink-0 items-center gap-2'>
+          <div data-tool-detail-actions className='ms-auto flex shrink-0 items-center gap-2'>
             {!isRunning && (
               <Dialog open={responseOpen} onOpenChange={setResponseOpen}>
                 <DialogTrigger asChild>
@@ -213,7 +213,7 @@ export function ToolRow({ conversationId, messageId, component, redactSensitiveT
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           {row}
         </button>
       </CollapsibleTrigger>

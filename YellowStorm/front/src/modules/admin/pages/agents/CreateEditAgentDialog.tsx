@@ -256,7 +256,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               </TabsList>
 
               <ScrollArea className='flex-1 min-h-0 mt-4'>
-                <div className='pr-4'>
+                <div className='pe-4'>
                   <TabsContent value='identity' forceMount className='mt-0 data-[state=inactive]:hidden'>
                     <div className='grid gap-4'>
                       <div className='space-y-2'>
@@ -386,7 +386,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                             {t('defaultAgents.form.genUiEnabled')}
                           </label>
                         </div>
-                        <p className='pl-6 text-xs text-muted-foreground'>{t('defaultAgents.form.genUiEnabledHint')}</p>
+                        <p className='ps-6 text-xs text-muted-foreground'>{t('defaultAgents.form.genUiEnabledHint')}</p>
                       </div>
 
                       <div className='space-y-2'>
@@ -522,7 +522,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               <Button type='submit' disabled={saving}>
                 {saving ? (
                   <>
-                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    <Loader2 className='me-2 h-4 w-4 animate-spin' />
                     {t('defaultAgents.form.actions.saving')}
                   </>
                 ) : agent ? (

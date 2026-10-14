@@ -132,7 +132,7 @@ export function ReadAllFieldsBar({ mappings, onApply, direct }: Readonly<{
     {choices.map((choice) => <Button key={choice} type='button' size='sm' variant={current === choice ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
       aria-pressed={current === choice} onClick={() => onApply(choice)}>
       {choice === 'direct'
-        ? <><Columns className='mr-1 h-3.5 w-3.5' />{t('mapping.cell.readAllDirect')}</>
+        ? <><Columns className='me-1 h-3.5 w-3.5' />{t('mapping.cell.readAllDirect')}</>
         : <><StrategyIcon strategy={choice} />{t(`mapping.strategy.${choice}`)}</>}
     </Button>)}
     {!current && <span className='text-xs text-muted-foreground'>{t('mapping.readAll.mixed')}</span>}
@@ -140,9 +140,9 @@ export function ReadAllFieldsBar({ mappings, onApply, direct }: Readonly<{
 }
 
 function StrategyIcon({ strategy }: Readonly<{ strategy: SourceExtractionStrategy }>) {
-  if (strategy === 'ai') return <Bot className='mr-1 h-3.5 w-3.5' />;
-  if (strategy === 'rules_then_ai') return <Sparkles className='mr-1 h-3.5 w-3.5' />;
-  return <ListChecks className='mr-1 h-3.5 w-3.5' />;
+  if (strategy === 'ai') return <Bot className='me-1 h-3.5 w-3.5' />;
+  if (strategy === 'rules_then_ai') return <Sparkles className='me-1 h-3.5 w-3.5' />;
+  return <ListChecks className='me-1 h-3.5 w-3.5' />;
 }
 
 /**
@@ -225,12 +225,12 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
   const optionsSummary = t(`mapping.rules.occurrenceOption.${rules?.occurrence ?? 'unique'}`) + (rules?.firstPageOnly ? ` · ${t('mapping.rules.firstPageShort')}` : '');
 
   return <div className='rounded-lg border border-dashed'>
-    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
+    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-start text-[11px] text-muted-foreground hover:bg-muted/50'
       aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
       {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
       <span className='shrink-0 font-medium text-foreground'>{t('mapping.rules.title')}</span>
       <span className='min-w-0 truncate'>{summary}</span>
-      {(problem || needsPattern || pagesError) && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
+      {(problem || needsPattern || pagesError) && <AlertTriangle className='ms-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
     </button>
     {open && <div id={id} className='border-t'>
       {location !== 'pages' && <RuleSection {...section('labels')} title={t('mapping.rules.labels')} icon={<Tag className='h-3.5 w-3.5' />}
@@ -243,7 +243,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
           <Input className='h-7 w-44 text-xs' value={draftLabel} placeholder={labels.length ? t('mapping.rules.addLabel') : fieldLabel}
             aria-label={t('mapping.rules.labels')} onChange={(event) => setDraftLabel(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addLabel(); } }} />
-          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftLabel.trim() || labels.length >= MAX_LABELS} onClick={() => addLabel()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
+          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftLabel.trim() || labels.length >= MAX_LABELS} onClick={() => addLabel()}><Plus className='me-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
         </div>
         {headingHint && location === 'auto' && <p role='status' className='flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-2 py-1.5 text-[11px] text-sky-800 dark:text-sky-300'>
           <Heading className='h-3.5 w-3.5 shrink-0' />
@@ -269,7 +269,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
           <Input id={`${id}-boundary`} className='h-7 w-44 text-xs' value={draftBoundary} maxLength={200} placeholder={t('mapping.rules.boundaryPlaceholder')}
             onChange={(event) => setDraftBoundary(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addBoundary(); } }} />
-          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={() => addBoundary()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
+          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={() => addBoundary()}><Plus className='me-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
         </div>}
 
         {location === 'pages' && <div className='space-y-1.5 pt-1'>
@@ -348,7 +348,7 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
     </div>}
     {suggestions.status === 'error' && <p role='alert' className='flex items-center gap-1.5 text-[11px] text-destructive'>
       <AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.suggestions.error')}
-      {suggestions.onRetry && <Button type='button' size='sm' variant='ghost' className='h-6 px-1.5 text-[11px]' onClick={suggestions.onRetry}><RefreshCw className='mr-1 h-3 w-3' />{t('action.retry')}</Button>}
+      {suggestions.onRetry && <Button type='button' size='sm' variant='ghost' className='h-6 px-1.5 text-[11px]' onClick={suggestions.onRetry}><RefreshCw className='me-1 h-3 w-3' />{t('action.retry')}</Button>}
     </p>}
     {suggestions.status === 'ready' && !available.length && <p className='text-[11px] text-muted-foreground'>
       {suggestions.labels.length ? t('mapping.suggestions.allAdded') : t('mapping.suggestions.empty')}
@@ -433,8 +433,8 @@ export function AiLimitsEditor({ defaults, value, onChange, folded }: Readonly<{
   const [open, setOpen] = useState(overridden && !folded);
   const effective = defaults ? { ...defaults, ...value } : undefined;
   return <div className='rounded-lg border'>
-    <div className='flex items-center gap-1 pr-2'>
-      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
+    <div className='flex items-center gap-1 pe-2'>
+      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-start text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? <ChevronDown className='h-4 w-4 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' />}
         <SlidersHorizontal className='h-4 w-4 shrink-0 text-muted-foreground' />
         <span className='shrink-0 font-medium'>{t('mapping.ai.title')}</span>
@@ -502,7 +502,7 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
         {found ? <CheckCircle2 className='h-3 w-3' /> : <AlertTriangle className='h-3 w-3' />}{method}
       </span>
     </div>
-    {found && reading.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline'
+    {found && reading.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-start text-[11px] text-primary hover:underline'
       onClick={() => onOpenQuote?.(reading.quote!, reading.page)}>
       <ExternalLink className='mt-0.5 h-3 w-3 shrink-0' /><span className='line-clamp-2'>{reading.page ? `${pageRange(t, reading.page, reading.pageEnd)} · ` : ''}{reading.column ? `${reading.column} · ` : ''}{reading.quote}</span>
     </button>}
