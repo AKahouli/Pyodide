@@ -69,7 +69,9 @@ existing ConversationArtifactService accepts only exact URLs referenced by that 
 It reuses GuardedUrlDownloaderService with connection-time public DNS validation on each redirect,
 proxy bypass disabled, a 15-second deadline and
 a 20 MiB streamed cap; only PNG/JPEG/WebP/GIF responses are returned as data URLs. Failed images
-stop export with a translated message. Exports allow 1–50 slides,
+stop export with a translated message. Wikimedia thumbnail discovery URLs use the canonical upload
+host with tracking-only parameters removed during export; saved answer URLs remain unchanged.
+Exports allow 1–50 slides,
 20 MiB per image, and a 60-second deadline; closing the preview cancels export and removes its stage.
 No new service or schema is introduced.
 

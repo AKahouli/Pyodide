@@ -93,6 +93,10 @@ async function inlineImages(stage: HTMLElement, signal: AbortSignal, fallback?: 
       try {
         const parsed = new URL(url, location.href);
         if (!['http:', 'https:', 'data:', 'blob:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('Invalid image URL');
+        if (parsed.hostname === 'thumb.wikimedia.org') {
+          parsed.hostname = 'upload.wikimedia.org';
+          for (const key of [...parsed.searchParams.keys()]) if (key === '_' || key.startsWith('utm_')) parsed.searchParams.delete(key);
+        }
         const response = await fetch(parsed.href, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
         const blob = await readImage(response, signal);
         return await new Promise<string>((resolve, reject) => {

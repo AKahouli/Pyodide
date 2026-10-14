@@ -108,6 +108,7 @@ export class GuardedUrlDownloaderService {
     const httpsAgent = options.pinDns ? new Agent({ lookup: publicAddressLookup }) : undefined;
     let currentUrl = url;
     const headers: Record<string, string> = {
+      'User-Agent': this.crawlUserAgent,
       ...this.pickIngestAuthHeaders(options.authHeaders),
     };
 

@@ -37,8 +37,13 @@ export class ConversationArtifactService {
     if (!this.imageDownloader) throw new ServiceUnavailableException(undefined, 'Image export unavailable');
     const parsed = new URL(url);
     if (parsed.username || parsed.password) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid image URL');
-    await this.imageDownloader.assertUrlIsSafe(url);
-    const image = await this.imageDownloader.download(url, { maxBytes: 20 * 1024 * 1024, deadlineMs: 15_000, pinDns: true });
+    if (parsed.hostname === 'thumb.wikimedia.org') {
+      parsed.hostname = 'upload.wikimedia.org';
+      for (const key of [...parsed.searchParams.keys()]) if (key === '_' || key.startsWith('utm_')) parsed.searchParams.delete(key);
+    }
+    const downloadUrl = parsed.href;
+    await this.imageDownloader.assertUrlIsSafe(downloadUrl);
+    const image = await this.imageDownloader.download(downloadUrl, { maxBytes: 20 * 1024 * 1024, deadlineMs: 15_000, pinDns: true });
     const type = String(image.headers['content-type'] ?? '').split(';')[0].toLowerCase();
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(type)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid image type');
