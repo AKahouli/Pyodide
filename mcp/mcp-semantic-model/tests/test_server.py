@@ -294,8 +294,9 @@ async def test_record_search_tools_tell_the_agent_how_to_read_results():
     assert "get_related_records" in find
     assert "passages" in find and "query_records" in find and "evidence" in find
     assert "provenance" in find and "documentId" in find and "filename" in find
+    assert "source-document retrieval guidance" in find and "freshly retrieved source-document content" in find
     assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related
-    assert "provenance" in related and "read_section" in related and "file_name" in related
+    assert "provenance" in related and "server instructions" in related
 
 
 @pytest.mark.asyncio
@@ -446,15 +447,17 @@ async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     describe = tools["describe_model"].description
     assert "exact totals" in query and "last_N_days" in query and "<relation>.<field>" in query
     assert "invalid_query" in query and "appliedQuery" in query and "unparsable" in query and "nextOffset" in query
-    assert "provenance" in query and "documentId" in query and "file_name" in query
+    assert "provenance" in query and "source-document guidance" in query
     assert "first" in describe and "type" in describe and "inData" in describe
     assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
-    assert "search_relevant_documents" in server.INSTRUCTIONS and "search_sections" in server.INSTRUCTIONS
-    assert "workspaceId" in server.INSTRUCTIONS and "filename" in server.INSTRUCTIONS
+    assert "list_workspace_files(source_workspace_id=workspaceId)" in server.INSTRUCTIONS
+    assert "declared by the connected tool" in server.INSTRUCTIONS and "Freshly retrieved source-document text" in server.INSTRUCTIONS
     assert "traverse_records" in server.INSTRUCTIONS and "connect_records" in server.INSTRUCTIONS
     walk = tools["traverse_records"].description
     assert "step" in walk and "hops" in walk and "startRecords" in walk and "complete" in walk
+    assert "provenance" in walk and "source-document guidance" in walk
     assert "search_cut" in tools["connect_records"].description
+    assert "provenance" in tools["connect_records"].description
     assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS
 
 

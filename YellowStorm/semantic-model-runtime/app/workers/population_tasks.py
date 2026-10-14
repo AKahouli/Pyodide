@@ -769,9 +769,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                   lambda name, raw=raw: resolve_column(name, raw))
                         output = populate_concept_rows(
                             concept, rows, {"assetRef": asset_ref,
-                                           "mappingVersion": entry["mappingVersion"],
-                                           "labelField": entry.get("labelField"),
-                                           "constantFields": list(constants)}, observer=sheet_health)
+                                            "mappingVersion": entry["mappingVersion"],
+                                            "labelField": entry.get("labelField"),
+                                            "filename": source.get("originalName"),
+                                            "constantFields": list(constants)}, observer=sheet_health)
                         # A value read out of a cell keeps where it was found: row, column and span.
                         for assertion in output["assertions"]:
                             item = assertion["evidence"].get("item")

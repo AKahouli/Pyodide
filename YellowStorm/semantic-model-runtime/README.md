@@ -61,12 +61,14 @@ model that was populated before.
 Semantic record search and relationship reads return existing source provenance.
 Each source reference retains its `workspaceId` and compatible `assetId`, exposes
 `documentId` as the corresponding document handle, and includes `filename` when
-the source is a mapped document. Derived and merged records carry the deduplicated
+the source provides `originalName` (including workspace/tabular sources). Derived and merged records carry the deduplicated
 references of their source records. `query_records` includes the same provenance
 on each returned record; grouped aggregate results have no record rows. MCP
-document connectors can use `workspaceId` as their workspace scope and
-`filename` as `file_name` for `search_sections` or `read_section`; when a declared
-tool accepts `document_id`, `documentId` is the handle (`assetId` remains an alias).
+document connectors should use only declared tool arguments: map `workspaceId` to
+a declared workspace scope, `filename` to `file_name` when accepted, and
+`documentId` to `document_id` only when accepted (`assetId` remains an alias). If
+legacy provenance omits `filename`, resolve it with
+`list_workspace_files(source_workspace_id=workspaceId)` and match the returned file.
 `AssetRef` itself remains unchanged.
 
 Feature switches default off:

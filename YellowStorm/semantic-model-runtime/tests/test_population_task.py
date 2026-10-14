@@ -172,7 +172,9 @@ def fake_query(path, *, columns=None, filters=None, limit=100, offset=0) -> dict
 
 @pytest.mark.asyncio
 async def test_task_populates_from_prepared_rows():
-    outcome = await run_population_for_task(command(), fetch=fake_fetch,
+    cmd = command()
+    cmd["payload"]["sources"][0]["source"]["originalName"] = "customers.csv"
+    outcome = await run_population_for_task(cmd, fetch=fake_fetch,
                                             prepare=fake_prepare, query=fake_query)
     assert outcome["ok"] is True
     assert outcome["jobState"] == "completed"
@@ -181,6 +183,8 @@ async def test_task_populates_from_prepared_rows():
     assert {a["attribute"] for a in outcome["assertions"]} == {"name"}
     assert outcome["relationships"] == []
     assert outcome["sourceObservations"][0]["datasetId"] == "ds_0123456789abcdef01234567"
+    assert {source["filename"] for entity in outcome["entities"]
+            for source in entity["provenance"]["sources"]} == {"customers.csv"}
 
 
 @pytest.mark.asyncio
