@@ -10,6 +10,9 @@ import { PgUserLookupAdapter } from './adapters/pg-user-lookup.adapter';
 import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
 import { USER_STORE } from './persistence/user.store';
 import { PgUserStore } from './persistence/pg-user.store';
+import { USER_INVITATION_STORE } from './persistence/user-invitation.store';
+import { PgUserInvitationStore } from './persistence/pg-user-invitation.store';
+import { UserInvitationService } from './user-invitation.service';
 
 @Module({
   imports: [
@@ -21,17 +24,22 @@ import { PgUserStore } from './persistence/pg-user.store';
   providers: [
     UserService,
     RegistrationApprovalService,
+    UserInvitationService,
     PgUserLookupAdapter,
     { provide: USER_LOOKUP_PORT, useExisting: PgUserLookupAdapter },
     { provide: USER_STORE, useClass: PgUserStore },
     PgUserStore,
+    { provide: USER_INVITATION_STORE, useClass: PgUserInvitationStore },
+    PgUserInvitationStore,
   ],
   exports: [
     UserService,
     RegistrationApprovalService,
+    UserInvitationService,
     PgUserLookupAdapter,
     USER_LOOKUP_PORT,
     USER_STORE,
+    USER_INVITATION_STORE,
   ],
 })
 export class UserModule {}
