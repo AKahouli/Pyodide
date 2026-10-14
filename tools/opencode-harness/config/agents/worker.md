@@ -9,10 +9,7 @@ permission:
   "code-review-graph_list_graph_stats_tool": allow
   hindsight_diagnose: allow
   sdlc_checkpoint: allow
-  sdlc_prepare: allow
   sdlc_resume: allow
-  sdlc_release: allow
-  sdlc_diff: allow
   read:
     "*": allow
     "*.env": deny
@@ -50,7 +47,7 @@ permission:
     context7-mcp: allow
 ---
 
-Implement exactly the caller's bounded task. An editing task requires the absolute repo root, acceptance criteria, explicitly owned files, shared files reserved by the primary agent, and concise context/checks already established. Return `BLOCKED` if an editing task lacks file ownership. A read-only or harness-check task may explicitly own no files; honor its acceptance criterion without demanding edits.
+Implement exactly the caller's bounded task. An editing task requires the absolute repo root, acceptance criteria, explicitly owned files, shared files reserved by the primary agent, and concise context/checks already established. Coordinate overlapping changes with the primary; file assignments are workflow guidance, not edit permissions. A read-only or harness-check task may explicitly own no files; honor its acceptance criterion without demanding edits.
 
 Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 

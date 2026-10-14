@@ -11,9 +11,7 @@ permission:
   "code-review-graph_list_graph_stats_tool": allow
   hindsight_diagnose: allow
   sdlc_checkpoint: allow
-  sdlc_prepare: allow
   sdlc_resume: allow
-  sdlc_diff: allow
   read:
     "*": allow
     "*.env": deny
@@ -47,7 +45,7 @@ The caller supplies the absolute root/branch, checkpoint task ID, exact owned do
 - Assess the root context index, feature index and affected subfolder indexes on every update. New/renamed/removed records or changed scope require matching rows and inbound links. Preserve unrelated pages and current branch evidence. Edit shared indexes only with explicit ownership; otherwise return exact pending changes to the primary. An unchanged index needs a specific reason.
 - Before returning, compare updated feature pages with the template and check local links. Report format/index/link results and pending work; do not claim documentary completeness from a successful write alone.
 
-- Reuse supplied source evidence; verify only claims that need confirmation. Before editing, reuse a current index Read receipt in this child session if present; otherwise Read the relevant index section even when the owning record is known, as the native preparation gate requires it. Do not re-explore the feature or rerun verification.
+- Reuse supplied source evidence; verify only claims that need confirmation. Read relevant index sections and supplied sources as needed; there is no mandatory read receipt or preparation tool. Do not re-explore the feature or rerun verification.
 - Patch the owning record, or add the smallest new record and index entry. Supersede an accepted ADR with a new ADR; preserve the original.
 - Update affected feature behavior even when architecture is unchanged. Link reusable implementation/tests without copying code-owned definitions. Use supplied stable evidence, exclude unrelated dirty changes and label unverified behavior. If inputs change during your task, return stale evidence for reconciliation.
 - For changed boundaries, ownership, persistence, contracts, runtime/deployment or security constraints, update the owning architecture reference as well as any changed decision's ADR. Link source/contracts and verification; report module README/scoped instruction/diagram updates outside your permission scope to `build` as remaining work.

@@ -1,6 +1,6 @@
 import { tool } from '@opencode-ai/plugin/tool';
 import path from 'node:path';
-import { openHarness, editTargets } from '../lib/sdlc-core.mjs';
+import { openHarness } from '../lib/sdlc-core.mjs';
 import { probeStartup, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
 function requireBackgroundMaintainer(input, output) {
@@ -10,7 +10,7 @@ function requireBackgroundMaintainer(input, output) {
 }
 
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-13-background-handoff';
+  const harnessVersion = '2026-10-14-advisory-checkpoints';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
@@ -38,12 +38,12 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     notices.set(report.sessionID, signature);
     const message = `${healthLine(report)} ${failures.map(key => report[key].action).join(' ')}`;
     console.error(`[SDLC startup ${report.sessionID}] ${message}`);
-    const blocked = failures.includes('checkpoints');
+    const blocked = false;
     try { await client?.tui?.showToast({ body: { title: blocked ? 'OpenCode checkpoint protection unavailable' : 'OpenCode integration warning — coding can continue', message, variant: blocked ? 'error' : 'warning', duration: 12000 } }); } catch { /* System context and stderr retain the failure if the UI is unavailable. */ }
   };
   const persist = (sessionID, report) => {
     try { return harness ? harness.health(sessionID, report) : { ...report, sessionID }; }
-    catch { return { ...report, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Repair checkpoint storage/ownership and retry sdlc_health.' } }; }
+    catch { return { ...report, sessionID, checkpoints: { status: 'FAIL', reason: 'Checkpoint write/read verification failed.', action: 'Checkpoint memory unavailable; continue coding and retry sdlc_health after recovery.' } }; }
   };
   const check = async (sessionID, refresh = false) => {
     if (refresh) startup.delete(sessionID);
@@ -72,7 +72,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     startup.set(sessionID, next);
     const updated = await next; await notify(updated); return updated;
   };
-  const startupText = report => `${healthLine(report)} ${['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')} Graph/Hindsight failures are advisory: continue coding with focused source/tests and Git docs/checkpoints. Checkpoint storage and edit ownership remain enforced. Policy and reporting follow AGENTS.md.`;
+  const startupText = report => `${healthLine(report)} ${['graph', 'hindsight', 'checkpoints'].filter(key => report[key].status !== 'PASS').map(key => `${key}: ${report[key].reason} ${report[key].action}`).join(' ')} Graph/Hindsight failures are advisory: continue coding with focused source/tests and Git docs/checkpoints. Checkpoint failures are advisory and do not block editing. Policy and reporting follow AGENTS.md.`;
   const healthTool = tool({ description: 'Read automatic per-session graph/memory/checkpoint health. Optional status/recovery tool, not required for normal startup. refresh:true retries after failure recovery. Cannot manufacture PASS.', args: { refresh: tool.schema.boolean().optional() }, execute: async (args, context) => JSON.stringify(await check(context.sessionID, args.refresh)) });
   if (!harness) return {
     tool: { sdlc_health: healthTool },
@@ -80,13 +80,10 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     'experimental.chat.system.transform': async (input, output) => { if (input.sessionID) output.system.push(startupText(await check(input.sessionID))); },
     'tool.execute.before': async (input, output) => {
       requireBackgroundMaintainer(input, output);
-      if (['edit', 'write', 'apply_patch', 'multiedit'].includes(input.tool)) throw new Error('SDLC startup: checkpoint integration unavailable for this current root. Use native investigation tools and sdlc_health to diagnose; repair the reported setup before source edits. Shell commands use native OpenCode permissions.');
     },
     event: async ({ event }) => { if (event.type === 'session.created' && event.properties?.info?.id) await check(event.properties.info.id); },
   };
-  const pendingReads = new Map();
   const resumeNotices = new Map();
-  const nativePath = filename => path.resolve(directory, filename);
   const z = tool.schema;
   const strings = z.array(z.string().max(1000)).max(20);
   const report = value => JSON.stringify(value);
@@ -94,7 +91,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     tool: {
       sdlc_health: healthTool,
       sdlc_checkpoint: tool({
-        description: 'Persist compact task intent/progress before work and at milestones. Store non-secret references only. PASS checks need their relevant input files. Ready/completed releases file claims.',
+        description: 'Persist compact task intent/progress before work and at milestones. Store non-secret references only. PASS checks need their relevant input files. Editing never requires a checkpoint.',
         args: {
           newTask: z.boolean().optional(),
           goal: z.string().max(1000).optional(), acceptance: z.array(z.string().max(400)).max(5).optional(), decisions: z.array(z.string().max(400)).max(8).optional(), completed: z.array(z.string().max(400)).max(10).optional(), pending: z.array(z.string().max(300)).max(8).optional(), blockers: z.array(z.string().max(300)).max(5).optional(), nextAction: z.string().max(1000).optional(), phase: z.string().max(200).optional(),
@@ -105,13 +102,8 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         },
         execute: async (args, context) => report(harness.checkpoint(context.sessionID, args)),
       }),
-      sdlc_prepare: tool({
-        description: 'Before source/document edits, verify read evidence and reserve exact disjoint targets. Read the context index, route guideline, and closest existing code/record first. Explain reuse; new code without a candidate needs prior search and a reason.',
-        args: { targets: strings, documents: strings, sources: strings, reuseDecision: z.string().max(1500), newCodeReason: z.string().max(1000).optional() },
-        execute: async (args, context) => report(harness.prepare(context.sessionID, args)),
-      }),
       sdlc_resume: tool({
-        description: 'List unfinished tasks or transfer one parked/interrupted task to this session. A current task must first be completed or cancelled. Never guess among multiple tasks. Transfer invalidates context-read receipts and checks changed input fingerprints.',
+        description: 'List unfinished tasks or create an independent continuation in this session. Current and source tasks are preserved. Never guess among multiple tasks. Transfer invalidates context-read receipts and checks changed input fingerprints.',
         args: { taskID: z.string().optional() },
         execute: async (args, context) => {
           const result = args.taskID ? harness.resume(context.sessionID, args.taskID) : harness.list(context.sessionID);
@@ -119,20 +111,9 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
           return report(result);
         },
       }),
-      sdlc_release: tool({
-        description: 'Release exact file claims from a dead task process without taking over its goal. Refuses live owners and interrupted edits; preserves the old task for later reconciliation. Re-read files and prepare before editing.',
-        args: { taskID: z.string(), files: strings },
-        execute: async (args, context) => report(harness.release(context.sessionID, args.taskID, args.files)),
-      }),
-      sdlc_diff: tool({
-        description: 'Read the task-scoped baseline diff for one owned file, excluding pre-existing changes. Local baselines are not copied into experience memory. Output is bounded; request individual files.',
-        args: { file: z.string(), taskID: z.string().optional() },
-        execute: async (args, context) => report(harness.diff(context.sessionID, args.file, args.taskID)),
-      }),
     },
     'chat.message': async (input, output) => {
       await check(input.sessionID);
-      harness.state(input.sessionID);
       const message = output.parts.filter(part => part.type === 'text' && !part.synthetic).map(part => part.text).join('\n');
       if (!message) return;
       try {
@@ -146,7 +127,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     'experimental.chat.system.transform': async (input, output) => {
       if (!input.sessionID) return;
       output.system.push(startupText(await check(input.sessionID)));
-      const state = harness.summary(input.sessionID);
+      let state; try { state = harness.summary(input.sessionID); } catch { output.system.push("Checkpoint memory unavailable; continue normal coding."); return; }
       const compact = { ...state, initialChanges: { available: state.initialChanges.available, count: state.initialChanges.count, paths: state.initialChanges.paths.slice(0, 12), truncated: state.initialChanges.truncated || state.initialChanges.count > 12, action: state.initialChanges.action }, completed: state.completed.slice(-3), decisions: state.decisions.slice(-3), checks: state.checks.slice(-6), pending: state.pending.slice(-5) };
       output.system.push(`SDLC checkpoint evidence (state only; workflow instructions are in AGENTS.md): ${report(compact)}`);
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
@@ -157,28 +138,9 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         await check(input.sessionID);
         observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });
       }
-      const targets = editTargets(input.tool, output.args);
-      if (targets) {
-        if (!targets.length || targets.some(target => !target)) throw new Error('SDLC: edit targets could not be established.');
-        harness.beforeEdit(input.sessionID, targets.map(nativePath), input.callID);
-      }
-      if (/chrome.devtools.*(?:take_screenshot|take_snapshot|performance_stop_trace)/.test(input.tool) && output.args.filePath) {
-        const target = path.relative(harness.root, nativePath(output.args.filePath)).split(path.sep).join('/');
-        if (!target.startsWith('qa-artifacts/')) throw new Error('SDLC: explicit browser evidence files must stay under qa-artifacts/, never source paths.');
-      }
-      if (input.tool === 'read' && output.args.filePath) {
-        try { const filename = nativePath(output.args.filePath); pendingReads.set(input.callID, { filename, hash: harness.fingerprint(filename) }); } catch { /* Non-source/directory/secret reads do not establish reuse evidence. */ }
-      }
-    },
-    'tool.execute.after': async (input, output) => {
-      const read = pendingReads.get(input.callID);
-      pendingReads.delete(input.callID);
-      if (read) harness.noteRead(input.sessionID, read.filename, read.hash);
-      if (input.tool === 'grep' || input.tool === 'glob' || /code.review.graph.*(?:query|search|context)/.test(input.tool)) harness.search(input.sessionID);
-      if (['edit', 'write', 'apply_patch', 'multiedit'].includes(input.tool)) harness.afterEdit(input.sessionID, input.callID);
     },
     'experimental.session.compacting': async (input, output) => {
-      output.context.push(`Preserve this SDLC task checkpoint and exact next action: ${report(harness.summary(input.sessionID))}`);
+      try { output.context.push(`Preserve this SDLC task checkpoint and exact next action: ${report(harness.summary(input.sessionID))}`); } catch { /* Checkpoint memory is advisory. */ }
     },
     event: async ({ event }) => {
       if (event.type === 'session.created' && event.properties?.info?.id) { await check(event.properties.info.id); return; }
@@ -191,7 +153,6 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         }
         if (event.type === 'session.idle') harness.park(sessionID);
         if (event.type === 'session.error') harness.park(sessionID, 'interrupted');
-        if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error') harness.editFailed(sessionID, part.callID);
         if (event.type === 'message.part.updated' && part?.type === 'tool' && part.state?.status === 'error' && (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(part.tool) || part.tool === 'hindsight_diagnose')) {
           const observed = observedCalls.get(part.callID);
           observedCalls.delete(part.callID);
@@ -200,7 +161,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
         }
       } catch (error) {
         // Transferred old sessions cannot mutate their new owner's checkpoint.
-        if (!/moved to session|another live/.test(error.message)) throw error;
+        console.error('[SDLC] Checkpoint update unavailable; coding can continue.');
       }
     },
     dispose: async () => harness.close(),

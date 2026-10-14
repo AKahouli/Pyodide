@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const terminal = new Set(['completed', 'cancelled']);
@@ -52,6 +51,7 @@ export async function openHarness(directory, options = {}) {
         CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, task TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS claims(path TEXT PRIMARY KEY, task TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS baselines(task TEXT NOT NULL, path TEXT NOT NULL, content BLOB, fingerprint TEXT, PRIMARY KEY(task,path));
+        DELETE FROM claims;
         COMMIT;`);
       db.exec('PRAGMA busy_timeout=5000;');
       break;
@@ -143,16 +143,22 @@ export async function openHarness(directory, options = {}) {
     return binding ? taskById(binding.task) : create(sessionID);
   };
   const owned = sessionID => {
-    const task = ensure(sessionID);
-    if (task.sessionID !== sessionID) throw new Error(`Task ${task.id} moved to session ${task.sessionID}; continue there.`);
-    if (task.owner.token !== owner && alive(task.owner.pid)) throw new Error(`Task ${task.id} is owned by another live OpenCode process.`);
-    if (task.owner.token !== owner) {
-      task.recovery = { interruptedOperation: task.inFlight, needsReconciliation: true };
-      task.inFlight = null;
-      task.reads = {};
-      task.prepared = {};
-    }
+    let task = ensure(sessionID);
+    if (task.sessionID !== sessionID) task = continuation(sessionID, task);
     task.owner = { pid, token: owner };
+    return task;
+  };
+  const continuation = (sessionID, source, startupHealth) => {
+    const task = create(sessionID, `${sessionID}-${randomUUID().slice(0, 8)}`);
+    for (const key of ['goal', 'acceptance', 'decisions', 'completed', 'checks', 'pending', 'blockers', 'nextAction', 'execution', 'phase', 'qa']) {
+      if (source[key] !== undefined) task[key] = structuredClone(source[key]);
+    }
+    task.checks = invalidateChecks(source);
+    task.status = 'active';
+    task.recovery = { resumedFrom: source.id, previousSession: source.sessionID, needsReconciliation: true, interruptedOperation: source.inFlight ?? null };
+    task.startupHealth = startupHealth;
+    if (task.qa) task.qa.runtimeVerified = false;
+    save(task);
     return task;
   };
   const invalidateChecks = task => {
@@ -203,7 +209,6 @@ export async function openHarness(directory, options = {}) {
       return transaction(() => {
         let task = owned(sessionID);
         if (input.newTask) {
-          if (task.inFlight) throw new Error('Finish the in-flight edit before starting another task.');
           if (!terminal.has(task.status) && task.status !== 'ready') task.status = 'waiting';
           save(task);
           const startupHealth = task.startupHealth;
@@ -218,184 +223,28 @@ export async function openHarness(directory, options = {}) {
           return { name: check.name, status: check.status, files, fingerprints: Object.fromEntries(files.map(file => [file, fileHash(file)])), head: identity().head };
         });
         if (terminal.has(task.status) || task.status === 'ready') {
-          query('DELETE FROM claims WHERE task=?').run(task.id);
           task.prepared = {};
         }
         save(task);
         return { taskID: task.id, status: task.status, saved: true };
       });
     },
-    noteRead(sessionID, filename, expectedHash) {
-      return transaction(() => {
-        const task = owned(sessionID);
-        const file = relative(filename);
-        const current = fileHash(file);
-        if (current && current === expectedHash) task.reads[file] = current;
-        save(task);
-      });
-    },
-    fingerprint(filename) { return fileHash(relative(filename)); },
-    search(sessionID) { transaction(() => { const task = owned(sessionID); task.searches++; save(task); }); },
-    prepare(sessionID, input) {
-      redactCheck(input);
-      return transaction(() => {
-        const task = owned(sessionID);
-        if (!task.goal || !task.acceptance.length || !task.nextAction) throw new Error('Call sdlc_checkpoint with goal, acceptance criteria and nextAction first.');
-        const targets = input.targets.map(relative);
-        if (!targets.length) throw new Error('Specify exact owned edit targets.');
-        const documents = input.documents.map(relative);
-        const sources = input.sources.map(relative);
-        const required = new Set([relative(policy.documentationIndex)]);
-        for (const target of targets) for (const route of policy.documentationRoutes) {
-          if (target.startsWith(relative(route.prefix + '__route_marker__').replace(/__route_marker__$/, ''))) required.add(relative(route.document));
-        }
-        for (const document of required) if (!documents.includes(document)) throw new Error(`Read and include required documentation: ${document}`);
-        for (const file of [...documents, ...sources]) {
-          const current = fileHash(file);
-          if (!current || task.reads[file] !== current) throw new Error(`Use Read on current relevant sections before preparing: ${file}`);
-        }
-        if (!input.reuseDecision?.trim()) throw new Error('Explain the closest implementation/record and how it will be reused.');
-        if (!sources.length && !(task.searches > 0 && input.newCodeReason?.trim())) throw new Error('Read an existing reuse candidate; if none exists, search first and explain why new code is necessary.');
-        const evidence = Object.fromEntries([...documents, ...sources].map(file => [file, fileHash(file)]));
-        for (const file of targets) {
-          const current = fileHash(file);
-          if (current && task.reads[file] !== current) throw new Error(`Read the existing target before editing: ${file}`);
-          const claim = query('SELECT task FROM claims WHERE path=?').get(file);
-          if (claim && claim.task !== task.id) {
-            const previous = taskById(claim.task);
-            if (previous && !alive(previous.owner.pid) && !previous.inFlight) throw new Error(`File ${file} belongs to task ${claim.task}, whose process has stopped. Call sdlc_release(taskID: "${claim.task}", files: ["${file}"]), then Read and prepare again.`);
-            throw new Error(`File ${file} belongs to task ${claim.task}; coordinate with its live owner or resume its interrupted edit.`);
-          }
-          task.prepared[file] = { expected: fileHash(file), evidence, reuseDecision: input.reuseDecision, newCodeReason: input.newCodeReason ?? '' };
-          const baseline = query('SELECT fingerprint FROM baselines WHERE task=? AND path=?').get(task.id, file);
-          if (baseline && current !== (task.files[file] ?? baseline.fingerprint)) task.reviewGaps = [...new Set([...(task.reviewGaps ?? []), file])];
-          if (!baseline) {
-            const content = existsSync(path.join(root, file)) ? readFileSync(path.join(root, file)) : null;
-            if (content && content.length > 2 * 1024 * 1024) throw new Error('Edit target is larger than the 2 MB local baseline limit. Split the task or use a dedicated artifact workflow.');
-            query('INSERT INTO baselines(task,path,content,fingerprint) VALUES(?,?,?,?)').run(task.id, file, content ? gzipSync(content) : null, current);
-          }
-          query('INSERT INTO claims(path,task) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET task=excluded.task').run(file, task.id);
-        }
-        task.status = 'active';
-        save(task);
-        return { taskID: task.id, prepared: targets, evidenceVerified: true };
-      });
-    },
-    beforeEdit(sessionID, filenames, callID) {
-      return transaction(() => {
-        const task = owned(sessionID);
-        if (terminal.has(task.status)) throw new Error('Task is completed/cancelled; start a new task before editing.');
-        const files = filenames.map(relative);
-        for (const file of files) {
-          const prepared = task.prepared[file];
-          if (!prepared) throw new Error(`Before editing ${file}, read relevant docs/code and call sdlc_prepare with a reuse decision.`);
-          if (fileHash(file) !== prepared.expected) throw new Error(`File ${file} changed outside this task. Read it and prepare again.`);
-          for (const [source, expected] of Object.entries(prepared.evidence)) {
-            if (fileHash(source) !== expected) throw new Error(`Context ${source} changed. Read current sections and prepare again.`);
-          }
-          const claim = query('SELECT task FROM claims WHERE path=?').get(file);
-          if (claim?.task !== task.id) throw new Error(`Task no longer owns ${file}; prepare ownership again.`);
-        }
-        if (task.inFlight) throw new Error('Another source edit is still in flight for this task.');
-        task.inFlight = { callID, files, before: Object.fromEntries(files.map(file => [file, fileHash(file)])) };
-        task.status = 'active';
-        save(task);
-      });
-    },
-    afterEdit(sessionID, callID) {
-      transaction(() => {
-        const task = owned(sessionID);
-        if (task.inFlight?.callID !== callID) return;
-        for (const file of task.inFlight.files) {
-          const current = fileHash(file);
-          task.files[file] = current;
-          task.prepared[file].expected = current;
-          task.reads[file] = current;
-          for (const prepared of Object.values(task.prepared)) if (file in prepared.evidence) prepared.evidence[file] = current;
-        }
-        task.inFlight = null;
-        save(task);
-      });
-    },
-    editFailed(sessionID, callID) {
-      transaction(() => {
-        const task = owned(sessionID);
-        if (task.inFlight?.callID !== callID) return;
-        task.recovery = { interruptedOperation: task.inFlight, needsReconciliation: true };
-        task.inFlight = null;
-        task.prepared = {};
-        save(task);
-      });
-    },
     park(sessionID, status = 'waiting') {
       transaction(() => { const task = owned(sessionID); if (!terminal.has(task.status) && task.status !== 'ready') task.status = status; save(task); });
-    },
-    release(sessionID, taskID, filenames) {
-      return transaction(() => {
-        const requester = owned(sessionID);
-        const task = taskById(taskID);
-        if (!task || task.root !== root || task.branch !== identity().branch) throw new Error('Claim task is missing or belongs to another worktree/branch.');
-        if (task.id === requester.id) throw new Error('This task owns the claim; complete or cancel it to release its files.');
-        if (alive(task.owner.pid) || task.inFlight) throw new Error('Claim owner is live or has an interrupted edit; resume or coordinate with that task first.');
-        const files = filenames.map(relative);
-        if (!files.length) throw new Error('Name the exact stale claim files to release.');
-        for (const file of files) {
-          if (query('SELECT task FROM claims WHERE path=?').get(file)?.task !== task.id) throw new Error(`File ${file} is not claimed by task ${task.id}.`);
-        }
-        for (const file of files) query('DELETE FROM claims WHERE path=? AND task=?').run(file, task.id);
-        task.prepared = {};
-        task.reviewGaps = [...new Set([...(task.reviewGaps ?? []), ...files])];
-        task.recovery = { ...(task.recovery ?? {}), releasedClaims: [...new Set([...(task.recovery?.releasedClaims ?? []), ...files])], needsReconciliation: true };
-        save(task);
-        return { released: files, previousTask: task.id, action: 'Read current files and call sdlc_prepare for the requesting task before editing.' };
-      });
     },
     resume(sessionID, taskID) {
       return transaction(() => {
         const provisional = owned(sessionID);
-        if (provisional.goal && provisional.id !== taskID && !terminal.has(provisional.status)) throw new Error('This session has an unfinished task; complete or cancel it before resuming another task.');
-        const task = taskById(taskID);
-        if (!task || terminal.has(task.status)) throw new Error('Checkpoint is missing or already finished.');
-        if (task.root !== root || task.branch !== identity().branch) throw new Error('Checkpoint belongs to a different worktree/branch.');
-        if (task.sessionID !== sessionID && (task.inFlight || task.status === 'active') && alive(task.owner.pid)) throw new Error('The original task is active. Interrupt/park it before transferring ownership.');
-        const previousSession = task.sessionID;
-        // Only the destination session's current-process checks remain valid.
-        task.startupHealth = { ...(task.startupHealth ?? {}), ...(provisional.startupHealth ?? {}) };
-        task.sessionID = sessionID;
-        task.owner = { pid, token: owner };
-        task.checks = invalidateChecks(task);
-        task.reads = {};
-        task.prepared = {};
-        task.status = 'active';
-        task.recovery = { ...(task.recovery ?? {}), previousSession, interruptedOperation: task.inFlight ?? task.recovery?.interruptedOperation ?? null, needsReconciliation: Boolean(task.recovery?.needsReconciliation || Object.entries(task.files).some(([file, expected]) => fileHash(file) !== expected)) };
-        task.inFlight = null;
-        if (task.qa) task.qa = { ...task.qa, runtimeVerified: false };
-        query('INSERT INTO sessions(id,task) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET task=excluded.task').run(sessionID, task.id);
-        if (provisional.id !== task.id && !provisional.goal) query('DELETE FROM tasks WHERE id=?').run(provisional.id);
-        save(task);
-        return summary(task);
+        const source = taskById(taskID);
+        if (!source || source.root !== root || source.branch !== identity().branch) throw new Error('Checkpoint is missing or belongs to another worktree/branch.');
+        if (source.id === provisional.id) return summary(provisional);
+        if (provisional.goal && !terminal.has(provisional.status)) provisional.status = 'waiting';
+        save(provisional);
+        return summary(continuation(sessionID, source, provisional.startupHealth));
       });
     },
     summary(sessionID) {
       return transaction(() => summary(ensure(sessionID)));
-    },
-    diff(sessionID, filename, taskID) {
-      const task = transaction(() => taskID ? taskById(taskID) : ensure(sessionID));
-      if (!task || task.root !== root) throw new Error('Review task does not belong to this worktree.');
-      const file = relative(filename);
-      if (task.reviewGaps?.includes(file) || (file in task.files && fileHash(file) !== task.files[file])) throw new Error('This file also changed outside the task. Exact review scope needs reconciliation; do not present a combined diff as task-only.');
-      const baseline = query('SELECT content FROM baselines WHERE task=? AND path=?').get(task.id, file);
-      if (!baseline) throw new Error('This file has no task baseline; unrelated changes are outside review scope.');
-      const temporary = path.join(store, `diff-${randomUUID()}`);
-      const current = temporary + '-current';
-      writeFileSync(temporary, baseline.content ? gunzipSync(baseline.content) : '');
-      writeFileSync(current, existsSync(path.join(root, file)) ? readFileSync(path.join(root, file)) : '');
-      try {
-        let result;
-        try { result = execFileSync('git', ['diff', '--no-index', '--no-ext-diff', '--no-color', '--', temporary, current], { encoding: 'utf8', windowsHide: true, maxBuffer: 4 * 1024 * 1024 }); }
-        catch (error) { if (error.status !== 1) throw error; result = error.stdout.toString(); }
-        return { file, diff: result.slice(0, 12000), truncated: result.length > 12000 };
-      } finally { unlinkSync(temporary); unlinkSync(current); }
     },
     autoResume(sessionID, message) {
       const explicit = message.trim().match(/^resume\s+task\s+([\w-]+)\s*[.!]?$/i);
@@ -418,14 +267,4 @@ export async function openHarness(directory, options = {}) {
     },
   };
   return api;
-}
-
-export function editTargets(tool, args) {
-  if (tool === 'edit' || tool === 'write') return [args.filePath];
-  if (tool === 'multiedit') return args.edits.map(edit => edit.filePath);
-  if (tool === 'apply_patch') {
-    const patch = args.patchText ?? args.patch ?? '';
-    return [...patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm)].map(match => (match[1] ?? match[2]).trim());
-  }
-  return null;
 }

@@ -54,7 +54,7 @@ try {
   } else sessions = await Promise.all(bases.map((base, index) => request(base, '/session', { title: `SDLC native verification ${index}` })));
   const instructions = index => {
     const file = index ? 'src/b.js' : 'src/a.js'; const symbol = index ? 'other' : 'value'; const marker = index ? 'B' : 'A';
-    return `One-phase authorized harness verification in a disposable fixture. Own ONLY ${file}. Do not ask questions, run shell commands, use MCP, or launch specialists. First deliberately attempt a native source edit (ApplyPatch/Edit/Write) changing ${symbol} to ${index ? 202 : 101}, BEFORE checkpoint/Read/prepare: the guard should reject it. Then recover without asking permission: sdlc_checkpoint goal "Isolation ${marker}", acceptance ["${symbol} is ${index ? 202 : 101}"], nextAction "Update existing constant", status active. Read docs/agent-context/README.md, guidelines.md, and ${file}; call sdlc_prepare with that target, both documents, that source, and reuseDecision "Extend the existing constant; no new module". Apply the native edit and read the result. Save completed ["Updated ${file}"], status waiting, nextAction "Report RESUME_${marker} without changing files", checks [{name:"Static constant criterion",status:"PASS",files:["${file}"]}]. Do not mark completed: this test deliberately leaves a resumable task. End with LIVE_${marker}.`;
+    return `One-phase authorized harness verification in a disposable fixture. Own ONLY ${file}. Do not ask questions, run shell commands, use MCP, or launch specialists. First perform a native source edit (ApplyPatch/Edit/Write) changing ${symbol} to ${index ? 202 : 101}, without checkpoint preparation. Then save progress: sdlc_checkpoint goal "Isolation ${marker}", acceptance ["${symbol} is ${index ? 202 : 101}"], nextAction "Update existing constant", status active. Read docs/agent-context/README.md, guidelines.md, and ${file};. Apply the native edit and read the result. Save completed ["Updated ${file}"], status waiting, nextAction "Report RESUME_${marker} without changing files", checks [{name:"Static constant criterion",status:"PASS",files:["${file}"]}]. Do not mark completed: this test deliberately leaves a resumable task. End with LIVE_${marker}.`;
   };
   if (!process.argv.includes('--resume-only')) {
     const done = sessions.map((session, index) => streams[index].wait(session.id));
@@ -64,8 +64,6 @@ try {
   const histories = await Promise.all(sessions.map((session, index) => request(bases[index], `/session/${session.id}/message`)));
   for (const [index, history] of histories.entries()) {
     const tools = history.flatMap(message => message.parts).filter(part => part.type === 'tool');
-    assert.ok(tools.some(part => ['edit', 'write', 'apply_patch'].includes(part.tool) && part.state.status === 'error' && /sdlc_prepare|Before editing/i.test(part.state.error)), JSON.stringify(tools.map(part => ({ tool: part.tool, status: part.state.status, error: part.state.error }))));
-    assert.ok(tools.some(part => part.tool === 'sdlc_prepare' && part.state.status === 'completed'));
     assert.ok(tools.some(part => ['edit', 'write', 'apply_patch'].includes(part.tool) && part.state.status === 'completed'));
     assert.match(readFileSync(path.join(root, index ? 'src/b.js' : 'src/a.js'), 'utf8'), index ? /202/ : /101/);
   }
@@ -75,7 +73,7 @@ try {
   const fresh = await request(bases[1], '/session', { title: 'SDLC automatic resume verification' });
   await request(bases[1], `/session/${fresh.id}/message`, { agent: 'build', model, noReply: true, parts: [{ type: 'text', text: `resume task ${sessions[0].id}` }] });
   const resumed = harness.state(fresh.id);
-  assert.equal(resumed.id, sessions[0].id);
+  assert.equal(resumed.recovery.resumedFrom, sessions[0].id);
   assert.equal(resumed.sessionID, fresh.id);
   assert.equal(resumed.goal, before.goal);
   assert.equal(resumed.nextAction, before.nextAction);
@@ -86,7 +84,7 @@ try {
   const final = await request(bases[1], `/session/${fresh.id}/message`);
   const text = final.filter(message => message.info.role === 'assistant').flatMap(message => message.parts).filter(part => part.type === 'text').map(part => part.text).join('\n');
   assert.match(text, /Isolation A/); assert.match(text, /RESUME_A/);
-  console.log(JSON.stringify({ parallelOpenCodeServers: 2, guardRejectsUnpreparedNativeEdits: true, validReuseAllowsEdits: true, independentTaskState: true, automaticResumeTransferredTask: true, resumedModelReceivesNextAction: true }));
+  console.log(JSON.stringify({ parallelOpenCodeServers: 2, editsNeedNoPreparation: true, checkpointsRemainAvailable: true, independentTaskState: true, automaticResumeContinuesTask: true, resumedModelReceivesNextAction: true }));
 } finally {
   harness?.close();
   await Promise.all(streams.map(stream => stream.close()));

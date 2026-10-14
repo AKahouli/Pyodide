@@ -52,13 +52,7 @@ function assertPass(report) {
   for (const key of ['graph', 'hindsight', 'checkpoints']) assert.equal(report[key].status, 'PASS', `${key}: ${report[key].reason}`);
 }
 async function prepareEdit(plugin, root, sid) {
-  await plugin.tool.sdlc_checkpoint.execute({ goal: 'Test guarded reuse', acceptance: ['Read evidence accepted'], nextAction: 'Edit owned source' }, { sessionID: sid });
-  for (const file of ['docs/agent-context/README.md', 'guidelines.md', 'src/a.js']) {
-    const callID = `${sid}-read-${file}`;
-    await plugin['tool.execute.before']({ sessionID: sid, tool: 'read', callID }, { args: { filePath: path.join(root, file) } });
-    await plugin['tool.execute.after']({ sessionID: sid, tool: 'read', callID }, { output: 'synthetic successful read' });
-  }
-  return plugin.tool.sdlc_prepare.execute({ targets: ['src/a.js'], documents: ['docs/agent-context/README.md', 'guidelines.md'], sources: ['src/a.js'], reuseDecision: 'Reuse existing value export' }, { sessionID: sid });
+  return plugin.tool.sdlc_checkpoint.execute({ goal: 'Test advisory checkpoints', acceptance: ['Normal edits remain available'], nextAction: 'Continue' }, { sessionID: sid });
 }
 async function observation(plugin, root, sid, tool, callID, status = 'completed') {
   const args = tool === 'hindsight_diagnose' ? {} : { repo_root: root };
@@ -67,7 +61,7 @@ async function observation(plugin, root, sid, tool, callID, status = 'completed'
     ? { workspace: root, bank_id: `coding-agent::${path.basename(root)}`, config: { api_url: 'http://memory.invalid', disabled: false }, credential: { api_token_matches_config: true } }
     : { status: 'ok', total_nodes: 5 };
   // Raw MCP after-hook payloads are not authoritative persisted observations.
-  await plugin['tool.execute.after']({ sessionID: sid, tool, callID }, { content: [{ type: 'text', text: 'unparseable transport wrapper' }] });
+  await plugin['tool.execute.after']?.({ sessionID: sid, tool, callID }, { content: [{ type: 'text', text: 'unparseable transport wrapper' }] });
   await plugin.event({ event: { type: 'message.part.updated', properties: { part: { type: 'tool', sessionID: sid, callID, tool, state: { status, input: args, output: JSON.stringify(output), error: status === 'error' ? 'Synthetic integration failure' : undefined } } } } });
 }
 
@@ -88,7 +82,7 @@ test('maintainer Task calls require background mode while other tasks and coding
   await prepareEdit(plugin, root, 'background');
   await plugin['tool.execute.before']({ sessionID: 'background', tool: 'edit', callID: 'source-edit' }, { args: { filePath: 'src/a.js' } });
   writeFileSync(path.join(root, 'src/a.js'), 'export const value = 42;');
-  await plugin['tool.execute.after']({ sessionID: 'background', tool: 'edit', callID: 'source-edit' }, { output: 'edited' });
+  await plugin['tool.execute.after']?.({ sessionID: 'background', tool: 'edit', callID: 'source-edit' }, { output: 'edited' });
 });
 
 test('automatic checks create independent receipts and allow prepared edits without diagnostic model calls', async t => {
@@ -126,10 +120,10 @@ test('native shell permissions remain authoritative during graph failures', asyn
     await plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'bash', callID: command }, output);
     assert.equal(output.args.command, command);
   }
-  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'edit', callID: 'edit' }, { args: { filePath: 'src/a.js' } }), /sdlc_prepare/);
+  await plugin['tool.execute.before']({ sessionID: 'diagnose', tool: 'edit', callID: 'edit' }, { args: { filePath: 'src/a.js' } });
 });
 
-test('graph and memory failures allow prepared coding while retaining parallel file protection', async t => {
+test('graph and memory failures allow overlapping coding without checkpoint preparation', async t => {
   const { plugin, root, toasts } = await create(t, async () => ({ data: { 'code-review-graph': { status: 'disconnected' } } }), { ids: async () => ({ data: [] }) });
   const receipt = await health(plugin, 'coding');
   assert.equal(receipt.graph.status, 'FAIL'); assert.equal(receipt.hindsight.status, 'FAIL');
@@ -140,31 +134,31 @@ test('graph and memory failures allow prepared coding while retaining parallel f
   assert.match(context.system[0], /advisory: continue coding/);
   assert.doesNotMatch(context.system.join(' '), /edits blocked|require.*all.*PASS/i);
   await prepareEdit(plugin, root, 'coding');
-  await assert.rejects(prepareEdit(plugin, root, 'parallel'), /belongs to task/);
+  await prepareEdit(plugin, root, 'parallel');
   for (const [tool, args] of [['edit', { filePath: 'src/a.js' }], ['write', { filePath: 'src/a.js' }], ['apply_patch', { patchText: '*** Update File: src/a.js' }]]) {
     await plugin['tool.execute.before']({ sessionID: 'coding', tool, callID: tool }, { args });
     writeFileSync(path.join(root, 'src/a.js'), `export const value = '${tool}';\n`);
-    await plugin['tool.execute.after']({ sessionID: 'coding', tool, callID: tool }, {});
+    await plugin['tool.execute.after']?.({ sessionID: 'coding', tool, callID: tool }, {});
   }
   assert.match(readFileSync(path.join(root, 'src/a.js'), 'utf8'), /apply_patch/);
   assert.equal((await health(plugin, 'coding')).graph.status, 'FAIL');
-  await assert.rejects(plugin['tool.execute.before']({ sessionID: 'parallel', tool: 'edit', callID: 'overlap' }, { args: { filePath: 'src/a.js' } }), /sdlc_prepare/);
+  await plugin['tool.execute.before']({ sessionID: 'parallel', tool: 'edit', callID: 'overlap' }, { args: { filePath: 'src/a.js' } });
 });
 
-test('missing policy reports failure and blocks native edits without replacing shell permissions', async t => {
+test('missing policy reports failure and allows native edits without replacing shell permissions', async t => {
   const { root, toasts } = await create(t);
   rmSync(path.join(root, 'tools/opencode-harness/policy.json'));
   const fallback = await SdlcHarness({ worktree: root, directory: root, client: { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: { ids: async () => ({ data: ['hindsight_diagnose'] }) }, tui: { showToast: async input => { toasts.push(input.body); } } } });
   const report = await health(fallback, 'missing-policy');
   assert.equal(report.checkpoints.status, 'FAIL');
-  await assert.rejects(fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'task', callID: 'maintainer' }, { args: { subagent_type: 'maintainer' } }), /maintainer requires Task\(background:true\)/);
+  await assert.rejects(fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'task', callID: 'maintainer' }, { args: { subagent_type: 'maintainer' } }), /maintainer requires/);
   await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'task', callID: 'maintainer-background' }, { args: { subagent_type: 'maintainer', background: true } });
   assert.ok(toasts.some(item => item.message.includes('checkpoints FAIL')));
   for (const command of ['git status', 'powershell.exe -NoProfile -File scripts/start-local.ps1', 'Get-Content logs/worker.log -Tail 80']) {
     await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'bash', callID: command }, { args: { command } });
   }
   for (const [tool, args] of [['edit', { filePath: 'src/a.js' }], ['write', { filePath: 'src/a.js' }]]) {
-    await assert.rejects(fallback['tool.execute.before']({ sessionID: 'missing-policy', tool, callID: tool }, { args }), /checkpoint integration unavailable/);
+    await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool, callID: tool }, { args });
   }
 });
 
@@ -206,7 +200,7 @@ test('native tool errors remain visible without duplicate probes or blocking cod
   assert.ok(toasts.some(item => item.message.includes('graph FAIL')));
   await prepareEdit(plugin, root, 'runtime');
   await plugin['tool.execute.before']({ sessionID: 'runtime', tool: 'edit', callID: 'allowed' }, { args: { filePath: 'src/a.js' } });
-  await plugin['tool.execute.after']({ sessionID: 'runtime', tool: 'edit', callID: 'allowed' }, {});
+  await plugin['tool.execute.after']?.({ sessionID: 'runtime', tool: 'edit', callID: 'allowed' }, {});
   assertPass(await health(plugin, 'runtime', true));
 });
 

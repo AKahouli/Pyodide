@@ -4,9 +4,8 @@
 
 - Make the smallest correct change; reuse code and current evidence. Read scoped sections and matching Git docs before edits. Source/tests establish behavior; reviewed branch docs establish intent; Hindsight is fallible experience.
 - External SDK/library/CLI behavior unresolved locally: use Context7 and its skill. Code investigations reuse current graph evidence or `get_minimal_context_tool` with the absolute worktree root. Load `crg-navigation` when needed; keep queries minimal/bounded. Skip graph for prose/git chores.
-- Automatic health/recall needs no duplicate startup calls. Graph/Hindsight failures or pending checks never block coding: use source/tests and Git docs/checkpoints, report once or on status changes, refresh after recovery. Storage/ownership failures still block native edits. Report missing/stale SDLC tools; plugin installations require a full host restart.
-- With SDLC active, checkpoint intent, read routed docs/code and prepare exact targets with a reuse decision before native edits. Save task IDs, check inputs and milestones before replies/resume. Unrelated work uses `newTask: true`; corrections reopen the same task. Native permissions govern shell commands; don't bypass guards through shell writes.
-- A cancelled/completed task can resume a parked task in the same chat. For a file claim left by a stopped process, use `sdlc_release(taskID, files)` on the exact file and then re-read/re-prepare; live owners or interrupted edits require coordination or resume. A cancelled task needs a new checkpoint generation before further edits.
+- Automatic health/recall needs no duplicate startup calls. Graph/Hindsight failures or pending checks never block coding: use source/tests and Git docs/checkpoints, report once or on status changes, refresh after recovery. Checkpoint failures are advisory; normal coding continues. Report missing/stale SDLC tools; plugin installations require a full host restart.
+- With SDLC active, checkpoint intent, read relevant docs/code and reuse existing implementations before edits; no SDLC preparation or reservation is required. Save task IDs, check inputs and milestones before replies/resume. Unrelated work uses `newTask: true`; corrections reopen the same task. Native OpenCode permissions govern edits and shell commands.
 
 ## Autonomy and background handoff
 
@@ -15,7 +14,7 @@
 - Use native `Task(background: true)` for useful independent long work. Give compact criteria/evidence, root/branch, disjoint owned files, source revision, passed checks and the exact result needed. Reuse child sessions for corrections. Do small fixes directly.
 - **Maintainer always runs asynchronously: every initial/follow-up Task call requires `background: true`.** If unsupported, report recovery and pending docs; continue coding without foreground fallback.
 - Save child/task IDs, purposes, owned paths, input revisions and pending results in checkpoint `pending`/`nextAction`. Continue independent work; when none remains, return control so the user can message while children run. Completion notifications resume integration; never poll, sleep, duplicate tasks or mark PENDING work PASS. Preserve unfinished children when feedback steers the request.
-- Keep file claims, private QA contexts/page IDs, test data/reports and cleanup separate across sessions. Respect shared processes/ports and unrelated dirty/staged work.
+- Coordinate file changes and keep private QA contexts/page IDs, test data/reports and cleanup separate across sessions. Respect shared processes/ports and unrelated dirty/staged work.
 
 ## Documentation and delivery
 
