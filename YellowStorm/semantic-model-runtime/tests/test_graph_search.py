@@ -8,7 +8,7 @@ import pytest
 from app.graph_search.documents import build_document, fold, query_terms
 from app.graph_search.embeddings import (STORAGE_DIMENSION, EmbeddingError, EmbeddingProfile, embed,
                                          vector_literal)
-from app.graph_search.retrieval import is_visible, resolve_concepts, resolve_relations
+from app.graph_search.retrieval import describe_entity, is_visible, resolve_concepts, resolve_relations
 from app.graph_search.traversal import graph_of, step_query
 from app.population.age_projection import relation_label
 from app.population.compiler import PopulationError
@@ -69,6 +69,18 @@ def test_visibility_requires_every_source_workspace() -> None:
     assert is_visible(ENTITY, ["ws1"])  # the manual source has no workspace
     assert not is_visible(ENTITY, ["ws2"])
     assert is_visible({"provenance": {}}, [])
+
+
+def test_record_provenance_exposes_document_handles_and_deduplicates_sources() -> None:
+    source = {"assetRef": {"workspaceId": "ws1", "assetId": "doc1", "assetVersionId": "v1"},
+              "filename": "agreement.pdf", "mappingVersion": "m1", "rowNumbers": [2]}
+    described = describe_entity({**ENTITY, "provenance": {"sources": [source, {**source, "rowNumbers": [3]}]}},
+                                COMPILED)
+
+    assert described["provenance"] == [{
+        "assetId": "doc1", "documentId": "doc1", "workspaceId": "ws1", "filename": "agreement.pdf",
+        "assetVersionId": "v1", "mappingVersion": "m1", "rowNumbers": [2, 3],
+    }]
 
 
 def test_step_queries_are_fixed_shapes_with_escaped_values() -> None:

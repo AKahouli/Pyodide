@@ -7,9 +7,10 @@ feature_id: semantic-model
 
 ## Evidence and scope
 
-Source baseline: `cc3d0e078dfcb0f535bcfcb28b8041fa9d2251a9`, inspected 2026-10-13.
-This is a source-and-test inventory, not evidence of live browser QA or deployed configuration.
-Uncommitted work is excluded. Recheck the current branch's source before implementation; this revision identifies the initialization baseline, not a permanent freshness guarantee.
+Source revision/branch: `f548c8f6a804fdf2b5e259e00216aa5446ef2ca2` / `baseline/semantic-model-001` (caller-supplied base; current branch diff inspected).
+Verified on: 2026-10-14.
+Verification level: source inspection and focused runtime, MCP and backend tests listed below; no live browser QA or deployed configuration was verified.
+Scope: semantic-record provenance returned by `find_records`, `get_related_records` and `query_records`, plus agent guidance for retrieving corresponding source documents. Existing workspace authorization remains in force.
 
 ## Purpose and workflows
 
@@ -24,6 +25,7 @@ Semantic models describe concepts, fields and relationships, map workspace data 
 | Populate and inspect | Build/refresh/rebuild commands, model/mapping/concept scopes, job progress/history/stop controls, data preview, concept record tables and graph viewer |
 | Resolve ambiguity | Identity fields, relation matching and source priority rules; health/readiness checks, review queue, corrections and correction undo |
 | Publish and search | Draft/published versions, version comparison, graph search index status/build/stop/restart, search and expansion APIs |
+| Trace a record to its source document | The three record retrieval tools expose provenance handles; use the existing document connector tools with filename/workspace scope as described below, following each tool's declared schema |
 
 Route ownership: [Router.tsx](../../../YellowStorm/front/src/Router.tsx).
 Page ownership: [catalog](../../../YellowStorm/front/src/modules/semantic-model/pages/SemanticModelCatalogPage.tsx), [editor](../../../YellowStorm/front/src/modules/semantic-model/pages/SemanticModelEditorPage.tsx).
@@ -42,6 +44,8 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
+Semantic record provenance is produced from existing source provenance; it does not create a separate document contract. The record-returning `find_records`, `get_related_records` and `query_records` results preserve provenance containing `workspaceId` and `documentId`, retain `assetId` as a compatibility handle, and include `filename` when available. Runtime provenance description gathers available values from the existing source and asset references and deduplicates references; records derived through chained or merged sources retain the deduplicated source references represented in their provenance. MCP guidance maps provenance `filename` to the document tools' `file_name` and `workspaceId` to their workspace scope. Where a declared document tool accepts `document_id`, guidance uses `documentId` (with `assetId` as compatibility fallback); always follow the actual tool schema rather than assuming additional arguments. Record tools remain actor-scoped: inaccessible workspaces are filtered from search/query results and hidden linked records are excluded from related-record results/counts.
+
 ## Reuse map
 
 | Change | Existing owner to extend |
@@ -52,6 +56,7 @@ NestJS calls the runtime through its service client; workers obtain workspace as
 | Run admission / refresh / rebuild | [refresh service](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-population-refresh.service.ts), [runtime client](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-runtime-client.service.ts), [job service](../../../YellowStorm/semantic-model-runtime/app/jobs/service.py), [population worker](../../../YellowStorm/semantic-model-runtime/app/workers/population_tasks.py) |
 | Manual records / correction | [record panel](../../../YellowStorm/front/src/modules/semantic-model/components/records/ConceptRecordsPanel.tsx), [manual table editor](../../../YellowStorm/front/src/modules/semantic-model/components/records/ManualTableEditor.tsx), [manual store](../../../YellowStorm/semantic-model-runtime/app/persistence/manual_store.py), existing correction commands |
 | Search / index lifecycle | [graph search service](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-graph-search.service.ts), [runtime graph search](../../../YellowStorm/semantic-model-runtime/app/graph_search), [search worker](../../../YellowStorm/semantic-model-runtime/app/workers/graph_search_tasks.py) |
+| Record-to-document provenance retrieval | [Runtime provenance shaping and workspace visibility](../../../YellowStorm/semantic-model-runtime/app/graph_search/retrieval.py), [record query visibility](../../../YellowStorm/semantic-model-runtime/app/graph_search/record_query.py), [MCP tool guidance and result preservation](../../../mcp/mcp-semantic-model/server.py); extend these existing owners and follow document connector schemas |
 | Publication / cloning / deletion | [version service](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-model-version.service.ts), owning model service, runtime revision activation/publish/clone/purge routes |
 
 Keep payload definitions in executable DTOs/types/schemas; this page intentionally does not duplicate them.
@@ -67,10 +72,12 @@ Reuse existing revision, lease, authorization and idempotency checks instead of 
 - Datasource admission requires explicit `workspaceId`; unsupported cross-workspace execution adapters remain fail-closed as documented by the runtime guide.
 - A valid AGE projection and population revision are distinct from editor definitions. Inspect graph status, freshness and version bindings when diagnosing missing records.
 - Do not treat health UI, mapped sources, a published definition or a queued index as proof that all records were populated or indexed successfully.
+- Provenance may omit `filename` when source metadata has no filename; document retrieval guidance must use available provenance and the declared document-tool schema, not assume optional identifiers or arguments.
+- Preserve actor-scoped workspace filtering when changing retrieval: source-document handles do not grant access to the document or override existing visibility rules.
 
 ## Focused verification
 
-Choose the checks relevant to the changed behavior; commands below identify existing coverage, not results from this initialization.
+The caller reports the following checks passed for the supplied branch evidence:
 
 | Area | Existing coverage / command |
 | --- | --- |
@@ -79,6 +86,10 @@ Choose the checks relevant to the changed behavior; commands below identify exis
 | Backend boundary | From `YellowStorm/back`: `npm test -- semantic-model.controller.spec.ts`; service tests are colocated under `src/modules/semantic-model/services/` |
 | Runtime population | From `YellowStorm/semantic-model-runtime`: `conda run -n meta pytest tests/test_population_commands.py tests/test_population_tabular.py tests/test_document_population.py -q` |
 | Durable runtime / search | Existing `tests/test_jobs.py`, `tests/test_concept_refresh.py`, `tests/test_scoped_population_reads.py`, `tests/test_graph_search.py`; integration variants require their configured database/services |
+| Provenance runtime | From `YellowStorm/semantic-model-runtime`: focused conda tests, 149 passed (caller-reported) |
+| MCP provenance and guidance | From `mcp/mcp-semantic-model`: `test_server`, 24 passed (caller-reported) |
+| Backend search boundary | From `YellowStorm/back`: semantic-graph-search service spec, 15 passed (caller-reported) |
+| Diff hygiene | `git diff --check` passed (caller-reported) |
 | Visible workflow | Private browser QA at catalog/editor routes; own the test model/source/run data and verify the specific criterion rather than altering shared fixtures |
 
 For Python always use conda `meta`; never run integration mutations against a shared developer dataset without owned fixtures.
@@ -88,8 +99,10 @@ For Python always use conda `meta`; never run integration mutations against a sh
 - [Context index](../README.md), [frontend instructions](../../../YellowStorm/front/AGENTS.md), [backend instructions](../../../YellowStorm/back/AGENTS.md).
 - [System overview](../architecture/overview.md), [component map](../architecture/component-map.md), [cross-service contracts](../architecture/cross-service-contracts.md), [persistence](../backend/persistence.md).
 - [Runtime contracts](../../../YellowStorm/semantic-model-runtime/contracts/v1/README.md), [search plan](../../../YellowStorm/semantic-model-runtime/docs/graph-search-plan.md), [QA fixtures](../testing/qa-fixtures.md).
+- [Semantic Model MCP tools](../../../mcp/mcp-semantic-model/server.py) and [runtime provenance shaping](../../../YellowStorm/semantic-model-runtime/app/graph_search/retrieval.py) own the executable provenance and retrieval guidance; keep their payload definitions in code.
 - [Architecture change control](../architecture/change-control.md) governs new schema/service/module/runtime proposals; significant approved design decisions belong in ADRs.
 
 Update this page alongside implementation when workflows, reusable owners, limits or verification entry points change.
 The maintainer can prepare updates after source stabilizes; the owning coding agent supplies changed behavior, source paths and actual verification evidence.
 Keep documentation on the same feature branch and PR as its code, and record pending documentation work in the task checkpoint before a handoff.
+The pre-existing dirty `YellowStorm/semantic-model-runtime/app/workers/population_tasks.py` was preserved and not inspected or modified as part of this documentation update.

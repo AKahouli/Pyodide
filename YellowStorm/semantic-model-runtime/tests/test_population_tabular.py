@@ -9,7 +9,7 @@ from app.population.tabular import (entity_key, match_relationships, match_value
 from test_population_compiler import base_spec
 
 SOURCE = {"assetRef": {"workspaceId": "ws", "assetId": "a1", "assetVersionId": "sha256:abc"},
-          "mappingVersion": "map-v3", "labelField": "name"}
+          "mappingVersion": "map-v3", "labelField": "name", "filename": "customers.csv"}
 
 
 @pytest.fixture
@@ -29,6 +29,7 @@ def test_rows_become_entities_with_provenance(plan: dict):
     assert first["label"] == "Acme"
     assert first["provenance"]["sources"][0]["rowNumbers"] == [2]
     assert first["provenance"]["sources"][0]["mappingVersion"] == "map-v3"
+    assert first["provenance"]["sources"][0]["filename"] == "customers.csv"
     assert {a["attribute"] for a in result["assertions"]} == {"name", "country"}
 
 
@@ -148,6 +149,24 @@ def test_merge_keeps_first_value_and_both_provenances(plan: dict):
     assert len(merged["entities"][0]["provenance"]["sources"]) == 2
     assert [g["kind"] for g in merged["gaps"]] == ["conflicting_values"]
     assert merged["counts"]["materialized"] == 1
+
+
+def test_merge_does_not_collapse_distinct_assets_with_the_same_content_version(plan: dict):
+    first = populate_concept_rows(plan["concepts"]["c1"], [
+        {"_row": 2, "customer_id": "C-1", "name": "Acme"},
+    ], SOURCE)
+    second_source = {**SOURCE, "assetRef": {**SOURCE["assetRef"], "workspaceId": "ws-2", "assetId": "a2"},
+                     "filename": "customers-copy.csv"}
+    second = populate_concept_rows(plan["concepts"]["c1"], [
+        {"_row": 5, "customer_id": "C-1", "name": "Acme"},
+    ], second_source)
+
+    merged = merge_concept_results([first, second])
+    sources = merged["entities"][0]["provenance"]["sources"]
+
+    assert {(source["assetRef"]["workspaceId"], source["assetRef"]["assetId"], source["filename"])
+            for source in sources} == {
+                ("ws", "a1", "customers.csv"), ("ws-2", "a2", "customers-copy.csv")}
 
 
 def test_identity_helpers_are_deterministic():

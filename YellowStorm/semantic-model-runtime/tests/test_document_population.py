@@ -90,6 +90,10 @@ async def test_metadata_fields_take_the_name_workspace_id_and_document_id_of_the
     assert values["customer_reference"] == SOURCE["workspaceId"]
     assert values["file_name"] == "agreement.pdf"
     assert {item["evidence"]["origin"] for item in result["assertions"]} == {"metadata"}
+    provenance_source = result["entities"][0]["provenance"]["sources"][0]
+    assert provenance_source["assetRef"]["workspaceId"] == SOURCE["workspaceId"]
+    assert provenance_source["assetRef"]["assetId"] == SOURCE["assetId"]
+    assert provenance_source["filename"] == "agreement.pdf"
 
 
 AMENDMENT_CONCEPT = {
