@@ -127,10 +127,29 @@ export const configValidationSchema = Joi.object({
   STORAGE_PROVIDER: Joi.string().valid('ceph', 'azure').default('ceph'),
 
   // Azure Blob / Data Lake Gen2 — required when STORAGE_PROVIDER=azure.
-  // The connection string must carry an account key: SAS generation needs it.
+  // Two credentials, and exactly one source for the account in each:
+  //   key      -> AZURE_STORAGE_CONNECTION_STRING, which must carry an account
+  //               key because SAS generation signs with it.
+  //   identity -> AZURE_STORAGE_ACCOUNT_URL. An account with shared-key access
+  //               disabled has no connection string at all, and SAS URLs are
+  //               signed with a user delegation key instead.
+  AZURE_STORAGE_USE_MANAGED_IDENTITY: Joi.boolean().default(false),
   AZURE_STORAGE_CONNECTION_STRING: Joi.string().when('STORAGE_PROVIDER', {
     is: 'azure',
-    then: Joi.required(),
+    then: Joi.when('AZURE_STORAGE_USE_MANAGED_IDENTITY', {
+      is: true,
+      then: Joi.string().allow('').optional(),
+      otherwise: Joi.required(),
+    }),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  AZURE_STORAGE_ACCOUNT_URL: Joi.string().uri({ scheme: ['http', 'https'] }).when('STORAGE_PROVIDER', {
+    is: 'azure',
+    then: Joi.when('AZURE_STORAGE_USE_MANAGED_IDENTITY', {
+      is: true,
+      then: Joi.required(),
+      otherwise: Joi.string().allow('').optional(),
+    }),
     otherwise: Joi.string().allow('').optional(),
   }),
   AZURE_STORAGE_CONTAINER_NAME: Joi.string().default('documents'),
