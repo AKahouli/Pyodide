@@ -22,6 +22,7 @@ import {
 import { Request } from 'express';
 import { UserService } from './user.service';
 import { RegistrationApprovalService } from './registration-approval.service';
+import { UserInvitationService } from './user-invitation.service';
 import { UsageService } from '../usage/usage.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { AuditLogService } from '../authorization/services/audit-log.service';
@@ -35,9 +36,11 @@ import {
   AssignPlanDto,
   AdminUserResponse,
   AdminUserListResponse,
+  InviteUserDto,
+  InviteUserResponse,
 } from './dto/admin-user.dto';
 import { Inject } from '@nestjs/common';
-import { NotFoundException } from '../exceptions';
+import { ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
 @ApiTags('Admin Users')
@@ -51,6 +54,7 @@ export class AdminUserController {
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
     private readonly auditLogService: AuditLogService,
+    private readonly userInvitationService: UserInvitationService,
     @Inject(USER_STORE) private readonly userStore: UserStore,
   ) {}
 
@@ -92,6 +96,50 @@ export class AdminUserController {
       page,
       limit,
       totalPages,
+    };
+  }
+
+  @Post('invite')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Invite a user by email (Super Admin only)' })
+  @ApiResponse({ status: 200, description: 'Invitation email sent' })
+  @ApiResponse({ status: 409, description: 'User already registered' })
+  @ApiResponse({ status: 503, description: 'Email service unavailable or send failed' })
+  async inviteUser(
+    @Body() dto: InviteUserDto,
+    @CurrentUser() actor: AuthUser,
+    @Req() req: Request,
+  ): Promise<InviteUserResponse> {
+    const email = dto.email.trim().toLowerCase();
+
+    const existing = await this.userStore.findByEmail(email);
+    if (existing) {
+      throw new ConflictException(ErrorCode.USER_ALREADY_EXISTS);
+    }
+
+    const invitation = await this.userInvitationService.invite({
+      email,
+      invitedById: actor._id.toString(),
+    });
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'users.invite',
+      targetType: 'User',
+      metadata: {
+        targetEmail: invitation.email,
+        expiresAt: invitation.expiresAt.toISOString(),
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return {
+      message: 'Invitation sent successfully',
+      email: invitation.email,
+      expiresAt: invitation.expiresAt,
     };
   }
 
