@@ -88,6 +88,29 @@ def test_bulk_sql_shapes():
         insert_edges_sql("pop_dr_1; drop", link)
 
 
+def test_source_documents_are_structured_reserved_metadata():
+    sources = [
+        {"assetRef": {"workspaceId": "ws-1", "assetId": "doc-1"}},
+        {"assetRef": {"workspaceId": "ws-1", "assetId": "doc-1"}, "filename": "contrat été.pdf"},
+        {"assetRef": {"workspaceId": "ws-2", "assetId": "doc-1"}, "filename": "copy.pdf"},
+        {"assetRef": {"assetId": "manual"}},
+    ]
+    [vertex] = compile_projection([{
+        "entityId": "record-1", "conceptId": "contract", "provenance": {"sources": sources},
+        "identity": {"source_documents": "spoofed"},
+        "attributes": {"source-documents": "also spoofed"},
+    }], [], {"contract": {"hidden": ["source_documents"], "maxChars": {"source_documents": 1}}})["vertices"]
+    expected = [
+        {"workspaceId": "ws-1", "documentId": "doc-1", "filename": "contrat été.pdf"},
+        {"workspaceId": "ws-2", "documentId": "doc-1", "filename": "copy.pdf"},
+    ]
+    assert vertex["source_documents"] == expected
+    assert json.loads(agtype_document(vertex))["source_documents"] == expected
+    assert vertex["workspace_ids"] == ["ws-1", "ws-2"]
+    [manual] = compile_projection([{"entityId": "manual", "conceptId": "contract"}], [])["vertices"]
+    assert json.loads(agtype_document(manual))["source_documents"] == []
+
+
 def test_labels_are_safe_readable_and_distinct_per_id():
     assert concept_label("c-invoice").startswith("c_c_invoice_")
     assert relation_label("r-billed").startswith("r_r_billed_")
@@ -131,7 +154,7 @@ def test_graph_nodes_show_key_fields_and_keep_their_own_id():
         [])
     assert plan["vertices"][0] == {"customer_id": "C00042", "name": "Sony France", "country": "France",
                                    "record_id": "crm:C00042", "concept_id": "customer", "label": "Sony France",
-                                   "workspace_ids": []}
+                                   "workspace_ids": [], "source_documents": []}
 
 
 def test_validate_projection_compares_counts():

@@ -8,7 +8,8 @@ relationship, named from the concept and relation ids (``concept_label`` /
 ``relation_label``), so a query on one concept or relationship reads only its
 table. Every vertex label has a btree index on ``record_id``; AGE indexes the
 edges' ends itself. Vertices keep ``concept_id`` and edges ``relation_id``, and
-each vertex carries ``workspace_ids``, the workspaces its record was read from,
+each vertex carries ``source_documents`` (structured document locators from record provenance)
+and ``workspace_ids``, the workspaces its record was read from,
 so visibility can be checked inside a Cypher query. Graphs built before
 (``age:v1:``) hold ``Entity`` vertices and ``RELATED_TO`` edges; readers match
 without labels so both serve until ``reproject_revision`` rebuilds them.
@@ -59,6 +60,7 @@ LIVE_PROJECTION_PREFIX = "age:v1:"  # Entity / RELATED_TO graphs, served until r
 TYPED_PROJECTION_PREFIX = "age:v2:"  # a label per concept and per relationship
 _PROJECTION_PREFIXES = (TYPED_PROJECTION_PREFIX, LIVE_PROJECTION_PREFIX)
 WORKSPACES_PROPERTY = "workspace_ids"
+SOURCE_DOCUMENTS_PROPERTY = "source_documents"
 _CYPHER_TAG = "$agecypher$"
 _GRAPH_RE = re.compile(r"^pop_[a-z0-9_]{1,64}$")
 _LABEL_RE = re.compile(r"^[cr]_[a-z0-9_]{1,60}$")
@@ -175,8 +177,8 @@ def _workspaces(entity: dict[str, Any]) -> list[str]:
 MAX_EXPOSURE_CONCEPTS = 500
 MAX_EXPOSURE_FIELDS = 500
 MAX_FIELD_CHARS = 100_000
-# Names the vertex always carries, whatever the exposure: its id, concept, label and workspaces.
-PROTECTED_PROPERTIES = frozenset({"record_id", "concept_id", "label", WORKSPACES_PROPERTY})
+# Names the vertex always carries, whatever the exposure: record identity and source metadata.
+PROTECTED_PROPERTIES = frozenset({"record_id", "concept_id", "label", WORKSPACES_PROPERTY, SOURCE_DOCUMENTS_PROPERTY})
 
 
 def normalize_graph_exposure(raw: Any) -> dict[str, dict[str, Any]]:
@@ -232,6 +234,22 @@ def stored_graph_exposure(coverage: Any) -> dict[str, dict[str, Any]]:
         return {}
 
 
+def _source_documents(entity: dict[str, Any]) -> list[dict[str, str]]:
+    documents: dict[tuple[str, str], dict[str, str]] = {}
+    for source in (entity.get("provenance") or {}).get("sources") or []:
+        asset = (source or {}).get("assetRef") or {}
+        workspace_id, document_id = asset.get("workspaceId"), asset.get("assetId")
+        if not isinstance(workspace_id, str) or not workspace_id or not isinstance(document_id, str) or not document_id:
+            continue
+        document = documents.setdefault((workspace_id, document_id), {
+            "workspaceId": workspace_id, "documentId": document_id,
+        })
+        filename = source.get("filename")
+        if isinstance(filename, str) and filename and "filename" not in document:
+            document["filename"] = filename
+    return list(documents.values())
+
+
 def compile_projection(entities: list[dict[str, Any]],
                        relationships: list[dict[str, Any]],
                        exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -253,9 +271,10 @@ def compile_projection(entities: list[dict[str, Any]],
                     if key in limits and isinstance(value, str):
                         value = value[:limits[key]]
                     properties[_safe_key(key)] = value
-        # Set last: a field named like these never replaces the node's own id, label or workspaces.
+        # Set last: business fields never replace record identity or source metadata.
         properties.update({"record_id": entity["entityId"], "concept_id": entity.get("conceptId", ""),
-                           "label": entity.get("label", ""), WORKSPACES_PROPERTY: _workspaces(entity)})
+                           "label": entity.get("label", ""), WORKSPACES_PROPERTY: _workspaces(entity),
+                           SOURCE_DOCUMENTS_PROPERTY: _source_documents(entity)})
         vertices[entity["entityId"]] = properties
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
     for relationship in relationships:
@@ -287,9 +306,9 @@ def _property_value(value: Any) -> Any:
 
 def agtype_document(properties: dict[str, Any]) -> str:
     """The agtype map of a record's or link's properties, as JSON text. A property set to null is
-    left out, as ``SET n = row`` does."""
+    left out, as ``SET n = row`` does. Reserved document locators retain their list/map structure."""
     stored = {name: converted for name, value in properties.items()
-              if (converted := _property_value(value)) is not None}
+              if (converted := (value if name == SOURCE_DOCUMENTS_PROPERTY else _property_value(value))) is not None}
     return json.dumps(stored, ensure_ascii=False, allow_nan=False, separators=(", ", ": "))
 
 

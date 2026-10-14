@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import uuid
 
 import asyncpg
@@ -12,6 +13,54 @@ from app.population.age_projection import (compile_projection, drop_projection,
 
 DSN = os.environ.get("SEMANTIC_AGEGRAPH_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="SEMANTIC_AGEGRAPH_TEST_DATABASE_URL not set")
+
+
+@pytest.mark.asyncio
+async def test_source_documents_are_readable_by_direct_cypher_including_derivation_chains() -> None:
+    from app.population.derived import derive_concept, normalize_derivations
+    from test_derived import compiled_concepts, contract, derive, sector_derivation
+
+    documents = [
+        {"workspaceId": "ws-1", "documentId": "doc-1", "filename": "contrat été.pdf"},
+        {"workspaceId": "ws-2", "documentId": "doc-2", "filename": "contract-copy.pdf"},
+    ]
+    direct = [contract("k1", "C-1", "Acme"), contract("k2", "C-1", "Acme")]
+    for record, document in zip(direct, documents):
+        record["provenance"]["sources"] = [{
+            "assetRef": {"workspaceId": document["workspaceId"], "assetId": document["documentId"],
+                         "assetVersionId": "same-content"},
+            "filename": document["filename"], "mappingVersion": "map-1", "rowNumbers": [1],
+        }]
+    organizations = derive(direct)["entities"]
+    concepts = compiled_concepts()
+    [derivation] = normalize_derivations([sector_derivation()], concepts)
+    sectors = derive_concept(concepts["sector"], derivation, organizations, [])["entities"]
+    expected = {record["entityId"]: [document] for record, document in zip(direct, documents)}
+    expected.update({record["entityId"]: documents for record in organizations + sectors})
+    graph = f"pop_test_{uuid.uuid4().hex[:20]}"
+    connection = await _age_connection()
+    try:
+        await project_revision(connection, graph=graph, plan=compile_projection(direct + organizations + sectors, []))
+        rows = await connection.fetch(f"""
+            SELECT * FROM ag_catalog.cypher('{graph}', $$
+                MATCH (n) RETURN n.record_id, n.source_documents,
+                    n.source_documents[0].workspaceId, n.source_documents[0].documentId,
+                    n.source_documents[0].filename
+            $$) AS (record_id ag_catalog.agtype, documents ag_catalog.agtype,
+                    workspace_id ag_catalog.agtype, document_id ag_catalog.agtype, filename ag_catalog.agtype)
+        """)
+        assert len(rows) == len(expected)
+        for row in rows:
+            sources = expected[json.loads(row["record_id"])]
+            assert json.loads(row["documents"]) == sources
+            assert json.loads(row["workspace_id"]) == sources[0]["workspaceId"]
+            assert json.loads(row["document_id"]) == sources[0]["documentId"]
+            assert json.loads(row["filename"]) == sources[0]["filename"]
+    finally:
+        if await projection_exists(connection, graph):
+            await drop_projection(connection, graph)
+        assert not await projection_exists(connection, graph)
+        await connection.close()
 
 
 @pytest.mark.asyncio

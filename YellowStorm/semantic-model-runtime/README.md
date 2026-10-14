@@ -71,6 +71,27 @@ legacy provenance omits `filename`, resolve it with
 `list_workspace_files(source_workspace_id=workspaceId)` and match the returned file.
 `AssetRef` itself remains unchanged.
 
+AGE record vertices also expose `source_documents` as an array of objects with
+`workspaceId`, `documentId` (the source asset ID), and `filename` when present in
+provenance. Derived concepts inherit their original document references; multiple
+mappings of the same workspace/document are deduplicated. Business fields cannot
+overwrite this metadata. Manual records have an empty array. Existing graphs must
+be rebuilt (a new data revision or forced re-projection) to acquire the property;
+legacy provenance without filenames still supports ID-based lookup.
+
+Direct Cypher can read the array or individual locator fields:
+
+```cypher
+MATCH (n)
+RETURN n.record_id, n.source_documents,
+       n.source_documents[0].workspaceId,
+       n.source_documents[0].documentId,
+       n.source_documents[0].filename
+```
+
+Document locators provide no access grant: use the existing `workspace_ids`
+visibility scope and acting-user authorization when retrieving document content.
+
 Feature switches default off:
 
 - `SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED=true` permits durable admission.

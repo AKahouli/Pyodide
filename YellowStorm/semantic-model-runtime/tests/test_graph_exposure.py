@@ -64,13 +64,14 @@ async def test_readers_get_hidden_and_cut_values_back_from_the_stored_records(mo
 
     async def attributes(_pool, revision_id, ids):  # type: ignore[no-untyped-def]
         asked.append((revision_id, list(ids)))
-        return {"mail:1": {"cle_message": "msg_1", "corps_complet": "y" * 500, "corps": None, "9x": 7}}
+        return {"mail:1": {"cle_message": "msg_1", "corps_complet": "y" * 500, "corps": None, "9x": 7,
+                           "source_documents": "spoofed"}}
 
     monkeypatch.setattr(search_store, "entity_attributes", attributes)
     nodes = [{"id": "mail:1", "label": "c-mail", "properties": {"objet": "Offer", "corps_complet": "y" * 20,
-                                                                  "record_label": "Offer"}},
+                                                                  "record_label": "Offer", "source_documents": []}},
              {"id": "p:1", "label": "c-person", "properties": {"name": "A"}}]
-    await restore_hidden_values(object(), "dr_1", nodes, {"c-mail": {"hidden": ["corps", "9x", "label"],
+    await restore_hidden_values(object(), "dr_1", nodes, {"c-mail": {"hidden": ["corps", "9x", "label", "source_documents"],
                                                                       "maxChars": {"corps_complet": 20}}})
     assert asked == [("dr_1", ["mail:1"])]  # only the records of a concept that limits fields
     properties = nodes[0]["properties"]
@@ -78,6 +79,7 @@ async def test_readers_get_hidden_and_cut_values_back_from_the_stored_records(mo
     assert "corps" not in properties  # null stays absent
     # A hidden field named like a protected property never replaces it.
     assert "label" not in properties and properties["record_label"] == "Offer"
+    assert properties["source_documents"] == []
     assert nodes[1]["properties"] == {"name": "A"}
     asked.clear()
     await restore_hidden_values(object(), "dr_1", nodes, {})
