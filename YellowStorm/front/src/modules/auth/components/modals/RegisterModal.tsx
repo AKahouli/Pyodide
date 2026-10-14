@@ -17,6 +17,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '../../useAuth';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ApiError } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-codes';
 import { useAuthModalStore } from '../../store';
 
 const createRegisterSchema = (passwordMismatchMessage: string) =>
@@ -47,20 +48,39 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
   const setRegisterSuccess = useAuthModalStore((state) => state.setRegisterSuccess);
   const registeredEmail = useAuthModalStore((state) => state.registeredEmail);
   const setRegisteredEmail = useAuthModalStore((state) => state.setRegisteredEmail);
+  const inviteToken = useAuthModalStore((state) => state.inviteToken);
+  const inviteEmail = useAuthModalStore((state) => state.inviteEmail);
+  const setInvite = useAuthModalStore((state) => state.setInvite);
   const [error, setError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  // Invited registrations lock the address to the one the invitation was sent
+  // to; the backend re-validates the token/email binding regardless.
+  const invited = Boolean(inviteToken && inviteEmail);
 
   const form = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { email: '', password: '', confirmPassword: '' },
   });
 
+  React.useEffect(() => {
+    if (inviteEmail) {
+      form.setValue('email', inviteEmail, { shouldValidate: true });
+    }
+  }, [inviteEmail, form]);
+
   const onSubmit = async (data: RegisterFormValues) => {
     setError(null);
     setRegisterSuccess(false);
     setIsSubmitting(true);
     try {
-      await register({ email: data.email, password: data.password });
+      await register({
+        email: data.email,
+        password: data.password,
+        ...(inviteToken ? { inviteToken } : {}),
+      });
+      // The invitation is single-use and now consumed; drop the locked address.
+      setInvite(null, null);
       setRegisteredEmail(data.email);
       setRegisterSuccess(true);
       form.reset();
@@ -70,6 +90,9 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
 
       if (apiError.details && apiError.details.length > 0) {
         setError(apiError.details.map((d) => d.message).join('. '));
+      } else if (apiError.code) {
+        // Invitation errors (invalid/expired/mismatch) carry explicit codes.
+        setError(getErrorMessage(apiError.code));
       } else if (apiError.message) {
         setError(apiError.message);
       } else {
@@ -86,9 +109,10 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
       form.reset();
       setError(null);
       setRegisterSuccess(false);
+      setInvite(null, null);
       onSwitchToLogin();
     },
-    [form, onSwitchToLogin],
+    [form, onSwitchToLogin, setInvite, setRegisterSuccess],
   );
 
   const handleClose = useCallback(
@@ -97,11 +121,12 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
         // Reset state when closing
         setError(null);
         setRegisterSuccess(false);
+        setInvite(null, null);
         form.reset();
       }
       onOpenChange(isOpen);
     },
-    [form, onOpenChange],
+    [form, onOpenChange, setInvite, setRegisterSuccess],
   );
 
   return (
@@ -148,6 +173,13 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-4'>
+                {invited && (
+                  <Alert className='border-primary/30 bg-primary/5'>
+                    <Mail className='h-4 w-4' />
+                    <AlertDescription>{t('register.invite.banner', { email: inviteEmail ?? '' })}</AlertDescription>
+                  </Alert>
+                )}
+
                 {error && (
                   <Alert variant='destructive'>
                     <AlertCircle className='h-4 w-4' />
@@ -162,8 +194,11 @@ export const RegisterModal = memo(function RegisterModal({ open, onOpenChange, o
                     <FormItem>
                       <FormLabel>{t('register.email.label')}</FormLabel>
                       <FormControl>
-                        <Input type='email' placeholder={t('register.email.placeholder')} autoComplete='email' disabled={isSubmitting} {...field} />
+                        <Input type='email' placeholder={t('register.email.placeholder')} autoComplete='email' disabled={isSubmitting || invited} {...field} />
                       </FormControl>
+                      {invited && (
+                        <p className='text-xs text-muted-foreground'>{t('register.invite.emailLocked')}</p>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
