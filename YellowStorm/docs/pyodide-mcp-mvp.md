@@ -160,29 +160,6 @@ sans que le modèle ait à le demander.
 
 ---
 
-## 9. Lancer et tester en local
-
-Prérequis : 4 process + un onglet navigateur connecté.
-
-1. **Backend** : `npm run start:dev` (dossier `YellowStorm/back`)
-2. **mcp-pyodide** : `python server.py` (dossier `mcp/mcp-pyodide`)
-3. **Frontend** : `npm run dev` (dossier `YellowStorm/front`)
-4. **ADK** : `python -m main` (dossier `yellowstorm-adk`)
-5. Ouvrir `http://localhost:5173`, se connecter, garder l'onglet ouvert.
-
-Tests rapides (`code` = `25*4`) :
-- **Conversation** : demander « Calcule 25*4 en Python ».
-- **MCP Inspector** : URL `http://localhost:8027/mcp`, Auth **Bearer**, + header
-  `X-YellowStorm-User-Id`.
-
-Commandes de vérification :
-```bash
-# MCP
-cd mcp/mcp-pyodide && python -m pytest tests -q
-# Backend
-cd YellowStorm/back && npm test -- pyodide-runtime && npm run build
-# Frontend
-cd YellowStorm/front && npx tsc --noEmit -p . && npm test -- pyodide-runtime
 ```
 
 ---

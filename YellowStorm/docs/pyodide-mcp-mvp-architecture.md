@@ -253,24 +253,7 @@ Flags par défaut à `false` hors dev.
 
 ---
 
-## 12. État & tests
 
-**Validé en local**
-- Conversation : `25*4` → `{ ok: true, result: 100 }` (Pyodide 314.0.7).
-- Playbook : exécution via le même connecteur.
-- Fichiers : `test.txt` lu → `test.csv` persisté comme document du workspace.
-
-**Commandes**
-```bash
-# MCP
-cd mcp/mcp-pyodide && python -m pytest tests -q
-# Backend
-cd YellowStorm/back && npm test -- pyodide-runtime && npm run build
-# Frontend
-cd YellowStorm/front && npx tsc --noEmit -p . && npm test -- pyodide-runtime
-```
-
----
 
 ## 13. Suite (MVP 1.1+)
 

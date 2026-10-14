@@ -156,35 +156,8 @@ tailles : code 64 Kio, entrée 2 Mio, logs 256 Kio, résultat 512 Kio.
 
 ---
 
-## 9. État d'avancement (validé en local)
 
-- Conversation : `25*4` → `{ ok: true, result: 100 }` ✅
-- Playbook : exécution via le même connecteur ✅
-- Fichiers : `test.txt` lu depuis le workspace → `test.csv` sauvegardé comme document ✅
-- Tests : MCP (36), backend `pyodide-runtime` + `playbook-execution-node-agent-metadata` (23), frontend (`tsc`, 7). Builds back/front OK.
-
----
-
-## 10. Lancer & tester (local)
-
-Prérequis : backend + mcp-pyodide + frontend (+ ADK), et un **onglet YellowMind connecté**.
-
-```bash
-# Backend
-cd YellowStorm/back && npm run start:dev
-# MCP
-cd mcp/mcp-pyodide && python server.py
-# Frontend
-cd YellowStorm/front && npm run dev
-# ADK
-cd yellowstorm-adk && python -m main
-```
-
-Test rapide : en Conversation, « Calcule 25*4 en Python » → l'agent appelle l'outil → `100`.
-
----
-
-## 11. Configuration (extrait)
+## 9. Configuration (extrait)
 
 **Backend** : `PYODIDE_RUNTIME_ENABLED=true`, `PYODIDE_MCP_SERVER_URL=http://localhost:8027/mcp`
 
@@ -203,7 +176,7 @@ MCP_PORT=8027
 
 ---
 
-## 12. Suite (MVP 1.1+)
+## 10. Suite (MVP 1.1+)
 
 - Liste blanche `micropip` (ex. `openpyxl` → vrai `.xlsx`).
 - Garde-fou « formats de sortie supportés » (éviter les faux fichiers).
