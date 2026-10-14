@@ -464,6 +464,13 @@
       "when": 1792400000000,
       "tag": "0049_user_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1792410000000,
+      "tag": "0050_user_invitation_grants",
+      "breakpoints": true
     }
   ]
 }

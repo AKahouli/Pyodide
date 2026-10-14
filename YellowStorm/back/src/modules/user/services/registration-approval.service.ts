@@ -1,29 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RegistrationApproval, UserStatus } from './user.types';
-import { USER_STORE, type UserRecord, type UserStore } from './persistence/user.store';
+import { RegistrationApproval, UserStatus } from '../user.types';
+import { USER_STORE, type UserRecord, type UserStore } from '../persistence/user.store';
+import type {
+  PendingRegistrationNotice,
+  RegistrationDecisionResult,
+} from '../interfaces/registration-approval.interface';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { buildFrontendHashUrl } from '../utils/frontend-url';
+import { formatRegistrationRequestedAt } from '../utils/format-requested-at';
 
 const SUPER_ADMIN_ROLE = 'super_admin';
-const REQUESTED_AT_TIME_ZONE = 'Europe/Paris';
-
-export interface PendingRegistrationNotice {
-  userId: string;
-  email: string;
-  requestedAt?: Date;
-}
-
-export interface RegistrationDecisionResult {
-  changed: boolean;
-  userId: string;
-  email: string;
-  status: UserStatus;
-  registrationApproval?: RegistrationApproval;
-}
 
 @Injectable()
 export class RegistrationApprovalService {
@@ -109,7 +100,7 @@ export class RegistrationApprovalService {
     const content = await this.emailTemplateRenderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
       appName: this.appName,
       applicantEmail: notice.email,
-      requestedAt: this.formatRegistrationRequestedAt(requestedAt),
+      requestedAt: formatRegistrationRequestedAt(requestedAt),
       usersAdminUrl: this.buildAdminUsersUrl(),
     });
 
@@ -187,36 +178,11 @@ export class RegistrationApprovalService {
   }
 
   private buildAdminUsersUrl(): string {
-    const base = this.frontendUrl.replace(/\/$/, '');
-    return `${base}/#/admin/users`;
+    return buildFrontendHashUrl(this.frontendUrl, '/admin/users');
   }
 
   private buildLoginUrl(): string {
-    const base = this.frontendUrl.replace(/\/$/, '');
-    return `${base}/#/`;
-  }
-
-  private formatRegistrationRequestedAt(date: Date): string {
-    const parts = new Intl.DateTimeFormat('fr-FR', {
-      timeZone: REQUESTED_AT_TIME_ZONE,
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(date);
-
-    const value = (type: Intl.DateTimeFormatPartTypes) =>
-      parts.find((part) => part.type === type)?.value ?? '';
-
-    const day = value('day').padStart(2, '0');
-    const month = value('month').padStart(2, '0');
-    const year = value('year');
-    const hour = value('hour').padStart(2, '0');
-    const minute = value('minute').padStart(2, '0');
-
-    return `${day}/${month}/${year} à ${hour}:${minute}`;
+    return buildFrontendHashUrl(this.frontendUrl, '/');
   }
 
   private async sendAccessActivatedEmail(userId: string, email: string): Promise<void> {

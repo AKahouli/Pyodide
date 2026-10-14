@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { EmailTemplate } from '../email/email-template.constants';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { EmailTemplate } from '../../email/email-template.constants';
 import {
   USER_INVITATION_TTL_HOURS,
   UserInvitationService,
 } from './user-invitation.service';
 
-jest.mock('../logger/logger.service', () => ({
+jest.mock('../../logger/logger.service', () => ({
   logDomainEvent: jest.fn(),
 }));
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { logDomainEvent } = require('../logger/logger.service') as {
+const { logDomainEvent } = require('../../logger/logger.service') as {
   logDomainEvent: jest.Mock;
 };
 
@@ -76,6 +76,8 @@ describe('UserInvitationService', () => {
     email: 'jane@acme.io',
     tokenHash: 'hash',
     invitedBy: 'admin-1',
+    roleIds: [] as string[],
+    planId: null as string | null,
     expiresAt: new Date(now + 60 * 60 * 1000),
     consumedAt: null,
     createdAt: new Date(now - 1000),
@@ -129,6 +131,31 @@ describe('UserInvitationService', () => {
       expect(store.consumePendingForEmail).toHaveBeenCalledWith('jane@acme.io', expect.any(Date));
       expect(store.consumePendingForEmail.mock.invocationCallOrder[0]).toBeLessThan(
         store.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('persists the chosen roles and plan on the invitation', async () => {
+      const { service, store } = makeService();
+
+      await service.invite({
+        email: 'jane@acme.io',
+        invitedById: 'admin-1',
+        roleIds: ['role-1', 'role-2'],
+        planId: 'plan-9',
+      });
+
+      expect(store.create).toHaveBeenCalledWith(
+        expect.objectContaining({ roleIds: ['role-1', 'role-2'], planId: 'plan-9' }),
+      );
+    });
+
+    it('defaults to no roles and no plan when none are provided', async () => {
+      const { service, store } = makeService();
+
+      await service.invite({ email: 'jane@acme.io', invitedById: 'admin-1' });
+
+      expect(store.create).toHaveBeenCalledWith(
+        expect.objectContaining({ roleIds: [], planId: null }),
       );
     });
 
@@ -221,12 +248,22 @@ describe('UserInvitationService', () => {
   });
 
   describe('assertUsableForEmail', () => {
-    it('accepts a token bound to the same (case-insensitive) address', async () => {
-      const { service } = makeService({ stored: storedInvitation() });
+    it('accepts a token bound to the same (case-insensitive) address and returns its grant', async () => {
+      const { service } = makeService({
+        stored: storedInvitation({ roleIds: ['role-1'], planId: 'plan-9' }),
+      });
 
       await expect(
         service.assertUsableForEmail('raw-token', ' Jane@Acme.io '),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ roleIds: ['role-1'], planId: 'plan-9' });
+    });
+
+    it('returns an empty grant when the invitation has no roles or plan', async () => {
+      const { service } = makeService({ stored: storedInvitation() });
+
+      await expect(
+        service.assertUsableForEmail('raw-token', 'jane@acme.io'),
+      ).resolves.toEqual({ roleIds: [], planId: null });
     });
 
     it('rejects a token issued for a different address', async () => {

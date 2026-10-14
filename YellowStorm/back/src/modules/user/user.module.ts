@@ -1,8 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { UserService } from './user.service';
-import { RegistrationApprovalService } from './registration-approval.service';
-import { UserController } from './user.controller';
-import { AdminUserController } from './admin-user.controller';
+import { UserService } from './services/user.service';
+import { RegistrationApprovalService } from './services/registration-approval.service';
+import { UserController } from './controllers/user.controller';
+import { AdminUserController } from './controllers/admin-user.controller';
 import { UsageModule } from '../usage/usage.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { HumainAgentModule } from '../humain-agent/humain-agent.module';
@@ -12,7 +12,7 @@ import { USER_STORE } from './persistence/user.store';
 import { PgUserStore } from './persistence/pg-user.store';
 import { USER_INVITATION_STORE } from './persistence/user-invitation.store';
 import { PgUserInvitationStore } from './persistence/pg-user-invitation.store';
-import { UserInvitationService } from './user-invitation.service';
+import { UserInvitationService } from './services/user-invitation.service';
 
 @Module({
   imports: [

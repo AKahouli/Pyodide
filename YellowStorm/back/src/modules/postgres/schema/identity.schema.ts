@@ -241,6 +241,10 @@ export const identityUserInvitations = identitySchema.table(
     tokenHash: text('token_hash').notNull(),
     /** Inviting super-admin; nullable because out-of-band/system issues leave no actor. */
     invitedBy: objectId('invited_by').references(() => identityUsers.id),
+    /** Roles granted at registration (snapshot; unknown ids are skipped). */
+    roleIds: text('role_ids').array().notNull().default([]),
+    /** Plan granted at registration (snapshot; falls back to the default plan). */
+    planId: objectId('plan_id'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
     ...timestamps(),

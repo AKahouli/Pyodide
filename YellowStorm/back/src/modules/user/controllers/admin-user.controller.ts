@@ -1,5 +1,5 @@
 import type { AuthUser } from '@common/auth/auth-user';
-import { RegistrationApproval, UserStatus } from './user.types';
+import { RegistrationApproval, UserStatus } from '../user.types';
 import {
   Controller,
   Get,
@@ -20,17 +20,17 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { UserService } from './user.service';
-import { RegistrationApprovalService } from './registration-approval.service';
-import { UserInvitationService } from './user-invitation.service';
-import { UsageService } from '../usage/usage.service';
-import { AuthorizationService } from '../authorization/authorization.service';
-import { AuditLogService } from '../authorization/services/audit-log.service';
-import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { PermissionsGuard } from '../authorization/guards/permissions.guard';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { USER_STORE, UserRecordWithRoles, UserStore } from './persistence/user.store';
-import { Permissions } from '../authorization/constants/permissions';
+import { UserService } from '../services/user.service';
+import { RegistrationApprovalService } from '../services/registration-approval.service';
+import { UserInvitationService } from '../services/user-invitation.service';
+import { UsageService } from '../../usage/usage.service';
+import { AuthorizationService } from '../../authorization/authorization.service';
+import { AuditLogService } from '../../authorization/services/audit-log.service';
+import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
+import { PermissionsGuard } from '../../authorization/guards/permissions.guard';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { USER_STORE, UserRecordWithRoles, UserStore } from '../persistence/user.store';
+import { Permissions } from '../../authorization/constants/permissions';
 import {
   AdminListUsersQueryDto,
   AssignPlanDto,
@@ -38,10 +38,10 @@ import {
   AdminUserListResponse,
   InviteUserDto,
   InviteUserResponse,
-} from './dto/admin-user.dto';
+} from '../dto/admin-user.dto';
 import { Inject } from '@nestjs/common';
-import { ConflictException, NotFoundException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { ConflictException, NotFoundException, BadRequestException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 @ApiTags('Admin Users')
 @ApiBearerAuth()
@@ -118,9 +118,14 @@ export class AdminUserController {
       throw new ConflictException(ErrorCode.USER_ALREADY_EXISTS);
     }
 
+    const roleIds = await this.resolveInviteRoleIds(dto.roleIds);
+    const planId = dto.planId ? (await this.usageService.getPlanById(dto.planId)).id : null;
+
     const invitation = await this.userInvitationService.invite({
       email,
       invitedById: actor._id.toString(),
+      roleIds,
+      planId,
     });
 
     this.auditLogService.logSuccess({
@@ -131,6 +136,8 @@ export class AdminUserController {
       metadata: {
         targetEmail: invitation.email,
         expiresAt: invitation.expiresAt.toISOString(),
+        roleIds,
+        planId,
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
@@ -141,6 +148,19 @@ export class AdminUserController {
       email: invitation.email,
       expiresAt: invitation.expiresAt,
     };
+  }
+
+  /** Keep only unique, existing and active role ids; reject anything unknown. */
+  private async resolveInviteRoleIds(roleIds?: string[]): Promise<string[]> {
+    if (!roleIds?.length) return [];
+    const unique = [...new Set(roleIds)];
+    const activeRoles = await this.authorizationService.findActiveRoles();
+    const valid = new Set(activeRoles.map((role) => role.id));
+    const unknown = unique.filter((id) => !valid.has(id));
+    if (unknown.length > 0) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Unknown or inactive role');
+    }
+    return unique;
   }
 
   @Get(':id')

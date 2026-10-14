@@ -2,40 +2,26 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { LoggerService } from '../logger';
+import { LoggerService } from '../../logger';
+import { RegistrationApproval, UserStatus } from '../user.types';
 import {
   CreateUserData,
   UpdateUserData,
   CompleteProfileData,
-} from './interfaces/user.interface';
+  SearchUsersParams,
+  UserSearchResult,
+  UserSummary,
+} from '../interfaces/user.interface';
 import {
   BadRequestException,
   ConflictException,
   NotFoundException,
-} from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { HumainAgentService } from '../humain-agent/humain-agent.service';
+} from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { HumainAgentService } from '../../humain-agent/humain-agent.service';
 import { RegistrationApprovalService } from './registration-approval.service';
-import { USER_STORE, type UserPatch, type UserRecord, type UserStore } from './persistence/user.store';
-import { toUserDoc, type UserDocLike } from './persistence/user-record.mapper';
-
-interface UserSearchResult {
-  id: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-}
-
-export interface UserSummary {
-  id: string;
-  email: string;
-}
-
-interface SearchUsersParams {
-  query: string;
-  excludeUserId?: string;
-  limit?: number;
-}
+import { USER_STORE, type UserPatch, type UserRecord, type UserStore } from '../persistence/user.store';
+import { toUserDoc, type UserDocLike } from '../persistence/user-record.mapper';
 
 const REGISTRATION_PENDING = 'pending';
 
@@ -80,8 +66,9 @@ export class UserService {
       profileRole: data.profile?.role ?? '',
       description: data.profile?.description ?? '',
       microsoftAccountId: data.microsoftAccountId,
-      status: 'inactive',
-      registrationApproval: REGISTRATION_PENDING,
+      status: data.status ?? UserStatus.INACTIVE,
+      registrationApproval: data.registrationApproval ?? RegistrationApproval.PENDING,
+      roleIds: data.roleIds,
     });
 
     this.logger.log('User created', { userId: user.id });

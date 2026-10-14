@@ -1,8 +1,8 @@
 import { Types } from 'mongoose';
 import { RegistrationApprovalService } from './registration-approval.service';
-import { EmailTemplateRenderer } from '../email';
-import { RegistrationApproval, UserStatus } from './user.types';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { EmailTemplateRenderer } from '../../email';
+import { RegistrationApproval, UserStatus } from '../user.types';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 describe('RegistrationApprovalService', () => {
   const applicant = {

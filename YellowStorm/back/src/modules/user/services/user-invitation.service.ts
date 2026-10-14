@@ -1,25 +1,25 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomBytes } from 'node:crypto';
 import { EmailService } from '@modules/email';
 import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.service';
 import { EmailTemplate } from '@modules/email/email-template.constants';
-import { BadRequestException, ServiceUnavailableException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { logDomainEvent } from '../logger/logger.service';
+import { BadRequestException, ServiceUnavailableException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { logDomainEvent } from '../../logger/logger.service';
 import {
   USER_INVITATION_STORE,
   type UserInvitationRecord,
   type UserInvitationStore,
-} from './persistence/user-invitation.store';
+} from '../persistence/user-invitation.store';
+import type {
+  UserInvitationDetails,
+  UserInvitationGrant,
+} from '../interfaces/user-invitation.interface';
+import { buildFrontendHashUrl } from '../utils/frontend-url';
+import { hashInvitationToken, issueInvitationToken } from '../utils/invitation-token';
 
 /** Invitation lifetime. The requirement is exactly 24 hours. */
 export const USER_INVITATION_TTL_HOURS = 24;
-
-export interface UserInvitationDetails {
-  email: string;
-  expiresAt: Date;
-}
 
 /** Route identity for refused-invite telemetry (registered `http.request.failed`). */
 const INVITE_LOOKUP_ROUTE = { method: 'GET', route: '/auth/invite' } as const;
@@ -49,6 +49,8 @@ export class UserInvitationService {
   async invite(params: {
     email: string;
     invitedById: string;
+    roleIds?: string[];
+    planId?: string | null;
   }): Promise<UserInvitationDetails> {
     const email = params.email.trim().toLowerCase();
 
@@ -64,13 +66,15 @@ export class UserInvitationService {
     const now = new Date();
     await this.store.consumePendingForEmail(email, now);
 
-    const { token, hash } = this.issueToken();
+    const { token, hash } = issueInvitationToken();
     const expiresAt = new Date(now.getTime() + USER_INVITATION_TTL_HOURS * 60 * 60 * 1000);
 
     const invitation = await this.store.create({
       email,
       tokenHash: hash,
       invitedBy: params.invitedById,
+      roleIds: params.roleIds ?? [],
+      planId: params.planId ?? null,
       expiresAt,
     });
 
@@ -98,15 +102,18 @@ export class UserInvitationService {
 
   /**
    * Validate that `token` may be used to register `email`: it must exist, be
-   * unconsumed, unexpired, and bound to that exact address. Throws explicit
-   * invitation errors otherwise — the invitee holds the link, so this is not
-   * an account-enumeration oracle.
+   * unconsumed, unexpired, and bound to that exact address. Returns the roles
+   * and plan the invitation grants the invitee. Throws explicit invitation
+   * errors otherwise — the invitee holds the link, so this is not an
+   * account-enumeration oracle.
    */
-  async assertUsableForEmail(token: string, email: string): Promise<void> {
+  async assertUsableForEmail(token: string, email: string): Promise<UserInvitationGrant> {
     const invitation = await this.loadValid(token, INVITE_REGISTER_ROUTE);
-    if (invitation.email === email.trim().toLowerCase()) return;
+    if (invitation.email !== email.trim().toLowerCase()) {
+      this.refuse(ErrorCode.AUTH_INVITE_EMAIL_MISMATCH, INVITE_REGISTER_ROUTE);
+    }
 
-    this.refuse(ErrorCode.AUTH_INVITE_EMAIL_MISMATCH, INVITE_REGISTER_ROUTE);
+    return { roleIds: invitation.roleIds, planId: invitation.planId };
   }
 
   /**
@@ -117,7 +124,7 @@ export class UserInvitationService {
    * request itself completed successfully.
    */
   async markConsumed(token: string): Promise<void> {
-    const hash = this.hashToken(token);
+    const hash = hashInvitationToken(token);
     if (hash) {
       await this.store.consumeIfValid(hash, new Date());
     }
@@ -127,7 +134,7 @@ export class UserInvitationService {
     token: string,
     route: { method: string; route: string },
   ): Promise<UserInvitationRecord> {
-    const hash = this.hashToken(token);
+    const hash = hashInvitationToken(token);
     const invitation = hash ? await this.store.findByTokenHash(hash) : null;
 
     if (!invitation || invitation.consumedAt) {
@@ -151,22 +158,6 @@ export class UserInvitationService {
       status_code: 400,
     });
     throw new BadRequestException(code);
-  }
-
-  private issueToken(): { token: string; hash: string } {
-    const token = randomBytes(32).toString('base64url');
-    return { token, hash: this.hashOf(token) };
-  }
-
-  /** SHA-256 hex of a non-empty token. */
-  private hashOf(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
-
-  /** SHA-256 of the trimmed token; null for an empty/missing token. */
-  private hashToken(token: string): string | null {
-    const trimmed = token?.trim();
-    return trimmed ? this.hashOf(trimmed) : null;
   }
 
   private async sendInviteEmail(params: { to: string; token: string }): Promise<void> {
@@ -204,7 +195,7 @@ export class UserInvitationService {
 
   /** Landing page route that opens the register modal with the email pre-filled. */
   private buildInviteUrl(token: string): string {
-    const base = this.config.get<string>('app.frontendUrl', 'http://localhost:5173').replace(/\/+$/, '');
-    return `${base}/#/?invite=${encodeURIComponent(token)}`;
+    const base = this.config.get<string>('app.frontendUrl', 'http://localhost:5173');
+    return buildFrontendHashUrl(base, `/?invite=${encodeURIComponent(token)}`);
   }
 }

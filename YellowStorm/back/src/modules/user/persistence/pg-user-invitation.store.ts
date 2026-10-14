@@ -83,6 +83,8 @@ export class PgUserInvitationStore implements UserInvitationStore {
       email: row.email,
       tokenHash: row.tokenHash,
       invitedBy: row.invitedBy,
+      roleIds: row.roleIds,
+      planId: row.planId,
       expiresAt: row.expiresAt,
       consumedAt: row.consumedAt,
       createdAt: row.createdAt,

@@ -8,6 +8,10 @@ export interface UserInvitationRecord {
   email: string;
   tokenHash: string;
   invitedBy: string | null;
+  /** Roles granted to the invitee at registration; order preserved. */
+  roleIds: string[];
+  /** Plan granted to the invitee at registration (snapshot), or null for default. */
+  planId: string | null;
   expiresAt: Date;
   consumedAt: Date | null;
   createdAt: Date;
@@ -18,6 +22,8 @@ export interface NewUserInvitation {
   email: string;
   tokenHash: string;
   invitedBy: string | null;
+  roleIds: string[];
+  planId: string | null;
   expiresAt: Date;
 }
 

@@ -1,5 +1,5 @@
 import type { AuthUser } from '@common/auth/auth-user';
-import { RegistrationApproval, UserStatus } from './user.types';
+import { RegistrationApproval, UserStatus } from '../user.types';
 import {
   Controller,
   Get,
@@ -11,15 +11,15 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
-import { UserService } from './user.service';
-import { UpdateProfileDto } from './dto/update-profile.dto';
-import { CompleteProfileDto } from './dto/complete-profile.dto';
-import { SearchUsersDto } from './dto/search-users.dto';
-import { UserSearchResultDto } from './dto/user-search-result.dto';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocLike } from './persistence/user-record.mapper';
-import { UserResponse } from './interfaces/user.interface';
-import { Permissions, RequirePermissions } from '../authorization';
+import { UserService } from '../services/user.service';
+import { UpdateProfileDto } from '../dto/update-profile.dto';
+import { CompleteProfileDto } from '../dto/complete-profile.dto';
+import { SearchUsersDto } from '../dto/search-users.dto';
+import { UserSearchResultDto } from '../dto/user-search-result.dto';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { UserDocLike } from '../persistence/user-record.mapper';
+import { UserResponse } from '../interfaces/user.interface';
+import { Permissions, RequirePermissions } from '../../authorization';
 
 @ApiTags('Users')
 @ApiBearerAuth()
