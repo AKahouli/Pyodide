@@ -1,5 +1,5 @@
 import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
 import type { IGrpcCompaction } from '@modules/agent/interfaces/agent.interface';
@@ -1605,6 +1605,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }): Promise<EvaluationTargetRunResult> {
     const request = await this.buildEvaluationGrpcRequest({
       ...input,
+      inputContext: { query: input.inputContext.query ?? '' },
       nodeIds: ['eval-target'],
     });
     const result = await this.collectEvaluationStream(request, {
@@ -1634,6 +1635,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }): Promise<EvaluationJudgeRunResult> {
     const request = await this.buildEvaluationGrpcRequest({
       ...input,
+      inputContext: {
+        query: input.inputContext.query ?? '',
+        expected_answer: input.inputContext.expected_answer ?? '',
+      },
       nodeIds: ['eval-judge'],
       extraInputContext: {
         target_answer: input.targetAnswer,
@@ -1666,12 +1671,25 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     extraInputContext?: Record<string, unknown>;
     agentContext?: EvaluationAgentContext;
   }): Promise<Record<string, unknown>> {
-    const { executionId, flowId, ownerId, snapshot, inputContext, nodeIds } = input;
+    const { flowId, ownerId, snapshot, inputContext, nodeIds } = input;
+    // Checkpoints and connector scopes must be fresh even for a same-question retry.
+    const executionId = `eval-${randomUUID()}`;
     const normalizedOwnerId = String(ownerId);
     const allNodes = Array.isArray(snapshot.nodes) ? (snapshot.nodes as any[]) : [];
-    const nodes = allNodes.filter((n) => nodeIds.includes(n.id));
+    // Reuse library agent/model selection, never persisted workflow inputs or history.
+    const nodes = allNodes.filter((n) => nodeIds.includes(n.id)).map((n) => ({
+      id: n.id,
+      kind: 'step',
+      label: n.id === 'eval-judge' ? 'LLM Judge' : 'Target Answer',
+      modelId: n.modelId,
+      metadata: {
+        assignedAgentId: n.metadata?.assignedAgentId,
+        description: typeof inputContext.query === 'string' ? inputContext.query : '',
+      },
+    }));
     const recursionLimit = Number((snapshot.settings as Record<string, unknown>)?.recursionLimit) || 25;
     const maxParallelism = Number((snapshot.settings as Record<string, unknown>)?.maxParallelism) || 5;
+    const workspaceIds: string[] = Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [];
 
     // Resolve agents present in the selected nodes only
     const agentIds = new Set<string>();
@@ -1702,12 +1720,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           agent_model: agent.chatbot?.model,
           agent_prompt: agent.prompt,
           agent_type: agent.agent_type,
-          agent_tools: agent.tools,
+          agent_tools: (agent.tools || []).filter((tool) => typeof tool.name !== 'string' || !['smart-memory', 'memory.retrieve', 'memory.write'].includes(tool.name)),
           skills: agent.skills || [],
           agent_params: agent.agent_params?.params || {},
-          connector_bindings: agent.connector_bindings || [],
+          connector_bindings: (agent.connector_bindings || []).filter((binding) => binding.connector_slug !== 'smart-memory'),
           connector_ids: agent.connectorIds || [],
-          brain_context: agent.brain_context || [],
+          brain_context: workspaceIds.map((workspaceId) => ({ workspace_id: workspaceId, workspace_documents: [] })),
           // Conversation-parity model knobs: reasoning effort and context window
           // are resolved by the agent builder but were dropped here, so the flow
           // runtime always ran the default effort. Carry them through.
@@ -1738,7 +1756,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }));
 
     // Workspace paths
-    const workspaceIds: string[] = Array.isArray((snapshot as any).workspaces) ? (snapshot as any).workspaces : [];
     const defaultWorkspaceId = workspaceIds[0] || '';
     const workspacePathsById = this.workspaceService
       ? await this.workspaceService.getStoragePathMapByIds(workspaceIds)
@@ -1751,16 +1768,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       __playbook_workspace_paths: workspacePathsById,
       __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
     }, []);
-
-    // Keep only edges/bindings whose nodes are all part of this step
-    const selectedNodes = new Set(nodeIds);
-    const controlEdges = ((snapshot.controlEdges as any[]) || []).filter(
-      (e) => selectedNodes.has(e.source) && selectedNodes.has(e.target),
-    );
-    const dataBindings = ((snapshot.dataBindings as any[]) || []).filter(
-      (b) => !b.sourceNode || (selectedNodes.has(b.sourceNode) && selectedNodes.has(b.targetNode)),
-    );
-    const dataBindingsProto = await this.buildDataBindingsProto(dataBindings, workspacePathsById);
 
     return {
       execution_id: executionId,
@@ -1795,15 +1802,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           human_approval_config: buildGrpcHumanApprovalConfig(n.humanApprovalConfig),
           retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
           model_id: n.modelId || '',
-          metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
+          metadata: toGrpcStruct(buildGrpcNodeMetadata(n, { hitlPolicy: { mode: 'off' } })),
           dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
         })),
-        control_edges: controlEdges.map((e) => ({
-          id: e.id, kind: e.kind, source: e.source, target: e.target,
-          router_label: e.routerLabel || '', priority: e.priority || 0,
-          source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
-        })),
-        data_bindings: dataBindingsProto,
+        control_edges: [],
+        data_bindings: [],
         settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
       },
       input_context: toGrpcStruct(runtimeInputContext),

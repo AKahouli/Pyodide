@@ -523,7 +523,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             }
           }
           const snapshot = (payload.snapshot ?? {}) as Record<string, unknown>;
-          const inputContext = { query: queryText, expected_answer: benchmarkQuery.answer ?? '' };
+          const targetInputContext = { query: queryText };
+          const judgeInputContext = { query: queryText, expected_answer: benchmarkQuery.answer ?? '' };
 
           try {
             const targetRun = await this.executionService.runEvaluationTarget({
@@ -531,7 +532,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
               flowId: template.flow_id,
               ownerId,
               snapshot,
-              inputContext,
+              inputContext: targetInputContext,
             });
             if (targetRun.status !== 'completed') {
               resultsByIndex[index] = buildQueryResult({
@@ -560,7 +561,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
               flowId: template.flow_id,
               ownerId,
               snapshot,
-              inputContext,
+              inputContext: judgeInputContext,
               targetAnswer: targetRun.targetAnswer,
               retrievedContext,
             }));

@@ -763,8 +763,24 @@ def _build_headers(
     header name (e.g. a saved API credential), letting auth_headers win
     silently replaces the gateway secret with a value the gateway was never
     issued -> 401, with no error at binding time to point at why.
+
+    Evaluation runtime scope headers take precedence over static settings.
     """
     config_headers = (server_config or {}).get("headers", {})
+    runtime_headers = {key.lower(): value for key, value in (auth_headers or {}).items()}
+    if str(runtime_headers.get("x-execution-id") or "").startswith("eval-"):
+        # Static connector settings cannot reuse another benchmark's scope.
+        protected = {"x-conversation-id", "x-execution-id", "workspace_id", "workspace-id",
+                     "workspace_name", "x-workspace-paths", "x-file-paths", "file_name", "file_names"}
+        config_headers = {key: value for key, value in (config_headers or {}).items() if key.lower() not in protected}
+        auth_headers = {key: value for key, value in (auth_headers or {}).items() if key.lower() not in protected}
+        for key in ("x-conversation-id", "x-execution-id", "x-workspace-paths", "x-file-paths"):
+            if key in runtime_headers:
+                auth_headers[key] = runtime_headers[key]
+        workspace = runtime_headers.get("workspace_id") or runtime_headers.get("workspace-id")
+        if workspace:
+            auth_headers["workspace_id"] = workspace
+            auth_headers["Workspace-Id"] = workspace
     if not config_headers and not auth_headers:
         return None
     colliding = sorted(set(config_headers or {}) & set(auth_headers or {}))

@@ -312,6 +312,7 @@ def _collect_connector_response_components(
     response: Any,
     tool_name: str = "",
     trusted_citations: bool = False,
+    log_payload: bool = True,
 ) -> Any:
     if not isinstance(response, dict):
         return response
@@ -337,8 +338,8 @@ def _collect_connector_response_components(
             if signature in collector._connector_source_links_seen:
                 logger.info(
                     "playbook_connector_source_reused title=%s url=%s",
-                    title,
-                    url,
+                    title if log_payload else "[suppressed]",
+                    url if log_payload else "[suppressed]",
                 )
                 continue
             collector._connector_source_links_seen.add(signature)
@@ -348,7 +349,7 @@ def _collect_connector_response_components(
             logger.info(
                 "playbook_connector_sources_component_emitted count=%s sources=%s",
                 len(new_sources),
-                _log_payload(new_sources),
+                _log_payload(new_sources) if log_payload else "[suppressed]",
             )
 
     citation_sources = normalized_response.get("citation_sources")
@@ -474,7 +475,7 @@ def _collect_connector_response_components(
         logger.warning(
             "PLAYBOOK_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s citation_sources=%s",
             assigned_references,
-            _log_payload(normalized_citation_sources),
+            _log_payload(normalized_citation_sources) if log_payload else "[suppressed]",
         )
 
     return normalized_response
@@ -1503,6 +1504,7 @@ def _create_connector_mcp_tools(
 
     tools: List[StructuredTool] = []
     sandbox_call_budget = SandboxCallBudget(max_sandbox_calls_per_step)
+    log_payload = not execution_id.startswith("eval-")
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1564,7 +1566,7 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             connector_name=connector_name,
             transport_type=transport_type,
-            server_url=server_url[:80] if server_url else "(empty)",
+            server_url=(server_url[:80] if server_url else "(empty)") if log_payload else "[suppressed]",
             action_count=len(actions),
         )
 
@@ -1680,6 +1682,13 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers["x-conversation-id"] = eid or sid
                             if eid:
                                 effective_auth_headers["x-execution-id"] = eid
+                            if eid.startswith("eval-") and _wi:
+                                effective_auth_headers = {key: value for key, value in effective_auth_headers.items()
+                                                          if key.lower() not in {"workspace_id", "workspace-id", "workspace_name"}}
+                                effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                if accepts_workspace:
+                                    merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                merged_params.pop("workspace_name", None)
                         if tt == "streamable_http":
                             # Filenames are model-visible context, not runtime scope.
                             # Let each MCP action's schema, instructions, and docstring
@@ -1722,7 +1731,7 @@ def _create_connector_mcp_tools(
                                 action_params,
                                 auth_headers=effective_auth_headers,
                                 auth_env=ae,
-                                log_payload=action != "send_file_to_user",
+                                log_payload=log_payload and action != "send_file_to_user",
                             )
 
                         if guard is not None and ak != "sandbox_create":
@@ -1789,7 +1798,7 @@ def _create_connector_mcp_tools(
                                     "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s",
                                     cid,
                                     ak,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     artifact_kind,
                                 )
                                 collector.add_component("artifact", {
@@ -1803,7 +1812,7 @@ def _create_connector_mcp_tools(
                                 logger.info(
                                     "mcp_file_artifact_emitted connector_id=%s filename=%s total_components=%d",
                                     cid,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     len(collector.components),
                                 )
                                 response = {
@@ -1819,6 +1828,7 @@ def _create_connector_mcp_tools(
                                 response,
                                 tool_name=ak,
                                 trusted_citations=result_kind in {"web_search", "web_fetch"},
+                                log_payload=log_payload,
                             )
                         return response
                     except SandboxMountValidationError as e:
@@ -1828,7 +1838,7 @@ def _create_connector_mcp_tools(
                         )
                         return f"Error: {e}"
                     except Exception as e:
-                        logger.error("MCP tool execution failed", tool=tn, error=str(e))
+                        logger.error("MCP tool execution failed", tool=tn, error=str(e) if log_payload else type(e).__name__)
                         return f"Connector action '{ak}' failed: {str(e)}"
 
                 _execute_mcp.__name__ = tn
@@ -1847,6 +1857,7 @@ def _create_connector_mcp_tools(
                         "source": "connector",
                         "connector_id": cid,
                         "connector_name": cn,
+                        "connector_slug": connector_slug_value,
                         "action_key": ak,
                         "safety": safety,
                         "parameters_schema": params_schema,
@@ -1861,7 +1872,7 @@ def _create_connector_mcp_tools(
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
             workspace_ids=workspace_ids,
-            file_names=file_names,
+            file_names=file_names if log_payload else "[suppressed]",
         )
 
     return tools

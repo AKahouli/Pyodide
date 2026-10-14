@@ -64,13 +64,18 @@ def _requires_text_only(exc: Exception) -> bool:
 
 
 def _ordered_tool_results(messages: list[BaseMessage]) -> list[BaseMessage]:
-    last_ai = max((index for index, message in enumerate(messages) if isinstance(message, AIMessage)), default=-1)
-    if last_ai < 0:
-        return messages
-    tail = messages[last_ai + 1:]
-    if not any(isinstance(message, ToolMessage) for message in tail):
-        return messages
-    return [*messages[:last_ai + 1], *[message for message in tail if isinstance(message, ToolMessage)], *[message for message in tail if not isinstance(message, ToolMessage)]]
+    assistant_indices = [index for index, message in enumerate(messages) if isinstance(message, AIMessage)]
+    ordered = list(messages)
+    # Image messages added by tools must follow all replies in every historical round.
+    for start, end in zip(assistant_indices, assistant_indices[1:] + [len(messages)]):
+        if not messages[start].tool_calls:
+            continue
+        tail = messages[start + 1:end]
+        ordered[start + 1:end] = [
+            *[message for message in tail if isinstance(message, ToolMessage)],
+            *[message for message in tail if not isinstance(message, ToolMessage)],
+        ]
+    return ordered
 
 
 def _completed_tool_round(messages: list[BaseMessage]) -> bool:
@@ -141,7 +146,7 @@ def build_model_node(tools: list[Any]):
             if reviewed.blocked:
                 return {"messages": [AIMessage(content=reviewed.text)], "guardrail_blocked": True, "guardrail_reason": reviewed.reason, "tool_iterations": next_iteration}
             if reviewed.sanitized and messages:
-                messages[-1] = HumanMessage(content=reviewed.text)
+                messages[-1] = messages[-1].model_copy(update={"content": reviewed.text})
 
         messages = _ordered_tool_results(messages)
         request_messages = _limit_images([_message_payload(message) for message in messages])

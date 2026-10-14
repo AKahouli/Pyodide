@@ -17,6 +17,10 @@ from src.guardrails.tool_registry import tool_policy
 from src.guardrails.adapters.google_adk import guardrail_config_fingerprint
 from src.temporary_child_summary import record_temporary_child_tool_call
 from langgraph.types import interrupt
+from yellowmind_observability import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def _matches_any(text: str, patterns: Any) -> bool:
@@ -166,6 +170,20 @@ def build_tool_wrapper():
         args = _normalize_tool_args(request.tool, args)
         tool_call["args"] = args
         metadata = tool_policy(tool_name, getattr(request.tool, "metadata", None))
+        is_memory = (metadata.get("connector_slug") == "smart-memory"
+                     or metadata.get("action_key") in {"memory.retrieve", "memory.write"}
+                     or tool_name in {"smart-memory", "memory.retrieve", "memory.write"})
+        if context.execution_id.startswith("eval-") and (is_memory or metadata["safety"] not in {"read", "internal"}):
+            message = "Benchmark isolation blocked persistent memory or a tool that is not declared read-only."
+            logger.warning("tool.call.failed", tool_name=tool_name, operation="benchmark_isolation")
+            if context.trace_collector is not None:
+                context.trace_collector.record_tool_call(
+                    tool_name=tool_name, args={}, output_summary=None, status="failed",
+                    duration_ms=0, error=message, agent_name=context.agent_name, agent_role=context.agent_role,
+                )
+                if context.on_trace_update is not None:
+                    context.on_trace_update()
+            return ToolMessage(content=message, tool_call_id=str(tool_call.get("id") or ""), name=tool_name, status="error")
         request_fingerprint = tool_request_fingerprint(tool_call, metadata, context)
         policy_fingerprint = guardrail_config_fingerprint(context.agent_config)
         decision = await guardrails.review_tool_action(
