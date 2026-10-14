@@ -358,6 +358,14 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     validated = run_population_for_payload(command_dump)
     if not validated.get("ok"):
         return validated
+    from app.datasource.attribute_extraction import AttributeExtractionError, uses_ai_extraction, validate_identity
+
+    ai_payload = command_dump.get("payload") or {}
+    if uses_ai_extraction(ai_payload) or ai_payload.get("aiExtraction") is not None:
+        try:
+            validate_identity(ai_payload.get("aiExtraction"))
+        except AttributeExtractionError as exc:
+            return {"ok": False, "errorCode": exc.code}
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
     ai_extraction = (command_dump.get("payload") or {}).get("aiExtraction")
     compiled = validated["compiled"]

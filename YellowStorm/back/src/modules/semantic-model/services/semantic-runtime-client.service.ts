@@ -303,12 +303,21 @@ export interface RuntimeActivateRevisionCommand {
 
 const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
 
+/** Non-secret runtime-owned identity bound into previews and execution fingerprints. */
+export interface AiExtractionIdentity {
+  profileId: 'semantic-runtime';
+  model: string;
+  contractVersion: 'ai-attribute-v2';
+  promptVersion: 'semantic-attributes-v1';
+  maxTokens: number;
+}
+
 export interface RuntimeDocumentPreviewRequest {
   actorUserId: string;
   modelId: string;
   /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
   entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
-  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  aiExtraction?: AiExtractionIdentity | null;
 }
 
 /** How each extracted field was read, or why it was not. */
@@ -363,7 +372,7 @@ export interface RuntimeSheetPreviewRequest {
     unit?: 'row' | 'record';
   };
   rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
-  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  aiExtraction?: AiExtractionIdentity | null;
   expand?: Record<string, unknown>;
 }
 
@@ -901,6 +910,38 @@ export class SemanticRuntimeClientService {
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
   ) { }
+
+  async getAiExtractionIdentity(): Promise<AiExtractionIdentity> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/ai-extraction/profile`, {
+        method: 'GET',
+        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch (error) {
+      throw this.translate(error);
+    }
+    if (!res.ok) throw new ServiceUnavailableException(
+      ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The semantic runtime AI extraction profile is unavailable',
+    );
+    let identity: Partial<AiExtractionIdentity> | null;
+    try {
+      identity = await res.json() as Partial<AiExtractionIdentity> | null;
+    } catch {
+      identity = null;
+    }
+    if (!identity || identity.profileId !== 'semantic-runtime' || typeof identity.model !== 'string' || !identity.model.trim()
+      || identity.contractVersion !== 'ai-attribute-v2' || identity.promptVersion !== 'semantic-attributes-v1'
+      || !Number.isSafeInteger(identity.maxTokens) || (identity.maxTokens ?? 0) <= 0) {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'The semantic runtime AI extraction profile is invalid');
+    }
+    // Only project the agreed identity, never credentials or unrelated configuration.
+    return { profileId: identity.profileId, model: identity.model, contractVersion: identity.contractVersion,
+      promptVersion: identity.promptVersion, maxTokens: identity.maxTokens! };
+  }
 
   private requireRuntime(): string {
     if (!this.config.runtimeEnabled || !this.config.runtimeUrl || !this.config.runtimeServiceKey) {

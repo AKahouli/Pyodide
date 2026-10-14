@@ -69,6 +69,30 @@ their owning source and verification below.
   claim/cancellation, and clean up only their own rows. They never reset shared
   schemas or cancel existing user jobs. Browser verification is a separate gate.
 
+### Semantic AI extraction (semantic runtime ↔ LiteLLM)
+
+The semantic runtime API and population workers call LiteLLM directly, with
+runtime-owned prompts/configuration. NestJS no longer proxies inference to ADK
+or resolves a semantic extraction agent from the agent library. Product
+authorization/job coordination and backend workspace asset delivery remain.
+
+The existing population API exposes protected profile discovery and standalone
+supplied-evidence extraction under `/v1/semantic-model-population/ai-extraction`.
+Both use `X-Semantic-Service-Key` and the existing command body limit. The
+non-secret profile is obtained by the backend before fingerprinting AI requests;
+runtime admission validates/pins identity and workers recheck it before cache or
+source access. Model/prompt/token-cap changes invalidate AI identities; old
+agent-library identities fail with rebuild-required errors.
+
+Executable owners: runtime `app/api/population_routes.py`,
+`app/datasource/attribute_extraction.py`, `app/workers/population_tasks.py`, and
+backend `semantic-runtime-client.service.ts`. Request shapes, configuration,
+coordinated rollout and compatibility are documented in the
+[runtime contracts guide](../../../YellowStorm/semantic-model-runtime/contracts/v1/README.md)
+and [ADR-0015](../decisions/ADR-0015-runtime-owned-semantic-ai-extraction.md).
+Focused API/transport/grounding/worker/fingerprint checks passed; required review
+found no critical/major issues. Live provider/deployment verification is separate.
+
 ## gRPC (NestJS ↔ ADK)
 
 Proto pairs (both copies authoritative; drift-tested where noted):

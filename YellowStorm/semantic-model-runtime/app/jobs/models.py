@@ -202,9 +202,9 @@ class PopulationPayload(BaseModel):
         default_factory=list, alias="relationBindings", max_length=50)
     # Concepts made from another concept's records, after every source is read.
     derivations: list[Derivation] = Field(default_factory=list, max_length=50)
-    # Identity of the AI extractor actually used (agent slug, effective model,
-    # contract version), or null when no mapping requests AI extraction. Part of
-    # the execution fingerprint so a model change produces a new revision.
+    # Runtime-owned extraction profile (model, contract/prompt version, token cap),
+    # or null when no mapping requests AI. Admission pins it into the execution
+    # fingerprint; workers reject incompatible legacy agent-library identities.
     ai_extraction: dict[str, Any] | None = Field(default=None, alias="aiExtraction")
     expected_active_data_revision_id: str | None = Field(
         default=None, alias="expectedActiveDataRevisionId", max_length=200)

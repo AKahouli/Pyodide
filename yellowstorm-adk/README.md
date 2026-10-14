@@ -20,6 +20,12 @@ Client (Web UI / gRPC client)
 
 The core of the system is a **Manager Agent** that receives user queries and dynamically delegates tasks to specialized sub-agents (search, operator, report writer, HTML diagram, etc.), each equipped with domain-specific tools.
 
+Semantic-model AI inference belongs to the standalone
+[`semantic-model-runtime`](../YellowStorm/semantic-model-runtime/README.md), which
+calls LiteLLM directly. ADK has no semantic-model extraction package, dedicated
+endpoint or configuration. The generic `/agentic/attribute_extraction` and batch
+document extraction features below are separate capabilities.
+
 ## Key Features
 
 - **Multi-Agent Orchestration** -- A manager agent dynamically creates and coordinates specialized sub-agents using Google ADK's `Runner` and `Agent` primitives. Supports sequential and parallel workflows.

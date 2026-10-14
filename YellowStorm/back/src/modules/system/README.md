@@ -31,6 +31,15 @@ The system module provides:
 - **Appearance**: Global color palettes plus a custom sidebar logo library stored in PostgreSQL (`catalog` schema)
 - **Audit Logging**: All maintenance changes are logged for accountability
 
+### Default-agent bootstrap and semantic extraction
+
+`PlatformCopilotBootstrapService` still seeds the platform copilot when its feature is enabled.
+Semantic extraction no longer seeds or updates a `semantic-field-extraction` default agent or its
+agent type. Existing historical agent rows are left untouched; no deletion or data migration is run.
+The semantic-model services obtain the non-secret AI profile from the existing semantic runtime
+client only for AI-enabled previews and population plans. The runtime owns inference configuration,
+prompts and execution; backend agent-library settings and ADK credentials no longer control extraction.
+
 ---
 
 ## Architecture

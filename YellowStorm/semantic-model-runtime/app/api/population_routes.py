@@ -17,6 +17,8 @@ from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Respo
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.datasource.attribute_extraction import (MAX_EVIDENCE_SECTIONS, AttributeExtractionError, extract_attributes,
+                                                profile_from_env, uses_ai_extraction, validate_identity)
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
                              ManualBatchCommand, ManualCommitCommand,
@@ -48,6 +50,71 @@ def _engine_key(idempotency_key: str) -> str:
     key = f"{idempotency_key}:{population_engine_version()}"
     return key if len(key) <= 200 else "sha256:" + hashlib.sha256(key.encode()).hexdigest()
 
+
+def _ai_http_error(error: AttributeExtractionError) -> HTTPException:
+    if error.code.endswith("rebuild_required"):
+        code = 409
+    elif error.code == "attribute_extraction_throttled":
+        code = 429
+    elif error.code in ("ai_extraction_not_configured", "ai_extraction_configuration_invalid"):
+        code = 503
+    elif error.code in ("no_evidence", "ai_extraction_identity_missing"):
+        code = 422
+    else:
+        code = 502
+    return HTTPException(status_code=code, detail=error.code)
+
+
+@router.get("/ai-extraction/profile")
+async def extraction_profile() -> dict[str, Any]:
+    """Non-secret runtime-owned profile, protected by the existing service guard."""
+    try:
+        return profile_from_env().identity
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
+
+
+class ExtractionAttribute(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(min_length=1, max_length=80)
+    label: str | None = Field(default=None, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    type: str = Field(default="string", max_length=32)
+
+
+class ExtractionSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sectionPk: str | int
+    blockPk: str | int
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class ExtractionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    modelId: str = Field(min_length=1, max_length=128)
+    conceptId: str = Field(min_length=1, max_length=128)
+    conceptLabel: str = Field(default="", max_length=200)
+    documentId: str = Field(default="", max_length=200)
+    fileName: str = Field(default="", max_length=500)
+    attributes: list[ExtractionAttribute] = Field(min_length=1, max_length=50)
+    sections: list[ExtractionSection] = Field(min_length=1, max_length=MAX_EVIDENCE_SECTIONS)
+    aiExtraction: dict[str, Any] | None = None
+    multiple: bool = False
+
+
+@router.post("/ai-extraction/extract")
+async def extract_evidence(body: ExtractionRequest) -> dict[str, Any]:
+    """Standalone inference from supplied evidence; never fetches backend assets."""
+    try:
+        identity = body.aiExtraction if body.aiExtraction is not None else profile_from_env().identity
+        return await extract_attributes(
+            model_id=body.modelId, concept_id=body.conceptId, concept_label=body.conceptLabel,
+            document_id=body.documentId, file_name=body.fileName,
+            attributes=[item.model_dump() for item in body.attributes],
+            sections=[item.model_dump() for item in body.sections], ai_extraction=identity, multiple=body.multiple)
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
+
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 async def request_run(
     command: PopulationCommand,
@@ -59,6 +126,18 @@ async def request_run(
     service = getattr(request.app.state, "job_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="jobs_unavailable")
+    payload = command.payload.model_dump(by_alias=True, mode="json")
+    if uses_ai_extraction(payload) or command.payload.ai_extraction is not None:
+        try:
+            identity = command.payload.ai_extraction
+            if identity is None:
+                identity = profile_from_env().identity
+                command.payload.ai_extraction = identity
+                if command.payload.population_execution_fingerprint is not None:
+                    raise AttributeExtractionError("ai_extraction_identity_missing")
+            validate_identity(identity)
+        except AttributeExtractionError as exc:
+            raise _ai_http_error(exc) from exc
     try:
         admission = await service.admit(
             job_type="population.run",

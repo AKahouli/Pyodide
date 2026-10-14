@@ -10,7 +10,6 @@ import {
   type SourcePreviewIssue,
 } from '../domain/semantic-cross-source.types';
 import { aiFieldHints,
-  AI_EXTRACTION_CONTRACT_VERSION,
   computedInputRefs,
   computeFieldProfiles,
   joinInputProblem,
@@ -23,7 +22,6 @@ import { aiFieldHints,
   type SourceAssetKind,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { documentReadOptions, effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';
@@ -115,7 +113,6 @@ export class SemanticSourceMappingService {
     private readonly runtime: SemanticRuntimeClientService,
     private readonly documentExtraction: DocumentExtractionConceptResolver,
     private readonly workspaces?: WorkspaceService,
-    private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) {}
 
@@ -270,7 +267,7 @@ export class SemanticSourceMappingService {
     });
     const usesAi = usesAiExtraction(fieldMappings);
     const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     return this.runtime.previewSheetFields({
       modelId: model.id,
       entry: {
@@ -281,7 +278,7 @@ export class SemanticSourceMappingService {
         ...(usesAi ? { options: { aiSettings: effectiveAiSettings(defaults, dto.aiSettings) } } : {}),
       },
       rows: dto.rows.map((row) => ({ rowNumber: row.rowNumber, values: row.values })),
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
       // Several records per row: each row is read once per item of the expanded column.
       ...(expand ? { expand: { ...expand } } : {}),
     });
@@ -355,7 +352,7 @@ export class SemanticSourceMappingService {
     });
     const usesAi = usesAiExtraction(fieldMappings);
     const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     const preview = await this.runtime.previewDocumentFields({
       actorUserId: input.userId,
       modelId: input.modelId,
@@ -370,7 +367,7 @@ export class SemanticSourceMappingService {
         fieldMappings,
         ...documentReadOptions(usesAi, defaults, aiSettings),
       },
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
     });
     const values: Record<string, unknown> = {};
     const provenance: NonNullable<ResolvedEntity['provenance']['fields']> = {};

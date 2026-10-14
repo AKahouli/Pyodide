@@ -84,6 +84,7 @@ const setup = (
     })),
   };
   const runtime = {
+    getAiExtractionIdentity: jest.fn(async () => ({ profileId: 'semantic-runtime', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 })),
     mirrorSpecification: jest.fn(async () => ({ reused: false })),
     appendManualRows: jest.fn(async () => undefined),
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
@@ -119,18 +120,15 @@ const setup = (
       },
     })),
   };
-  const aiExtractionAgent = {
-    resolveAgent: jest.fn(async () => ({ slug: 'semantic-field-extraction', llmModel: 'gpt-5.4-nano' })),
-  };
   const graphSearch = {
     allowedWorkspaceIds: jest.fn(async () => ['ws-1', 'ws-2']),
   };
   const service = new SemanticPopulationRefreshService(
     database as any, models as any, documents as any,
-    new ModelSpecificationService(), runtime as any, aiExtractionAgent as any,
+    new ModelSpecificationService(), runtime as any,
     undefined, undefined, graphSearch as any,
   );
-  return { database, models, documents, runtime, service, aiExtractionAgent, graphSearch };
+  return { database, models, documents, runtime, service, graphSearch };
 };
 
 describe('SemanticPopulationRefreshService', () => {
@@ -516,7 +514,7 @@ describe('SemanticPopulationRefreshService', () => {
     const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured: { purgeTimeoutSeconds: 900, maxRunSources: 40 } })) };
     const service = new SemanticPopulationRefreshService(
       built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-      built.aiExtractionAgent as any, extractionSettings as any,
+      extractionSettings as any,
     );
     await service.rebuildFromScratch('u-1', 'model-1');
     expect(built.runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: false, timeoutSeconds: 900 });
@@ -530,7 +528,7 @@ describe('SemanticPopulationRefreshService', () => {
       const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
       const service = new SemanticPopulationRefreshService(
         built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-        built.aiExtractionAgent as any, extractionSettings as any,
+        extractionSettings as any,
       );
       await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
       const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
@@ -552,7 +550,7 @@ describe('SemanticPopulationRefreshService', () => {
       const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
       const service = new SemanticPopulationRefreshService(
         built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-        built.aiExtractionAgent as any, extractionSettings as any,
+        extractionSettings as any,
       );
       await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
       const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
@@ -595,7 +593,7 @@ describe('SemanticPopulationRefreshService', () => {
       const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
       const service = new SemanticPopulationRefreshService(
         built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-        built.aiExtractionAgent as any, extractionSettings as any,
+        extractionSettings as any,
       );
       await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
       const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
@@ -776,7 +774,8 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[0][0].payload.populationExecutionFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
-  it('binds the AI agent identity into revision identity so a model change is a new revision', async () => {
+  it.each([{ model: 'other-model' }, { maxTokens: 8192 }, { promptVersion: 'semantic-attributes-v2' }, { contractVersion: 'ai-attribute-v3' }])
+    ('binds the whole runtime identity into the fingerprint when %j changes', async (change) => {
     const doc = MAPPING({
       id: 'm-doc', assetKind: 'document', sheetName: '',
       fieldMappings: [
@@ -792,12 +791,12 @@ describe('SemanticPopulationRefreshService', () => {
     await first.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
     const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(firstCall.payload.aiExtraction).toEqual({
-      agentSlug: 'semantic-field-extraction', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v1',
+      profileId: 'semantic-runtime', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096,
     });
 
-    // The admin points the agent at another model: the fingerprint must move.
+    // Every execution-relevant runtime profile change must move the fingerprint.
     const second = setup([doc]);
-    second.aiExtractionAgent.resolveAgent.mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'other-model' });
+    second.runtime.getAiExtractionIdentity.mockResolvedValue({ profileId: 'semantic-runtime', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096, ...change });
     second.documents.findById.mockResolvedValue({
       mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
       contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
@@ -809,12 +808,26 @@ describe('SemanticPopulationRefreshService', () => {
       .not.toEqual(firstCall.payload.populationExecutionFingerprint);
   });
 
+  it('does not admit a run or write runtime snapshots when an AI profile is unavailable', async () => {
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'ai' },
+    ] });
+    const { runtime, service } = setup([mapping]);
+    const failure = new Error('runtime AI profile unavailable');
+    runtime.getAiExtractionIdentity.mockRejectedValueOnce(failure);
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } })).rejects.toBe(failure);
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(runtime.mirrorSpecification).not.toHaveBeenCalled();
+    expect(runtime.commitManualSnapshot).not.toHaveBeenCalled();
+  });
+
   it('omits the AI identity when no mapping uses AI extraction', async () => {
     const doc = MAPPING({
       id: 'm-doc', assetKind: 'document', sheetName: '',
       fieldMappings: [{ sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract' }],
     });
-    const { documents, runtime, service, aiExtractionAgent } = setup([doc]);
+    const { documents, runtime, service } = setup([doc]);
     documents.findById.mockResolvedValueOnce({
       mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
       contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
@@ -823,7 +836,7 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
     const call = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(call.payload.aiExtraction).toBeNull();
-    expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
+    expect(runtime.getAiExtractionIdentity).not.toHaveBeenCalled();
   });
 
   it('uses the concept attribute label for document extraction mappings without a source field', async () => {
@@ -1003,7 +1016,7 @@ describe('SemanticPopulationRefreshService', () => {
     };
     const withDerivation = (built: ReturnType<typeof setup>) => new SemanticPopulationRefreshService(
       built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-      built.aiExtractionAgent as any, undefined,
+      undefined,
       new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: [derivedRow] })) } as any, {} as any),
     );
     const built = setup([contract], identity, [relation], [rule]);
@@ -1035,6 +1048,31 @@ describe('SemanticPopulationRefreshService', () => {
       .rejects.toThrow('No usable source in the selected scope');
   });
 
+  it('binds the runtime profile for a derived-only AI refresh and skips it for copied derivations', async () => {
+    const contract = MAPPING({ id: 'm-2', conceptId: 'c-contract', identityFields: ['contract_id'], fieldMappings: [
+      { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+      { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+    ] });
+    for (const usesAi of [false, true]) {
+      const built = setup([contract], { 'c-customer': ['customer_id'], 'c-contract': ['contract_id'] });
+      const derived = new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: [{
+        id: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'most_frequent',
+        orderBy: null, updatedAt: new Date('2026-09-30T00:00:00.000Z'), fieldMappings: [{
+          sourceAttribute: 'customer_ref', targetAttribute: 'customer_id',
+          ...(usesAi ? { mode: 'extract', extractionStrategy: 'ai' } : {}),
+        }],
+      }] })) } as never, {} as never);
+      const service = new SemanticPopulationRefreshService(built.database as never, built.models as never,
+        built.documents as never, new ModelSpecificationService(), built.runtime as never, undefined, derived);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } });
+      const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      expect(command.payload.sources).toEqual([]);
+      expect(command.payload.derivations).toHaveLength(1);
+      expect(built.runtime.getAiExtractionIdentity).toHaveBeenCalledTimes(usesAi ? 1 : 0);
+      expect(command.payload.aiExtraction).toEqual(usesAi ? await built.runtime.getAiExtractionIdentity.mock.results[0].value : null);
+    }
+  });
+
   it('refreshes one concept with only the derivations it feeds, and keeps the others out of the run', async () => {
     const contract = MAPPING({
       id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
@@ -1059,7 +1097,7 @@ describe('SemanticPopulationRefreshService', () => {
       const built = setup([contract, other], identity, [], [], [], [], labels);
       const service = new SemanticPopulationRefreshService(
         built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
-        built.aiExtractionAgent as any, undefined,
+        undefined,
         new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: derived })) } as any, {} as any),
       );
       await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId } });
@@ -1183,7 +1221,7 @@ describe('SemanticPopulationRefreshService', () => {
       { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
       { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic', rules },
     ] });
-    const { runtime, service, aiExtractionAgent } = setup([mapping]);
+    const { runtime, service } = setup([mapping]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     const command = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
     const [source] = command.payload.sources;
@@ -1191,7 +1229,7 @@ describe('SemanticPopulationRefreshService', () => {
     expect(source.fieldExtractions).toEqual({ name: { column: 'notes', label: 'Name', extractionStrategy: 'deterministic', rules } });
     expect(source.options).toEqual({ sheetName: 'Sheet1' });
     expect(command.payload.aiExtraction).toBeNull();
-    expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
+    expect(runtime.getAiExtractionIdentity).not.toHaveBeenCalled();
 
     const ai = setup([MAPPING({ fieldMappings: [
       { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
@@ -1201,7 +1239,7 @@ describe('SemanticPopulationRefreshService', () => {
     const aiCommand = (ai.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
     expect(aiCommand.payload.sources[0].fieldExtractions.name).toMatchObject({ extractionStrategy: 'rules_then_ai', description: 'Legal name', valueType: 'text' });
     expect(aiCommand.payload.sources[0].options.aiSettings).toBeDefined();
-    expect(aiCommand.payload.aiExtraction).toMatchObject({ agentSlug: 'semantic-field-extraction' });
+    expect(aiCommand.payload.aiExtraction).toMatchObject({ profileId: 'semantic-runtime' });
 
     // A sheet whose columns are read as they are keeps exactly what it sent before.
     const plain = setup();
@@ -1427,7 +1465,7 @@ describe('SemanticPopulationRefreshService', () => {
       const built = setup();
       const bare = new SemanticPopulationRefreshService(
         built.database as any, built.models as any, built.documents as any,
-        new ModelSpecificationService(), built.runtime as any, built.aiExtractionAgent as any,
+        new ModelSpecificationService(), built.runtime as any,
       );
       await expect(bare.graphOutline('u-1', 'model-1')).rejects.toThrow('Source authorization is not available');
       await expect(bare.graphRecord('u-1', 'model-1', 'n-1')).rejects.toThrow('Source authorization is not available');

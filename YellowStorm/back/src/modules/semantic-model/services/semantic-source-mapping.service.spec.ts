@@ -131,7 +131,9 @@ describe('SemanticSourceMappingService boundaries', () => {
       requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }),
     };
     const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', workspaceId: 'workspace-1', mimeType, originalName: 'Source.pdf', size: 10, updatedAt: 'now', indexingStatus: 'ready' }), findByIds: jest.fn() };
-    const runtime = { requestDatasourceDiscovery: jest.fn(), getJob: jest.fn() };
+    const runtime = { requestDatasourceDiscovery: jest.fn(), getJob: jest.fn(), getAiExtractionIdentity: jest.fn(),
+      previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', fields: {} }),
+      previewSheetFields: jest.fn().mockResolvedValue({ rows: [], ai: {} }) };
     const service = new SemanticSourceMappingService(
       database as never,
       models as never,
@@ -141,6 +143,26 @@ describe('SemanticSourceMappingService boundaries', () => {
     );
     return { service, database, models, documents, runtime };
   };
+
+  it.each(['document', 'sheet'])('fails closed on an unavailable AI profile for a %s preview but allows rules-only reading', async (kind) => {
+    const { service, database, runtime } = buildService(kind === 'document' ? 'application/pdf' : 'text/csv');
+    database.query.mockResolvedValue({ rows: [{ label: 'Customer', attributes: [{ key: 'id', label: 'ID', type: 'text' }] }] });
+    const failure = new Error('AI profile unavailable');
+    runtime.getAiExtractionIdentity.mockRejectedValue(failure);
+    const preview = (usesAi: boolean) => {
+      const dto = { conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+        fieldMappings: [{ sourceField: 'id', targetAttribute: 'id', mode: 'extract' as const,
+          extractionStrategy: usesAi ? 'ai' as const : 'deterministic' as const }] };
+      return kind === 'document' ? service.preview('user-1', 'model-1', dto)
+        : service.previewSheetFields('user-1', 'model-1', { ...dto, rows: [{ rowNumber: 1, values: { id: '1' } }] });
+    };
+    await expect(preview(true)).rejects.toBe(failure);
+    expect(runtime.previewDocumentFields).not.toHaveBeenCalled();
+    expect(runtime.previewSheetFields).not.toHaveBeenCalled();
+    runtime.getAiExtractionIdentity.mockClear();
+    await preview(false);
+    expect(runtime.getAiExtractionIdentity).not.toHaveBeenCalled();
+  });
 
   it('saves one mapping for every readable file of a workspace folder, named after the workspace and folder', async () => {
     const database = {
@@ -335,10 +357,10 @@ describe('SemanticSourceMappingService boundaries', () => {
     const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {
       number: { method: 'rules', reason: 'found', value: 'CNT-1', page: 1, quote: 'Contract number CNT-1' },
       title: { method: 'ai', reason: 'ai_not_found', rules: { method: 'rules', reason: 'label_not_found' } } } }) };
-    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'gpt' }) };
+    const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'gpt', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      runtime as never, {} as never, undefined, agent as never, settings as never);
+      { ...runtime, getAiExtractionIdentity } as never, {} as never, undefined, settings as never);
 
     const result = await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -351,7 +373,8 @@ describe('SemanticSourceMappingService boundaries', () => {
     const request = runtime.previewDocumentFields.mock.calls[0][0];
     expect(request.entry.fieldMappings[1].sourceField).toBe('Title');
     expect(request.entry.options.aiSettings).toEqual({ maxBlocks: 400, maxCharacters: 9000, longDocumentCharacters: 30000, blocksPerField: 3 });
-    expect(request.aiExtraction).toMatchObject({ agentSlug: 'semantic-field-extraction', contractVersion: 'ai-attribute-v1' });
+    expect(request.aiExtraction).toEqual(await getAiExtractionIdentity.mock.results[0].value);
+    expect(getAiExtractionIdentity).toHaveBeenCalledTimes(1);
     expect(result.entities[0]).toMatchObject({ entityKey: 'cnt-1', values: { number: 'CNT-1' },
       provenance: { fields: { number: { page: '1', quote: 'Contract number CNT-1' } } } });
     expect(result.fields.title.rules.reason).toBe('label_not_found');
@@ -368,7 +391,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       fields: { contract: { method: 'rules', reason: 'found', value: 'CNT-7' }, number: { method: 'rules', reason: 'found', value: '1', matches: 2 } },
       records: [{ values: { contract: 'CNT-7', number: '1' } }, { values: { contract: 'CNT-7', number: '2' } }], recordCount: 2, unevenFields: ['date'] }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      runtime as never, {} as never, undefined, undefined, undefined);
+      runtime as never, {} as never, undefined, undefined);
 
     const result = await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -394,9 +417,9 @@ describe('SemanticSourceMappingService boundaries', () => {
     const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
     const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'a.pdf', size: 10, indexingStatus: 'ready' }) };
     const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {} }) };
-    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'gpt' }) };
+    const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'gpt', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      runtime as never, {} as never, undefined, agent as never, undefined);
+      { ...runtime, getAiExtractionIdentity } as never, {} as never, undefined, undefined);
 
     await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -570,10 +593,10 @@ describe('SemanticSourceMappingService boundaries', () => {
     const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
     const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/zip', originalName: 'mails.zip' }) };
     const runtime = { previewSheetFields: jest.fn().mockResolvedValue({ rows: [], ai: { aiRows: 1, aiCalls: 1, aiSkippedRows: 0, aiFailedRows: 0 } }) };
-    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'extractor', llmModel: 'm' }) };
+    const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'm', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
-    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never,
-      undefined, agent as never, settings as never);
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, { ...runtime, getAiExtractionIdentity } as never, {} as never,
+      undefined, settings as never);
     const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'ai' as const };
     await service.previewSheetFields('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -585,7 +608,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       { ...reference, label: 'Référence', description: 'Order reference', valueType: 'text' }]);
     expect(request.entry.options.aiSettings.maxCharacters).toBe(9000);
     expect(request.rows).toEqual([{ rowNumber: 2, values: { id: 'M1', corps: 'Réf: A-1' } }]);
-    expect(request.aiExtraction).toMatchObject({ agentSlug: 'extractor', model: 'm' });
+    expect(request.aiExtraction).toEqual(await getAiExtractionIdentity.mock.results[0].value);
     const pdf = buildService();
     pdf.database.query.mockResolvedValue({ rows: [{}] });
     await expect(pdf.service.previewSheetFields('user-1', 'model-1', {

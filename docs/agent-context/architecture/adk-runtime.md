@@ -2,7 +2,8 @@
 
 Inspection date: 2026-10-13. Source-verified; descriptive prose in
 `yellowstorm-adk/README.md` was checked against code and protos — protos and call
-sites win on conflict. No behavior changed.
+sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
+`e9ef1676c` plus the scoped migration diff; other sections retain their baseline evidence.
 
 ## Ownership and entry points
 
@@ -17,7 +18,7 @@ sites win on conflict. No behavior changed.
 - Agent definitions are factory-built, not a static list; `AgentFactory` guards
   construction, `ManagerAgentFactory` builds the manager.
 - Routers (`src/routers/`): `chatbot.py` (chat + agentic), `similarity_search.py`,
-  `playbook.py`, `evaluation.py`, `evaluation_batch.py`, `semantic_model.py`,
+  `playbook.py`, `evaluation.py`, `evaluation_batch.py`,
   `vectorstores.py`, `response_correction.py`, `response_evaluation.py`,
   `sse_stream.py`, `authentification.py`, `health.py`.
 
@@ -34,6 +35,13 @@ Authoritative list: `yellowstorm-adk/README.md:103-136` + `src/routers/*.py`:
 
 Streaming is SSE; batch extraction continues via Celery (`attribute_extraction`
 queue, Redis broker; `celery -A src.infrastructure.celery_app.celery_app worker …`).
+
+Semantic-model extraction is owned by the standalone semantic runtime, which
+calls LiteLLM directly. ADK's former `src/semantic_model` package, dedicated
+router and semantic extraction settings are removed. The generic agentic document
+extraction endpoints above are separate features. See
+[ADR-0015](../decisions/ADR-0015-runtime-owned-semantic-ai-extraction.md) and the
+[runtime guide](../../../YellowStorm/semantic-model-runtime/README.md).
 
 ## gRPC surface (`:50051`)
 

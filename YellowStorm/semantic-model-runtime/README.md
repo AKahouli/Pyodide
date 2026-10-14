@@ -34,6 +34,57 @@ the affected revisions must be projected again before activation.
   `INTERNAL_SERVICE_SECRET`; sent only to the configured backend origin.
 - `YELLOWSTORM_BACKEND_API_PREFIX`: NestJS global API prefix (default `api`).
 
+## Autonomous AI extraction
+
+The runtime API and population workers call LiteLLM directly. Extraction prompts,
+response validation and configuration live in `app/datasource/attribute_extraction.py`
+and `extraction_prompt.py`; document/cell/derived readers retain grounding and typed
+value validation. No ADK package, backend inference proxy or agent-library lookup
+is needed. Backend credentials above are still used for workspace datasource access.
+
+Set the same extraction configuration on the API and population workers:
+
+| Variable | Purpose / default |
+| --- | --- |
+| `SEMANTIC_AI_BASE_URL` | Required LiteLLM origin, optionally ending in `/v1` |
+| `SEMANTIC_AI_API_KEY` | Required service-specific LiteLLM key; never returned in API/profile/job data |
+| `SEMANTIC_AI_MODEL` | Required configured LiteLLM model alias; callers cannot override it |
+| `SEMANTIC_AI_MAX_TOKENS` | Response token cap, default `32000` (1–128000) |
+| `SEMANTIC_AI_TIMEOUT_SECONDS` | Total inference deadline including capacity waits/backoff, default `240` (1–600) |
+| `SEMANTIC_AI_PARALLEL_CALLS` | Maximum inference requests in flight per process/event loop, default `8` (1–64) |
+
+These are independent of `SEMANTIC_EMBEDDING_*` settings. The gateway model must
+support OpenAI-compatible chat completions and JSON-object responses.
+
+- `GET /v1/semantic-model-population/ai-extraction/profile` returns the non-secret
+  runtime identity: profile, model, contract version, prompt version and token cap.
+- `POST /v1/semantic-model-population/ai-extraction/extract` accepts bounded supplied
+  evidence and concept attributes for standalone inference, including multiple
+  records. It needs no backend assets or database. It returns extraction candidates
+  with only supplied evidence references; population readers perform the stronger
+  value-to-text grounding before storing records.
+- Both routes use the existing `X-Semantic-Service-Key` authentication and command
+  body limit. Missing/invalid extraction configuration returns 503; incompatible
+  or changed bound identities return 409 with a rebuild-required code.
+
+Population admission binds the runtime profile when an AI request has no identity
+and no precomputed execution fingerprint. Backend-coordinated requests obtain it
+from the profile route before fingerprinting. Workers validate it before fetching
+sources or reusing extraction caches. Model, token-cap and prompt/contract changes
+invalidate AI execution/cache identity; timeout/concurrency changes do not.
+
+Deploy the backend, runtime API and population workers together. Legacy queued
+`agentSlug` extraction identities are explicitly rejected: resubmit/rebuild those
+runs under the runtime profile. Existing stored revisions and historical cache
+entries are preserved; v2 identities cannot reuse v1 extraction results. Rollback
+requires a coordinated backend/runtime/worker rollback and compatible job inputs.
+
+Focused verification (from this directory):
+`conda run -n meta python -m pytest tests/test_attribute_extraction_client.py tests/test_semantic_ai_runtime.py tests/test_document_population.py tests/test_cell_fields.py tests/test_derived_fields.py -q`.
+
+See [ADR-0015](../../docs/agent-context/decisions/ADR-0015-runtime-owned-semantic-ai-extraction.md)
+for the approved ownership decision.
+
 The per-revision tables (`semantic_population.entities`, `entity_identities`, `assertions`,
 `assertion_candidates`, `relationships`, and the graph search `entity_documents`, `entity_passages`)
 are LIST-partitioned (migration `031`): the store creates a revision's or a search generation's

@@ -10,7 +10,29 @@ Boundaries (plan §4.4): sample preview ≠ full coverage; exact text match ≠
 business role; task success ≠ evidence completeness; a scope token is not an
 authorization check.
 
-## Schemas
+## Runtime-owned AI extraction (current)
+
+The executable request models and endpoints in `app/api/population_routes.py`
+own the extraction contract; `app/datasource/attribute_extraction.py` owns the
+non-secret profile and direct LiteLLM transport. Existing service authentication
+and the 256 KiB command limit apply:
+
+| Method / path | Contract |
+| --- | --- |
+| `GET /v1/semantic-model-population/ai-extraction/profile` | Runtime profile identity, excluding URL/key; unavailable configuration returns 503 |
+| `POST /v1/semantic-model-population/ai-extraction/extract` | Bounded supplied evidence/attributes, optional bound identity and multiple-record mode; no document retrieval or persistence |
+
+Population `aiExtraction` carries `{profileId, model, contractVersion, promptVersion,
+maxTokens}` instead of an agent-library identity. It participates in existing
+execution and extraction-cache fingerprints. Admission/worker execution reject
+legacy or changed profiles explicitly; identity-free direct admission pins the
+runtime profile only when no precomputed fingerprint was supplied. Extraction
+values are candidates; document/cell/derived population readers enforce grounding
+and type/choice checks before storing them. Sender/receiver coverage lives in
+backend `semantic-runtime-client.service.spec.ts` and runtime
+`tests/test_semantic_ai_runtime.py` / `tests/test_attribute_extraction_client.py`.
+
+## Captured datasource schemas
 
 | File | Purpose |
 |---|---|

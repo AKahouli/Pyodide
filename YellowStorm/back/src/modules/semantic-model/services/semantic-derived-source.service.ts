@@ -7,10 +7,9 @@ import {
   reachableDerivationsInOrder, runtimeDerivedField, storedDerivedField, storedExpand, type DerivedExpand, type DerivedFieldMapping, type DerivedSource,
   type RuntimeDerivation,
 } from '../domain/semantic-derived-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
+import { type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
 import type { DerivedFieldPreviewDto, SaveDerivedSourceDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
@@ -45,7 +44,6 @@ export class SemanticDerivedSourceService {
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
     @Optional() private readonly runtime?: SemanticRuntimeClientService,
-    @Optional() private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
     @Optional() private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) { }
 
@@ -144,7 +142,7 @@ export class SemanticDerivedSourceService {
       return { ...rest, sourceField: (sourceAttribute as string | undefined) ?? null, mode: derivedFieldMode(field) };
     });
     const usesAi = fields.some(derivedFieldUsesAi);
-    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const aiExtraction = usesAi ? await this.runtime.getAiExtractionIdentity() : null;
     const result = await this.runtime.previewSheetFields({
       modelId: model.id,
       entry: {
@@ -156,7 +154,7 @@ export class SemanticDerivedSourceService {
         ...(usesAi ? { options: { aiSettings: { ...await this.aiSettings(), ...sourceAiSettings(dto.aiSettings) } } } : {}),
       },
       rows: dto.records.map((record, index) => ({ rowNumber: index + 1, values: record.values })),
-      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      aiExtraction,
       ...(expand ? { expand: { ...expand } } : {}),
     });
     // Each reading names the source record it was read on rather than a row number (and its item, when expanded).

@@ -29,6 +29,54 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
+  describe('runtime-owned AI extraction profile', () => {
+    const identity = { profileId: 'semantic-runtime', model: 'openai/extractor', contractVersion: 'ai-attribute-v2',
+      promptVersion: 'semantic-attributes-v1', maxTokens: 4096 };
+
+    it('reads the authenticated profile with writes disabled and forwards only non-secret identity', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ...identity, apiKey: 'not-forwarded' }));
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as never);
+      await expect(client.getAiExtractionIdentity()).resolves.toEqual(identity);
+      expect(fetchMock).toHaveBeenCalledWith('http://runtime:8000/v1/semantic-model-population/ai-extraction/profile', {
+        method: 'GET', headers: { 'X-Semantic-Service-Key': 'secret' }, signal: expect.any(AbortSignal),
+      });
+      expect(timeout).toHaveBeenCalledWith(5000);
+      timeout.mockRestore();
+    });
+
+    it.each([503, 404, 401])('fails closed when the profile endpoint returns %s', async (status) => {
+      fetchMock.mockResolvedValueOnce(new Response('{}', { status }));
+      await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity())
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, status: 503 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([null, {}, { ...identity, model: '' }, { ...identity, profileId: 'agent' },
+      { ...identity, contractVersion: 'ai-attribute-v1' }, { ...identity, promptVersion: 'wrong' },
+      { ...identity, maxTokens: 0 }, { ...identity, maxTokens: 1.5 }, { ...identity, maxTokens: '4096' }])
+      ('rejects malformed or incompatible identity %j', async (payload) => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(payload));
+        await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity())
+          .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      });
+
+    it('rejects malformed JSON and unreachable profiles without retrying', async () => {
+      const client = new SemanticRuntimeClientService(config() as never);
+      fetchMock.mockResolvedValueOnce(new Response('not json', { status: 200 }));
+      await expect(client.getAiExtractionIdentity()).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+      await expect(client.getAiExtractionIdentity()).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('requires runtime configuration without requesting a profile', async () => {
+      await expect(new SemanticRuntimeClientService(config({ runtimeServiceKey: '' }) as never).getAiExtractionIdentity())
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('posts population runs with service key, idempotency key and timeout', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j1', reused: false }));
     const client = new SemanticRuntimeClientService(config() as any);
