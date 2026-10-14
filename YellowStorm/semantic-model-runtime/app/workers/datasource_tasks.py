@@ -15,6 +15,7 @@ import json
 
 from app.datasource.email_archive import resolve_column
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.jobs.worker_identity import worker_identity
 
 from .celery_app import DATASOURCE_QUEUES, celery_app
 
@@ -278,7 +279,8 @@ def run_discovery_for_payload(command_dump: dict, *, authorize=None,
     )
 
 
-async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None) -> dict:
+async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None,
+                                 stop_event=None) -> dict:
     """Add execution-time authorized bytes to the otherwise-pure discovery."""
     import asyncio
 
@@ -322,7 +324,8 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None)
             if to_file:
                 # Discovery of an archive previews its first e-mails; the full read happens at population.
                 preview = await asyncio.to_thread(
-                    run_preview_subprocess, source, options if isinstance(options, dict) else None, data)
+                    run_preview_subprocess, source, options if isinstance(options, dict) else None, data,
+                    stop_event=stop_event)
                 profile = preview["profile"]
                 gaps = profile.get("status") in ("partial", "indexing_required")
                 return with_mapping_preview(
@@ -332,7 +335,7 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None)
             preview = await asyncio.to_thread(
                 prepare_dataset_subprocess, source,
                 options if isinstance(options, dict) else None, data, artifact,
-            )
+                stop_event=stop_event)
             uploader = upload or upload_prepared_dataset
             async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
                 await uploader(source, actor, preview["dataset"], artifact)
@@ -369,6 +372,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                          "idle_in_transaction_session_timeout": "10s"},
     )
     lease = None
+    guard = None
     try:
         repository = PostgresJobRepository(pool)
         lease = await repository.claim_task(task_id=task_id, queue_name=_QUEUES[1],
@@ -386,6 +390,19 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return {"ok": False, "errorCode": "attempts_exhausted"}
+        # Independent lease renewal (P0-02): a parser subprocess cannot renew
+        # anything itself, and to_thread cancellation never reaches it.
+        from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
+
+        lease_seconds, renew_seconds = lease_windows_from_env()
+        guard = TaskLeaseGuard(
+            TaskOwnership(task_id=task_id, job_id=lease.job_id,
+                          lease_owner=lease_owner, lease_epoch=lease.lease_epoch),
+            lease_seconds=lease_seconds, renew_seconds=renew_seconds)
+        try:
+            await guard.start()
+        except TaskLeaseLost:
+            return {"ok": False, "errorCode": "lease_lost"}
         # Deterministic source/parser failures are returned as outcomes. I/O,
         # configuration, backend 5xx, and other infrastructure failures must
         # escape to the requeue path below instead of becoming terminal jobs.
@@ -411,7 +428,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 lease.payload,
             )
         else:
-            outcome = await run_discovery_for_task(lease.payload)
+            outcome = await run_discovery_for_task(lease.payload, stop_event=guard.lost_event)
         if not outcome.get("ok"):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
@@ -422,6 +439,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             return outcome
         result = {key: value for key, value in outcome.items()
                   if key not in {"ok", "jobState"}}
+        await guard.assert_owned()
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,
@@ -429,13 +447,17 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         except StaleLease:
             return {"ok": False, "errorCode": "stale_lease"}
         return {"ok": True, **result, "jobState": outcome["jobState"]}
+    except TaskLeaseLost as exc:
+        logger.warning("Discovery attempt lost its task lease",
+                       extra={"task_id": task_id, "reason": type(exc).__name__[:100]})
+        return {"ok": False, "errorCode": "lease_lost"}
     except Exception as exc:
         # Infra/control-plane failure after a successful claim: release the
         # lease and reset the outbox row so the next dispatch (or the
         # dispatcher's lease-expiry recovery) reclaims it. If even this fails
         # the lease simply expires and recovery picks it up. Then re-raise so
         # the broker does not treat the delivery as handled.
-        if lease is not None:
+        if lease is not None and guard is not None and not guard.lost_event.is_set():
             try:
                 await PostgresJobRepository(pool).requeue_task(
                     task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
@@ -443,8 +465,12 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except Exception as requeue_exc:
                 logger.warning("Semantic discovery requeue failed; lease recovery will retry",
                                extra={"error_code": type(requeue_exc).__name__[:100]})
+        if lease is not None and guard is not None and guard.lost_event.is_set():
+            return {"ok": False, "errorCode": "lease_lost"}
         raise
     finally:
+        if guard is not None:
+            guard.stop()
         await pool.close()
 
 
@@ -452,7 +478,6 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 def discover_asset(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
     import asyncio
     import os
-    import uuid
 
     if isinstance(task_id, bool) or not isinstance(task_id, int):
         # Deterministic invalid reference: ack it, nothing to retry.
@@ -460,7 +485,7 @@ def discover_asset(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
     max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
     retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
     try:
-        return asyncio.run(_run_task(task_id, f"datasource-worker:{uuid.uuid4().hex}"))
+        return asyncio.run(_run_task(task_id, worker_identity("datasource").lease_owner()))
     except Exception as exc:
         # Infra/control-plane failure. Celery 5.3.6 rejects failure/timeout with
         # requeue=False when acks_on_failure_or_timeout is off, so a bare raise

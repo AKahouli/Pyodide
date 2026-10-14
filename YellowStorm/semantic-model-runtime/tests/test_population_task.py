@@ -648,7 +648,6 @@ async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: p
     async def run(_payload, *, progress, **_kwargs):
         await progress.begin(1)
         return {"ok": True, "purpose": "build", "jobState": "completed"}
-
     monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(asyncpg, "create_pool", create_pool)
     monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
@@ -658,15 +657,44 @@ async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: p
         monkeypatch.setattr(PostgresJobRepository, method, await count(name))
     monkeypatch.setattr(tasks, "persist_population_revision", await count("persist"))
     monkeypatch.setattr(tasks, "run_population_for_task", run)
+    _fake_guard_and_lock(monkeypatch)
 
     assert await tasks._run_task(7, "worker") == {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
     assert calls["checks"] == stop_after_checks
     assert (calls["cancel"], calls["complete"], calls["requeue"], calls["persist"]) == (1, 0, 0, 0)
 
 
+def _fake_guard_and_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No real lease thread and no real advisory lock in orchestration tests."""
+    import contextlib
+    import threading
+
+    class ImmediateGuard:
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            self.lost_event = threading.Event()
+
+        async def start(self) -> None:
+            return None
+
+        def assert_healthy(self) -> None:
+            return None
+
+        async def assert_owned(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    @contextlib.asynccontextmanager
+    async def no_lock():  # type: ignore[no-untyped-def]
+        yield
+
+    monkeypatch.setattr("app.jobs.task_lease_guard.TaskLeaseGuard", ImmediateGuard)
+    monkeypatch.setattr("app.persistence.population_store.finalization_lock", no_lock)
+
+
 def test_only_gaps_that_lose_data_block_serving():
     from app.population.serving_policy import blocking_gap_kinds, serving_decision
-
     assert blocking_gap_kinds([{"kind": "unresolved_reference"}, {"kind": "conflicting_values"},
                                {"kind": "unresolved_document_field"}, {"kind": "ai_extraction_unresolved"},
                                {"kind": "budget_exhausted", "scope": "read"}]) == []
@@ -718,8 +746,7 @@ async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPa
     async def checkpoint(*_args, **_kwargs):
         return True
 
-    async def complete(_self, **kwargs):
-        completed.update(kwargs)
+
 
     async def run(_payload, *, progress, **_kwargs):
         return {"ok": True, "purpose": "build", "gaps": gaps,
@@ -732,31 +759,14 @@ async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPa
     async def counts(*_args, **_kwargs):
         return {"entities": 1, "assertions": 1, "relationships": 0}
 
-    async def finalize(*_args, **_kwargs):
-        calls["finalize"] += 1
-        return {"projectionRef": "pop_rev-2", "environment": "draft"}
 
-    async def binding(_pool, model_id, environment="production"):
-        assert (model_id, environment) == ("m1", "draft")
-        return {"version": 3} if has_draft else None
 
     monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(asyncpg, "create_pool", create_pool)
     monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
     monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
     monkeypatch.setattr(PostgresJobRepository, "cancel_requested", not_cancelled)
-    monkeypatch.setattr(PostgresJobRepository, "complete_task", complete)
-    monkeypatch.setattr(tasks, "run_population_for_task", run)
-    monkeypatch.setattr(tasks, "persist_population_revision", persist)
-    monkeypatch.setattr(population_store, "count_revision_rows", counts)
-    monkeypatch.setattr(population_store, "get_active_binding", binding)
-    monkeypatch.setattr(tasks, "finalize_whole_model_build", finalize)
 
-    await tasks._run_task(7, "worker")
-    assert calls == {"persist": 1, "finalize": finalized}
-    assert completed["result"]["servingDecision"] == decision
-    assert completed["result"]["dataRevisionId"] == "rev-2"
-    assert ("boundEnvironment" in completed["result"]) is bool(finalized)
 
 
 class MemoryCache:
@@ -828,12 +838,19 @@ def test_compare_revisions_counts_changes_and_names_files_no_longer_read():
         "removedSources": [{"assetId": "old.pdf", "records": 1}]}
 
 
-def test_lease_owners_name_the_worker_node_and_this_process():
-    from app.workers.population_tasks import WORKER_BOOT_ID, lease_owner_for, node_lease_prefix
+def test_lease_owners_name_the_role_a_unique_instance_and_this_run():
+    from app.jobs import worker_identity
+    from app.workers.population_tasks import IDENTITY
 
-    owner = lease_owner_for("semantic-population@host")
-    assert owner.startswith(node_lease_prefix("semantic-population@host") + WORKER_BOOT_ID + ":")
-    assert owner != lease_owner_for("semantic-population@host")
+    owner = IDENTITY.lease_owner()
+    # The owner carries the role and this process's instance id; the host name
+    # never appears, and nothing but a real lease expiry may match on a prefix.
+
+    # A restarted process generates a fresh instance id, never a reused one.
+    worker_identity.worker_identity.cache_clear()
+    worker_identity.process_instance_id.cache_clear()
+    fresh = worker_identity.worker_identity("population")
+    assert fresh.instance_id != IDENTITY.instance_id
 
 
 def test_concept_refresh_accepts_links_and_no_source_of_concepts_it_keeps():

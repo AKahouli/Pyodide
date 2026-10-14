@@ -750,6 +750,38 @@ async def _discard_projection(connection: Any, graph: str, revision_id: str) -> 
                      revision_id, type(exc).__name__)
 
 
+async def prepare_draft_activation(pool: Any, age_pool: Any, revision_id: str,
+                                   report: StepReport | None = None,
+                                   batch_rows: int = DEFAULT_BATCH_ROWS,
+                                   exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build the candidate's graph (still unserved) and read everything the
+    fenced cutover must match, without moving any binding (P0-03 step C).
+
+    The worker passes the returned activation to the atomic
+    ``PostgresJobRepository.finalize_population_task`` transaction, which alone
+    compares-and-swaps the draft binding with the task's terminal transition.
+    The returned ``expectedVersion`` is read here only to fail early; the
+    cutover re-checks it inside its own transaction.
+    """
+    from app.persistence import population_store as store
+
+    projected = await ensure_revision_projection(
+        pool, age_pool, revision_id, report, batch_rows,
+        **({} if exposure is None else {"exposure": exposure}))
+    revision = await store.get_data_revision(pool, revision_id)
+    if revision is None:
+        raise PopulationError("revision_not_found")
+    sequence = await store.model_correction_sequence(pool, revision["model_id"])
+    if revision["correction_sequence"] != sequence:
+        raise PopulationError("stale_revision_watermark")
+    current = await store.get_active_binding(pool, revision["model_id"], "draft")
+    return {"environment": "draft", "revisionId": revision_id,
+            "projectionRef": projected["projectionRef"],
+            "modelId": revision["model_id"], "modelVersionId": revision["model_version_id"],
+            "specHash": revision["spec_hash"], "correctionSequence": sequence,
+            "expectedVersion": current["version"] if current else None}
+
+
 async def finalize_draft_revision(pool: Any, age_pool: Any, revision_id: str,
                                   report: StepReport | None = None,
                                   batch_rows: int = DEFAULT_BATCH_ROWS,

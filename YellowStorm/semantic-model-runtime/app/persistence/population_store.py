@@ -9,6 +9,7 @@ asyncpg-style ``fetch/fetchval/fetchrow/execute/executemany``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -668,6 +669,49 @@ async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
                 "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
 
     return await with_partition_locks(pool, delete)
+
+
+class FinalizationBusy(RuntimeError):
+    """Another finalization of the same model holds the per-model mutex."""
+
+
+@asynccontextmanager
+async def finalization_lock(pool: Any, model_id: str, *,
+                            guard: Any = None,
+                            wait_seconds: float = 30.0) -> AsyncIterator[None]:
+    """Serialize population finalization per model (P0-03 step A).
+
+    A dedicated session connection holds one PostgreSQL advisory lock across
+    persistence, projection and the fenced cutover, so two attempts never
+    interleave one model's candidate chain. Different models proceed in
+    parallel. The wait is bounded and guard-aware: an attempt that loses its
+    lease stops waiting instead of blocking forever.
+    """
+    key = f"semantic:population:finalize:{model_id}"
+    connection = await pool.acquire()
+    try:
+        locked = False
+        while not locked:
+            if guard is not None:
+                guard.assert_healthy()
+            try:
+                await asyncio.wait_for(
+                    connection.execute("SELECT pg_advisory_lock(hashtextextended($1, 0))", key),
+                    wait_seconds)
+                locked = True
+            except asyncio.TimeoutError:
+                continue  # bounded wait: re-check the guard, then try again
+        try:
+            yield
+        finally:
+            try:
+                await connection.execute("SELECT pg_advisory_unlock(hashtextextended($1, 0))", key)
+            except Exception:
+                logger.warning("could not release the population finalization lock; closing the connection",
+                               exc_info=True)
+                connection.terminate() if hasattr(connection, "terminate") else None
+    finally:
+        await pool.release(connection)
 
 
 async def get_active_binding(pool: Any, model_id: str,
