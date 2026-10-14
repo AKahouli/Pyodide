@@ -9,6 +9,7 @@ The auth module implements a secure authentication flow with:
 - HTTP-only refresh token cookies (7 day expiry, auto-rotation)
 - Email verification flow
 - Forgot password / reset password flow
+- Super-admin email invitation flow (an invite link resolves server-side, then opens the register modal with the invited address pre-filled and locked)
 - Profile completion flow
 - Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval; a rejected request shows declined access instead of “upcoming”)
 - Automatic token refresh on 401 responses
@@ -31,7 +32,7 @@ src/modules/auth/
 │   ├── PendingApprovalPage.test.tsx
 │   ├── RootGuard.tsx           # Route guard for "/"
 │   ├── RootGuard.test.tsx      # Root guard routing tests
-│   ├── LandingPage.tsx         # Landing page for guests
+│   ├── LandingPage.tsx         # Landing page for guests (handles ?invite= links)
 │   ├── LandingPage.test.tsx    # Landing page modal entry tests
 │   ├── EmailVerificationPage.tsx   # Email verification handler
 │   ├── EmailVerificationPage.test.tsx # Verification flow tests
@@ -42,7 +43,7 @@ src/modules/auth/
 │   ├── modals/
 │   │   ├── LoginModal.tsx          # Login form modal
 │   │   ├── LoginModal.test.tsx     # Login modal tests
-│   │   ├── RegisterModal.tsx       # Registration form modal
+│   │   ├── RegisterModal.tsx       # Registration form modal (invite prefill/lock)
 │   │   ├── RegisterModal.test.tsx  # Register modal tests
 │   │   ├── ForgotPasswordModal.tsx # Forgot password modal
 │   │   ├── ForgotPasswordModal.test.tsx # Forgot password modal tests
@@ -199,9 +200,12 @@ try {
 
 **Throws:**
 - `ERR_1101` - Email already exists
+- `ERR_1132` - Invitation token invalid or already used
+- `ERR_1133` - Invitation token expired
+- `ERR_1134` - Invitation was issued for a different email
 - Validation errors for weak password
 
-**Note:** After registration, user must verify their email before logging in.
+**Note:** After registration, user must verify their email before logging in. When an optional `inviteToken` is present, registration is bound to the invited address; the invite does not skip verification or Super Admin approval.
 
 ---
 
@@ -306,6 +310,27 @@ try {
 
 ---
 
+##### `getInviteDetails(token: string): Promise<InviteDetails>`
+
+Resolves a super-admin invitation token from an invite link (`/#/?invite=<token>`). A standalone API function imported from `api.ts`; called by `LandingPage`, not part of `useAuth`.
+
+```tsx
+import { getInviteDetails } from '@/modules/auth/api';
+
+try {
+  const { email, expiresAt } = await getInviteDetails(token);
+  // Open the register modal with `email` pre-filled and locked
+} catch (error) {
+  // ERR_1132 - Invalid or already used token
+  // ERR_1133 - Token has expired
+  // ERR_1007 - Rate limited
+}
+```
+
+**Rate limited:** 10 requests per minute. Only the invited email and expiry are returned — never the token.
+
+---
+
 ##### `completeProfile(data: CompleteProfileData): Promise<void>`
 
 Completes the user's profile (required after registration).
@@ -375,6 +400,7 @@ interface LoginCredentials {
 interface RegisterCredentials {
   email: string;
   password: string;
+  inviteToken?: string;  // Super-admin invitation token from the invite link
 }
 ```
 
@@ -387,6 +413,15 @@ interface CompleteProfileData {
   company: string;
   privacyPolicy: boolean;  // Must be true
   dataSharing: boolean;    // Optional
+}
+```
+
+### `InviteDetails`
+
+```typescript
+interface InviteDetails {
+  email: string;
+  expiresAt: string;
 }
 ```
 
@@ -429,6 +464,24 @@ Email link ──▶ /#/reset-password?token=xxx ──▶ ResetPasswordPage
   ──▶ Backend validates token, resets password, invalidates all sessions
   ──▶ Page shows success + countdown redirect to login
 ```
+
+### Invitation Flow
+
+```text
+Admin (#/admin/users) ──▶ POST /admin/users/invite ──▶ invitation email
+                                                        (unique link, 24h)
+
+Email link ──▶ /#/?invite=<token> ──▶ LandingPage effect
+  ──▶ strips ?invite from the URL immediately (history/referrer safety)
+  ──▶ getInviteDetails(token)
+        ├── ERR_1132 / ERR_1133 ──▶ toast with localized message (no modal)
+        └── valid ──▶ useAuthModalStore.setInvite(token, email)
+                      └── opens RegisterModal, email pre-filled + disabled
+  ──▶ user sets a password ──▶ register({ email, password, inviteToken })
+        └── ERR_1132 / ERR_1133 / ERR_1134 shown inline via error-code i18n
+```
+
+The invite state (`inviteToken`, `inviteEmail`) lives in `useAuthModalStore` and is cleared on modal close, switch-to-login, and successful registration. The token is never used for authorization on its own — the invitee still verifies their email and waits for Super Admin approval.
 
 ## Token Management
 
@@ -495,6 +548,9 @@ interface ApiError {
 | `ERR_1115` | Email already verified |
 | `ERR_1116` | Password reset token invalid or already used |
 | `ERR_1117` | Password reset token expired |
+| `ERR_1132` | Invitation token invalid or already used |
+| `ERR_1133` | Invitation token expired |
+| `ERR_1134` | Invitation was issued for a different email |
 
 ### Example Error Handling
 
@@ -557,7 +613,7 @@ type AuthModalType = 'login' | 'register' | 'forgotPassword' | null;
 
 | Path | Component | Description |
 |------|-----------|-------------|
-| `/` | `RootGuard` | Landing or app based on auth state |
+| `/` | `RootGuard` | Landing or app based on auth state; `?invite=<token>` opens the register modal via `LandingPage` |
 | `/verify-email` | `EmailVerificationPage` | Email verification from magic link |
 | `/reset-password` | `ResetPasswordPage` | Password reset from email link |
 | `/complete-profile` | `ProfileCompletionPage` | Profile completion form |

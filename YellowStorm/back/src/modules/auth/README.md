@@ -33,6 +33,7 @@ The authentication module provides:
 - **Session Management**: View and revoke active sessions
 - **Email Verification**: Magic link verification flow
 - **Password Reset**: Forgot password / reset password flow with secure tokens
+- **Email Invitations**: Resolve a super-admin invitation token and gate the existing registration on it
 - **Security Alerts**: New login location notifications
 - **RBAC Integration**: Role-based permissions embedded in JWT
 
@@ -166,6 +167,7 @@ auth/
 | `/auth/resend-verification` | 3 | 5 minutes |
 | `/auth/forgot-password` | 3 | 5 minutes |
 | `/auth/reset-password` | 5 | 1 minute |
+| `/auth/invite` | 10 | 1 minute |
 
 ---
 
@@ -174,11 +176,14 @@ auth/
 ### Registration Flow
 
 ```
-1. POST /auth/register { email, password }
+1. POST /auth/register { email, password, inviteToken? }
 2. AuthService.register()
+   ├── If inviteToken: UserInvitationService.assertUsableForEmail(token, email)
+   │     └── unknown/used → ERR_1132, expired → ERR_1133, other email → ERR_1134
    ├── UserService.create()
    │   ├── hash password, generate verification token
    │   └── persist status: inactive, registrationApproval: pending
+   ├── If inviteToken: UserInvitationService.markConsumed(token) (after the user exists)
    ├── UsageService.getDefaultPlan() - get free plan
    ├── UserService.assignPlan() - assign to new user
    ├── Send verification email (best-effort)
@@ -190,7 +195,7 @@ auth/
    (status and registrationApproval are unchanged)
 ```
 
-New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account.
+New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account. An invitation only pre-fills and binds the invited address: the invitee still verifies their email and waits for Super Admin approval like any other classic signup. The invitation token is claimed only **after** the user row is created, so a rejected or failed registration never burns the link.
 
 ### Login Flow
 
@@ -460,7 +465,8 @@ When an old refresh token is used:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/auth/register` | Register new user |
+| POST | `/auth/register` | Register new user (optional `inviteToken`) |
+| GET | `/auth/invite?token=xxx` | Resolve a super-admin invitation token (invited email + expiry) |
 | POST | `/auth/login` | Login with credentials |
 | POST | `/auth/refresh` | Refresh access token |
 | GET | `/auth/verify-email?token=xxx` | Verify email address |
@@ -500,6 +506,25 @@ Content-Type: application/json
 ```
 
 The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
+
+A super-admin invitation is supplied as an optional `inviteToken` (see the [User Invitations](../user/README.md#user-invitations) flow in the user module). It must be unused, unexpired, and issued for the same address or registration is refused with `ERR_1132` / `ERR_1133` / `ERR_1134`; without it, registration is unchanged.
+
+**Resolve Invitation (public):**
+```http
+GET /api/v1/auth/invite?token=<raw-invite-token>
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "invitee@example.com",
+    "expiresAt": "2026-10-15T13:45:39.295Z"
+  }
+}
+```
+
+Returns only the invited email and expiry — never the token. Unknown, already-used, or expired tokens fail with `ERR_1132` / `ERR_1133`.
 
 **Login:**
 ```http
@@ -668,6 +693,12 @@ class RegisterDto {
   @MaxLength(128)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
   password: string;
+
+  // Optional: super-admin invitation token from the invite link.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  inviteToken?: string;
 }
 ```
 
@@ -847,6 +878,9 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 | ERR_1116 | AUTH_RESET_TOKEN_INVALID | Password reset token invalid or already used |
 | ERR_1117 | AUTH_RESET_TOKEN_EXPIRED | Password reset token has expired |
 | ERR_1120 | AUTH_TOKEN_MISSING | Auth token missing (SSE) |
+| ERR_1132 | AUTH_INVITE_TOKEN_INVALID | Invitation token invalid or already used |
+| ERR_1133 | AUTH_INVITE_TOKEN_EXPIRED | Invitation token has expired |
+| ERR_1134 | AUTH_INVITE_EMAIL_MISMATCH | Invitation was issued for a different email |
 | ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (login / refresh / JWT / existing OAuth login) |
 
 ---
@@ -901,6 +935,21 @@ Contains:
 ```
 
 Rejection does not send mail to the applicant.
+
+### Account Invitation (super-admin)
+
+Sent by the user module's `UserInvitationService` when a Super Admin invites an address from `/#/admin/users` (best-effort at the transport level, but a send failure surfaces as `ERR_1203`): 
+
+```
+Subject: You are invited to join YelloStorm
+
+Contains:
+- Branded HTML template (user-invite.html)
+- Unique, single-use invite link valid 24h: {APP_FRONTEND_URL}/#/?invite=<token>
+- Plain text fallback
+```
+
+It does not activate the account: the invitee still verifies email and waits for Super Admin approval. See [User Invitations](../user/README.md#user-invitations).
 
 ### Password Reset Email
 
