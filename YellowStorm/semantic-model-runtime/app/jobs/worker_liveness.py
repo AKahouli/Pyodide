@@ -17,6 +17,8 @@ from collections.abc import Sequence
 
 import asyncpg
 
+from app.jobs.worker_identity import process_instance_id
+
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 15
@@ -103,7 +105,9 @@ def start_worker_heartbeat(consumer: object) -> WorkerHeartbeat | None:
     if not dsn or _heartbeat is not None:
         return _heartbeat
     queues = sorted(consumer.app.amqp.queues.consume_from)  # type: ignore[attr-defined]
-    _heartbeat = WorkerHeartbeat(dsn, str(consumer.hostname), queues)  # type: ignore[attr-defined]
+    # Unique per process: two instances on one host are two online workers, never
+    # one row they overwrite for each other. The host name is display only.
+    _heartbeat = WorkerHeartbeat(dsn, f"{consumer.hostname}:{process_instance_id()}", queues)  # type: ignore[attr-defined]
     _heartbeat.start()
     return _heartbeat
 

@@ -902,21 +902,35 @@ async def test_recovery_ends_a_dead_workers_run_that_was_asked_to_stop(pool: asy
 
 
 @pytest.mark.asyncio
-async def test_a_restarted_worker_hands_back_its_previous_processs_runs(pool: asyncpg.Pool):
+async def test_a_restarted_instance_never_touches_another_instances_run(pool: asyncpg.Pool):
+    """P0-01: boot actions are a heartbeat row keyed by the new instance id; no
+    restart may expire another live instance's lease. A stopped run whose worker
+    is gone ends when its lease really expires and recovery runs (P0-02 shortens
+    that bound with reliable lease management)."""
+    from app.jobs.worker_liveness import UPSERT_HEARTBEAT_SQL
+
     repository = PostgresJobRepository(pool)
     admitted = await admit(repository)
     task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
-    node = "population-worker:semantic-population@host:"
+    owner_a = "population-worker:i-aaaa:r1"
     assert await repository.claim_task(task_id=task_id, queue_name=QUEUE,
-                                       lease_owner=f"{node}old-boot:run", lease_seconds=900)
+                                       lease_owner=owner_a, lease_seconds=900)
+    await pool.execute(UPSERT_HEARTBEAT_SQL, "population-worker:i-aaaa", ["semantic-model-population.batch"], 4241)
     await repository.request_cancel(admitted.job_id, "user-1")
 
-    # Another node's process and this boot's own runs are left alone.
-    assert await repository.release_abandoned_leases(
-        node_prefix="population-worker:other@host:", boot_prefix="population-worker:other@host:new:") == 0
-    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}old-boot:") == 0
-    # The node starting again under a new boot id releases it, and the stop takes effect at once.
-    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new-boot:") == 1
+    # The new instance boots beside it: its heartbeat row changes nothing about A.
+    await pool.execute(UPSERT_HEARTBEAT_SQL, "population-worker:i-bbbb", ["semantic-model-population.batch"], 4242)
+    row = await pool.fetchrow("SELECT lease_owner, lease_epoch FROM semantic_jobs.tasks WHERE id = $1", task_id)
+    assert row["lease_owner"] == owner_a and row["lease_epoch"] == 1
+    online = await pool.fetchval(
+        "SELECT count(*) FROM semantic_jobs.worker_heartbeats "
+        "WHERE last_seen > now() - make_interval(secs => 45)")
+    assert online == 2
+
+    # Recovery acts only on the truly expired lease: the stop takes effect then.
+    await _recover(repository)
+    assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancel_requested"
+    await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1", task_id)
     await _recover(repository)
     assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancelled"
 
@@ -1065,18 +1079,26 @@ async def test_recovery_ends_the_generation_of_a_build_stopped_by_an_earlier_ver
 
 
 @pytest.mark.asyncio
-async def test_a_restarted_search_worker_hands_back_the_generation_lease_with_its_task_lease(pool: asyncpg.Pool):
+async def test_a_search_instances_expired_leases_recover_together(pool: asyncpg.Pool):
+    """P0-01: no restart eviction. When the owning instance is really gone (its
+    task and generation leases expire together), recovery hands both back."""
     repository = PostgresJobRepository(pool)
     admitted, index_id = await _admit_index(repository)
     task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
-    node = "search-worker:node:"
+    owner_a = "search-worker:i-aaaa:r1"
     await pool.execute("UPDATE semantic_graph_search.index_generations SET owner = $2 WHERE index_id = $1::uuid",
-                       index_id, f"{node}old:run")
-    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner=f"{node}old:run",
+                       index_id, owner_a)
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner=owner_a,
                                        lease_seconds=600)
 
-    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}old:") == 0
-    assert await repository.release_abandoned_leases(node_prefix=node, boot_prefix=f"{node}new:") == 1
+    # Another instance boots: nothing is taken from A while its leases live.
+    assert await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE,
+                                       lease_owner="search-worker:i-bbbb:r2", lease_seconds=600) is None
+    # A is really gone past its leases: recovery expires them together.
+    await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1", task_id)
+    await pool.execute("UPDATE semantic_graph_search.index_generations "
+                       "SET lease_until = now() - interval '1 second' WHERE index_id = $1::uuid", index_id)
+    await _recover(repository)
     assert (await _generation(pool, index_id))["lease_until"] < await pool.fetchval("SELECT now()")
 
 

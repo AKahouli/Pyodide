@@ -13,14 +13,14 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import threading
 import time
-import uuid
 from functools import partial
 
 import structlog
-from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.jobs.worker_identity import worker_identity
 from app.population.payload_rules import analyze_payload
 from app.population.derived import derivation_items, derive_concept, field_plan, merge_derived, read_derived_fields
 from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
@@ -332,11 +332,14 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                   query=None, index_connection=None, metadata_fetch=None,
                                   manual_pool=None, progress: PopulationProgress | None = None,
                                   extraction_cache=None, upload_derived=None, derive=None,
-                                  carried: dict | None = None) -> dict:
+                                  carried: dict | None = None,
+                                  parser_stop: threading.Event | None = None) -> dict:
     """Fetch, prepare, query and populate every mapped source (bounded), reporting progress.
 
     ``carried`` is the data in use when the run refreshes one concept: every record, value and link the
-    run does not make again is kept from it (see ``carry_over``)."""
+    run does not make again is kept from it (see ``carry_over``).
+    ``parser_stop`` is set from outside (lease lost) to end a running parse: the
+    subprocess and its tree are terminated, and nothing it wrote is used."""
     import asyncio
     import os
     import shutil
@@ -435,8 +438,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             with tempfile.TemporaryDirectory(prefix="semantic-derived-",
                                              dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
                 await progress.advance("opening", 0, None)
-                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=source_limits(limits, source)),
-                                                source, path, Path(directory))
+                files = await asyncio.to_thread(
+                    derive or partial(derive_files_subprocess, limits=source_limits(limits, source),
+                                      stop_event=parser_stop),
+                    source, path, Path(directory))
                 created = sent = failed = 0
                 await progress.advance("files", 0, len(files))
                 # Several at once: a large mailbox gives tens of thousands of files. One that fails
@@ -491,7 +496,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 started = time.monotonic()
                 email_tables[key] = await asyncio.to_thread(
                     prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables",
-                    limits=source_limits(limits, source))
+                    limits=source_limits(limits, source), stop_event=parser_stop)
                 log_archive_read(email_tables[key], started)
             table = email_tables[key][selected_sheet(options)]
             await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
@@ -499,7 +504,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "datasetId": dataset_id(source, options),
                     **({"reading": table["reading"]} if table.get("reading") else {})}
         result = await asyncio.to_thread(
-            prepare or partial(prepare_dataset_subprocess, limits=limits), source, options, data, artifact)
+            prepare or partial(prepare_dataset_subprocess, limits=limits, stop_event=parser_stop),
+            source, options, data, artifact)
         # The parser answers with the preview and the prepared dataset beside it.
         return result["dataset"] if isinstance(result, dict) and isinstance(result.get("dataset"), dict) else result
 
@@ -1315,14 +1321,18 @@ async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[n
     return bool(model_id) and await get_active_binding(pool, model_id, "draft") is not None
 
 
-async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
-                                     revision_id: str, progress: PopulationProgress | None = None) -> dict | None:
+async def prepare_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
+                                    revision_id: str, progress: PopulationProgress | None = None) -> dict | None:
+    """Build the candidate's graph and read the activation it asks for - without
+    touching any binding (P0-03 step C). The cutover itself happens only in the
+    fenced ``finalize_population_task`` transaction; this returns None for runs
+    that do not produce a whole model's data."""
     if not is_whole_model_build(command_dump):
         return None
     import asyncpg
     import os
 
-    from app.population.age_projection import finalize_draft_revision, normalize_graph_exposure
+    from app.population.age_projection import prepare_draft_activation, normalize_graph_exposure
 
     database_url = os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL")
     if not database_url:
@@ -1339,7 +1349,7 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
         # Absent (an older caller): the graph keeps the exposure it has; present, even empty, it is the choice.
         exposure = (normalize_graph_exposure(payload.get("graphExposure"))
                     if "graphExposure" in payload and payload["graphExposure"] is not None else None)
-        return await finalize_draft_revision(
+        return await prepare_draft_activation(
             pool, age_pool, revision_id, progress.advance if progress is not None else None,
             batch_rows=run_limits(payload)["projectionBatchRows"], exposure=exposure)
     finally:
@@ -1570,6 +1580,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                          "idle_in_transaction_session_timeout": "10s"},
     )
     lease = None
+    guard = None
     try:
         repository = PostgresJobRepository(pool)
         lease = await repository.claim_task(
@@ -1586,13 +1597,28 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return {"ok": False, "errorCode": "attempts_exhausted"}
+        # One independent, authoritative lease renewer for this attempt (P0-02):
+        # silent stages keep the lease without progress reports, and a lost or
+        # unverifiable lease stops the attempt from making further effects.
+        from app.jobs.task_lease_guard import TaskLeaseGuard, TaskOwnership, TaskLeaseLost, lease_windows_from_env
+
+        lease_seconds, renew_seconds = lease_windows_from_env()
+        guard = TaskLeaseGuard(
+            TaskOwnership(task_id=task_id, job_id=lease.job_id,
+                          lease_owner=lease_owner, lease_epoch=lease.lease_epoch),
+            lease_seconds=lease_seconds, renew_seconds=renew_seconds)
+        try:
+            await guard.start()
+        except TaskLeaseLost:
+            return {"ok": False, "errorCode": "lease_lost"}
         from app.persistence.extraction_cache import DocumentExtractionCache
 
         async def report(snapshot: dict) -> None:
-            # Each report also renews the lease, so a run over thousands of files stays owned.
+            # Fenced progress only: the guard is the one authoritative renewer, so
+            # a report verifies ownership without choosing a competing lease window.
             if not await repository.checkpoint(task_id=task_id, lease_owner=lease_owner,
                                                lease_epoch=lease.lease_epoch, progress=snapshot,
-                                               lease_seconds=PROGRESS_LEASE_SECONDS):
+                                               lease_seconds=PROGRESS_LEASE_SECONDS, renew=False):
                 raise StaleLease("population lease lost while reporting progress")
             # Someone asked to stop: end here, before anything read is saved.
             if await repository.cancel_requested(lease.job_id):
@@ -1611,7 +1637,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 outcome = await run_population_for_task(
                     lease.payload, manual_pool=pool, progress=progress,
                     extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None,
-                    carried=carried)
+                    carried=carried, parser_stop=guard.lost_event)
             if outcome.get("ok") and outcome.get("purpose") != "preview":
                 # The last chance to stop: after this the new data is saved.
                 await progress.enter("saving")
@@ -1634,6 +1660,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return outcome
+        # Durable verification before the first serving-side effect: anything
+        # past this point proves its ownership against PostgreSQL again.
+        await guard.assert_owned()
         # Preview/Test runs never mutate stored state: the bounded computed
         # output travels in the job result and no revision is created.
         if outcome.get("purpose") == "preview":
@@ -1645,64 +1674,87 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             # the summary.
             from app.persistence.population_store import count_revision_rows
 
-            revision_id = await persist_population_revision(pool, lease.payload, outcome, progress)
-            persisted = await count_revision_rows(pool, revision_id)
-            result = summarize_job_result(revision_id, outcome, persisted)
-            # Measured against the data in use before this result can replace it.
-            if is_whole_model_build(lease.payload):
-                # Loads both revisions' records to compare them: a phase of its own, with no count.
-                await progress.enter("comparing")
-                try:
-                    changes = await changes_from_data_in_use(
-                        pool, lease.payload, revision_id,
-                        run_population_for_payload(lease.payload).get("sources", []))
-                except Exception as exc:  # a missing comparison never fails a saved run
-                    logger.warning("Population change summary failed",
-                                   extra={"error_code": type(exc).__name__[:100]})
-                    changes = None
-                if changes is not None:
-                    result["changes"] = changes
-                    progress.changes = changes
-                    try:
-                        await progress.send(force=True)
-                    except RunCancelled:
-                        pass  # Already saved: a late stop request changes nothing.
-            # A result missing data it should have is kept for diagnosis but does not
-            # replace a graph already in use (see serving_policy).
-            blocking = blocking_gap_kinds(outcome.get("gaps", []))
-            decision = "activate"
-            if blocking and is_whole_model_build(lease.payload):
-                decision = serving_decision(blocking, await has_draft_binding(pool, lease.payload))
-            result.update({"blockingGapKinds": blocking, "servingDecision": decision})
-            if decision == "activate":
+            # P0-03: persistence, projection and the cutover are one critical
+            # section per model - other models finalize independently. A lost
+            # lease stops the wait instead of blocking it forever.
+            from app.persistence.population_store import finalization_lock
+
+            async with finalization_lock(pool, model_id, guard=guard):
+                await guard.assert_owned()
+                revision_id = await persist_population_revision(pool, lease.payload, outcome, progress)
+                persisted = await count_revision_rows(pool, revision_id)
+                result = summarize_job_result(revision_id, outcome, persisted)
+                # Measured against the data in use before this result can replace it.
                 if is_whole_model_build(lease.payload):
+                    # Loads both revisions' records to compare them: a phase of its own, with no count.
+                    await progress.enter("comparing")
+                    try:
+                        changes = await changes_from_data_in_use(
+                            pool, lease.payload, revision_id,
+                            run_population_for_payload(lease.payload).get("sources", []))
+                    except Exception as exc:  # a missing comparison never fails a saved run
+                        logger.warning("Population change summary failed",
+                                       extra={"error_code": type(exc).__name__[:100]})
+                        changes = None
+                    if changes is not None:
+                        result["changes"] = changes
+                        progress.changes = changes
+                        try:
+                            await progress.send(force=True)
+                        except RunCancelled:
+                            pass  # Already saved: a late stop request changes nothing.
+                # A result missing data it should have is kept for diagnosis but does not
+                # replace a graph already in use (see serving_policy).
+                blocking = blocking_gap_kinds(outcome.get("gaps", []))
+                decision = "activate"
+                if blocking and is_whole_model_build(lease.payload):
+                    decision = serving_decision(blocking, await has_draft_binding(pool, lease.payload))
+                result.update({"blockingGapKinds": blocking, "servingDecision": decision})
+                # The graph is staged external work: it never serves by itself.
+                activation = None
+                if decision == "activate" and is_whole_model_build(lease.payload):
+                    await guard.assert_owned()
                     try:
                         await progress.enter("projecting")
                     except RunCancelled:
                         pass  # Already saved: a late stop request changes nothing.
-                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id, progress)
-                if finalized is not None:
-                    result.update({"projectionRef": finalized["projectionRef"],
-                                   "boundEnvironment": finalized["environment"]})
-                    # The new draft data gets its search index in its own job; a failure
-                    # here never fails the build (reads request it again).
-                    from app.graph_search.indexer import request_index_quietly
-                    from app.graph_search.settings import IndexBuildSettings
-                    from app.jobs.service import JobService
+                    prepared = await prepare_whole_model_build(pool, lease.payload, revision_id, progress)
+                    if prepared is not None:
+                        activation = {**prepared, "jobId": lease.job_id}
+                        result.update({"projectionRef": prepared["projectionRef"],
+                                       "boundEnvironment": prepared["environment"]})
+                # One atomic, lease-fenced transaction: the binding CAS (when
+                # activating) and the terminal task/job transition commit or
+                # roll back together; a stale attempt cuts nothing over.
+                await guard.assert_owned()
+                await repository.finalize_population_task(
+                    task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
+                    job_state=outcome["jobState"], result=result, activate=activation)
+            if activation is not None:
+                # The new draft data gets its search index only after the fenced
+                # commit, in its own job; a failure here never fails the build
+                # (reads request it again).
+                from app.graph_search.indexer import request_index_quietly
+                from app.graph_search.settings import IndexBuildSettings
+                from app.jobs.service import JobService
 
-                    # The admin's index build knobs ride on the run (they never enter its fingerprint).
-                    build = index_build_limits((lease.payload.get("payload") or {}).get("limits"))
-                    await request_index_quietly(pool, JobService(repository).admit, revision_id,
-                                                build=IndexBuildSettings.model_validate(build) if build else None)
-        try:
-            await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
-                                           lease_epoch=lease.lease_epoch,
-                                           job_state=outcome["jobState"], result=result)
-        except StaleLease:
-            return {"ok": False, "errorCode": "stale_lease"}
+                # The admin's index build knobs ride on the run (they never enter its fingerprint).
+                build = index_build_limits((lease.payload.get("payload") or {}).get("limits"))
+                await request_index_quietly(pool, JobService(repository).admit, revision_id,
+                                            build=IndexBuildSettings.model_validate(build) if build else None)
         return {"ok": True, **result, "jobState": outcome["jobState"]}
+    except TaskLeaseLost as exc:
+        # Lost or unverifiable ownership fails closed: the attempt stops making
+        # effects and never retries inside the old ownership context. Recovery
+        # hands the task to a fresh attempt after its lease really expired.
+        logger.warning("Population attempt lost its task lease",
+                       extra={"task_id": task_id, "reason": type(exc).__name__[:100]})
+        return {"ok": False, "errorCode": "lease_lost"}
     except Exception as exc:
-        if lease is not None:
+        if lease is not None and guard is not None and not guard.lost_event.is_set():
+            # Ownership still provable: an ordinary infrastructure failure, so the
+            # bounded retry path applies. Once the lease is gone the fenced
+            # release returns False and lease-expiry recovery owns redelivery.
             try:
                 await PostgresJobRepository(pool).requeue_task(
                     task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
@@ -1710,62 +1762,19 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except Exception as requeue_exc:
                 logger.warning("Semantic population requeue failed; lease recovery will retry",
                                extra={"error_code": type(requeue_exc).__name__[:100]})
+        if lease is not None and guard is not None and guard.lost_event.is_set():
+            return {"ok": False, "errorCode": "lease_lost"}
         raise
     finally:
+        if guard is not None:
+            guard.stop()
         await pool.close()
 
 
-# Changes each time a worker process starts: a lease under another boot id of the same
-# node was left by a process that is gone (see release_abandoned_leases).
-WORKER_BOOT_ID = uuid.uuid4().hex
-
-
-def node_lease_prefix(hostname: str | None) -> str:
-    return f"population-worker:{hostname or 'unknown'}:"
-
-
-def lease_owner_for(hostname: str | None) -> str:
-    return f"{node_lease_prefix(hostname)}{WORKER_BOOT_ID}:{uuid.uuid4().hex}"
-
-
-async def _release_abandoned_leases(hostname: str) -> int:
-    import os
-
-    import asyncpg
-
-    from app.persistence.postgres_jobs import PostgresJobRepository
-
-    pool = await asyncpg.create_pool(os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=1,
-                                     command_timeout=10)
-    try:
-        prefix = node_lease_prefix(hostname)
-        return await PostgresJobRepository(pool).release_abandoned_leases(
-            node_prefix=prefix, boot_prefix=f"{prefix}{WORKER_BOOT_ID}:")
-    finally:
-        await pool.close()
-
-
-@worker_ready.connect
-def release_abandoned_leases(sender=None, **_kwargs) -> None:  # type: ignore[no-untyped-def]
-    """A restarted worker hands back the runs its previous process was reading.
-
-    Without this, a run asked to stop while its worker was restarted shows "Stopping"
-    until its lease runs out (up to 15 minutes), and an unstopped one waits as long to
-    be read again.
-    """
-    import asyncio
-
-    hostname = getattr(sender, "hostname", None)
-    if not hostname:
-        return
-    try:
-        released = asyncio.run(_release_abandoned_leases(str(hostname)))
-        if released:
-            logger.info("Released runs left by this worker's previous process",
-                        extra={"released": released})
-    except Exception as exc:  # recovery still ends them when their lease runs out
-        logger.warning("Releasing abandoned population leases failed",
-                       extra={"error_code": type(exc).__name__[:100]})
+# One identity per worker process (P0-01): lease owners are derived from it, so
+# instances sharing a host never touch each other's ownership. A restart recovers
+# another instance's leases only when they really expire in PostgreSQL.
+IDENTITY = worker_identity("population")
 
 
 @celery_app.task(bind=True, name="semantic-model-population.run", queue=POPULATION_QUEUES[1])
@@ -1778,7 +1787,7 @@ def populate_model(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
     max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
     retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
     try:
-        return asyncio.run(_run_task(task_id, lease_owner_for(self.request.hostname)))
+        return asyncio.run(_run_task(task_id, IDENTITY.lease_owner()))
     except Exception as exc:
         logger.warning("Semantic population task failed, scheduling bounded retry",
                        extra={"error_code": type(exc).__name__[:100]})
