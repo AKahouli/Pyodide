@@ -2,8 +2,11 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { AuthService } from './auth.service';
-import { AuthController } from './auth.controller';
+import { AuthService } from './services/auth.service';
+import { SessionService } from './services/session.service';
+import { RegistrationService } from './services/registration.service';
+import { AuthEmailService } from './services/auth-email.service';
+import { AuthController } from './controllers/auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
@@ -43,6 +46,9 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
   controllers: [AuthController],
   providers: [
     AuthService,
+    SessionService,
+    RegistrationService,
+    AuthEmailService,
     JwtStrategy,
     JwtAuthGuard,
     InternalServiceGuard,
@@ -52,7 +58,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     PgSessionStore,
   ],
-  exports: [AuthService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
+  exports: [AuthService, SessionService, RegistrationService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
 })
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- Nest module: configuration lives in the decorator
 export class AuthModule {}

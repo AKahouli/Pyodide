@@ -1,9 +1,8 @@
 import { newObjectId } from '@common/postgres/object-id';
-import { AuthService } from './auth.service';
-import { makeSessionStoreFake } from './persistence/session-store.fake';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { RegistrationService } from './registration.service';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
-describe('AuthService register with an invitation token', () => {
+describe('RegistrationService register with an invitation token', () => {
   const buildUser = (overrides: Record<string, unknown> = {}) => ({
     _id: newObjectId(),
     email: 'jane@acme.io',
@@ -23,6 +22,7 @@ describe('AuthService register with an invitation token', () => {
     const userInvitations = {
       assertUsableForEmail: jest.fn(async () => {
         calls.push('assert');
+        return { roleIds: ['role-1'], planId: 'plan-9' };
       }),
       markConsumed: jest.fn(async () => {
         calls.push('consume');
@@ -37,21 +37,18 @@ describe('AuthService register with an invitation token', () => {
       findByEmail: jest.fn().mockResolvedValue(null),
       assignPlan: jest.fn().mockResolvedValue(undefined),
     };
-    const jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     const configService = {
       get: jest.fn((_key: string, def: unknown) => def),
     };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-    const emailService = { isAvailable: jest.fn().mockReturnValue(false), send: jest.fn() };
-    const emailTemplateRenderer = {
-      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+    const authEmailService = {
+      sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+      sendNewLocationAlertEmail: jest.fn().mockResolvedValue(undefined),
     };
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({ _id: newObjectId(), slug: 'free', workspaceStorageBytes: 100 }),
-    };
-    const authorizationService = {
-      getUserPermissions: jest.fn().mockResolvedValue([]),
-      getUserRoleNames: jest.fn().mockResolvedValue([]),
+      getPlanById: jest.fn().mockResolvedValue({ id: 'plan-9', slug: 'pro', workspaceStorageBytes: 500 }),
     };
     const systemService = {
       isRegistrationEnabled: jest.fn().mockReturnValue(true),
@@ -59,24 +56,18 @@ describe('AuthService register with an invitation token', () => {
     };
     const workspaceInitializer = { getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined) };
     const humainAgentService = { ensureForUser: jest.fn().mockResolvedValue(undefined) };
-    const service = new AuthService(
-      makeSessionStoreFake() as never,
+    const service = new RegistrationService(
       userService as never,
       userInvitations as never,
-      jwtService as never,
-      configService as never,
-      logger as never,
-      emailService as never,
-      emailTemplateRenderer as never,
+      authEmailService as never,
       usageService as never,
-      authorizationService as never,
-      systemService as never,
-      { getSettings: jest.fn() } as never,
       workspaceInitializer as never,
       humainAgentService as never,
-      { assertNotLocked: jest.fn(), reserveAttempt: jest.fn().mockReturnValue(null), recordSuccess: jest.fn(), release: jest.fn() } as never,
+      systemService as never,
+      configService as never,
+      logger as never,
     );
-    return { service, calls, userInvitations, userService };
+    return { service, calls, userInvitations, userService, usageService };
   };
 
   it('asserts before creating the user, then claims the invitation after', async () => {
@@ -91,6 +82,27 @@ describe('AuthService register with an invitation token', () => {
     expect(calls).toEqual(['assert', 'create', 'consume']);
     expect(userInvitations.assertUsableForEmail).toHaveBeenCalledWith('raw-token', 'jane@acme.io');
     expect(userInvitations.markConsumed).toHaveBeenCalledWith('raw-token');
+  });
+
+  it('registers an invited user pre-approved with the invited roles and plan', async () => {
+    const { service, userService } = build();
+
+    await service.register({
+      email: 'jane@acme.io',
+      password: 'Str0ng!pass',
+      inviteToken: 'raw-token',
+    } as never);
+
+    expect(userService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'jane@acme.io',
+        status: 'active',
+        registrationApproval: 'approved',
+        roleIds: ['role-1'],
+      }),
+    );
+    // The invited plan is applied, not the default plan.
+    expect(userService.assignPlan).toHaveBeenCalledWith(expect.anything(), 'plan-9', 'pro');
   });
 
   it('does not create a user when the invitation is refused', async () => {
@@ -120,12 +132,14 @@ describe('AuthService register with an invitation token', () => {
   });
 
   it('leaves the plain registration path untouched when no token is sent', async () => {
-    const { service, calls, userInvitations } = build();
+    const { service, calls, userInvitations, userService } = build();
 
     await service.register({ email: 'jane@acme.io', password: 'Str0ng!pass' } as never);
 
     expect(calls).toEqual(['create']);
     expect(userInvitations.assertUsableForEmail).not.toHaveBeenCalled();
     expect(userInvitations.markConsumed).not.toHaveBeenCalled();
+    // Classic registration is untouched: no pre-approval and no invitation roles.
+    expect(userService.create).toHaveBeenCalledWith({ email: 'jane@acme.io', password: 'Str0ng!pass' });
   });
 });

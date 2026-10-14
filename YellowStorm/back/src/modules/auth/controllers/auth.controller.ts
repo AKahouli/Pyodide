@@ -14,22 +14,24 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { AuthService } from './auth.service';
-import { UserService } from '../user/user.service';
-import { UserInvitationService } from '../user/user-invitation.service';
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { Public } from './decorators/public.decorator';
-import { CurrentUser } from './decorators/current-user.decorator';
+import { AuthService } from '../services/auth.service';
+import { SessionService } from '../services/session.service';
+import { RegistrationService } from '../services/registration.service';
+import { UserService } from '../../user/services/user.service';
+import { UserInvitationService } from '../../user/services/user-invitation.service';
+import { RegisterDto } from '../dto/register.dto';
+import { LoginDto } from '../dto/login.dto';
+import { ForgotPasswordDto } from '../dto/forgot-password.dto';
+import { ResetPasswordDto } from '../dto/reset-password.dto';
+import { Public } from '../decorators/public.decorator';
+import { CurrentUser } from '../decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
-import { BadRequestException, UnauthorizedException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { BadRequestException, UnauthorizedException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { getClientIp } from '@common/utils';
-import { AuthThrottleService } from './throttle/auth-throttle.service';
-import { LoginLockedException } from './throttle/login-lockout.service';
-import { getAuthCookiePath } from './auth-cookie-path';
+import { AuthThrottleService } from '../throttle/auth-throttle.service';
+import { LoginLockedException } from '../throttle/login-lockout.service';
+import { getAuthCookiePath } from '../auth-cookie-path';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -41,6 +43,8 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
+    private readonly registrationService: RegistrationService,
     private readonly userService: UserService,
     private readonly userInvitations: UserInvitationService,
     private readonly configService: ConfigService,
@@ -61,7 +65,7 @@ export class AuthController {
   @ApiResponse({ status: 429, description: 'Too many registration attempts' })
   async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.throttle.enforceIp('register', req, res);
-    return this.authService.register(dto);
+    return this.registrationService.register(dto);
   }
 
   @Public()
@@ -116,7 +120,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Logout successful' })
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const refreshToken = this.readRefreshTokenCookie(req);
-    await this.authService.logout(refreshToken);
+    await this.sessionService.logout(refreshToken);
 
     // Clear refresh token cookie
     this.clearRefreshTokenCookie(res);
@@ -147,7 +151,7 @@ export class AuthController {
     const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] ?? 'unknown';
 
-    const tokens = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent, attemptId);
+    const tokens = await this.sessionService.refreshTokens(refreshToken, ipAddress, userAgent, attemptId);
 
     // Set new refresh token in cookie
     this.setRefreshTokenCookie(res, tokens.refreshToken);
@@ -258,10 +262,10 @@ export class AuthController {
   async getSessions(@CurrentUser() user: AuthUser, @Req() req: Request) {
     const refreshToken = this.readRefreshTokenCookie(req);
     const currentSessionId = refreshToken
-      ? this.authService.extractSessionIdFromToken(refreshToken)
+      ? this.sessionService.extractSessionIdFromToken(refreshToken)
       : undefined;
 
-    return this.authService.getUserSessions(
+    return this.sessionService.getUserSessions(
       user._id,
       currentSessionId ?? undefined,
     );
@@ -277,7 +281,7 @@ export class AuthController {
     @Param('sessionId') sessionId: string,
     @CurrentUser() user: AuthUser,
   ) {
-    await this.authService.invalidateSession(user._id, sessionId);
+    await this.sessionService.invalidateSession(user._id, sessionId);
     return { message: 'Session invalidated' };
   }
 
@@ -289,7 +293,7 @@ export class AuthController {
       httpOnly: true,
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
-      maxAge: this.authService.getRefreshTokenExpiryMs(),
+      maxAge: this.sessionService.getRefreshTokenExpiryMs(),
       path: this.cookiePath,
     });
   }

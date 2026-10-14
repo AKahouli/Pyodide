@@ -1,8 +1,8 @@
 import { AuthController } from './auth.controller';
-import { AuthThrottleService } from './throttle/auth-throttle.service';
-import { RateLimiterService } from '../rate-limiter';
-import { LoginLockedException } from './throttle/login-lockout.service';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { AuthThrottleService } from '../throttle/auth-throttle.service';
+import { RateLimiterService } from '../../rate-limiter';
+import { LoginLockedException } from '../throttle/login-lockout.service';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 describe('AuthController throttling', () => {
   const rule = (limit: number, windowMs = 60_000) => ({ limit, windowMs });
@@ -26,6 +26,7 @@ describe('AuthController throttling', () => {
 
   let limiter: RateLimiterService;
   let authService: Record<string, jest.Mock>;
+  let sessionService: Record<string, jest.Mock>;
   let userInvitations: Record<string, jest.Mock>;
   let controller: AuthController;
 
@@ -39,8 +40,10 @@ describe('AuthController throttling', () => {
     } as never);
     authService = {
       login: jest.fn().mockResolvedValue({ loginResponse: { accessToken: 'a' }, refreshToken: 'r' }),
-      refreshTokens: jest.fn().mockResolvedValue({ accessToken: 'a', refreshToken: 'r', expiresIn: 1 }),
       forgotPassword: jest.fn().mockResolvedValue(undefined),
+    };
+    sessionService = {
+      refreshTokens: jest.fn().mockResolvedValue({ accessToken: 'a', refreshToken: 'r', expiresIn: 1 }),
       getRefreshTokenExpiryMs: jest.fn().mockReturnValue(1000),
     };
     userInvitations = {
@@ -48,7 +51,9 @@ describe('AuthController throttling', () => {
     };
     controller = new AuthController(
       authService as never,
-      {} as never,
+      sessionService as never,
+      {} as never, // registrationService
+      {} as never, // userService
       userInvitations as never,
       { get: jest.fn((_k: string, def: unknown) => def) } as never,
       new AuthThrottleService(limiter, config),
@@ -96,7 +101,7 @@ describe('AuthController throttling', () => {
     await expect(controller.refresh(withCookie(), res())).rejects.toMatchObject({
       code: ErrorCode.TOO_MANY_REQUESTS,
     });
-    expect(authService.refreshTokens).toHaveBeenCalledTimes(2);
+    expect(sessionService.refreshTokens).toHaveBeenCalledTimes(2);
   });
 
   it('throttles the public invite lookup per IP', async () => {

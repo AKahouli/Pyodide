@@ -1,8 +1,8 @@
-import { AuthService } from './auth.service';
-import { makeSessionStoreFake, sessionRecord, type SessionStoreFake } from './persistence/session-store.fake';
-import { ServiceUnavailableException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { isTransientSessionStoreError, classifySessionStoreError } from './utils/session-store-errors';
+import { SessionService } from './session.service';
+import { makeSessionStoreFake, sessionRecord, type SessionStoreFake } from '../persistence/session-store.fake';
+import { ServiceUnavailableException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { isTransientSessionStoreError, classifySessionStoreError } from '../utils/session-store-errors';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed'),
@@ -20,22 +20,15 @@ describe('AuthService.isSessionValid error classification (F01)', () => {
     sessionStore = makeSessionStoreFake();
     (sessionStore.findById as jest.Mock).mockImplementation(findByIdImpl);
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    const service = new AuthService(
+    const service = new SessionService(
       sessionStore as never,
-      {} as never,
-      {} as never, // userInvitations
       { sign: jest.fn() } as never,
       { get: jest.fn((_k: string, def: unknown) => def) } as never,
       logger as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      { getSettings: jest.fn().mockResolvedValue({ throttle: { limit: 100, windowSeconds: 60 }, auth: { maxSessionsPerUser: 10 }, documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] } }) } as never, // platformSettings
-      {} as never,
-      { assertNotLocked: jest.fn(), reserveAttempt: jest.fn().mockReturnValue(null), recordSuccess: jest.fn(), release: jest.fn() } as never, // loginLockout
+      { getUserPermissions: jest.fn(), getUserRoleNames: jest.fn() } as never,
+      { findById: jest.fn() } as never,
+      { getSettings: jest.fn().mockResolvedValue({ throttle: { limit: 100, windowSeconds: 60 }, auth: { maxSessionsPerUser: 10 }, documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] } }) } as never,
+      { getLoginSettingsSync: jest.fn() } as never,
     );
     return { service };
   };

@@ -1,9 +1,8 @@
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
-import { LoginLockoutService } from './throttle/login-lockout.service';
-import { makeSessionStoreFake } from './persistence/session-store.fake';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { UserStatus } from '../user/user.types';
+import { LoginLockoutService } from '../throttle/login-lockout.service';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { UserStatus } from '../../user/user.types';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('decoy-hash'),
@@ -39,29 +38,31 @@ describe('AuthService login hardening', () => {
       lockout: { threshold: 3, baseSeconds: 30, maxSeconds: 120, resetSeconds: 600 },
       rateLimits: { account: { login: { limit: 100, windowMs: 900_000 } } },
     } as never);
+    const sessionService = {
+      generateTokens: jest.fn().mockResolvedValue({ accessToken: 'signed.jwt', refreshToken: 'sess.secret', expiresIn: 900 }),
+      isNewLoginLocation: jest.fn().mockResolvedValue(false),
+      invalidateAllUserSessions: jest.fn().mockResolvedValue(undefined),
+    };
+    const authEmailService = {
+      sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+      sendNewLocationAlertEmail: jest.fn().mockResolvedValue(undefined),
+    };
+    const humainAgentService = { ensureForUser: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(
-      makeSessionStoreFake() as never,
       userService as never,
-      {} as never, // userInvitations
-      { sign: jest.fn().mockReturnValue('signed.jwt') } as never,
-      { get: jest.fn((_key: string, def: unknown) => def) } as never,
+      sessionService as never,
+      { get: jest.fn((_key: string, def: unknown) => def) } as never, // configService
       logger as never,
-      { isAvailable: jest.fn().mockReturnValue(false) } as never,
-      { render: jest.fn() } as never,
-      {} as never,
+      authEmailService as never,
       {
         getUserPermissions: jest.fn().mockResolvedValue([]),
         getUserRoleNames: jest.fn().mockResolvedValue([]),
-      } as never,
-      { isRegistrationEnabled: jest.fn(), getLoginSettingsSync: () => ({ accessExpiry: '15m', refreshExpiry: '7d' }) } as never,
-      {
-        getSettings: jest.fn().mockResolvedValue({ auth: { maxSessionsPerUser: 10 } }),
-      } as never,
-      {} as never,
-      { ensureForUser: jest.fn().mockResolvedValue(undefined) } as never,
-      lockout,
+      } as never, // authorizationService
+      humainAgentService as never,
+      lockout, // loginLockout
     );
-    return { service, userService, logger, lockout };
+    return { service, userService, logger, lockout, humainAgentService };
   };
 
   const attempt = (service: AuthService, email = EMAIL, ip = '127.0.0.1') =>
@@ -173,6 +174,18 @@ describe('AuthService login hardening', () => {
       userService.validatePassword.mockResolvedValue(false);
 
       expect(lockout.reserveAttempt(EMAIL, '127.0.0.1')).toBeNull();
+    });
+  });
+
+  describe('human agent', () => {
+    it('ensures a human agent on login (covers already-registered users)', async () => {
+      const { service, humainAgentService } = build(buildUser(), true);
+
+      await expect(attempt(service)).resolves.toMatchObject({ refreshToken: expect.any(String) as string });
+
+      expect(humainAgentService.ensureForUser).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: '64b000000000000000000001', email: EMAIL, firstName: 'Jane' }),
+      );
     });
   });
 
