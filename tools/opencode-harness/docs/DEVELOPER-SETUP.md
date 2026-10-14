@@ -1,426 +1,487 @@
-# Developer setup: OpenCode SDLC harness
+# Developer user guide: OpenCode SDLC harness
 
-Start here. This is the Windows setup used for this harness, with Hindsight in
-WSL and OpenCode/Chrome/graph tools on Windows. Commands marked **PowerShell**
-run on Windows; commands marked **WSL** run inside Ubuntu. Do not mix their paths.
-macOS/Linux users can reuse the runtime and policy, but this Windows installer
-and service-start procedure have not been verified there.
+Install the harness in your own account, launch OpenCode from the intended Git
+checkout, then use `build` for implementation and fixes. The harness preserves
+task checkpoints, coordinates parallel edits and routes agents to reusable code
+and Git documentation. Independent work runs in the background so you can keep
+messaging the main agent.
 
-## What you receive
+This guide covers the verified **Windows + PowerShell** setup. Hindsight runs
+inside WSL/Ubuntu; OpenCode, Chrome and the code graph run on Windows.
+macOS/Linux installation is not verified by this Windows procedure.
 
-| Included in the ZIP | Installed/downloaded separately |
+## Choose your starting point
+
+| You need to… | Start here |
 | --- | --- |
-| Native runtime, SQLite checkpoints and health checks | OpenCode, Node/npm, Git, Windows uv/uvx |
-| Seven specialist agents and three skills | Hindsight Coding Agents plugin and WSL daemon |
-| Configuration examples, installer and tests | Chrome and graph MCP packages |
-| Repository `AGENTS.md`, frontend/backend instructions and Git context/ADRs | Your own model-provider sign-in; application runtime and QA account |
-| Commit manifest and file hashes | Optional Context7 account/API key |
+| Install with a guided double-click launcher | [One-click installer](#one-click-installer) |
+| Install on a new developer machine | [First-time installation](#first-time-installation) |
+| Check an existing installation | [Verify onboarding](#verify-onboarding) |
+| Implement or fix something | [Daily use](#daily-use) |
+| Continue interrupted work | [Resume a task](#resume-a-task) |
+| Run parallel sessions or branches | [Parallel work](#parallel-work) |
+| Fix setup problems or upgrade | [Recovery and upgrades](#recovery-and-upgrades) |
 
-The ZIP contains the harness and reviewed YellowStorm documentation profile,
-not the application source. Use it with a normal YellowStorm Git checkout.
-Links from the profile to application READMEs/source resolve in that checkout.
-Credentials, private sessions, memory databases, browser profiles, `.env`,
-checkpoint databases, graphs and installed dependencies are not exported.
+## What is shared and what stays local
 
-Manual steps: prerequisites, repository paths, provider sign-in, Hindsight
-configuration, the first memory bank, initial graph indexing, service startup,
-model selection and application/QA access. The harness installer only copies
-its runtime, agents, skills and global instructions, with backups.
+| Layer | Location | Shared through Git? |
+| --- | --- | --- |
+| Harness source, installer, examples and tests | `<repo>/tools/opencode-harness/` | Yes |
+| Team instructions and reviewed context | Root/scoped `AGENTS.md`, `docs/agent-context/`, owning READMEs/contracts | Yes |
+| Installed runtime, agents and skills | `%USERPROFILE%\.config\opencode\` | No |
+| Provider settings and sign-in | Your OpenCode configuration/account | No |
+| Experience memory | Your WSL Hindsight daemon; Windows client config in `%USERPROFILE%\.hindsight\coding-agent.json` | No |
+| Task checkpoints and local baselines | `<worktree>/.opencode/sdlc/` | No |
+| Structural graph | `<worktree>/.code-review-graph/` | No |
+| Private browser state and QA evidence | Task-owned Chrome context; `qa-artifacts/<task-id>/<run-id>/` | No |
 
-## 1. Install prerequisites — manual, once per developer
+Each developer uses their own credentials and memory. Reviewed documentation
+travels with implementation in the same branch and PR.
 
-Install Git, Node **24 or newer with `node:sqlite`**, Google Chrome Stable,
-and Windows uv from their official distributions. Node 24 is the documented
-baseline. Install WSL/Ubuntu if you do not already have a working distribution.
-WSL installation can require administrator access and a Windows restart.
+## One-click installer
 
-**PowerShell:**
+Finish/checkpoint active work and close OpenCode hosts, then double-click
+[`Install-Harness.cmd`](../Install-Harness.cmd) in `tools/opencode-harness/`.
+Run it from a reviewed checkout/release; the launcher uses a process-only execution
+policy, subject to your organization's restrictions. It keeps the window open so
+you can read the result. Internet access is needed for missing dependencies.
+
+The first question is **Install Hindsight local experience memory? (Y/N)**:
+
+| Answer | Result |
+| --- | --- |
+| **Y** | Installs the native Hindsight client, enrolls this repo, preserves existing endpoint/auth settings, and attempts local WSL setup if the configured local API is unavailable |
+| **N** | Skips Hindsight setup; existing memory installations/settings remain unchanged. An unconfigured memory warning is advisory |
+
+The script checks Git, Node 24+ and uv/uvx, installs missing prerequisites through
+WinGet, installs the pinned SDK and OpenCode if absent, merges missing config
+defaults, installs the harness, enables background tasks, and prepares Chrome/graph.
+It backs up existing personal settings, preserves JSON/JSONC/provider configuration
+and serializes installers per Windows user. It never stops an active OpenCode host.
+An existing Node older than 24 needs an upgrade before rerunning.
+
+Hindsight **Y** reuses a reachable configured service. A fresh local setup may need
+Windows permission/restart for WSL, Ubuntu first-run initialization and an interactive
+masked provider configuration. Existing WSL provider profiles are reused.
+It does not copy anyone's credentials or silently create a new sign-in.
+API/bank readiness is checked; extraction/capture still needs onboarding verification.
+
+For explicit command-line choices, from the repository root:
 
 ```powershell
-# Administrator terminal only if WSL is not installed:
-wsl --install -d Ubuntu-22.04
+.\tools\opencode-harness\setup.ps1 -InstallHindsight N
+# Or, when local experience memory is wanted:
+.\tools\opencode-harness\setup.ps1 -InstallHindsight Y
+# A separately extracted release can target an already prepared checkout:
+.\tools\opencode-harness\setup.ps1 -RepoRoot 'C:\work\YellowStorm-poc' -InstallHindsight Y
+```
 
-# Normal developer terminal:
+If the release is outside a Git checkout, the launcher asks for the application's
+root. That checkout must already contain the policy and its routed docs; merge the
+release profile first. Setup does not overwrite team code/policy or clone a repository.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Setup stages completed; restart, select accessible models and verify onboarding |
+| 1 | Core setup failed; fix the displayed error before retrying |
+| 2 | Harness installed, with Chrome/graph/Hindsight steps pending; follow the displayed recovery instructions |
+
+After completion, continue at [Verify onboarding](#verify-onboarding).
+For managed/manual installation, use the steps below.
+
+## First-time installation
+
+### 1. Install prerequisites and choose the checkout
+
+Install Git, Node **24 or newer with `node:sqlite`**, Windows uv/uvx and Chrome
+Stable. Install WSL/Ubuntu for local Hindsight. If WSL is missing, run this in an
+administrator PowerShell terminal, restart if prompted, and complete Ubuntu setup:
+
+```powershell
+wsl --install -d Ubuntu-22.04
+```
+
+The tested dependency baseline is pinned below; these are not claims about the
+latest releases. Upgrade deliberately and repeat onboarding checks.
+
+| Component | Tested version |
+| --- | --- |
+| OpenCode CLI | 1.18.34 |
+| OpenCode plugin SDK | `@opencode-ai/plugin@1.1.42` |
+| One-click JSON/JSONC configuration helper | `jsonc-parser@3.3.1` |
+| Code graph, core package | `code-review-graph==2.3.9` |
+| Chrome MCP | `chrome-devtools-mcp@1.10.1` |
+| Hindsight Coding Agents plugin | `@vectorize-io/hindsight-coding-agents@0.8.1` |
+| Hindsight local service | `hindsight-embed==0.10.3` |
+
+Use a normal developer PowerShell terminal for the remaining Windows commands:
+
+```powershell
 npm install -g opencode-ai@1.18.34
 node --version
 git --version
-uv --version
 uvx --version
 opencode --version
 wsl --list --verbose
-```
 
-Complete Ubuntu's first-run user setup. Windows uv and WSL uv are separate
-installations. The desktop is optional; CLI 1.18.34 is the verified integration
-baseline. Desktop Node 24.15 graph reading was also checked; a complete GUI
-onboarding on a clean developer machine remains an acceptance check.
-
-Pinned integration versions:
-
-| Component | Version |
-| --- | --- |
-| OpenCode CLI | 1.18.34 |
-| `@opencode-ai/plugin` (and its SDK dependency) | 1.1.42 |
-| `code-review-graph` | 2.3.9, core package |
-| `chrome-devtools-mcp` | 1.10.1 |
-| `@vectorize-io/hindsight-coding-agents` | 0.8.1 |
-| `hindsight-embed` / local API | 0.10.3 |
-
-Do not replace these with `latest` during initial onboarding. Upgrade components
-deliberately and rerun the verification below. The optional Codex login CLI has
-its own release cycle; its local help is authoritative for login flags.
-
-## 2. Prepare the Git checkout and paths — manual
-
-Clone the team's application repository and check out the agreed branch. Compare
-the ZIP's SHA256 with the supplied `.zip.sha256` before extracting:
-
-```powershell
-$archivePath = 'C:\Downloads\opencode-sdlc-harness.zip' # Your downloaded file.
-(Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-Get-Content -LiteralPath ($archivePath + '.sha256')
-```
-
-Extract
-the ZIP separately, for example under `C:\work\harness-release`. In that folder,
-`PACKAGE-MANIFEST.json` records the source commit and every exported file hash.
-
-Set these values in your **PowerShell** terminal:
-
-```powershell
-$repoRoot = 'C:\work\YellowStorm-poc'  # Replace with YOUR Git checkout.
-$releaseRoot = 'C:\work\harness-release\opencode-sdlc-harness'
+$repoRoot = 'C:\work\YellowStorm-poc' # Replace with YOUR Git checkout.
 $configDir = Join-Path $env:USERPROFILE '.config\opencode'
 Set-Location -LiteralPath $repoRoot
 git rev-parse --show-toplevel
 ```
 
-If the checkout already includes this harness commit, use its files directly.
-Otherwise copy `tools/opencode-harness` from the release into the same path in
-your checkout. Review/merge the supplied root `AGENTS.md`, frontend/backend
-`AGENTS.md` and `docs/agent-context/` profile; do not overwrite newer team policy.
-Keep the directory layout intact. Commit approved shared instructions and docs
-before creating additional worktrees.
+Clone/check out the team's agreed repository branch before this step. Prefer its
+reviewed harness source. If you received a release ZIP, follow
+[the release notes below](#using-a-release-zip); it does not include application code.
 
-Verify that `tools/opencode-harness/policy.json` exists in the Git root. Its
-YellowStorm routes require these existing files:
-
-- `docs/agent-context/README.md`
-- `YellowStorm/front/AGENTS.md`
-- `YellowStorm/back/AGENTS.md`
-- `yellowstorm-adk/README.md`
-- `tools/opencode-harness/README.md`
-
-Ensure the repository's `.gitignore` contains:
-
-```gitignore
-.opencode/
-.code-review-graph/
-qa-artifacts/
-```
-
-Other repositories: adapt the root/scoped instructions and use
-[`policy.generic.example.json`](../config/policy.generic.example.json) as a
-starting point, replacing routes with real paths/documents. Create a compact
-`docs/agent-context/README.md` and the routed scoped documents before edits.
-Do not copy YellowStorm's architecture claims into another application.
-
-## 3. Configure local Hindsight — manual, once per developer
-
-Hindsight stores experience locally and uses a configured LLM for extraction and
-reflection. Choose **one** authentication route in
-[Hindsight setup](HINDSIGHT-SETUP.md): your approved provider API key, or your own
-Codex sign-in in a dedicated WSL auth home. Complete that guide through daemon
-health, Windows plugin installation and first-bank creation before continuing.
-
-Expected Windows result:
+The checkout needs `tools/opencode-harness/policy.json`,
+`docs/agent-context/README.md` and every document routed by that policy.
+Check the actual policy rather than assuming another branch has identical routes:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:9077/health -TimeoutSec 10
-# status: healthy; database: connected
+$policyPath = Join-Path $repoRoot 'tools\opencode-harness\policy.json'
+$harnessPolicy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+$contextPaths = @($harnessPolicy.documentationIndex) +
+    @($harnessPolicy.documentationRoutes | ForEach-Object { $_.document })
+foreach ($contextPath in ($contextPaths | Select-Object -Unique)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $contextPath) -PathType Leaf)) {
+        throw "Missing routed document: $contextPath"
+    }
+}
 ```
 
-One daemon serves parallel sessions. No developer receives another person's
-credentials or memory database. Experience is per developer/repository by
-default; the shared team context is reviewed Git documentation.
+Keep local checkpoints, graphs and QA evidence ignored by Git. Preserve the team's
+existing ignore rules; do not ignore shared agents/configuration you intend to track.
+For another application, adapt [the generic policy](../config/policy.generic.example.json)
+and its instructions/docs; do not import YellowStorm architecture claims.
 
-## 4. Install the plugin SDK and harness — automatic file copy
+### 2. Install the runtime and merge configuration
 
-**PowerShell, from the Git root:**
+Back up personal OpenCode configuration before configuring integrations.
+From the Git root:
 
 ```powershell
 npm install --prefix "$configDir" --save-exact @opencode-ai/plugin@1.1.42
 .\tools\opencode-harness\install.ps1
 ```
 
-If Windows blocks an unsigned script, use a process-only policy in a terminal
-where your organization permits it, or obtain an approved signature:
+If script execution is blocked, use your organization's approved signing/policy
+procedure. Where permitted, the process-only alternative is:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\opencode-harness\install.ps1
 ```
 
-The installer backs up overwritten harness files to
-`$configDir\.sdlc-backups\<timestamp-id>`. It replaces its global `AGENTS.md`,
-seven named agents, runtime files and three skills. It does not merge instructions
-automatically; reconcile any personal rules from the backup afterwards.
-It does not replace `opencode.json`, provider credentials or the project policy.
+The installer copies runtime files, global instructions, seven specialists and
+three skills. Existing owned files are backed up under
+`$configDir\.sdlc-backups/<timestamp-id>`.
+It **does not merge your personal instructions** or install/configure the services.
+It preserves `opencode.json`, provider credentials and repository policy.
+Reconcile personal instruction/model overrides from the backup after installation.
 
-## 5. Merge OpenCode settings and choose models — manual
+Merge [opencode.example.json](../config/opencode.example.json) into the active
+`opencode.json` or `opencode.jsonc` under your configuration directory.
+Preserve provider settings and any existing Hindsight plugin registration.
+Do not create a competing config file or blindly replace the existing one.
 
-Back up your personal `opencode.json`/`opencode.jsonc` before editing.
-Merge the relevant sections from
-[`opencode.example.json`](../config/opencode.example.json) into the active config
-under `%USERPROFILE%\.config\opencode`. Do not blindly replace an existing config
-or create a competing JSON/JSONC file. Preserve working provider settings and
-the native Hindsight plugin registered in step 3.
-Configuration sources can merge/override one another; see the official
-[OpenCode precedence rules](https://opencode.ai/docs/config/#precedence-order).
+The template configures graph MCP, Chrome MCP with `--isolated --page-id-routing`,
+Context7, specialist permissions, subagent depth and context compaction/pruning.
+The SDLC plugin is discovered from `plugins/sdlc.js`; do not also register it in
+the `plugin` array. Hindsight uses its native plugin, not a second MCP server.
 
-The supplied template contains:
+Connect your provider through `/connect` and select an available model through
+`/models`. Review specialist files in `$configDir\agents`:
 
-- Graph MCP: `uvx --from code-review-graph==2.3.9 code-review-graph serve`.
-- Chrome MCP: `chrome-devtools-mcp@1.10.1 --isolated --page-id-routing`.
-- Context7's public MCP endpoint, configurable for your team's access.
-- Primary-to-specialist permissions, bounded subagent depth and compaction.
-- Hindsight's native plugin is registered separately by step 3, not another MCP.
-
-Preserve that registered `plugin` entry; the template intentionally does not
-duplicate it. In the tested Windows CLI, substituting `{env:USERPROFILE}` inside
-a JSON plugin path can introduce unescaped backslashes and invalidate the config.
-Keep the installer-generated path rather than replacing it with that expression.
-
-The SDLC plugin is discovered from `plugins/sdlc.js`; do not also list it in the
-`plugin` array and load it twice. On your first OpenCode launch, connect your own
-provider using `/connect`, then select an available model with `/models`. You can
-persist `model` and `small_model` using actual provider/model IDs from that list.
-The template deliberately does not assume a personal proxy URL or model catalog.
-
-**Important manual model choice:** check every installed file under
-`$configDir\agents`, not only the primary model:
-
-| Agents | Shipped explicit model |
+| Specialist | Shipped model / purpose |
 | --- | --- |
-| `diagnostics`, `plan`, `reviewer`, `frontend-qa` | `openai/gpt-6.1-sol` |
-| `explore`, `maintainer` | `openai/gpt-6-luna` |
-| `worker` | Inherits the primary model |
+| `explore` | `openai/gpt-6-luna`; bounded source investigation |
+| `plan` | `openai/gpt-6.1-sol`; unresolved design |
+| `worker` | Inherits primary model; independent owned implementation |
+| `diagnostics` | `openai/gpt-6.1-sol`; focused diagnostic checks |
+| `frontend-qa` | `openai/gpt-6.1-sol`; private browser validation |
+| `reviewer` | `openai/gpt-6.1-sol`; required high-risk review |
+| `maintainer` | `openai/gpt-6-luna`; asynchronous documentation updates |
 
-For every unavailable override, remove its `model:` line to inherit the primary
-or choose an actual model offered by your provider. The specialist reasoning
-settings must also be supported. Reapply personal overrides after upgrades from
-the installation backup. Restart the host after changing agent files.
+If a model is unavailable, remove its `model:` override to inherit the primary,
+or choose a model your provider actually offers. Reasoning settings must also
+be supported. Reapply personal overrides after harness upgrades.
 
-Enable the tested native background-task feature in **PowerShell**:
+Enable native background tasks for this terminal and future user processes:
 
 ```powershell
 $env:OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS = '1'
 [Environment]::SetEnvironmentVariable('OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS', '1', 'User')
 ```
 
-The first line affects this terminal and its child processes; the second persists
-the setting for future processes. Launch the CLI from that terminal initially.
-Fully restart desktop hosts too; sign out/in if the desktop launcher still has
-the old environment. `subagent_depth` alone does not enable background tasks.
+Launch the CLI from this terminal initially. A desktop launcher must inherit the
+new environment; fully restart it, or sign out/in if needed. Subagent depth alone
+does not enable background execution.
 
-Context7 account/key setup is optional for its public endpoint, subject to its
-current service limits. If your team requires a key, configure its documented
-authentication in your personal config. The `context7-mcp` skill is included.
-Other optional design skills allowed by policy are not bundled; install them
-separately only if the team uses them.
+### 3. Connect Hindsight and prepare the graph
 
-## 6. Build and register the code graph — manual, once per checkout
+Follow [Hindsight setup](HINDSIGHT-SETUP.md) for WSL installation, approved
+provider authentication, daemon startup, Windows plugin installation, repository
+opt-in and creation of the exact memory bank. Use your own authentication;
+never copy another developer's credentials. Existing approved authentication
+does not require another sign-in solely to install this harness.
 
-**PowerShell:**
+Then verify the service from Windows:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9077/health -TimeoutSec 10
+```
+
+Expected: healthy API and connected database. This alone does not prove memory
+extraction or automatic capture; finish that guide's write/read and capture checks.
+
+Prepare the graph once per checkout/worktree:
 
 ```powershell
 uvx --from code-review-graph==2.3.9 code-review-graph build --repo "$repoRoot"
 uvx --from code-review-graph==2.3.9 code-review-graph status --repo "$repoRoot" --json
 uvx --from code-review-graph==2.3.9 code-review-graph daemon add "$repoRoot" --alias YellowStorm-poc
-```
-
-Use your checkout's alias if different. The one-time build can take time for a
-large repository; do it before starting a coding session. CLI status should show
-`nodes > 0`, `files > 0` and `build_incomplete: false`. Its field names differ from
-MCP statistics. A matching `built_at_commit`/`current_sha` is a committed-source
-freshness anchor; it does not prove every uncommitted edit is indexed.
-
-The health check reads `$repoRoot\.code-review-graph\graph.db`. Keep the default
-data directory; external `--data-dir` is not supported by this check. The core
-package supplies structural indexing; embeddings/PyTorch are not prerequisites.
-For later source changes use an incremental update, not a routine full rebuild:
-
-```powershell
-uvx --from code-review-graph==2.3.9 code-review-graph update --repo "$repoRoot"
-```
-
-## 7. Start background services — manual, once per login
-
-Start the WSL Hindsight daemon as described in its guide. Separately, Windows
-graph `daemon start` stays in the foreground; start **one shared watcher**, not
-one per OpenCode session. Check first whether a watcher is already running.
-
-**PowerShell:**
-
-```powershell
 uvx --from code-review-graph==2.3.9 code-review-graph daemon status
+```
 
-# If not running: one hidden process for this Windows user.
+Use a unique alias for another checkout/worktree. Expect a nonempty completed
+index. Keep its default `.code-review-graph/graph.db` location; this health
+check does not support an external graph data directory. Embeddings/PyTorch
+are not prerequisites.
+
+If no shared graph watcher is running, start one hidden Windows process:
+
+```powershell
 $uvxPath = (Get-Command uvx.exe).Source
 Start-Process -FilePath $uvxPath -WindowStyle Hidden -ArgumentList @(
-  '--from', 'code-review-graph==2.3.9', 'code-review-graph', 'daemon', 'start', '--foreground'
+    '--from', 'code-review-graph==2.3.9',
+    'code-review-graph', 'daemon', 'start', '--foreground'
 )
-
 uvx --from code-review-graph==2.3.9 code-review-graph daemon status
 ```
 
-`daemon add` stores watched paths in
-`%USERPROFILE%\.code-review-graph\watch.toml`. Only registered paths are watched.
-For a second worktree, register that path too and build its own graph.
+One watcher and one Hindsight daemon serve this developer's parallel sessions.
+Register each worktree with the watcher; each retains its own graph.
+For subsequent changes, use incremental `update --repo "$repoRoot"` when needed,
+not routine full rebuilds. Watcher liveness and matching HEAD do not prove
+uncommitted source freshness. Logon automation is optional; see
+[operations](OPERATIONS.md) and [Hindsight startup](HINDSIGHT-SETUP.md).
 
-Optional automatic logon: use Task Scheduler under the same Windows user.
-Create a graph task with program equal to `$uvxPath` and arguments
-`--from code-review-graph==2.3.9 code-review-graph daemon start --foreground`.
-Create a separate WSL Hindsight task using the exact action in its guide.
-Set each task to avoid a second concurrent instance. Verify both after logon.
-The package does not silently register tasks or keep services running for you.
+## Verify onboarding
 
-## 8. Verify setup — manual acceptance checks
+After active tasks are checkpointed/finished, fully close OpenCode hosts and launch
+from the intended checkout. A new chat inside an old host does not reload plugins.
 
-Close **all OpenCode host processes/windows**, then start a new one from your
-repository. Creating another chat inside an old host does not reload plugins.
-
-First send:
-
-```text
-Verify onboarding without source edits. Use the automatic startup result and
-report graph, Hindsight and checkpoint statuses plus the loaded harness version.
-Do not repeat diagnostic tool calls when the native checks already passed.
+```powershell
+Set-Location -LiteralPath $repoRoot
+opencode
 ```
 
-Expected: graph/Hindsight/checkpoints **PASS**, loaded harness
-`2026-10-13-advisory-integrations`, and tools `sdlc_checkpoint`, `sdlc_prepare`,
-`sdlc_resume`, `sdlc_diff`, `sdlc_health`. Failure must be visible with a recovery
-action. After fixing a reported problem, retry `sdlc_health(refresh: true)`;
-do not rebuild a healthy graph because another integration failed. Graph/Hindsight
-failures or pending checks never block coding: use source/tests and Git docs/checkpoints.
-Actual checkpoint storage and file ownership still protect native edits.
+Send this prompt to `build`:
 
-Run the behavioral suite from the repository root:
+```text
+Verify onboarding without source edits. Report the automatic startup statuses
+for graph, Hindsight and checkpoints, the actual repository root and loaded
+harness version. Reuse native results; do not repeat passing diagnostic calls.
+For any failure, give the specific recovery action and say whether coding can
+continue.
+```
+
+Expected runtime for this guide: `2026-10-13-background-handoff`.
+The SDLC tools are `sdlc_checkpoint`, `sdlc_prepare`, `sdlc_resume`,
+`sdlc_diff` and `sdlc_health`.
+
+| Startup result | Expected action |
+| --- | --- |
+| All PASS | Start work; no repeated diagnostics |
+| Graph/Hindsight FAIL or pending | Report the problem; continue with source/tests and Git docs/checkpoints |
+| Checkpoint storage/ownership FAIL | Investigate and repair before native edits |
+| Missing tools or old runtime | Repair installation and fully restart the host |
+
+After recovery, request `sdlc_health(refresh: true)`. Health proves availability,
+not complete graph coverage, future memory capture or application readiness.
+
+For automated regression checks, from the Git root:
 
 ```powershell
 node --test tools/opencode-harness/tests/*.test.mjs
 ```
 
-The Windows suite includes runtime behavioral checks and two installer
-preservation/failure checks, including feature-document evidence and 12 simultaneous
-first-time checkpoint initializations, independent process receipts, interrupted
-edits, reuse gates and stale-event recovery. Tests use disposable repositories
-and a mocked memory API; they do not validate your actual sign-in or application.
+Use the runner's actual result; no fixed test count is an installation guarantee.
+Tests use disposable repositories/mocked integrations. They do not validate your
+provider sign-in or application. Report failed tests with the failing policy/path;
+do not remove guards to obtain a green result.
 
-For a real parallel readiness check, in **two separate PowerShell terminals**:
-
-```powershell
-# Terminal A, repository root:
-Set-Location -LiteralPath $repoRoot
-opencode serve --hostname 127.0.0.1 --port 6193
-
-# Terminal B, frontend directory:
-Set-Location -LiteralPath (Join-Path $repoRoot 'YellowStorm\front')
-opencode serve --hostname 127.0.0.1 --port 6194
-```
-
-Each terminal needs its own `$repoRoot` value. In a third terminal from the root:
+For the reusable native background acceptance test:
 
 ```powershell
-node tools/opencode-harness/tests/live-startup.mjs "$repoRoot"
+node tools/opencode-harness/tests/live-background.mjs --create-fixture
 ```
 
-Expected: two distinct process/session/probe identities, all checks PASS and
-`diagnosticModelToolCalls: 0`. These localhost test servers use no model reply;
-stop both afterwards with Ctrl+C. The test currently assumes those ports and
-no server password; use it only for local onboarding, not a public server.
-Readiness proves availability/configuration, not future LLM memory extraction.
-Complete the memory write/read check in [Hindsight setup](HINDSIGHT-SETUP.md).
+Follow its printed two-terminal instructions. It uses an owned localhost server
+and your accessible test model; the shipped probe selects `openai/gpt-6-luna`.
+It verifies a second parent response during child execution, persistent child
+references, automatic completion and initial/resumed maintainer background rules.
+Stop only the test server you launched; never stop another session's host.
+The verified CLI result does not establish desktop GUI behavior.
 
-For background-task acceptance, ask the primary to run one bounded read-only
-`explore` task with native `Task(background: true)` while it answers another
-independent question. It should return a background task ID promptly and receive
-completion automatically. If unsupported, verify the feature flag/host version;
-do not pretend a foreground task ran in the background or poll repeatedly.
+In your desktop session, request one bounded background task, then send another
+message while it runs. Expect the main agent to answer and later report completion.
+Maintainer calls must always use background mode, including follow-ups; unsupported
+execution leaves docs pending with recovery instructions, not a foreground fallback.
 
-## 9. Verify private frontend QA and login — manual access
+For advanced two-process startup verification, use
+[the parallel readiness procedure](PARALLEL-VERIFICATION.md).
 
-Start the application using its own README and development/test configuration;
-the harness does not provision application databases or test accounts.
-Give the primary agent the URL/route and one observable UI criterion.
+## Daily use
 
-Frontend QA must create `new_page` with a globally unique
-`isolatedContext: "qa-<session-and-run-id>"` and retain the returned `pageId`.
-Every page operation uses that ID. `--isolated` separates MCP processes;
-different named contexts separate tasks inside the same process. Reusing a
-context name shares its storage. Browser ownership is agent policy, not a
-hard page-ID access-control boundary in this plugin.
-The upstream [context/tool reference](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/tool-reference.md)
-defines `isolatedContext`; the pinned tool schema remains authoritative.
+Start services if stopped, then launch OpenCode from your actual checkout and use
+`build`. The harness does not install application dependencies, provision test
+accounts or start the application automatically; follow the owning runtime README.
 
-If sign-in is needed, expect `BLOCKED / AUTH_REQUIRED` with the private context,
-page ID and login URL. Sign in yourself in that browser/password manager, then
-tell the primary to resume the same QA child/context. It stores a confirmed
-non-secret login recipe in Hindsight, not your password, cookies or MFA codes.
-A new private context can still require a fresh sign-in.
+### Implement a feature
 
-Evidence belongs under `qa-artifacts/<task-id>/<run-id>/`. Chrome MCP 1.10.1 also
-restricts file writes: the host must provide appropriate MCP roots or a permitted
-`--workspace`. If evidence saving is blocked, configure the active repository's
-workspace in its project MCP override; do not enable unrestricted filesystem
-access or save evidence into source paths. Missing isolation/routing capabilities
-must produce `BLOCKED / BROWSER_ISOLATION`.
+```text
+Implement [goal] in [area]. Requirements: [2–5 observable criteria].
+Finish end to end. Reuse existing code and relevant Git documentation.
+Deliver the first complete testable flow as soon as focused checks and frontend
+QA pass. Run independent long work in the background; keep me able to message.
+Update affected docs through the background maintainer in this branch.
+```
 
-## 10. Normal use, interruption and documentation
+### Fix a defect
 
-- Give a goal and observable requirements; the primary asks for material missing
-  decisions/access, not confirmation for each routine step. For substantial
-  testable phases, choose end to end or phase pauses once for the task.
-- Before edits, the agent checkpoints, reads matching Git docs and existing code,
-  then prepares exact owned files with a reuse decision. Disjoint work can run
-  in parallel; overlapping edits need coordination or separate worktrees.
-- After interruption, send `resume` or `resume task TASK_ID`. Multiple unfinished
-  candidates require selection. New ordinary requests do not adopt old tasks.
-- Every human reply ends with **Follow-up:** who does what next, where, and the
-  expected result or verification. Avoid abstract lesson-only endings or routine
-  approval requests. Hindsight capture is asynchronous; a reply is not proof that
-  memory extraction succeeded.
-- Git docs live in `docs/agent-context/`: `architecture/`, `decisions/`,
-  `features/`, `frontend/`, `backend/`, `testing/`, routed by `README.md`. Code/graph checks
-  establish implementation; reviewed docs establish approved intent; experience
-  is fallible background context.
-- Read the matching feature page before implementation. Assign affected pages to
-  `maintainer` once source is stable, with exact owned docs, branch and check evidence.
-  Feature docs travel in the implementation branch/PR; developers receive the reviewed
-  shared baseline by merging/rebasing main. Preserve pending updates in checkpoints;
-  full completion includes doc review. See `docs/agent-context/documentation-workflow.md`.
-- Changed boundaries, runtime, persistence or durable decisions update owning
-  architecture references. ADRs use `decisions/ADR-NNNN-topic.md`, status, scope,
-  source paths, decision, rationale and verification. Start new decisions as
-  `proposed`; accept after approval/review. Supersede accepted ADRs with new
-  records rather than rewriting their history; update the index.
-- Creating a new schema/table/collection, module/service/runtime or microservice
-  requires approval of the concrete design. A generic end-to-end instruction is
-  not approval of a new architecture.
-- Ready-to-test delivery follows focused checks and relevant frontend QA.
-  Routine reviewer/maintainer tasks are not delivery gates; high-risk changes
-  still require independent review before full completion.
+```text
+Fix [symptom]. Reproduction: [route, actions, expected and actual result].
+Finish end to end. Add the smallest meaningful regression when feasible,
+rerun affected checks, and tell me where/how to verify the fix.
+```
 
-See [operations and recovery](OPERATIONS.md) for upgrades, rollback and
-troubleshooting. There is no automatic memory upload to the shared Git docs.
+The agent should inspect relevant docs/source, checkpoint intent and reserve owned
+targets before editing. It asks only for consequential missing information.
+A new schema/table/collection, module/service/runtime or microservice still needs
+approval for the named design; general end-to-end authorization is insufficient.
+For substantial phases you may instead choose: “Pause after each completed,
+testable phase.”
 
-## Official references
+### Understand delivery status
 
-- [OpenCode configuration](https://opencode.ai/docs/config/), [plugins](https://opencode.ai/docs/plugins/) and [providers](https://opencode.ai/docs/providers/).
-- [uv installation](https://docs.astral.sh/uv/getting-started/installation/).
-- [WSL installation](https://learn.microsoft.com/windows/wsl/install).
-- [Graph commands](https://github.com/tirth8205/code-review-graph/blob/main/docs/COMMANDS.md).
-- [Chrome advanced usage](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md) and [tool reference](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/tool-reference.md).
+| Status | Meaning |
+| --- | --- |
+| Preview available | Something visible exists; validation is pending |
+| Ready to test | Relevant focused checks and frontend QA passed; includes route/action/result |
+| Ready for local testing; review pending | Testable, but required high-risk review is unfinished |
+| Complete | Required checks/review and affected documentation finished, or specific no-impact reason |
+| BLOCKED | Missing environment/access/evidence; includes an exact recovery action |
 
-Commands were checked against the pinned installed CLI/help and runtime source;
-upstream latest documentation can describe newer behavior.
+Routine reviewers and documentation do not delay ready-to-test delivery.
+The maintainer always runs asynchronously. It updates affected behavior,
+architecture and contracts after source stabilizes; the primary reviews results
+and records pending/updated paths. Full completion includes those updates.
+
+Each human reply ends with **Follow-up:** an actor, concrete next action/location
+and expected result. Background launch is not a verification PASS or proof that
+memory was saved. You can send corrections while tasks run; they steer the active
+request without restarting discovery.
+
+## Resume a task
+
+Before stopping, request: “Save the checkpoint, pending child IDs and exact next
+action.” To continue in a new session in the **same worktree and branch**, send:
+
+```text
+resume
+```
+
+If several tasks exist, select the actual task ID:
+
+```text
+resume task TASK_ID
+```
+
+The agent reconciles source/environment and child state before continuing.
+Passed checks can be reused only for unchanged inputs. A stopped host may interrupt
+background work; saved IDs do not guarantee it completed. Never guess or relaunch
+before establishing the previous task's state. An active owner must first park or
+interrupt its task; never delete its database to bypass ownership.
+
+## Parallel work
+
+Use separate Git worktrees for developers/sessions that may touch the same files.
+Commit approved shared instructions/docs before creating worktrees.
+Each worktree needs its policy/docs, application environment and graph registration.
+Checkpoints/graphs remain local to that worktree; linked worktrees may share the
+developer's repository memory bank.
+
+In the same checkout, assign disjoint files and coordinate shared contracts,
+translations/manifests and indexes. Use unique ports where independent runtimes
+need them, unique test data/report paths and scoped cleanup. Do not reset another
+session's fixtures or stop its processes.
+
+QA opens a private Chrome context per task with explicit page IDs; MCP
+`--isolated` also separates OpenCode processes. Never share tabs, cookies or browser
+storage between tasks. If QA reports AUTH_REQUIRED, sign in directly in its owned
+private browser/password manager, then ask the primary to resume the same child.
+Do not send passwords/MFA in chat. Only a verified non-secret login recipe is
+eligible for memory; a fresh private context can still require fresh sign-in.
+
+## Documentation developers share
+
+Use `docs/agent-context/README.md` as the entry point, then read only relevant
+records and linked source/tests. Common categories are `architecture/`,
+`decisions/`, feature records where present, `frontend/`, `backend/` and `testing/`.
+The actual branch policy determines mandatory edit evidence. Missing records are
+reported as documentation gaps, never invented as implemented facts.
+
+Maintainer updates travel with implementation in the same branch/PR.
+Reviewed main-branch documentation reaches other developers through normal Git
+merge/rebase; unmerged branch records remain provisional outside their branch.
+No separate Obsidian workspace or shared memory database is required.
+See [documentation workflow](WORKFLOW.md#documentation-maintenance).
+
+ADRs use `decisions/ADR-NNNN-topic.md`, with status, scope, source paths, decision,
+rationale and verification. New decisions start proposed; acceptance requires
+approved design and reviewed evidence. Preserve accepted records and supersede
+them through a new ADR; resolve numbering collisions before acceptance.
+
+## Recovery and upgrades
+
+[Operations and recovery](OPERATIONS.md) covers missing tools, stale runtime,
+graph/memory failures, unavailable models, browser isolation, ownership and rollback.
+Graph/memory failures never justify refusing authorized runtime scripts or tests.
+Shell commands follow the current agent's native permissions; guarded native edits
+still require preparation and ownership.
+
+To upgrade: save active checkpoints, finish/park child tasks, fetch the reviewed
+source, back up personal config, reinstall, reapply personal overrides and fully
+restart hosts. Repeat affected onboarding checks. Keep one coherent installed
+runtime version across your sessions; the global installation is shared within
+your Windows account. Do not delete checkpoint/memory databases for an upgrade.
+
+## Using a release ZIP
+
+Verify the supplied archive hash before extracting:
+
+```powershell
+$archivePath = 'C:\Downloads\opencode-sdlc-harness.zip' # Your release file.
+(Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+Get-Content -LiteralPath ($archivePath + '.sha256')
+```
+
+Extract separately. `PACKAGE-MANIFEST.json` identifies the exported commit/files.
+Copy the harness into the application checkout and review/merge the supplied
+instructions/context profile; preserve newer team policy. The archive contains
+neither application source nor personal credentials/runtime databases.
+Only committed changes enter an exported release; see
+[packaging](OPERATIONS.md#build-another-shareable-package).
+
+## References
+
+- [Harness internals and guard limits](../README.md)
+- [Detailed handoff/QA/documentation recipes](WORKFLOW.md)
+- [Local Hindsight installation and memory verification](HINDSIGHT-SETUP.md)
+- [OpenCode configuration](https://opencode.ai/docs/config/) and [providers](https://opencode.ai/docs/providers/)
+- [uv installation](https://docs.astral.sh/uv/getting-started/installation/)
+- [WSL installation](https://learn.microsoft.com/windows/wsl/install)
+
+Commands and examples follow the pinned harness baseline. Clean-machine onboarding
+and desktop UI checks must be verified on the developer's own environment.

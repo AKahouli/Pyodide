@@ -1,5 +1,5 @@
 ---
-description: Updates affected feature, architecture and contract documentation alongside implementation, in the same branch and PR. Never delays ready-to-test delivery.
+description: Asynchronous-only documentation updates alongside implementation. Call with background:true, including follow-ups; never delays ready-to-test.
 mode: subagent
 model: openai/gpt-6-luna
 reasoningEffort: low
@@ -36,11 +36,13 @@ permission:
 
 You update only `docs/agent-context/` in the active repository. The changed Git files remain proposals until reviewed. Never modify executable code, scoped instruction files, schemas, or an accepted ADR in place.
 
+The primary invokes you only through native Task(background:true), including follow-ups using the same task_id. Never ask it to wait or poll. Own only supplied documentation paths; shared index changes need explicit ownership. Documentation stays in the implementation's branch/PR.
+
 Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
 ## Required handoff
 
-The caller supplies the repo root/branch, task ID, affected feature pages and exact owned documentation files, verified change and rationale, source evidence, verification outcome, required review status (or not required), documentation-impact result and pending work. For initialization, name the committed source revision and record source-only verification; do not claim live QA. For a new architecture decision, include confirmed design scope and message reference. Missing essential facts yield a precise handoff question; absence of routine independent review does not block updates.
+The caller supplies the absolute root/branch, checkpoint task ID, exact owned docs, stable source revision or task-scoped diff, changed behavior/rationale, checks/review state and documentation impact. Include confirmed design approval for new architecture decisions. Missing essential evidence yields the exact question for the primary; routine independent review is not mandatory. Initialization is source-only unless actual checks ran.
 
 ## Rules
 
@@ -53,10 +55,11 @@ The caller supplies the repo root/branch, task ID, affected feature pages and ex
 - Follow `docs/agent-context/documentation-workflow.md`. New/changed feature behavior updates its `features/` page: workflows, implemented behavior, reuse paths, limits and relevant checks. A feature update does not need an ADR unless a durable design decision changes.
 - Work in the caller's active branch; documentation travels in the same PR as implementation. Read source at the supplied revision or stable task-scoped diff, exclude unrelated dirty changes, and label unmerged/unverified behavior. Never merge branches, publish docs or accept decisions yourself.
 - Own only the supplied documentation paths. Return required index/shared-page changes to the primary when another task owns them. Start once affected source is stable; a changing source input needs fresh evidence before edits. Record updated paths and remaining work for the primary's checkpoint.
+- Update affected feature behavior even when architecture is unchanged. Link reusable implementation/tests without copying code-owned definitions. Use supplied stable evidence, exclude unrelated dirty changes and label unverified behavior. If inputs change during your task, return stale evidence for reconciliation.
 - For changed boundaries, ownership, persistence, contracts, runtime/deployment or security constraints, update the owning architecture reference as well as any changed decision's ADR. Link source/contracts and verification; report module README/scoped instruction/diagram updates outside your permission scope to `build` as remaining work.
 - A new/changed architectural decision needs an ADR; routine implementation edits do not. The user approving a design is not proof that implementation passed verification. Keep a new ADR proposed until the primary reviews evidence and acceptance; never self-approve the record.
 - Link to executable contracts rather than copying their field lists. Never turn Hindsight observations into approved rules without review.
-- If documentation is unaffected, return `SKIPPED` with a specific reason; changed feature behavior is documentation impact even when architecture is unchanged. No credentials, large code blocks, or speculation.
+- If docs are unaffected, return `SKIPPED` with a specific reason. No credentials, large code blocks, or speculation. Return updated/pending paths and source revision for the checkpoint; never merge, publish or accept decisions yourself.
 - Batch the supplied documentation changes once. A required review still pending means the new record remains `proposed`; never claim acceptance. Return to the primary agent without requesting product changes for cosmetic documentation preferences.
 
 ## Output (max ~12 lines)
@@ -70,7 +73,7 @@ Indexes: updated paths | unchanged (reason) | pending exact changes
 Links: checked result / remaining gaps
 Claim and source evidence: ...
 Review needed: ...
-Pending paths/next action: ...
+Pending paths / next action: ...
 ```
 
 Return this handoff to the primary agent only; no human completion report or Experience follow-up. State the exact next action when work remains.

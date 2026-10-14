@@ -1,17 +1,22 @@
 # OpenCode SDLC harness
 
 The versioned configuration snapshot, native plugin, and focused tests live
-here. `config/opencode.example.json` uses environment references for credentials;
-it is a reference, not an automatic replacement for working provider settings.
+here. `config/opencode.example.json` supplies integration and permission defaults;
+merge it with working provider settings rather than replacing them.
 The existing Hindsight integration remains independent of task checkpoints.
 
 For developer onboarding and manual steps, start with
-[Developer setup](docs/DEVELOPER-SETUP.md), then
+[Developer user guide](docs/DEVELOPER-SETUP.md), then
 [Hindsight setup](docs/HINDSIGHT-SETUP.md) and
 [Operations/recovery](docs/OPERATIONS.md). `package.ps1` exports committed source
 and the reviewed repository context profile with a manifest and hashes.
 
 ## Install
+
+For guided Windows installation, double-click [Install-Harness.cmd](Install-Harness.cmd).
+It asks whether to install Hindsight (Y/N), reuses `install.ps1` and preserves personal
+configuration with backups. See [the one-click procedure](docs/DEVELOPER-SETUP.md#one-click-installer)
+for prerequisites, authentication/WSL steps and partial-success exit codes.
 
 Run `./tools/opencode-harness/install.ps1` from PowerShell, then stop and restart
 the entire OpenCode host process. Creating a new chat in a running host does not
@@ -117,6 +122,25 @@ require reporting a missing `sdlc_health` tool as a setup failure.
 The reviewer can call `sdlc_diff(file, taskID)` using the primary task ID supplied
 in its handoff. It excludes pre-existing changes. External changes after the
 task baseline produce an explicit review gap instead of a falsely scoped diff.
+
+## Background handoff and scoped recipes
+
+Native Task handles asynchronous execution and completion notifications.
+Every maintainer initial/follow-up invocation requires `background:true`; the
+plugin rejects foreground maintainer Task calls in healthy and degraded modes.
+Unsupported background support leaves docs pending while coding continues.
+The guard covers Task invocations, not direct manual agent selection.
+
+Save child IDs, owned paths, source inputs and pending results in existing
+checkpoint fields. Continue independent work, then return control when none remains.
+The user can message while children run; integrate automatic completion without
+polling or repeating discovery. Checkpoint ownership, edit guards and private QA
+isolation remain unchanged. Full completion still includes affected documentation.
+Detailed recipes are loaded only when relevant from [WORKFLOW](docs/WORKFLOW.md).
+The reusable `tests/live-background.mjs --create-fixture` prepares an isolated
+headless acceptance run; see [setup](docs/DEVELOPER-SETUP.md). It checks interaction,
+checkpoint retention, maintainer scheduling and automatic completion with the
+installed plugin. Desktop UI behavior needs separate verification.
 
 ## Interruption and automatic resume
 

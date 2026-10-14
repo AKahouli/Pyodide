@@ -1,6 +1,7 @@
 # Local Hindsight setup
 
-Complete this before the first gated coding session. Windows OpenCode connects
+Complete this to enable local experience memory. Coding may continue with Git
+docs/checkpoints while memory setup is pending. Windows OpenCode connects
 to a developer-owned WSL daemon on `http://127.0.0.1:9077`. The daemon performs
 memory extraction; the native Coding Agents plugin captures/injects conversations.
 Neither replaces the reviewed Git documentation or local task checkpoints.

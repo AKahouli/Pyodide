@@ -71,6 +71,26 @@ async function observation(plugin, root, sid, tool, callID, status = 'completed'
   await plugin.event({ event: { type: 'message.part.updated', properties: { part: { type: 'tool', sessionID: sid, callID, tool, state: { status, input: args, output: JSON.stringify(output), error: status === 'error' ? 'Synthetic integration failure' : undefined } } } } });
 }
 
+test('maintainer Task calls require background mode while other tasks and coding remain available', async t => {
+  const { plugin, root } = await create(t);
+  const call = args => plugin['tool.execute.before']({ sessionID: 'background', tool: 'task', callID: 'task' }, { args });
+  for (const args of [
+    { subagent_type: 'maintainer' },
+    { subagent_type: 'maintainer', background: false },
+    { subagent_type: 'maintainer', task_id: 'existing-child', background: false },
+  ]) await assert.rejects(call(args), /maintainer requires Task\(background:true\)/);
+  for (const args of [
+    { subagent_type: 'maintainer', background: true },
+    { subagent_type: 'maintainer', task_id: 'existing-child', background: true },
+    { subagent_type: 'explore', background: false },
+    { subagent_type: 'worker', background: true },
+  ]) await call(args);
+  await prepareEdit(plugin, root, 'background');
+  await plugin['tool.execute.before']({ sessionID: 'background', tool: 'edit', callID: 'source-edit' }, { args: { filePath: 'src/a.js' } });
+  writeFileSync(path.join(root, 'src/a.js'), 'export const value = 42;');
+  await plugin['tool.execute.after']({ sessionID: 'background', tool: 'edit', callID: 'source-edit' }, { output: 'edited' });
+});
+
 test('automatic checks create independent receipts and allow prepared edits without diagnostic model calls', async t => {
   const { plugin, root } = await create(t);
   const first = await health(plugin, 'first');
@@ -137,6 +157,8 @@ test('missing policy reports failure and blocks native edits without replacing s
   const fallback = await SdlcHarness({ worktree: root, directory: root, client: { mcp: { status: async () => ({ data: { 'code-review-graph': { status: 'connected' } } }) }, tool: { ids: async () => ({ data: ['hindsight_diagnose'] }) }, tui: { showToast: async input => { toasts.push(input.body); } } } });
   const report = await health(fallback, 'missing-policy');
   assert.equal(report.checkpoints.status, 'FAIL');
+  await assert.rejects(fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'task', callID: 'maintainer' }, { args: { subagent_type: 'maintainer' } }), /maintainer requires Task\(background:true\)/);
+  await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'task', callID: 'maintainer-background' }, { args: { subagent_type: 'maintainer', background: true } });
   assert.ok(toasts.some(item => item.message.includes('checkpoints FAIL')));
   for (const command of ['git status', 'powershell.exe -NoProfile -File scripts/start-local.ps1', 'Get-Content logs/worker.log -Tail 80']) {
     await fallback['tool.execute.before']({ sessionID: 'missing-policy', tool: 'bash', callID: command }, { args: { command } });

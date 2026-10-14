@@ -3,8 +3,14 @@ import path from 'node:path';
 import { openHarness, editTargets } from '../lib/sdlc-core.mjs';
 import { probeStartup, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
+function requireBackgroundMaintainer(input, output) {
+  if (input.tool === 'task' && output.args.subagent_type === 'maintainer' && output.args.background !== true) {
+    throw new Error('SDLC: maintainer requires Task(background:true), including follow-ups. If unsupported, report documentation pending and continue coding; do not use a foreground fallback.');
+  }
+}
+
 export const SdlcHarness = async ({ worktree, directory, client }) => {
-  const harnessVersion = '2026-10-13-advisory-integrations';
+  const harnessVersion = '2026-10-13-background-handoff';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
   const root = path.resolve(candidate);
   let harness, checkpointError;
@@ -73,6 +79,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     'chat.message': async input => { await check(input.sessionID); },
     'experimental.chat.system.transform': async (input, output) => { if (input.sessionID) output.system.push(startupText(await check(input.sessionID))); },
     'tool.execute.before': async (input, output) => {
+      requireBackgroundMaintainer(input, output);
       if (['edit', 'write', 'apply_patch', 'multiedit'].includes(input.tool)) throw new Error('SDLC startup: checkpoint integration unavailable for this current root. Use native investigation tools and sdlc_health to diagnose; repair the reported setup before source edits. Shell commands use native OpenCode permissions.');
     },
     event: async ({ event }) => { if (event.type === 'session.created' && event.properties?.info?.id) await check(event.properties.info.id); },
@@ -140,6 +147,7 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
     },
     'tool.execute.before': async (input, output) => {
+      requireBackgroundMaintainer(input, output);
       if (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(input.tool) || input.tool === 'hindsight_diagnose') {
         await check(input.sessionID);
         observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });

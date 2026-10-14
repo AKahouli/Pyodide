@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $commit = (& git -C $repo rev-parse --verify "$Ref^{commit}").Trim()
 if ($LASTEXITCODE -ne 0) { throw 'The package reference must resolve to a committed Git revision.' }
+$hasSetupLauncher = @(& git -C $repo ls-tree -r --name-only $commit -- 'tools/opencode-harness/Install-Harness.cmd') -contains 'tools/opencode-harness/Install-Harness.cmd'
 & git -C $repo cat-file -e ($commit + ':tools/opencode-harness/docs/DEVELOPER-SETUP.md')
 if ($LASTEXITCODE -ne 0) { throw 'This revision has no developer distribution guide. Choose a packaged release revision.' }
 if (-not $OutputPath) { $OutputPath = Join-Path $env:USERPROFILE ('Downloads\opencode-sdlc-harness-' + $commit.Substring(0,9) + '.zip') }
@@ -24,7 +25,8 @@ try {
     try {
         $introWriter.WriteLine('# OpenCode SDLC harness')
         $introWriter.WriteLine('')
-        $introWriter.WriteLine('Start with [Developer setup](tools/opencode-harness/docs/DEVELOPER-SETUP.md).')
+        $introWriter.WriteLine('Start with [Developer user guide](tools/opencode-harness/docs/DEVELOPER-SETUP.md).')
+        if ($hasSetupLauncher) { $introWriter.WriteLine('Or double-click tools/opencode-harness/Install-Harness.cmd for guided setup with optional Hindsight (Y/N).') }
         $introWriter.WriteLine('')
         $introWriter.WriteLine('This Windows release contains the harness and reviewed YellowStorm documentation profile. Use it with the application Git checkout. Each developer configures their own accounts and local services; runtime databases and credentials are excluded.')
         $introWriter.WriteLine('')
