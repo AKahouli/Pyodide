@@ -36,6 +36,7 @@ vi.mock('../api', () => ({
   getActiveRoles: vi.fn(),
   assignRoleToUser: vi.fn(),
   unassignRoleFromUser: vi.fn(),
+  inviteUser: vi.fn(),
 }));
 
 import {
@@ -43,6 +44,7 @@ import {
   getAllPlans,
   getActiveRoles,
   approveRegistration,
+  inviteUser,
 } from '../api';
 
 const pendingUser: AdminUserResponse = {
@@ -107,5 +109,27 @@ describe('UsersPage registration review', () => {
     expect(await screen.findByText('users.modals.approveRegistration.title')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'users.modals.approveRegistration.action' }));
     await waitFor(() => expect(approveRegistration).toHaveBeenCalledWith('user-pending'));
+  });
+
+  it('invites a user by email from the header for a Super Admin', async () => {
+    vi.mocked(inviteUser).mockResolvedValue({ message: 'ok', email: 'new@acme.io', expiresAt: '2030-01-01T00:00:00.000Z' });
+
+    const { user } = renderWithProviders(<UsersPage />);
+    await screen.findByText('jane@acme.io');
+
+    await user.click(screen.getByRole('button', { name: 'users.actions.invite' }));
+    await user.type(await screen.findByLabelText('users.modals.invite.email.label'), 'new@acme.io');
+    await user.click(screen.getByRole('button', { name: 'users.modals.invite.action' }));
+
+    await waitFor(() => expect(inviteUser).toHaveBeenCalledWith({ email: 'new@acme.io' }));
+  });
+
+  it('hides the invite action for a non Super Admin', async () => {
+    hasPermissionMock.mockReturnValue(false);
+
+    renderWithProviders(<UsersPage />);
+    await screen.findByText('jane@acme.io');
+
+    expect(screen.queryByRole('button', { name: 'users.actions.invite' })).not.toBeInTheDocument();
   });
 });
