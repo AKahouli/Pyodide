@@ -7,10 +7,10 @@ feature_id: semantic-model
 
 ## Evidence and scope
 
-Source revision/branch: `28eb652e506d7a30e630d72a333c77f85399fe16` / `baseline/semantic-model-001` (caller-supplied HEAD; scoped implementation diff inspected).
-Verified on: 2026-10-14.
-Verification level: source inspection and focused runtime, MCP and backend checks listed below; no live browser QA or deployed configuration was verified. Earlier handoffs prematurely called the work end-to-end complete; this page reflects the final scoped evidence and verified limits.
-Scope: semantic-record provenance and AGE graph projection, plus agent guidance for retrieving source documents. Existing workspace authorization remains in force.
+Source revision/branch: `33cfe3300` / `baseline/semantic-model-001`, plus the scoped graph inspector implementation diff.
+Verified on: 2026-10-15.
+Verification level: source inspection, focused automated checks, scoped code review, direct AGE queries and local browser QA listed below. This does not establish a deployed production configuration.
+Scope: semantic-record provenance, AGE graph projection and read-only source metadata in the data graph inspector, plus agent guidance for retrieving source documents. Existing workspace authorization remains in force.
 
 ## Purpose and workflows
 
@@ -44,9 +44,11 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
-Semantic record provenance originates in existing source provenance. Backend assistant retrieval forwards non-empty provenance for `find_records` and `get_related_records`, preserves record provenance in query/traversal rows, and includes it on records along connection paths. Runtime locators expose available `workspaceId`, `documentId`, compatibility `assetId` and `filename`; `filename` may be absent. Chained and merged derived concepts carry their underlying document references, deduplicated by workspace/document. MCP treats provenance as a locator, not evidence: follow connected document-tool schemas, use workspace scope and a declared `file_name`/document identifier only when accepted, and resolve missing filenames through `list_workspace_files(source_workspace_id=workspaceId)` by matching returned file identity/name rather than fabricating one. Facts supported by freshly retrieved document text may be answered with file/section citations and must be distinguished from model-record fields. Record search and graph reads retain existing acting-user workspace visibility filtering; locators do not grant document access.
+Semantic record provenance originates in existing source provenance. Backend assistant retrieval forwards non-empty provenance for `find_records` and `get_related_records`, preserves record provenance in query/traversal rows, and includes it on records along connection paths. Runtime locators expose available `workspaceId`, `documentId`, compatibility `assetId` and `filename`; `filename` may be absent. Chained and merged derived concepts carry their underlying document references; canonical and MCP provenance can retain distinct mapping/version references to the same document. MCP treats provenance as a locator, not evidence: follow connected document-tool schemas, use workspace scope and a declared `file_name`/document identifier only when accepted, and resolve missing filenames through `list_workspace_files(source_workspace_id=workspaceId)` by matching returned file identity/name rather than fabricating one. Facts supported by freshly retrieved document text may be answered with file/section citations and must be distinguished from model-record fields. Record search and graph reads retain existing acting-user workspace visibility filtering; locators do not grant document access.
 
 AGE projection stores an array-valued `source_documents` property on each record vertex, containing structured workspace/document identifiers and filename when present. Manual records have an empty array. Chained and merged derived concepts inherit deduplicated original document references. This is reserved projection metadata: business identity/attributes cannot overwrite it, graph-exposure hidden-field restoration cannot replace protected properties, and existing `workspace_ids` remain available for Cypher visibility checks. Direct Cypher can read the locator array or individual values; executable projection/read code owns exact query details. Existing graphs need a new data revision or forced re-projection to acquire this property. This changes projection properties within the existing runtime and graph lifecycle; no new schema, service or topology is introduced.
+
+The AGE locator array deduplicates documents by `(workspaceId, documentId)`. The data graph record API exposes `source_documents` separately from concept-defined values. In **Data graph**, open a record's information badge to see **Source documents** in the right inspector: JSON can be expanded and copied, but cannot be edited as a business field. An empty array means no document locator; a null or absent property means the stored graph predates this metadata and the inspector directs the user to **Run → Rebuild graph from stored records**. The backend retains model-role and acting-user workspace checks before returning metadata. EN/FR text follows existing module localization.
 
 ## Reuse map
 
@@ -60,6 +62,7 @@ AGE projection stores an array-valued `source_documents` property on each record
 | Search / index lifecycle | [graph search service](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-graph-search.service.ts), [runtime graph search](../../../YellowStorm/semantic-model-runtime/app/graph_search), [search worker](../../../YellowStorm/semantic-model-runtime/app/workers/graph_search_tasks.py) |
 | Record-to-document provenance retrieval | [Runtime provenance shaping and workspace visibility](../../../YellowStorm/semantic-model-runtime/app/graph_search/retrieval.py), [record query visibility](../../../YellowStorm/semantic-model-runtime/app/graph_search/record_query.py), [MCP tool guidance and result preservation](../../../mcp/mcp-semantic-model/server.py); extend these existing owners and follow document connector schemas |
 | AGE document locators and graph exposure | [AGE projection](../../../YellowStorm/semantic-model-runtime/app/population/age_projection.py), [runtime projection guide](../../../YellowStorm/semantic-model-runtime/README.md); use existing projection/re-projection lifecycle and Cypher readers |
+| Source metadata in the graph inspector | [Record response shaping](../../../YellowStorm/back/src/modules/semantic-model/domain/graph-outline.ts), [graph viewer](../../../YellowStorm/front/src/modules/semantic-model/components/editor/SemanticModelGraphViewer.tsx), [record inspector](../../../YellowStorm/front/src/modules/semantic-model/components/graph/GraphRecordPanel.tsx); keep reserved metadata separate from editable concept fields |
 | Publication / cloning / deletion | [version service](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-model-version.service.ts), owning model service, runtime revision activation/publish/clone/purge routes |
 
 Keep payload definitions in executable DTOs/types/schemas; this page intentionally does not duplicate them.
@@ -77,18 +80,24 @@ Reuse existing revision, lease, authorization and idempotency checks instead of 
 - Do not treat health UI, mapped sources, a published definition or a queued index as proof that all records were populated or indexed successfully.
 - Provenance may omit `filename` when source metadata has no filename; document retrieval guidance must use available provenance and the declared document-tool schema, not assume optional identifiers or arguments.
 - Preserve actor-scoped workspace filtering when changing retrieval: source-document handles do not grant access to the document or override existing visibility rules.
-- Existing AGE projections do not acquire `source_documents` automatically; rebuild data or force re-projection. A filename is included only when present in source provenance; no broader workspace/tabular filename acquisition behavior is asserted.
+- Existing AGE projections do not acquire `source_documents` automatically; rebuild data or force re-projection. A filename is included only when present in stored source provenance. Re-projection does not fetch missing names from workspaces or reread documents; legacy records can therefore retain workspace/document IDs without filenames.
 
 ## Focused verification
 
-The caller reports the following focused checks passed for the supplied branch evidence (not live QA):
+Use the existing entry points below for affected behavior. Only rows with explicit results describe checks run for the source metadata changes; the remaining rows are reusable coverage entry points.
 
 | Area | Existing coverage / command |
 | --- | --- |
 | Catalog/editor | From `YellowStorm/front`: `npm test -- src/modules/semantic-model/pages/SemanticModelCatalogPage.test.tsx src/modules/semantic-model/pages/SemanticModelEditorPage.test.tsx` |
 | Mapping and run UI | Existing `components/mapping/*.test.tsx`, `components/population/*.test.tsx`, `components/records/*.test.tsx`; run the affected test file from the frontend directory |
+| Backend boundary | From `YellowStorm/back`: `npm test -- semantic-model.controller.spec.ts`; service tests are colocated under `src/modules/semantic-model/services/` |
+| Runtime population | From `YellowStorm/semantic-model-runtime`: `conda run -n meta pytest tests/test_population_commands.py tests/test_population_tabular.py tests/test_document_population.py -q` |
+| Durable runtime / search | Existing `tests/test_jobs.py`, `tests/test_concept_refresh.py`, `tests/test_scoped_population_reads.py`, `tests/test_graph_search.py`; integration variants require their configured database/services |
 | AGE projection/exposure | Focused projection/exposure tests, 34 passed; isolated AGE direct-Cypher integration, 1 passed (4 unrelated tests deselected); cleanup verified (caller-reported) |
-| Diff hygiene | `git diff --check` passed (caller-reported) |
+| Graph record API | `npm test -- graph-outline.spec.ts --runInBand`: 7 passed; metadata remains separate from editable values and distinguishes missing metadata from an empty array |
+| Graph inspector | `npm test -- SemanticModelGraphViewer.test.tsx --run`: 31 passed; includes read-only source metadata on a derived-concept record |
+| Types/build and review | Frontend `npx tsc --noEmit -p .` and backend `npm run build` passed; scoped code review found no critical/major findings |
+| Local AGE and browser verification | Model `61ce5cd7-68e6-4ade-a5e8-cf42e3d108a8`: both served graphs re-projected from stored records. Direct Cypher verified metadata on all 228 draft and 26,671 published vertices. All draft records returned workspace/document IDs and filenames; legacy published records returned IDs without filenames. Signed-in Chrome QA, explicitly authorized by the user, verified expanded JSON on a derived Correspondant record in the inspector |
 | Visible workflow | Private browser QA at catalog/editor routes; own the test model/source/run data and verify the specific criterion rather than altering shared fixtures |
 
 For Python always use conda `meta`; never run integration mutations against a shared developer dataset without owned fixtures.
@@ -105,4 +114,4 @@ For Python always use conda `meta`; never run integration mutations against a sh
 Update this page alongside implementation when workflows, reusable owners, limits or verification entry points change.
 The maintainer can prepare updates after source stabilizes; the owning coding agent supplies changed behavior, source paths and actual verification evidence.
 Keep documentation on the same feature branch and PR as its code, and record pending documentation work in the task checkpoint before a handoff.
-No unresolved worker filename blocker is carried forward: it is outside this final scoped diff and is removed as stale from the prior handoff. No ADR is needed; projection metadata reuses existing AGE graph lifecycle and introduces no topology change.
+No ADR is needed; projection metadata and its inspector reuse existing graph lifecycle, API and UI owners without a topology change.

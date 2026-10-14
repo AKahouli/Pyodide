@@ -1,4 +1,5 @@
 {
+  "sourceDocuments": { "title": "Source documents", "needsReprojection": "Source metadata is absent from this graph. Choose Run → Rebuild graph from stored records." },
   "navigation": { "label": "Business models", "tooltip": "Organize business concepts and knowledge" },
   "status": { "draft": "Draft", "published": "Published", "archived": "Archived" },
   "action": { "searchList": "Search…", "noListMatch": "Nothing matches", "add": "Add", "cancel": "Cancel", "close": "Close", "retry": "Retry", "loadMore": "Load more", "undo": "Undo", "redo": "Redo", "autoLayout": "Arrange automatically", "validate": "Check model" },

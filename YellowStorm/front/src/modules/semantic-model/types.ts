@@ -167,7 +167,7 @@ export interface GraphOutline {
   links: Array<{ id: string; r: string; s: string; t: string }>;
 }
 
-export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null }
+export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null; source_documents?: unknown[] | null }
 
 /** A document a cited record was read from, as the file viewer opens it. */
 export interface CitedRecordDocument { documentId: string; workspaceId: string; name: string; path: string; mimeType: string }

@@ -620,6 +620,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
 
         {selected && panelOpen && <GraphRecordPanel key={selected.id} index={index} record={selected} valuesLoading={values.isLoading}
           valuesError={values.error ? parseApiError(values.error).message : null} sourceFileName={values.data?.id === selected.id ? values.data.sourceFileName : null}
+          sourceDocuments={values.data?.id === selected.id ? values.data.source_documents : null}
           color={colorOf(selected.concept)} modelId={modelId} canEdit={canEdit}
           onRebuildStarted={onRebuildStarted} onSelect={goTo} onCenter={(id) => canvas.current?.centerOn(id)} onClose={() => setPanelOpen(false)} />}
       </div>

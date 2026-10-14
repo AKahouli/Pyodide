@@ -1,4 +1,5 @@
 {
+  "sourceDocuments": { "title": "Documents sources", "needsReprojection": "Les métadonnées sources sont absentes de ce graphe. Choisissez Exécuter → Reconstruire le graphe à partir des données stockées." },
   "navigation": { "label": "Modèles métier", "tooltip": "Organiser les concepts métier et les connaissances" },
   "status": { "draft": "Brouillon", "published": "Publié", "archived": "Archivé" },
   "action": { "searchList": "Rechercher…", "noListMatch": "Aucun résultat", "add": "Ajouter", "cancel": "Annuler", "close": "Fermer", "retry": "Réessayer", "loadMore": "Afficher plus", "undo": "Annuler", "redo": "Rétablir", "autoLayout": "Organiser automatiquement", "validate": "Vérifier le modèle" },

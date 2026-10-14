@@ -31,13 +31,14 @@ export function formatValue(field: Pick<GraphField, 'type' | 'value'>, locale: s
 }
 
 /** Everything about one record of the data graph: its values, what it is linked to, and fixes. */
-export function GraphRecordPanel({ index, record, valuesLoading = false, valuesError, sourceFileName, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
+export function GraphRecordPanel({ index, record, valuesLoading = false, valuesError, sourceFileName, sourceDocuments, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
   index: GraphIndex;
   /** The record, with its values once they are read. */
   record: GraphRecord;
   valuesLoading?: boolean;
   valuesError?: string | null;
   sourceFileName?: string | null;
+  sourceDocuments?: unknown[] | null;
   color: string;
   modelId: string;
   canEdit: boolean;
@@ -107,6 +108,13 @@ export function GraphRecordPanel({ index, record, valuesLoading = false, valuesE
           {showMissing && <dl className='mt-1 divide-y divide-white/5'>{missing.map(fieldRow)}</dl>}
         </div>}
       </section>
+
+      {!valuesLoading && !valuesError && <section aria-label={t('sourceDocuments.title')}>
+        <h4 className='mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/40'>{t('sourceDocuments.title')}</h4>
+        {sourceDocuments ? <dl><FieldRow field={{ key: 'source_documents', label: 'source_documents', type: 'text', value: sourceDocuments, missing: false }}
+          text={JSON.stringify(sourceDocuments, null, 2)} fix={null} /></dl>
+          : <p className='text-xs text-amber-400/80'>{t('sourceDocuments.needsReprojection')}</p>}
+      </section>}
 
       <LinkedRecords index={index} record={record} onSelect={onSelect} />
 
