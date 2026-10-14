@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 
 describe('ConversationArtifactService', () => {
   const messageService = { getMessageDocument: jest.fn(), listRecentArtifactMessages: jest.fn() };
-  const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn(), openReadStream: jest.fn() };
+  const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn(), openReadStream: jest.fn(), copy: jest.fn() };
   const conversationService = {
     getConversationDocument: jest.fn(),
     filterAccessibleWorkspaceIds: jest.fn(async (_userId: string | undefined, ids: string[]) => ids),
@@ -39,8 +39,8 @@ describe('ConversationArtifactService', () => {
       tools.findAllActive.mockResolvedValue([{ id: 't', name: 'generate_image', attributes: [], defaultAgentTypes: [] }]);
       models.findById.mockResolvedValue({ isActive: true, type: 'image_generation', types: [] });
       post.mockResolvedValue({ data: { data: [{ b64_json: png.toString('base64') }] } });
-      workspaces.uploadSmallFile.mockResolvedValue({ id });
-      workspaces.findById.mockResolvedValue({ originalName: 'generated-test.png', path: 'stored/image.png', mimeType: 'image/png' });
+      workspaces.uploadSmallFile.mockResolvedValue({ id, path: 'stored/new-image.png' });
+      workspaces.findById.mockResolvedValue({ id, originalName: 'generated-test.png', path: 'stored/image.png', mimeType: 'image/png' });
       documentService.openReadStream.mockImplementation(async () => ({ body: Readable.from([png]) }));
       messageService.getMessageDocument.mockResolvedValue({ conversationId: 'c', conversationType: 'ai',
         content: `Image("AI generated", "generated-image:${id}")` });
@@ -50,6 +50,27 @@ describe('ConversationArtifactService', () => {
       expect(post).toHaveBeenCalledWith('/v1/images/generations', expect.objectContaining({ model: request.model,
         n: 1, size: '1536x1024' }), expect.objectContaining({ timeout: 180000 }));
       expect(workspaces.uploadSmallFile).toHaveBeenCalledWith('w', 'u', png, expect.any(String), 'image/png', undefined, undefined, false);
+      expect(documentService.copy).toHaveBeenCalledWith('stored/new-image.png', `u/system_c/generated-images/${id}.png`);
+    });
+    it('reuses an authorized previous image without model calls and stages the same path after reload', async () => {
+      const reuse = { ...request, prompt: '', reuseImage: `generated-image:${id}` };
+      const receipt = await generator.generateImage(reuse);
+      expect(receipt).toEqual({ imageSource: `generated-image:${id}`, fileName: 'generated-test.png',
+        mimeType: 'image/png', generated: true, sandboxPath: `/mnt/workspace/generated-images/${id}.png` });
+      expect(await generator.generateImage(reuse)).toEqual(receipt);
+      expect(documentService.copy).toHaveBeenLastCalledWith('stored/image.png', `u/system_c/generated-images/${id}.png`);
+      expect(post).not.toHaveBeenCalled();
+      expect(models.findById).not.toHaveBeenCalled();
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+    });
+    it('rejects ambiguous, foreign and invalid reuse references before copying', async () => {
+      await expect(generator.generateImage({ ...request, reuseImage: `generated-image:${id}`,
+        sourceImage: `generated-image:${id}` })).rejects.toThrow('either');
+      await expect(generator.generateImage({ ...request, reuseImage: 'stored/private.png' })).rejects.toThrow('not found');
+      workspaces.findById.mockRejectedValueOnce(new Error('Image not found'));
+      await expect(generator.generateImage({ ...request, reuseImage: `generated-image:${id}` })).rejects.toThrow('not found');
+      expect(documentService.copy).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
     });
     it('rejects inaccessible conversations, unassigned tools and inactive models before spending', async () => {
       conversations.getConversationDocument.mockResolvedValueOnce({ createdBy: 'other' });

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from './ConversationAssistantBubble';
 import { useAgentStore } from '@/modules/agent/store';
 import { mockNavigate } from '@/test/setup';
@@ -74,6 +74,7 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 describe('ConversationAssistantBubble', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it('keeps the background lifecycle visible after the dispatch tool completes', () => {
     const props = { conversationId: 'conversation-1', messageId: 'message-1', isStreaming: false,
       components: [{ id: 'activity', type: 'agentActivity' as const, data: { summary: 'Dispatched', status: 'completed' as const } }],
@@ -1284,7 +1285,12 @@ describe('ConversationAssistantBubble', () => {
       viewUrl: 'https://storage.example/view',
       downloadUrl: 'https://storage.example/download',
     });
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const blob = new Blob(['presentation'], { type: 'application/pdf' });
+    const fetchArtifact = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob });
+    vi.stubGlobal('fetch', fetchArtifact);
+    const objectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:download-artifact');
+    let clicked: { href: string; filename: string } | undefined;
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked = { href: this.href, filename: this.download }; });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -1302,8 +1308,23 @@ describe('ConversationAssistantBubble', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+    expect(fetchArtifact).toHaveBeenCalledWith('https://storage.example/download', { credentials: 'omit', referrerPolicy: 'no-referrer' });
+    expect(objectUrl).toHaveBeenCalledWith(blob);
+    expect(clicked).toEqual({ href: 'blob:download-artifact', filename: 'report.pdf' });
+    expect(document.querySelector('a[href="blob:download-artifact"]')).toBeNull();
     expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledTimes(2);
     anchorClick.mockRestore();
+  });
+
+  it.each([false, 'network'])('shows an artifact error instead of navigating when download fails: %s', async (failure) => {
+    mocks.getArtifactDownloadUrl.mockResolvedValue({ downloadUrl: 'https://storage.example/download' });
+    vi.stubGlobal('fetch', failure === 'network' ? vi.fn().mockRejectedValue(new Error('Network')) : vi.fn().mockResolvedValue({ ok: false }));
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    render(<ConversationAssistantBubble conversationId='conversation-1' messageId='message-1' isStreaming={false} components={[{ id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'deck.pptx', availability: 'ready' } }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(mocks.showError).toHaveBeenCalledWith('Artifact error'));
+    expect(anchorClick).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
   });
 
   it.each([

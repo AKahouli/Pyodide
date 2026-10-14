@@ -34,7 +34,7 @@ export class ConversationArtifactService {
   ) {}
 
   async generateImage(request: GenerateConversationImageDto, signal?: AbortSignal): Promise<{
-    imageSource: string; fileName: string; mimeType: string; generated: true;
+    imageSource: string; fileName: string; mimeType: string; generated: true; sandboxPath: string;
   }> {
     const conversation = await this.conversationService.getConversationDocument(request.conversationId);
     const member = conversation.isGroup && conversation.members?.some(item => item.userId === request.userId);
@@ -51,6 +51,13 @@ export class ConversationArtifactService {
     if (!agent?.isActive || !tool || configuredModel !== request.model) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image generation is not enabled for this agent');
     }
+    if (request.reuseImage !== undefined) {
+      if (request.sourceImage !== undefined) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Choose either image editing or reuse');
+      }
+      const source = await this.findGeneratedImage(conversation.systemWorkspaceId, request.reuseImage);
+      return this.stageGeneratedImage(request, source, signal);
+    }
     const model = await this.models?.findById(request.model);
     if (!model?.isActive || !(model.type === 'image_generation' || model.types.includes('image_generation'))) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Select an active image generation model');
@@ -64,15 +71,7 @@ export class ConversationArtifactService {
       model: request.model, prompt: request.prompt, n: 1, size, user: request.userId,
     };
     if (request.sourceImage !== undefined) {
-      const match = /^generated-image:([a-f0-9]{24})$/.exec(request.sourceImage);
-      if (!match || !conversation.systemWorkspaceId) {
-        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
-      }
-      const source = await this.workspaceDocumentService.findById(conversation.systemWorkspaceId, match[1]);
-      if (source.isFolder || !source.path || !source.originalName.startsWith('generated-')
-          || !['image/png', 'image/jpeg', 'image/webp'].includes(source.mimeType) || source.size > 20 * 1024 * 1024) {
-        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
-      }
+      const source = await this.findGeneratedImage(conversation.systemWorkspaceId, request.sourceImage);
       const bytes = await this.readGeneratedImage(source.path, signal);
       const form = new FormData();
       for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
@@ -110,7 +109,36 @@ export class ConversationArtifactService {
     signal?.throwIfAborted();
     const document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, request.userId,
       bytes, fileName, mimeType, undefined, undefined, false);
-    return { imageSource: `generated-image:${document.id}`, fileName, mimeType, generated: true };
+    return this.stageGeneratedImage(request, { ...document, originalName: fileName, mimeType }, signal);
+  }
+
+  private async findGeneratedImage(workspaceId: string | undefined, reference: string): Promise<
+    Awaited<ReturnType<WorkspaceDocumentService['findById']>> & { path: string }
+  > {
+    const match = /^generated-image:([a-f0-9]{24})$/.exec(reference);
+    if (!match || !workspaceId) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    const source = await this.workspaceDocumentService.findById(workspaceId, match[1]);
+    if (source.isFolder || !source.path || !source.originalName.startsWith('generated-')
+        || !['image/png', 'image/jpeg', 'image/webp'].includes(source.mimeType) || source.size > 20 * 1024 * 1024) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+    }
+    return { ...source, path: source.path };
+  }
+
+  private async stageGeneratedImage(request: GenerateConversationImageDto,
+    image: { id: string; path?: string; originalName: string; mimeType: string }, signal?: AbortSignal): Promise<{
+      imageSource: string; fileName: string; mimeType: string; generated: true; sandboxPath: string;
+    }> {
+    signal?.throwIfAborted();
+    if (!image.path) throw new ServiceUnavailableException(undefined, 'Image file unavailable');
+    const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[image.mimeType];
+    const relativePath = `generated-images/${image.id}.${extension}`;
+    // The existing MCP run folder is mounted live, including files created mid-turn.
+    const runFolder = `system_${request.conversationId}`;
+    await this.documentService.copy(image.path, `${request.userId}/${runFolder}/${relativePath}`);
+    signal?.throwIfAborted();
+    return { imageSource: `generated-image:${image.id}`, fileName: image.originalName, mimeType: image.mimeType,
+      generated: true as const, sandboxPath: `/mnt/workspace/${relativePath}` };
   }
 
   private async readGeneratedImage(path: string, signal?: AbortSignal): Promise<Buffer> {

@@ -277,13 +277,22 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
     setLoadingAction('download');
     try {
       const { downloadUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
+      // Cross-origin links ignore `download`; transfer the authorized object into a local blob first.
+      const response = await fetch(downloadUrl, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+      if (!response.ok) throw new Error('Artifact download failed');
+      const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement('a');
-      anchor.href = downloadUrl;
+      anchor.href = url;
       anchor.download = filename;
       anchor.rel = 'noopener';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      try {
+        document.body.appendChild(anchor);
+        anchor.click();
+      } finally {
+        anchor.remove();
+        // Let browsers start consuming the blob before releasing it.
+        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      }
     } catch {
       showError(t('stream.activity.artifactError'));
     } finally {

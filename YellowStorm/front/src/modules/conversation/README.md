@@ -97,6 +97,17 @@ the conversation workspace and sends a multipart image; each edit creates a new 
 reference, preserving the original. Arbitrary URLs, paths and images from other conversations
 are rejected before the provider call. Without `sourceImage`, generation is unchanged. OpenUI image
 fields accept the returned source in images, galleries, cards and slide backgrounds.
+For MCP document creation, the receipt also includes an authoritative `sandboxPath` under
+`/mnt/workspace/generated-images/`. The backend stages a deterministic copy into the existing
+conversation run folder, which MCP exposes at the sandbox workspace root; canonical image storage and OpenUI references remain
+unchanged. Use `reuseImage` with an existing image reference to recover its sandbox path after
+reload without calling the image model. It is mutually exclusive with `sourceImage`.
+The code-interpreter skill consumes the returned path directly with `python-docx` or
+`python-pptx`; PPTX text and shapes remain editable while the image is an embedded picture.
+Deliver generated documents through the existing `send_file_to_user` artifact flow.
+Artifact downloads resolve the authenticated message-scoped storage URL, then fetch it without
+credentials or referrer and save a local blob using the artifact filename. This storage-transfer
+exception avoids cross-origin link navigation; HTTP failures use the existing artifact error toast.
 Resolution waits until answer completion, then calls the authenticated message-scoped
 `POST /conversations/:conversationId/messages/:messageId/generated-images/:documentId/url`.
 Only the returned authorized image URL is fetched, without credentials or referrer; a bounded

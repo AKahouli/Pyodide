@@ -55,6 +55,8 @@ def _configured_native_tool(tool: Any, description: str | None) -> Any:
         return await tool(*args, **kwargs)
 
     configured_tool.__doc__ = description
+    if getattr(tool, "__name__", "") == "generate_image":
+        configured_tool.__doc__ += "\n\n" + (tool.__doc__ or "")
     return configured_tool
 
 

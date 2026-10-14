@@ -19,14 +19,17 @@ def test_image_tool_requires_assignment_and_trusted_context():
     for key in CONTEXT:
         assert resolve_native_tools(["generate_image"], {k: v for k, v in CONTEXT.items() if k != key}) == []
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
-    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage"}
+    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage", "reuseImage"}
     schema = FunctionTool(tool)._get_declaration().parameters_json_schema
-    assert set(schema["properties"]) == {"prompt", "aspectRatio", "sourceImage"}
+    assert set(schema["properties"]) == {"prompt", "aspectRatio", "sourceImage", "reuseImage"}
     assert "sourceImage" not in schema.get("required", [])
     from src.root_runtime.leaf_tools import is_leaf_tool
     assert is_leaf_tool(tool)
     configured = resolve_native_tools([{"name": "generate_image", "description": "Generate an image."}], CONTEXT)[0]
     assert is_leaf_tool(FunctionTool(configured))
+    assert "reuseImage" in configured.__doc__
+    assert "sandboxPath" in configured.__doc__
+    assert "sourceImage" in configured.__doc__
 
 
 def test_legacy_tool_config_preserves_model_and_routes_as_native():
@@ -97,6 +100,43 @@ async def test_edit_image_passes_source_and_returns_new_receipt():
     assert result["imageSource"] != source
     assert client.post.call_args.kwargs["json"]["sourceImage"] == source
     assert client.post.call_args.kwargs["json"]["model"] == "gpt-image-2.5-flare"
+
+
+@pytest.mark.asyncio
+async def test_reuse_returns_authoritative_path_without_prompt():
+    tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
+    path = f"/mnt/workspace/generated-images/{'a' * 24}.png"
+    response = MagicMock()
+    response.json.return_value = {**RECEIPT, "sandboxPath": path, "storageKey": "private"}
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        client = factory.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=response)
+        result = await tool(reuseImage=RECEIPT["imageSource"])
+    assert result == {**RECEIPT, "generated": True, "sandboxPath": path}
+    assert client.post.call_args.kwargs["json"]["reuseImage"] == RECEIPT["imageSource"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mnt/workspace/system_other/generated-images/" + "a" * 24 + ".png",
+                                  "/home/manus/private.png", "/mnt/workspace/system_c1/../private.png",
+                                  "/mnt/workspace/generated-images/" + "b" * 24 + ".png",
+                                  "/mnt/workspace/generated-images/../" + "a" * 24 + ".png"])
+async def test_untrusted_sandbox_paths_never_reach_agent(path):
+    response = MagicMock()
+    response.json.return_value = {**RECEIPT, "sandboxPath": path}
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        factory.return_value.__aenter__.return_value.post = AsyncMock(return_value=response)
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0]("Japan")
+    assert "sandboxPath" not in result
+
+
+@pytest.mark.asyncio
+async def test_reuse_rejects_ambiguous_or_invalid_sources_before_request():
+    tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        assert (await tool(reuseImage="https://untrusted.test/a.png"))["status"] == "error"
+        assert (await tool(sourceImage=RECEIPT["imageSource"], reuseImage=RECEIPT["imageSource"]))["status"] == "error"
+        factory.assert_not_called()
 
 
 @pytest.mark.asyncio
