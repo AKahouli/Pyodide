@@ -2,7 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
-import { UserService } from '../user/user.service';
+import { UserService } from '../user/services/user.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorAuthService, ConnectorDynamicHeaderConfig } from './interfaces/connector-auth.interface';
 import { DynamicHeaderSource } from './connector.types';

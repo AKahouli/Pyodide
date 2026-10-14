@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { UserService, type UserSummary } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
+import type { UserSummary } from '../../user/interfaces/user.interface';
 import { LoggerService } from '../../logger';
 import { ConflictException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { EmailService } from '@modules/email';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ServiceUnavailableException } from '@modules/exceptions';

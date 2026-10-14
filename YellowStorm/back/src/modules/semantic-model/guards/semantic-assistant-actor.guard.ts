@@ -4,7 +4,7 @@ import { AuthorizationService } from '@modules/authorization/authorization.servi
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
 import { UnauthorizedException } from '@modules/exceptions';
 

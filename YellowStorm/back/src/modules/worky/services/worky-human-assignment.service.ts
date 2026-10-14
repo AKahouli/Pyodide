@@ -7,7 +7,7 @@ import { WorkyMailRepository } from '../persistence/worky-mail.repository';
 import type { WorkyStreamRecord, WorkyTaskRecord } from '../worky.types';
 import { LoggerService } from '../../logger';
 import { EmailService } from '../../email/email.service';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyAuditService } from './worky-audit.service';
 import { WorkySchedulerService } from './worky-scheduler.service';

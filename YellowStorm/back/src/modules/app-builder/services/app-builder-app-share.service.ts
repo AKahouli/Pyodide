@@ -1,6 +1,6 @@
 import { Injectable,  Logger,  Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { EmailService } from '@modules/email';
 import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.service';
 import { EmailTemplate } from '@modules/email/email-template.constants';
