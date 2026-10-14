@@ -22,7 +22,7 @@ import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell }
 import { tableLabel } from '../../utils/data-sources';
 import { indexModelCheck } from '../../utils/model-check';
 import { CheckBadge } from './CheckBadge';
-import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
+import { closesDerivationCycle, designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
 /** What a concept card says about its data: how many sources feed it, which are usable, and how it recognises a record. */
 export interface ConceptDataSummary {
@@ -68,6 +68,11 @@ type BusinessNodeData = Record<string, unknown> & {
   checkIssues?: ModelCheckIssue[];
   onCheckIssue?: (issue: ModelCheckIssue) => void;
 };
+
+const DATA_TARGET_HANDLE = 'data-target';
+const DATA_SOURCE_HANDLE = 'data-source';
+const RELATION_TARGET_HANDLE = 'relationship-target';
+const RELATION_SOURCE_HANDLE = 'relationship-source';
 
 function stopNodeEvent(event: MouseEvent | PointerEvent | FormEvent): void {
   event.stopPropagation();
@@ -137,20 +142,26 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
     </NodeToolbar>}
     {dropLabel&&<div className={cn('pointer-events-none absolute -top-8 z-20 whitespace-nowrap rounded-full px-3 py-1 text-center text-[10px] font-semibold shadow',data.dropState==='valid'&&'bg-primary text-primary-foreground',data.dropState==='already-linked'&&'bg-emerald-600 text-white',data.dropState==='busy'&&'bg-amber-500 text-amber-950')}>{dropLabel}</div>}
     {/* The + on the left brings data in; the one on the right adds what comes next. */}
-    {data.quickActions&&!data.protected&&<DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='nodrag nopan absolute left-0 top-[36px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>event.stopPropagation()} aria-label={t('designer.plus.source',{name:data.label})} title={t('designer.plus.source',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start' onCloseAutoFocus={(event)=>event.preventDefault()}>
+    {data.quickActions&&!data.protected&&<DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='nodrag nopan absolute left-[14px] top-[36px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>event.stopPropagation()} aria-label={t('designer.plus.source',{name:data.label})} title={t('designer.plus.source',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start' onCloseAutoFocus={(event)=>event.preventDefault()}>
       {data.onOpenManualTable&&<DropdownMenuItem className='min-h-11' onSelect={()=>{if(data.recordPolicy==='none'){showWarning(t('records.disabled'));return;}data.onOpenManualTable?.(data.nodeId);}}><Table2 className='h-4 w-4'/>{t('designer.plus.manual')}</DropdownMenuItem>}
       <DropdownMenuItem className='min-h-11' onSelect={()=>data.onOpenKnowledge?.(data.nodeId)}><Library className='h-4 w-4'/>{t('designer.plus.connect')}</DropdownMenuItem>
     </DropdownMenuContent></DropdownMenu>}
     <div className={cn('relative flex h-24 w-24 items-center justify-center rounded-full transition-shadow',data.protected?'bg-sky-500 text-white':'bg-primary text-primary-foreground',selected?'ring-8 ring-primary/30':'ring-8 ring-primary/10 hover:ring-primary/20',data.dropState==='valid'&&'ring-primary/40',data.dropState==='already-linked'&&'ring-emerald-500/40',data.dropState==='busy'&&'ring-amber-500/40')}>
-      <Handle type='target' position={Position.Left} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectTo')} title={t('relation.connectTo')} />
+      {data.category==='record' ? <Handle type='target' position={Position.Left} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectTo')} title={t('relation.connectTo')} /> : <>
+        <Handle id={DATA_TARGET_HANDLE} type='target' position={Position.Left} isConnectable={isConnectable} style={{top:'28%'}} className='!h-3.5 !w-3.5 !rounded-sm !border-2 !border-background !bg-teal-500' aria-label={t('canvasConnections.dataTo')} title={t('canvasConnections.dataTo')} />
+        <Handle id={RELATION_TARGET_HANDLE} type='target' position={Position.Left} isConnectable={isConnectable} style={{top:'68%'}} className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-background !bg-foreground/65' aria-label={t('canvasConnections.relationshipTo')} title={t('canvasConnections.relationshipTo')} />
+      </>}
       {data.refreshing&&<span className='pointer-events-none absolute -inset-3 animate-spin rounded-full drop-shadow-[0_0_6px_rgba(236,72,153,0.8)] [animation-duration:1.6s] motion-reduce:animate-none' style={REFRESH_RING} role='status' aria-label={t('editor.refreshing',{name:data.label})} title={t('editor.refreshing',{name:data.label})} />}
       <Icon className='h-10 w-10' />
-      {data.onDelete&&!selected&&<HoverDelete label={t('designer.delete.concept',{name:data.label})} className='-left-1 -top-1' onDelete={()=>data.onDelete?.(data.nodeId)} />}
+      {data.onDelete&&!selected&&<HoverDelete label={t('designer.delete.concept',{name:data.label})} className='left-1/2 -top-4 -translate-x-1/2' onDelete={()=>data.onDelete?.(data.nodeId)} />}
       {data.checkIssues?.length?<CheckBadge issues={data.checkIssues} onOpen={data.onCheckIssue} className='absolute -right-1 -top-1 z-20' />:null}
       {hasKey&&<span className='absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-amber-400 text-amber-950' role='img' aria-label={t('editor.matchingKey')} title={t('editor.matchingKey')}><KeyRound className='h-3.5 w-3.5' /></span>}
-      <Handle type='source' position={Position.Right} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} />
+      {data.category==='record' ? <Handle type='source' position={Position.Right} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} /> : <>
+        <Handle id={DATA_SOURCE_HANDLE} type='source' position={Position.Right} isConnectable={isConnectable} style={{top:'28%'}} className='!h-3.5 !w-3.5 !rounded-sm !border-2 !border-background !bg-teal-500' aria-label={t('canvasConnections.dataFrom')} title={t('canvasConnections.dataFrom')} />
+        <Handle id={RELATION_SOURCE_HANDLE} type='source' position={Position.Right} isConnectable={isConnectable} style={{top:'68%'}} className='!h-3.5 !w-3.5 !rounded-full !border-2 !border-background !bg-foreground/65' aria-label={t('canvasConnections.relationshipFrom')} title={t('canvasConnections.relationshipFrom')} />
+      </>}
     </div>
-    {data.quickActions&&<div className='nodrag nopan nowheel absolute right-0 top-[36px] z-10' onClick={stopNodeEvent}>
+    {data.quickActions&&<div className='nodrag nopan nowheel absolute right-[14px] top-[36px] z-10' onClick={stopNodeEvent}>
       <DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary/60 bg-background text-primary opacity-70 transition hover:scale-110 hover:opacity-100' aria-label={t('designer.plus.next',{name:data.label})} title={t('designer.plus.next',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start' onCloseAutoFocus={(event)=>event.preventDefault()}>
         {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>data.onQuickConcept?.(data.nodeId)}><Briefcase className='h-4 w-4'/>{t('concept.quickAdd')}</DropdownMenuItem>}
         <DropdownMenuItem className='min-h-11' onSelect={()=>data.onOpenKnowledge?.(data.nodeId)}><Library className='h-4 w-4'/>{t('designer.plus.mapSource')}</DropdownMenuItem>
@@ -206,7 +217,7 @@ const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<So
       <Icon className='h-9 w-9' />
       {data.onRemove&&!selected&&<HoverDelete label={source.kind==='typed'?t('designer.delete.typed'):t('designer.delete.source',{name:title})} className='-left-1 -top-1' onDelete={()=>data.onRemove?.(source)} />}
       {source.tone!=='idle'&&<span className={cn('absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-background',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
-      <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
+      <Handle id={DATA_SOURCE_HANDLE} type='source' position={Position.Right} isConnectable={false} className='!h-3.5 !w-3.5 !rounded-sm !border-2 !border-background !bg-teal-500' aria-label={t('canvasConnections.dataFrom')} title={t('canvasConnections.dataFrom')} />
     </div>
     {data.onOpen&&<button type='button' className='nodrag nopan absolute left-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onOpen?.(source);}} aria-label={source.kind==='typed'?t('canvasTools.openRecords'):t('designer.editSource',{name:title})} title={source.kind==='typed'?t('canvasTools.openRecords'):t('designer.editSource',{name:title})}><Pencil className='h-3.5 w-3.5' /></button>}
     {data.onAddFeed&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute right-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onAddFeed?.(source);}} aria-label={t('designer.plus.feed',{name:title})} title={t('designer.plus.feed',{name:title})}><Plus className='h-4 w-4' /></button>}
@@ -222,6 +233,7 @@ const CARDINALITY_SHORT: Record<string,string> = { one_to_one:'1 → 1', one_to_
 // declaration invalid and the line falls back to React Flow's nearly invisible default grey.
 const EDGE_COLOR = 'color-mix(in oklab, var(--foreground) 55%, transparent)';
 const EDGE_COLOR_SELECTED = 'var(--primary)';
+const DATA_EDGE_COLOR = 'rgb(13 148 136)';
 
 const CARDINALITIES: SemanticRelationType['cardinality'][] = ['one_to_one','one_to_many','many_to_one','many_to_many'];
 
@@ -238,13 +250,14 @@ function RelationToolbar({ id,label,cardinality,onCardinality,onDetails,onDelete
 
 /** A relationship reads as a sentence on the canvas: its wording, plus how many records each side can hold. */
 const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition,selected,data,markerEnd }: EdgeProps) {
-  const [path,labelX,labelY] = getBezierPath({ sourceX,sourceY,sourcePosition,targetX,targetY,targetPosition });
+  const parallel = Boolean(data?.parallel);
+  const [path,labelX,labelY] = getBezierPath({ sourceX,sourceY,sourcePosition,targetX,targetY,targetPosition,curvature:parallel?0.35:0.25 });
   const label = String(data?.label??'');
   const cardinality = CARDINALITY_SHORT[String(data?.cardinality??'')] ?? '';
   return <>
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?3.5:2.25,stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id,{details:true})}>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY+(parallel?16:0)}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id,{details:true})}>
         {Array.isArray(data?.checkIssues)&&data.checkIssues.length>0&&<CheckBadge issues={data.checkIssues as ModelCheckIssue[]} onOpen={data.onCheckIssue as ((issue:ModelCheckIssue)=>void)|undefined} className='absolute -left-3 -top-2 z-20' />}
         {typeof data?.onDelete==='function'&&!selected&&<HoverDelete label={String(data?.deleteLabel??'')} className='-right-3 -top-2' onDelete={()=>(data.onDelete as (id:string)=>void)(id)} />}
         {label&&<span className={cn('max-w-40 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',selected?'border-primary text-primary':'border-border text-foreground')}>{label}</span>}
@@ -258,16 +271,17 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
 });
 
 /** Data flowing from a source into a concept; the chip in the middle is the mapping step. */
-const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition,selected,data }: EdgeProps) {
+const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition,selected,data,markerEnd }: EdgeProps) {
   const { t } = useModuleTranslation('semantic-model');
-  const [path,labelX,labelY] = getBezierPath({ sourceX,sourceY,sourcePosition,targetX,targetY,targetPosition });
+  const parallel = Boolean(data?.parallel);
+  const [path,labelX,labelY] = getBezierPath({ sourceX,sourceY,sourcePosition,targetX,targetY,targetPosition,curvature:parallel?0.15:0.25 });
   const feed = data?.feed as DesignerFeed|undefined;
   if (!feed) return null;
   const label = feed.step==='typed' ? t('designer.step.typed') : feed.step==='extract' ? t('designer.step.extract') : feed.step==='derived' ? t('designer.step.derived') : t('designer.step.map',{mapped:feed.mapped,total:feed.total});
   return <>
-    <BaseEdge id={id} path={path} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:'color-mix(in oklab, rgb(20 184 166) 55%, transparent)'}} />
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?4:2.75,strokeDasharray:'1 8',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:DATA_EDGE_COLOR}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='nodrag nopan group pointer-events-auto absolute cursor-pointer p-2' onClick={()=>(data?.onOpen as ((feed:DesignerFeed)=>void)|undefined)?.(feed)}>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY-(parallel?16:0)}px)`}} className='nodrag nopan group pointer-events-auto absolute cursor-pointer p-2' onClick={()=>(data?.onOpen as ((feed:DesignerFeed)=>void)|undefined)?.(feed)}>
         {Array.isArray(data?.checkIssues)&&data.checkIssues.length>0&&<CheckBadge issues={data.checkIssues as ModelCheckIssue[]} onOpen={data.onCheckIssue as ((issue:ModelCheckIssue)=>void)|undefined} className='absolute -left-3 -top-2 z-20' />}
         {feed.mapping&&typeof data?.onRemove==='function'&&<HoverDelete visible={selected} label={t('designer.delete.feed')} className='-right-3 -top-2' onDelete={()=>(data.onRemove as (feed:DesignerFeed)=>void)(feed)} />}
         <span className={cn('rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',TONE_CLASS[feed.tone],selected&&'border-primary')}>{label}</span>
@@ -278,13 +292,13 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onOpenManualTable,onPaneClick,refreshingConcepts,checkIssues,onOpenCheckIssue }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,onDataConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onOpenManualTable,onPaneClick,refreshingConcepts,checkIssues,onOpenCheckIssue }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
   /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
   identityRules?:{conceptId:string;fields:string[]}[];
   /** Concepts made from another concept's records; each draws a line from that concept. */
   derivedSources?:DerivedSource[];onOpenDerived?:(derived:DerivedSource)=>void;
   /** Records per concept from the last Run; manual table rows are counted until a Run has happened. */
-  recordCounts?:Record<string,number>;mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
+  recordCounts?:Record<string,number>;mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;onDataConnectRequest?:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
   /** A source box or its line was clicked; the mapping is set when a specific line was chosen. */
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
@@ -324,6 +338,7 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   const flowRef = useRef<ReactFlowInstance<Node<BusinessNodeData>,Edge>|null>(null);
   const [quickConcept,setQuickConcept] = useState<{id:string;sourceId:string;position:{x:number;y:number}}|null>(null);
   const [recordOptions,setRecordOptions] = useState<CompatibleRecordRelation[]>([]);
+  const [edgeView,setEdgeView] = useState<'relationships'|'data'|'both'>('both');
   const [dropNodeId,setDropNodeId] = useState<string|null>(null);
   // Where nodes are while being dragged; committed to the model only when the drag ends.
   const [dragPositions,setDragPositions] = useState<Record<string,{x:number;y:number}>>({});
@@ -608,17 +623,33 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   };
   const edges = useMemo<Edge[]>(()=>{
     if (!graph) return [];
-    const marker = {type:MarkerType.ArrowClosed,width:5,height:5,color:EDGE_COLOR};
-    if (mode==='records') return graph.recordRelations.map((relation)=>({id:relation.id,source:relation.sourceRecordId,target:relation.targetRecordId,type:'relation',markerEnd:marker,data:{label:graph.relations.find((type)=>type.id===relation.relationTypeId)?.label??''}}));
+    const relationMarker = {type:MarkerType.ArrowClosed,width:12,height:12,color:EDGE_COLOR};
+    const dataMarker = {type:MarkerType.ArrowClosed,width:14,height:14,color:DATA_EDGE_COLOR};
+    if (mode==='records') return graph.recordRelations.map((relation)=>({id:relation.id,source:relation.sourceRecordId,target:relation.targetRecordId,type:'relation',markerEnd:relationMarker,data:{label:graph.relations.find((type)=>type.id===relation.relationTypeId)?.label??''}}));
     const openFeed = (feed:DesignerFeed)=>{if(feed.derived){onOpenDerived?.(feed.derived);return;}const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);};
     const removeFeed = canEdit&&onRemoveSource ? (feed:DesignerFeed)=>{const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onRemoveSource(source,feed.mapping);} : undefined;
-    const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,type:'feed',data:{feed,onRemove:removeFeed,onOpen:openFeed,checkIssues:[...(feed.mapping?checkIndex.mappings[feed.mapping.id]??[]:[]),...(feed.derived?checkIndex.sources[feed.derived.id]??[]:[])],onCheckIssue:onOpenCheckIssue}}));
-    const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,type:'relation',animated:false,markerEnd:marker,data:{label:relation.label,cardinality:relation.cardinality,onDelete:canEdit?deleteRelation:undefined,deleteLabel:t('designer.delete.relation',{name:relation.label}),onCardinality:canEdit?setCardinality:undefined,onDetails:openDetails,checkIssues:checkIndex.relations[relation.id],onCheckIssue:onOpenCheckIssue}}))];
+    const pairKey = (left:string,right:string) => [left,right].sort().join('|');
+    const relationPairs = new Set(graph.relations.map((relation)=>pairKey(relation.sourceNodeTypeId,relation.targetNodeTypeId)));
+    const feedPairs = new Set(flow.feeds.filter((feed)=>feed.derived).map((feed)=>pairKey(feed.sourceId,feed.conceptId)));
+    const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,sourceHandle:DATA_SOURCE_HANDLE,targetHandle:DATA_TARGET_HANDLE,type:'feed',markerEnd:dataMarker,data:{feed,parallel:Boolean(feed.derived&&relationPairs.has(pairKey(feed.sourceId,feed.conceptId))),onRemove:removeFeed,onOpen:openFeed,checkIssues:[...(feed.mapping?checkIndex.mappings[feed.mapping.id]??[]:[]),...(feed.derived?checkIndex.sources[feed.derived.id]??[]:[])],onCheckIssue:onOpenCheckIssue}}));
+    const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,sourceHandle:RELATION_SOURCE_HANDLE,targetHandle:RELATION_TARGET_HANDLE,type:'relation',animated:false,markerEnd:relationMarker,data:{label:relation.label,cardinality:relation.cardinality,parallel:feedPairs.has(pairKey(relation.sourceNodeTypeId,relation.targetNodeTypeId)),onDelete:canEdit?deleteRelation:undefined,deleteLabel:t('designer.delete.relation',{name:relation.label}),onCardinality:canEdit?setCardinality:undefined,onDetails:openDetails,checkIssues:checkIndex.relations[relation.id],onCheckIssue:onOpenCheckIssue}}))];
     return quickConcept?[...modelEdges,{id:`quick-${quickConcept.id}`,source:quickConcept.sourceId,target:quickConcept.id,label:t('relation.defaultWording'),animated:true,style:{strokeDasharray:'5 5',stroke:EDGE_COLOR_SELECTED,strokeWidth:2}}]:modelEdges;
   },[canEdit,checkIndex,flow,graph,mode,onOpenCheckIssue,onOpenSource,onOpenDerived,onRemoveSource,quickConcept,t]);
 
   // Selection lives in the editor store (a click on a line's label selects it too), so lines follow it.
-  const shownEdges = useMemo(()=>edges.map((edge)=>(edge.id===selectedId)===Boolean(edge.selected)?edge:{...edge,selected:edge.id===selectedId}),[edges,selectedId]);
+  const shownEdges = useMemo(()=>edges.filter((edge)=>mode==='records'||edgeView==='both'||(edgeView==='data'&&edge.type==='feed')||(edgeView==='relationships'&&edge.type!=='feed'))
+    .map((edge)=>(edge.id===selectedId)===Boolean(edge.selected)?edge:{...edge,selected:edge.id===selectedId}),[edgeView,edges,mode,selectedId]);
+  const connectionChannel = (connection:Connection|Edge):'record'|'relationship'|'data'|null => {
+    if (mode==='records') return 'record';
+    if (connection.sourceHandle===RELATION_SOURCE_HANDLE&&connection.targetHandle===RELATION_TARGET_HANDLE) return 'relationship';
+    if (connection.sourceHandle!==DATA_SOURCE_HANDLE||connection.targetHandle!==DATA_TARGET_HANDLE||!graph) return null;
+    const source = graph.nodes.find((node)=>node.id===connection.source);
+    const target = graph.nodes.find((node)=>node.id===connection.target);
+    if (!source||!target) return null;
+    if (derivedSources?.some((derived)=>derived.sourceConceptId===source.id&&derived.conceptId===target.id)) return 'data';
+    if (source.id===target.id||source.systemKey||target.systemKey||source.attributes.length===0) return null;
+    return closesDerivationCycle(derivedSources??[],source.id,target.id)?null:'data';
+  };
   const paneDragOver = (event:DragEvent<HTMLDivElement>) => {
     if (!canEdit||!onPaneDrop||!event.dataTransfer.types.includes(KNOWLEDGE_DRAG_TYPE)) return;
     event.preventDefault();
@@ -632,11 +663,26 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
     knowledge.setDraggedResource(null);
     onPaneDrop(resource);
   };
-  return <div ref={canvasRef} className='h-full w-full' onDragOver={paneDragOver} onDrop={paneDrop}>
+  return <div ref={canvasRef} className='relative h-full w-full' onDragOver={paneDragOver} onDrop={paneDrop}>
+    {mode!=='records'&&<div className='absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5 rounded-xl border bg-background/95 p-2 shadow-sm'>
+      <div className='flex rounded-lg bg-muted p-0.5' role='group' aria-label={t('canvasConnections.viewLabel')}>
+        {(['relationships','data','both'] as const).map((view)=><button key={view} type='button' aria-pressed={edgeView===view} onClick={()=>setEdgeView(view)} className={cn('rounded-md px-2 py-1 text-[10px] font-medium transition',edgeView===view?'bg-background text-foreground shadow-sm':'text-muted-foreground hover:text-foreground')}>{t(`canvasConnections.${view}`)}</button>)}
+      </div>
+      <div className='flex items-center gap-3 px-1 text-[10px] text-muted-foreground' aria-label={t('canvasConnections.legend')}>
+        <span className='flex items-center gap-1'><span className='h-0 w-5 border-t-2 border-foreground/55' aria-hidden />{t('canvasConnections.relationship')}</span>
+        <span className='flex items-center gap-1'><span className='h-0 w-5 border-t-[3px] border-dotted border-teal-600' aria-hidden />{t('canvasConnections.dataFlow')}</span>
+      </div>
+    </div>}
     <ReactFlow nodes={nodes} edges={shownEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{padding:0.15,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} deleteKeyCode={null} nodesConnectable={canEdit} nodesDraggable={canEdit} elevateNodesOnSelect={false} zoomOnDoubleClick={false} onInit={(instance)=>{flowRef.current=instance;}}
+      isValidConnection={(connection)=>connectionChannel(connection)!==null}
       onConnect={(connection:Connection)=>{
         if (!connection.source||!connection.target||!graph) return;
-        if (mode!=='records'){onConnectRequest({sourceId:connection.source,targetId:connection.target});return;}
+        const channel = connectionChannel(connection);
+        if (channel!=='record'){
+          if(channel==='relationship')onConnectRequest({sourceId:connection.source,targetId:connection.target});
+          else if(channel==='data')onDataConnectRequest?.({sourceId:connection.source,targetId:connection.target});
+          return;
+        }
         const options = compatibleRecordRelations(graph,connection.source,connection.target).filter((option)=>!graph.recordRelations.some((existing)=>existing.relationTypeId===option.relation.id&&existing.sourceRecordId===option.sourceRecordId&&existing.targetRecordId===option.targetRecordId));
         if (!options.length){showWarning(t('records.noCompatibleRelationship'));return;}
         if (options.length===1){addRecordRelation(options[0]);return;}

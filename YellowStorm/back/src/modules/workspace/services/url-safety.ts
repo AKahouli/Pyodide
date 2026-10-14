@@ -1,5 +1,23 @@
 import { lookup } from 'dns/promises';
+import { lookup as connectionLookup } from 'node:dns';
+import type { LookupFunction } from 'node:net';
 import { BadRequestException } from '../../exceptions';
+
+/** Validate the addresses used by the socket itself, closing the DNS check/connect race. */
+export const publicAddressLookup: LookupFunction = (hostname, options, callback) => {
+  connectionLookup(hostname, { all: true }, (error, addresses) => {
+    if (error) { callback(error, '', 4); return; }
+    if (!addresses.length || addresses.some(({ address, family }) => family === 6 ? isPrivateIpv6Address(address) : isPrivateIpv4Address(address))) {
+      callback(new Error('Disallowed image host address'), '', 4);
+      return;
+    }
+    const family = options.family;
+    const suitable = family ? addresses.filter(address => address.family === family) : addresses;
+    if (!suitable.length) { callback(new Error('No public host address'), '', 4); return; }
+    if (options.all) callback(null, suitable);
+    else callback(null, suitable[0].address, suitable[0].family);
+  });
+};
 
 /**
  * SSRF guard for server-side fetches triggered by user-supplied URLs

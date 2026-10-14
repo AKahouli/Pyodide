@@ -45,6 +45,28 @@ afterEach(() => {
 });
 
 describe('report in an OpenUI answer', () => {
+  it('clears the artifact owner when an open presentation unmounts', async () => {
+    const view = mount('root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", MinimalTitle("Japan"))');
+    await screen.findByRole('button', { name: /view/i });
+    fireEvent.click(viewButton());
+    await screen.findByTestId('report-panel');
+    view.rerender(<ReportPanelSidebar />);
+    await waitFor(() => expect(reportPanelStore.getState().activeDetailedViewId).toBeNull());
+  });
+  it('opens a stock slide deck, navigates thumbnails, and closes the shared preview', async () => {
+    const slides = 'root = Presentation({title: "Japan slides"}, [s1, s2])\ns1 = Slide("s1", MinimalTitle("Visit Japan"))\ns2 = Slide("s2", ContentClassic("Places to explore", ["Tokyo", "Kyoto"]))';
+    mount(`${CHAT}\n\n${slides}`);
+    await screen.findByText('Short answer.');
+    fireEvent.click(viewButton());
+    const panel = await screen.findByTestId('report-panel');
+    expect(within(panel).getByRole('button', { name: 'openui.slides.export.label' })).toBeInTheDocument();
+    const second = await within(panel).findByRole('button', { name: 'Go to slide 2' });
+    fireEvent.click(second);
+    expect(within(panel).getByLabelText('Slide 2 of 2')).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole('button', { name: 'openui.report.close' }));
+    await waitFor(() => expect(screen.queryByTestId('report-panel')).not.toBeInTheDocument());
+  });
+
   it('renders the chat answer and the report chip inline, with the panel closed', async () => {
     mount(answer('Q3 mail report'));
     expect(await screen.findByText('Short answer.')).toBeInTheDocument();
@@ -66,6 +88,7 @@ describe('report in an OpenUI answer', () => {
     fireEvent.click(viewButton());
     const panel = await screen.findByTestId('report-panel');
     await waitFor(() => expect(within(panel).getByText('Highlights')).toBeInTheDocument());
+    expect(within(panel).queryByRole('button', { name: 'openui.slides.export.label' })).not.toBeInTheDocument();
     expect(within(panel).getByText('EMEA')).toBeInTheDocument();
     expect(within(panel).getByText('48,210')).toBeInTheDocument();
 

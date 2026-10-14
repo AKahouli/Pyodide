@@ -8,6 +8,8 @@ import { WorkspaceDocumentService } from '../../workspace/workspace-document.ser
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 import { RootEvidenceService } from '../root-work/root-evidence.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
+import { GuardedUrlDownloaderService } from '../../workspace/services/guarded-url-downloader.service';
+import { BadRequestException } from '../../exceptions';
 
 @Injectable()
 export class ConversationArtifactService {
@@ -18,7 +20,36 @@ export class ConversationArtifactService {
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly rootEvidence?: RootEvidenceService,
     @Optional() private readonly governedRuntime?: GovernedConversationRuntimeService,
+    @Optional() private readonly imageDownloader?: GuardedUrlDownloaderService,
   ) {}
+
+  async resolveSlideImage(conversationId: string, messageId: string, url: string): Promise<{ dataUrl: string }> {
+    const message = await this.messageService.getMessageDocument(messageId);
+    const programs = [message.content, ...(message.components ?? []).map(component => component.data.content)]
+      .filter((content): content is string => typeof content === 'string');
+    const referenced = programs.some(content => {
+      const strings = content.match(/"(?:[^"\\]|\\.)*"/g) ?? [];
+      return strings.some(value => { try { return JSON.parse(value) === url; } catch { return false; } });
+    });
+    if (message.conversationId.toString() !== conversationId || message.conversationType !== 'ai' || !referenced) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Slide image not found');
+    }
+    if (!this.imageDownloader) throw new ServiceUnavailableException(undefined, 'Image export unavailable');
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid image URL');
+    if (parsed.hostname === 'thumb.wikimedia.org') {
+      parsed.hostname = 'upload.wikimedia.org';
+      for (const key of [...parsed.searchParams.keys()]) if (key === '_' || key.startsWith('utm_')) parsed.searchParams.delete(key);
+    }
+    const downloadUrl = parsed.href;
+    await this.imageDownloader.assertUrlIsSafe(downloadUrl);
+    const image = await this.imageDownloader.download(downloadUrl, { maxBytes: 20 * 1024 * 1024, deadlineMs: 15_000, pinDns: true });
+    const type = String(image.headers['content-type'] ?? '').split(';')[0].toLowerCase();
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(type)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid image type');
+    }
+    return { dataUrl: `data:${type};base64,${image.data.toString('base64')}` };
+  }
 
   async listRecent(userId: string, limit: number): Promise<{
     source: 'conversation';

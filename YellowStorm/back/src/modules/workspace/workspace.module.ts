@@ -131,6 +131,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
     },
   ],
   exports: [WorkspaceService, WorkspaceSettingService, WorkspaceDocumentService, WorkspaceDocumentRead, WorkspaceInitializerService, WorkspaceShareService, WorkspaceAccessGuard, WritePermissionGuard, RunCodeSourceScopeService, WORKSPACE_READ_PORT, WORKSPACE_SETTING_READ_PORT, // Concrete stores are exported so modules that instantiate the workspace
+    GuardedUrlDownloaderService,
     // guards directly (e.g. IndexingModule provides WorkspaceOwnerGuard) can
     // resolve the guards' dependencies.
     PgWorkspaceStore, PgShareStore,

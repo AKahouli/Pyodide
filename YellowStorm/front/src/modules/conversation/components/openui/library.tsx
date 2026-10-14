@@ -6,6 +6,7 @@ import { chatLibrary } from '@openuidev/thesys';
 import { cn } from '@/lib/utils';
 import { CitationMarkdown, hasMarker, OpenUiCitationContext, OpenUiTextContent } from './citations';
 import { inlineTextOverrides, withCitedHeader, type StockComponent } from './inline-text';
+import { withDocumentImages } from './document-images';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -67,11 +68,16 @@ const overrides: Record<string, (stock: StockComponent) => StockComponent> = {
   Table: withCitedTable,
 };
 
+const IMAGE_COMPONENTS = new Set(['Image', 'ImageBlock', 'ImageGallery', 'ImageText', 'ImageTextLarge', 'List', 'OptionCards',
+  'ContextCardBlock', 'CompositeCardBlock', 'OverviewCardBlock', 'SnippetCardBlock', 'VisualCardBlock']);
+
 export const openUiLibrary = createLibrary({
   root: chatLibrary.root,
   componentGroups: chatLibrary.componentGroups,
   components: Object.values(chatLibrary.components).map((definition) => {
     const override = overrides[definition.name];
-    return override ? ({ ...definition, component: override(definition.component as StockComponent) } as DefinedComponent) : definition;
+    let component = override ? override(definition.component as StockComponent) : definition.component as StockComponent;
+    if (IMAGE_COMPONENTS.has(definition.name)) component = withDocumentImages(component, definition.name);
+    return { ...definition, component } as DefinedComponent;
   }),
 });

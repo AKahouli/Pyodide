@@ -21,7 +21,7 @@ from typing import Any
 from .cell_fields import normalize_field_extractions, uses_ai as uses_cell_ai
 from .compiler import canonical_spec_hash, compile_specification, filter_fields, validate_specification
 from .computed_fields import check_inputs, normalize_computed, normalize_row_recipes
-from .derived import DerivationError, normalize_derivations
+from .derived import DerivationError, cyclic_derivation_ids, normalize_derivations
 from .document_rules import RuleError, normalize_ai_settings, normalize_rules
 from .expand import ExpandError, is_item_attribute, normalize_expand
 
@@ -398,11 +398,11 @@ def _check_derivations(payload: dict[str, Any], compiled: dict[str, Any], analys
     try:
         analysis.derivations = one(raw, raw)
     except DerivationError as exc:
-        # Only the whole list can fail now: a concept filled by a derivation also feeds another one.
-        targets = {entry.get("conceptId") for entry in raw}
-        chained = [entry for entry in raw if entry.get("sourceConceptId") in targets]
-        if exc.code == "chained_derivation" and chained:
-            for entry in chained:
+        # Only the whole list can fail now: otherwise-valid derivations form a cycle.
+        cyclic_ids = cyclic_derivation_ids(raw) if exc.code == "cyclic_derivation" else set()
+        cyclic = [entry for entry in raw if entry.get("derivationId") in cyclic_ids]
+        if cyclic:
+            for entry in cyclic:
                 report(exc, entry)
         else:
             report(exc, None)

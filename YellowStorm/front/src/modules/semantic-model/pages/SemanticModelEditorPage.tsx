@@ -1040,6 +1040,11 @@ export function SemanticModelEditorPage() {
               setRelationConnection(connection);
               setRelationOpen(true);
             }}
+            onDataConnectRequest={({ sourceId, targetId }) => openDerived({
+              conceptId: targetId,
+              initialSourceConceptId: sourceId,
+              derived: derivedSources.data?.find((source) => source.sourceConceptId === sourceId && source.conceptId === targetId),
+            })}
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}

@@ -64,11 +64,11 @@ describe('SemanticDerivedSourceService', () => {
     await expect(service.save('user', 'model', input)).rejects.toThrow(message);
   });
 
-  it('never chains derivations', async () => {
+  it('allows acyclic chains and refuses a derivation cycle', async () => {
     await expect(setup([derived({ id: 'd-2', conceptId: 'contract', sourceConceptId: 'site' })]).service.save('user', 'model', dto()))
-      .rejects.toThrow('Contract is itself made from another concept');
-    await expect(setup([derived({ id: 'd-2', conceptId: 'site', sourceConceptId: 'org' })]).service.save('user', 'model', dto()))
-      .rejects.toThrow('Organization already fills another concept');
+      .resolves.toMatchObject({ revision: 7 });
+    await expect(setup([derived({ id: 'd-2', conceptId: 'contract', sourceConceptId: 'org' })]).service.save('user', 'model', dto()))
+      .rejects.toThrow('would create a derivation cycle');
   });
 
   it('sends a run only the derivations it can make, in a stable order and shape', () => {
@@ -81,6 +81,16 @@ describe('SemanticDerivedSourceService', () => {
       derivationId: 'd-2', conceptId: 'org', sourceConceptId: 'contract', fieldMappings: derived().fieldMappings,
       conflictRule: 'latest', orderBy: 'effective_date', labelField: 'name', mappingVersion: '2026-09-30T00:00:00.000Z',
     });
+  });
+
+  it('sends reachable chained derivations in dependency order rather than id order', () => {
+    const { service } = setup();
+    const runtime = service.runtimeDerivations([
+      derived({ id: 'a-child', conceptId: 'site', sourceConceptId: 'org',
+        fieldMappings: [{ sourceAttribute: 'id', targetAttribute: 'code' }] }),
+      derived({ id: 'z-parent' }),
+    ], nodes, new Set(['contract']), new Map([['org', ['id']], ['site', ['code']]]));
+    expect(runtime.map((item) => item.derivationId)).toEqual(['z-parent', 'a-child']);
   });
 
   it('leaves out a derivation whose key or date field was removed, and stops copying a removed field', () => {

@@ -5,6 +5,12 @@ const chat = 'root = Card([t])\nt = TextContent("Short answer [1].")';
 const report = 'root = Report({title: "Q3", subtitle: "Spike"}, [p1])\np1 = Page("p1", cp)\ncp = ContentPage([h])\nh = InlineHeader("Highlights")';
 
 describe('splitReportProgram', () => {
+  it('splits presentation programs and holds back their partial streaming root', () => {
+    const slides = 'root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", MinimalTitle("Japan"))';
+    expect(splitReportProgram(`${chat}\n\n${slides}`)).toEqual({ chat, report: slides });
+    expect(splitReportProgram(slides)).toEqual({ chat: '', report: slides });
+    expect(splitReportProgram(`${chat}\nroot = Pres`)).toEqual({ chat, report: null });
+  });
   it('leaves a chat-only answer untouched', () => {
     expect(splitReportProgram(chat)).toEqual({ chat, report: null });
   });

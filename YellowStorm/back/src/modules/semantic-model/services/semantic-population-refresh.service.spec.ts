@@ -1052,8 +1052,8 @@ describe('SemanticPopulationRefreshService', () => {
     const derived = [
       { id: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
         fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
-      { id: 'dv-2', conceptId: 'c-fact', sourceConceptId: 'c-other', conflictRule: 'latest', orderBy: 'other_id',
-        fieldMappings: [{ sourceAttribute: 'other_id', targetAttribute: 'fact_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
+      { id: 'dv-2', conceptId: 'c-fact', sourceConceptId: 'c-customer', conflictRule: 'latest', orderBy: 'customer_id',
+        fieldMappings: [{ sourceAttribute: 'customer_id', targetAttribute: 'fact_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
     ];
     const run = async (conceptId: string) => {
       const built = setup([contract, other], identity, [], [], [], [], labels);
@@ -1066,14 +1066,18 @@ describe('SemanticPopulationRefreshService', () => {
       const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
       return command.payload;
     };
-    // Contracts: only their own source, and the customers made from them; the facts made from other records stay as they are.
+    // Contracts: their source refreshes customers, then the facts made from those refreshed customers.
     const contracts = await run('c-contract');
     expect(contracts.sources.map((source: { conceptId: string }) => source.conceptId)).toEqual(['c-contract']);
-    expect(contracts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-1']);
+    expect(contracts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-1','dv-2']);
     // The kept concepts remain in the specification so the data in use is not dropped.
     expect(contracts.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort())
       .toEqual(['c-contract', 'c-customer', 'c-fact', 'c-other']);
-    // A concept made from another one: no source, only the derivation that makes it.
+    // Refreshing the middle concept remakes it from kept contracts, then refreshes its downstream fact.
+    const customers = await run('c-customer');
+    expect(customers.sources).toEqual([]);
+    expect(customers.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-1','dv-2']);
+    // The last concept needs only the derivation that makes it from kept customer records.
     const facts = await run('c-fact');
     expect(facts.sources).toEqual([]);
     expect(facts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-2']);

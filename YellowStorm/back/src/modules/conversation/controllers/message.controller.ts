@@ -49,6 +49,7 @@ import {
   endBackendPreAdkStage,
 } from '../utils/backend-latency-tracker';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { ExportSlideImageDto } from '../dto/export-slide-image.dto';
 
 /**
  * Surfacing a concurrently fetched read at its decision point: rejections are
@@ -82,6 +83,15 @@ export class MessageController {
     private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext('MessageController');
+  }
+
+  @Post(':messageId/slides/image')
+  async getSlideExportImage(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: ExportSlideImageDto,
+  ): Promise<{ dataUrl: string }> {
+    return this.conversationArtifactService.resolveSlideImage(conversationId, messageId, dto.url);
   }
 
   @Post(':messageId/artifacts/:artifactId/url')

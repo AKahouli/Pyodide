@@ -29,6 +29,24 @@ afterEach(() => vi.clearAllMocks());
 
 // Unmocked: proves the stock library mounts under React 18 + jsdom.
 describe('OpenUiRenderer', () => {
+  it('renders tool-supplied photos as stock OpenUI cards and galleries', async () => {
+    const content = `root = Card([cards, gallery])
+cards = VisualCardBlock([tokyo, kyoto], "grid")
+tokyo = VisualCardItem(BoldText("text", "Tokyo", "City lights"), "tokyo", "https://images.example.test/tokyo.jpg", Tag("City", "info"), "Tokyo skyline")
+kyoto = VisualCardItem(BoldText("text", "Kyoto", "Temples"), "kyoto", "https://images.example.test/kyoto.jpg", Tag("Culture", "info"), "Kyoto temple")
+gallery = ImageGallery(["Generated travel illustration", "Original activity photograph"], ["https://images.example.test/generated.png", "https://images.example.test/activity.jpg"])`;
+    const { container } = render(<OpenUiRenderer content={content} isStreaming={false} onAction={vi.fn()} />);
+    expect(await screen.findByText('Tokyo')).toBeInTheDocument();
+    // Stock visual cards use CSS backgrounds; gallery pictures use img elements.
+    const cards = container.querySelectorAll('.c1-visual-first-card');
+    expect(cards).toHaveLength(2);
+    expect(cards[0].getAttribute('style')).toContain('https://images.example.test/tokyo.jpg');
+    expect(cards[1].getAttribute('style')).toContain('https://images.example.test/kyoto.jpg');
+    for (const [alt, url] of [['Generated travel illustration', 'generated.png'], ['Original activity photograph', 'activity.jpg']]) {
+      expect(await screen.findByRole('img', { name: alt })).toHaveAttribute('src', `https://images.example.test/${url}`);
+    }
+  });
+
   it('renders an OpenUI Lang program with the stock component library', async () => {
     render(<OpenUiRenderer content={program('Quarterly summary')} isStreaming={false} onAction={vi.fn()} />);
     expect(await screen.findByText('Quarterly summary')).toBeInTheDocument();

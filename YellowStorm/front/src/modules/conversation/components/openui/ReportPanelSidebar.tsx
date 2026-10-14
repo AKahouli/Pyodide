@@ -16,6 +16,7 @@ export function ReportPanelSidebar({ resetKey }: Readonly<{ resetKey?: string }>
   const { t } = useModuleTranslation('conversation');
   const active = useReportPanelActive();
   const setNode = useStore(reportPanelStore, (state) => state._setDetailedViewPanelNode);
+  const setExportNode = useStore(reportPanelStore, (state) => state._setExportMenuNode);
   const viewerInSidebar = useFileViewerStore((state) => state.mode !== 'closed' && state.displayMode === 'sidebar');
   const close = useCallback(() => reportPanelStore.getState().reset(), []);
 
@@ -23,7 +24,7 @@ export function ReportPanelSidebar({ resetKey }: Readonly<{ resetKey?: string }>
   useEffect(() => { close(); return close; }, [resetKey, close]);
   useEffect(() => {
     if (!active) return;
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) close(); };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [active, close]);
@@ -36,7 +37,8 @@ export function ReportPanelSidebar({ resetKey }: Readonly<{ resetKey?: string }>
       className='fixed inset-0 z-50 flex flex-col bg-background md:static md:z-auto md:h-full md:w-[44rem] md:max-w-[55%] md:shrink-0 md:border-l'
     >
       <div className='flex h-10 shrink-0 items-center justify-between border-b bg-muted/50 px-3'>
-        <span className='me-2 truncate text-sm font-medium'>{t('openui.report.panelTitle')}</span>
+        <span className='mr-2 truncate text-sm font-medium'>{t('openui.report.panelTitle')}</span>
+        <div ref={setExportNode} className='ml-auto mr-1' />
         <Button variant='ghost' size='icon' className='h-6 w-6' onClick={close} aria-label={t('openui.report.close')}>
           <X className='h-3.5 w-3.5' />
         </Button>

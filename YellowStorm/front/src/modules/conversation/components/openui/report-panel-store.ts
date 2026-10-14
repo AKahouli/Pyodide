@@ -16,9 +16,11 @@ import { useFileViewerStore } from '@/modules/file-viewer/store';
 export interface ReportPanelState extends DetailedViewState, DetailedViewActions {
   _detailedViewPanelNode: HTMLElement | null;
   _setDetailedViewPanelNode: (node: HTMLElement | null) => void;
+  _exportMenuNode: HTMLElement | null;
+  _setExportMenuNode: (node: HTMLElement | null) => void;
 }
 
-export const initialState = { activeDetailedViewId: null, _detailedViewPanelNode: null } satisfies Pick<ReportPanelState, 'activeDetailedViewId' | '_detailedViewPanelNode'>;
+export const initialState = { activeDetailedViewId: null, _detailedViewPanelNode: null, _exportMenuNode: null } satisfies Pick<ReportPanelState, 'activeDetailedViewId' | '_detailedViewPanelNode' | '_exportMenuNode'>;
 
 /** Both panels sit on the right of the conversation: opening one closes the other (see ReportPanelSidebar for the reverse). */
 function closeFileViewerSidebar(): void {
@@ -34,6 +36,7 @@ export const reportPanelStore = createStore<ReportPanelState>()(devtools((set) =
   },
   reset: () => set({ activeDetailedViewId: null }),
   _setDetailedViewPanelNode: (node) => set({ _detailedViewPanelNode: node }),
+  _setExportMenuNode: (node) => set({ _exportMenuNode: node }),
 }), { name: 'conversation-report-panel-store' }));
 
 export const useReportPanelActive = () => useStore(reportPanelStore, (state) => state.activeDetailedViewId !== null);

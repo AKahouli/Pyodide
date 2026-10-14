@@ -676,7 +676,20 @@
   "rootInput.pendingCount": "{{count}} need your input",
   "rootInput.pendingCount_one": "{{count}} needs your input",
   "rootInput.pendingCount_other": "{{count}} need your input",
-  "openui.report.panelTitle": "Report",
-  "openui.report.close": "Close report",
-  "openui.report.sources": "Sources"
+  "openui.report.panelTitle": "Preview",
+  "openui.report.close": "Close preview",
+  "openui.report.sources": "Sources",
+  "openui.slides.export.label": "Export",
+  "openui.slides.export.busy": "Exporting…",
+  "openui.slides.export.hint": "Slides are exported as images, without editable text or charts.",
+  "openui.slides.export.pdf": "PDF (.pdf)",
+  "openui.slides.export.pptx": "PowerPoint (.pptx)",
+  "openui.slides.export.ready": "Slide export ready",
+  "openui.slides.export.failed": "Could not export the slides. Please try again.",
+  "openui.slides.export.invalid": "This deck cannot be exported. Export requires 1 to 50 completed slides.",
+  "openui.slides.export.images": "Some slide images could not be exported. Their source may be unavailable or block downloads. Please try again.",
+  "openui.slides.export.timeout": "The slide export took too long. Please try again.",
+  "openui.image.loading": "Loading document image…",
+  "openui.image.unavailable": "The document image could not be loaded.",
+  "openui.image.page": "Page {{page}}"
 }

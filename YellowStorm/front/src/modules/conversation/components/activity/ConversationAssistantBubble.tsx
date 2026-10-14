@@ -7,7 +7,7 @@ import type { Agent } from '@/modules/agent/types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
-import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { getMimeTypeFromFilename, isViewableFile, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
@@ -253,11 +253,14 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
   const view = async () => {
     if (!enabled || loadingAction) return;
     setLoadingAction('view');
+    const mimeType = data.mimeType && isViewableFile(data.mimeType)
+      ? data.mimeType
+      : getMimeTypeFromFilename(filename) || data.mimeType || 'application/octet-stream';
     try {
       await openFileViewerFromUrlLoader(
         JSON.stringify([conversationId, messageId, data.artifactId]),
         filename,
-        data.mimeType || 'application/octet-stream',
+        mimeType,
         async () => {
           const { viewUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
           return { url: viewUrl };

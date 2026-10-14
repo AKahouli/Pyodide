@@ -17,6 +17,35 @@ describe('ConversationArtifactService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('uses the canonical Wikimedia image host only after checking the original saved URL', async () => {
+    const downloader = { assertUrlIsSafe: jest.fn(), download: jest.fn().mockResolvedValue({ data: Buffer.from('image'), headers: { 'content-type': 'image/jpeg' } }) };
+    const exporter = new ConversationArtifactService(messageService as never, documentService as never, conversationService as never, workspaceDocumentService as never, undefined, undefined, downloader as never);
+    const url = 'https://thumb.wikimedia.org/wikipedia/commons/thumb/test.jpg?utm_source=search&_=123&width=960';
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'c', conversationType: 'ai', content: `root = Presentation({title: "Japan"}, ["${url}"])` });
+    await exporter.resolveSlideImage('c', 'm', url);
+    expect(downloader.assertUrlIsSafe).toHaveBeenCalledWith('https://upload.wikimedia.org/wikipedia/commons/thumb/test.jpg?width=960');
+    expect(downloader.download).toHaveBeenCalledWith('https://upload.wikimedia.org/wikipedia/commons/thumb/test.jpg?width=960', expect.objectContaining({ pinDns: true }));
+    await expect(exporter.resolveSlideImage('c', 'm', 'https://upload.wikimedia.org/wikipedia/commons/thumb/test.jpg?width=960')).rejects.toThrow('not found');
+    expect(downloader.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('exports only HTTPS images referenced by the owned AI answer through the guarded downloader', async () => {
+    const downloader = { assertUrlIsSafe: jest.fn(), download: jest.fn().mockResolvedValue({ data: Buffer.from('image'), headers: { 'content-type': 'image/png' } }) };
+    const exporter = new ConversationArtifactService(messageService as never, documentService as never, conversationService as never, workspaceDocumentService as never, undefined, undefined, downloader as never);
+    const url = 'https://photos.example/japan.png';
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'c', conversationType: 'ai', components: [{ data: { content: `root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", Image("${url}"))` } }] });
+    expect(await exporter.resolveSlideImage('c', 'm', url)).toEqual({ dataUrl: 'data:image/png;base64,aW1hZ2U=' });
+    expect(downloader.assertUrlIsSafe).toHaveBeenCalledWith(url);
+    expect(downloader.download).toHaveBeenCalledWith(url, { maxBytes: 20971520, deadlineMs: 15000, pinDns: true });
+    await expect(exporter.resolveSlideImage('other', 'm', url)).rejects.toThrow('not found');
+    await expect(exporter.resolveSlideImage('c', 'm', 'https://photos.example/other.png')).rejects.toThrow('not found');
+    expect(downloader.download).toHaveBeenCalledTimes(1);
+    downloader.assertUrlIsSafe.mockRejectedValueOnce(new Error('Blocked private address'));
+    await expect(exporter.resolveSlideImage('c', 'm', url)).rejects.toThrow('Blocked');
+    downloader.download.mockResolvedValueOnce({ data: Buffer.from('html'), headers: { 'content-type': 'text/html' } });
+    await expect(exporter.resolveSlideImage('c', 'm', url)).rejects.toThrow('Invalid image type');
+  });
+
   it('resolves governed citations only through the current pinned scope, without ordinary workspace expansion', async () => {
     const runtime = { resolveRuntime: jest.fn().mockResolvedValue({ workspaceIds: ['approved'] }) };
     const governed = new ConversationArtifactService(messageService as never, documentService as never,

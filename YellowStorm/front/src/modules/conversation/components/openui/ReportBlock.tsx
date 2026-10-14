@@ -1,12 +1,15 @@
 import './devtools-off';
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useStore } from 'zustand';
 import { createLibrary, Renderer, type DefinedComponent, type ParseResult } from '@openuidev/react-lang';
 import { ChatProvider, DetailedViewContext, type ChatLLM } from '@openuidev/react-headless';
-import { reportLibrary } from '@openuidev/thesys';
+import { reportLibrary, presentationLibrary } from '@openuidev/thesys';
 import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useModuleTranslation } from '@/modules/localization';
 import { reportPanelStore } from './report-panel-store';
 import type { OpenUiCitationScope } from './citations';
+import { SlideExportMenu } from './SlideExportMenu';
 
 /**
  * Two reasons the thesys `Report` needs a provider: it is an artifact component (a chip in the chat
@@ -40,6 +43,14 @@ const openUiReportLibrary = createLibrary({
     : definition)),
 });
 
+const openUiPresentationLibrary = createLibrary({
+  root: presentationLibrary.root,
+  componentGroups: presentationLibrary.componentGroups,
+  components: Object.values(presentationLibrary.components).map((definition) => (definition.name === 'Presentation'
+    ? ({ ...definition, component: scoped(definition.component as StockComponent) } as DefinedComponent)
+    : definition)),
+});
+
 interface ReportBlockProps {
   program: string;
   isStreaming: boolean;
@@ -52,24 +63,29 @@ interface ReportBlockProps {
 }
 
 /**
- * The report of an OpenUI answer: the thesys chip inline, whose View button opens the full report in
+ * A report or presentation of an OpenUI answer: the stock chip's View button opens the artifact in
  * the conversation's report panel (ReportPanelSidebar). The report text is rendered by editable
  * rich-text blocks that cannot carry our citation chips, so the sources it marks are listed under the chip.
  */
 export function ReportBlock({ program, isStreaming, panelId, citations, citationScope, onParseResult }: Readonly<ReportBlockProps>) {
   const { t } = useModuleTranslation('conversation');
+  const presentation = /^\s*root\s*=\s*Presentation\s*\(/.test(program);
+  const library = presentation ? openUiPresentationLibrary : openUiReportLibrary;
+  const activeId = useStore(reportPanelStore, (state) => state.activeDetailedViewId);
+  const exportMenuNode = useStore(reportPanelStore, (state) => state._exportMenuNode);
   // The panel portals the report out of this block's tree: if the block goes away (message unmounted by a
   // reload or list virtualization) while its report is open, the panel would be left empty, so close it.
   useEffect(() => () => {
     const { activeDetailedViewId, reset } = reportPanelStore.getState();
-    if (activeDetailedViewId?.startsWith(`${panelId}:`)) reset();
+    if (activeDetailedViewId?.startsWith(`artifact-${panelId}:`) || activeDetailedViewId?.startsWith(`${panelId}:`)) reset();
   }, [panelId]);
   return (
     <div data-openui-report='' data-testid='openui-report'>
+      {presentation && activeId === `artifact-${panelId}:root` && exportMenuNode && createPortal(<SlideExportMenu program={program} isStreaming={isStreaming} citationScope={citationScope} />, exportMenuNode)}
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>
-            <Renderer response={program} library={openUiReportLibrary} isStreaming={isStreaming} onParseResult={onParseResult} />
+            <Renderer response={program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
           </ReportScopeContext.Provider>
         </DetailedViewContext.Provider>
       </ChatProvider>

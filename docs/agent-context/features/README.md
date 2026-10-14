@@ -15,6 +15,10 @@ This initial index is not an exhaustive product inventory; add a row for each
 new feature and link its actual implementation.
 
 Updates and branch sharing follow [documentation workflow](../documentation-workflow.md).
+Every feature page uses [feature template v1](../templates/feature.md): the same
+metadata and seven sections in the same order. Maintainer checks the feature index
+and root context index when adding, renaming, removing or changing feature scope;
+unchanged indexes require a specific no-change reason in its handoff.
 The primary assigns affected pages to `maintainer` once source is stable, with
 disjoint file ownership and evidence. Documentation changes belong in the same
 branch/PR as implementation. Reviewed main-branch docs become shared context when

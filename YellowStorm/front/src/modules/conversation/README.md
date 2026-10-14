@@ -44,6 +44,77 @@ The conversation module is a self-contained feature module that handles:
 
 ## Architecture
 
+### OpenUI slides
+
+Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
+by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
+`Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,
+comparison, text and chart layouts are included in the generated agent prompt. Image URLs and numerical
+data must come from tool results; optional images are omitted when unavailable.
+
+The View chip opens the existing report panel, now labelled Preview, with stock slide thumbnails,
+navigation and fullscreen controls where the browser supports fullscreen. Presentations and reports
+are parsed separately from chat, including during streaming. Saved presentation-only answers retain
+their renderer if the agent's Generative UI checkbox is later disabled. Panel ownership and cleanup
+remain scoped to the answer; switching conversations or opening the document viewer closes the preview.
+Slide source markers are retained in text and exposed as clickable chips below the artifact.
+This reuses the existing artifact store and installed presentation library.
+
+The preview header's Export menu downloads PDF or PowerPoint files with one 1920×1080 image per
+slide; text and charts in PowerPoint are flattened. Export uses the standalone OpenUI print renderer,
+adapting the saved Presentation root to SlideShow. `html-to-image`, `pdf-lib` and `pptxgenjs` are
+loaded on demand. Public images are fetched directly when browser CORS permits; requests omit credentials
+and referrers. If CORS blocks an HTTPS image, the authenticated message `slides/image` route in the
+existing ConversationArtifactService accepts only exact URLs referenced by that saved AI answer.
+It reuses GuardedUrlDownloaderService with connection-time public DNS validation on each redirect,
+proxy bypass disabled, a 15-second deadline and
+a 20 MiB streamed cap; only PNG/JPEG/WebP/GIF responses are returned as data URLs. Failed images
+stop export with a translated message. Wikimedia thumbnail discovery URLs use the canonical upload
+host with tracking-only parameters removed during export; saved answer URLs remain unchanged.
+Exports allow 1–50 slides,
+20 MiB per image, and a 60-second deadline; closing the preview cancels export and removes its stage.
+No new service or schema is introduced.
+
+Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `render-mode.ts` and
+`scripts/generate-openui-prompt.mjs`; focused coverage is in `ReportPanel.test.tsx` and `report-program.test.ts`.
+
+### OpenUI document images
+
+Agents with Generative UI enabled are instructed to obtain relevant images from their available tools
+and use the stock OpenUI photo cards, grids, carousels and galleries. Web search and image-generation
+results must provide an actual image URL; a web-page URL is insufficient. Generated illustrations
+are labelled as generated. This does not add an image-search or generation tool to an agent:
+its configured tools determine which images it can obtain. Without an image result the answer uses
+text/icon cards, explaining missing pictures when requested. Document figures use the citation path below.
+Travel and destination recommendations request photographs proactively, use a search tool's image-results
+option when available, and reuse relevant returned URLs. The configured Linkup MCP connector supplies
+web photographs directly to the model; stock OpenUI visual cards render those URLs with source chips in
+their supported text. No document citation resolver or additional image proxy is involved for public photos.
+
+When an agent's **Generative UI** checkbox and `VITE_OPENUI_RENDER_ENABLED` are enabled, its
+OpenUI answer can use an attached document citation as an image source: `Image("Original figure", "[1]")`.
+`ImageGallery` and the stock image cards, lists and image options accept the same references.
+Only image source fields are resolved; citation markers in prose keep their usual source chips.
+
+The renderer waits for answer completion, then resolves the citation through the existing
+message citation URL endpoint or the owning root evidence endpoint. Private paths and signed
+URLs are never placed in the stored OpenUI program. Image files are loaded into temporary blob
+URLs; PDF figures are rasterized from the cited page and region with the installed EmbedPDF
+engine. Without region metadata, the preview shows the cited page. Standalone figures retain
+their proportions and have a source chip that opens the existing document viewer.
+
+Reopening the answer resolves access again. Unknown references, non-document citations,
+incomplete evidence identities and inaccessible files show a localized retryable error.
+Temporary image URLs and PDF engines are released when their rendering work ends.
+Standalone document figures keep their intrinsic width within a responsive 48rem container and
+a 24rem height bound. Document galleries share the width bound and show complete figures without cropping.
+The resolver introduces no new endpoint, persistence schema or service.
+
+Sources: [`document-images.tsx`](components/openui/document-images.tsx),
+[`pdf-image.ts`](components/openui/pdf-image.ts), [`library.tsx`](components/openui/library.tsx),
+and [`generate-openui-prompt.mjs`](../../../scripts/generate-openui-prompt.mjs).
+Focused regression coverage is in `document-images.test.tsx` and `pdf-image.test.ts` alongside the renderer.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           CONVERSATION MODULE                                │
