@@ -60,11 +60,33 @@ export class ConversationArtifactService {
       throw new ServiceUnavailableException(undefined, 'Image generation unavailable');
     }
     const size = { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' }[request.aspectRatio];
+    let payload: FormData | Record<string, string | number> = {
+      model: request.model, prompt: request.prompt, n: 1, size, user: request.userId,
+    };
+    if (request.sourceImage !== undefined) {
+      const match = /^generated-image:([a-f0-9]{24})$/.exec(request.sourceImage);
+      if (!match || !conversation.systemWorkspaceId) {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+      }
+      const source = await this.workspaceDocumentService.findById(conversation.systemWorkspaceId, match[1]);
+      if (source.isFolder || !source.path || !source.originalName.startsWith('generated-')
+          || !['image/png', 'image/jpeg', 'image/webp'].includes(source.mimeType) || source.size > 20 * 1024 * 1024) {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image not found');
+      }
+      const bytes = await this.readGeneratedImage(source.path, signal);
+      const form = new FormData();
+      for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
+      form.append('image', new Blob([new Uint8Array(bytes)], { type: source.mimeType }), source.originalName);
+      payload = form;
+    }
+    signal?.throwIfAborted();
     let encoded: unknown;
     try {
-      const response = await client.post<{ data?: { b64_json?: unknown }[] }>('/v1/images/generations', {
-        model: request.model, prompt: request.prompt, n: 1, size, user: request.userId,
-      }, { signal, timeout: 180_000, maxContentLength: 28 * 1024 * 1024, maxBodyLength: 64 * 1024 });
+      const response = await client.post<{ data?: { b64_json?: unknown }[] }>(
+        request.sourceImage ? '/v1/images/edits' : '/v1/images/generations', payload,
+        { signal, timeout: 180_000, maxContentLength: 28 * 1024 * 1024,
+          maxBodyLength: request.sourceImage ? 21 * 1024 * 1024 : 64 * 1024,
+          ...(request.sourceImage ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}) });
       encoded = response.data.data?.[0]?.b64_json;
     } catch {
       // Provider errors may include credentials or signed URLs. Keep them out of the stream.
@@ -89,6 +111,30 @@ export class ConversationArtifactService {
     const document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, request.userId,
       bytes, fileName, mimeType, undefined, undefined, false);
     return { imageSource: `generated-image:${document.id}`, fileName, mimeType, generated: true };
+  }
+
+  private async readGeneratedImage(path: string, signal?: AbortSignal): Promise<Buffer> {
+    signal?.throwIfAborted();
+    const stream = await this.documentService.openReadStream(path);
+    const abort = () => stream.body.destroy(new Error('Image read cancelled'));
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      signal?.throwIfAborted();
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of stream.body) {
+        signal?.throwIfAborted();
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += buffer.length;
+        if (size > 20 * 1024 * 1024) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image exceeds size limit');
+        chunks.push(buffer);
+      }
+      if (!size) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image is empty');
+      return Buffer.concat(chunks);
+    } finally {
+      signal?.removeEventListener('abort', abort);
+      stream.body.destroy();
+    }
   }
 
   async resolveGeneratedImage(conversationId: string, messageId: string, documentId: string): Promise<{

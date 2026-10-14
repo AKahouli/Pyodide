@@ -19,9 +19,10 @@ def test_image_tool_requires_assignment_and_trusted_context():
     for key in CONTEXT:
         assert resolve_native_tools(["generate_image"], {k: v for k, v in CONTEXT.items() if k != key}) == []
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
-    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio"}
+    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage"}
     schema = FunctionTool(tool)._get_declaration().parameters_json_schema
-    assert set(schema["properties"]) == {"prompt", "aspectRatio"}
+    assert set(schema["properties"]) == {"prompt", "aspectRatio", "sourceImage"}
+    assert "sourceImage" not in schema.get("required", [])
     from src.root_runtime.leaf_tools import is_leaf_tool
     assert is_leaf_tool(tool)
     configured = resolve_native_tools([{"name": "generate_image", "description": "Generate an image."}], CONTEXT)[0]
@@ -79,6 +80,32 @@ async def test_invalid_image_inputs_make_no_provider_request():
         assert (await tool(" "))["status"] == "error"
         assert (await tool("x" * 12001))["status"] == "error"
         assert (await tool("Japan", "invalid"))["status"] == "error"
+        factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_image_passes_source_and_returns_new_receipt():
+    source = "generated-image:" + "b" * 24
+    tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
+    response = MagicMock()
+    response.json.return_value = RECEIPT
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        client = factory.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=response)
+        result = await tool("Make Mount Fuji watercolor and add a boat", "landscape", source)
+    assert result == {**RECEIPT, "generated": True}
+    assert result["imageSource"] != source
+    assert client.post.call_args.kwargs["json"]["sourceImage"] == source
+    assert client.post.call_args.kwargs["json"]["model"] == "gpt-image-2.5-flare"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["", "https://example.test/image.png", "generated-image:" + "a" * 23,
+                                    "generated-image:" + "A" * 24, "generated-image:" + "a" * 24 + "\n", 123])
+async def test_invalid_edit_source_makes_no_request(source):
+    tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        assert (await tool("Add a boat", sourceImage=source))["status"] == "error"
         factory.assert_not_called()
 
 

@@ -91,7 +91,12 @@ and stores it in the conversation system workspace without indexing. Governed co
 are currently excluded. Cancellation aborts the provider request and prevents publication before upload.
 
 The configured `generate_image` tool returns a persistent `generated-image:<24hex documentId>`
-source. OpenUI image fields accept this source in images, galleries, cards and slide backgrounds.
+source. Its optional `sourceImage` argument edits an existing generated image in the same
+conversation via LiteLLM `/v1/images/edits`. The backend loads bounded original bytes from
+the conversation workspace and sends a multipart image; each edit creates a new file and
+reference, preserving the original. Arbitrary URLs, paths and images from other conversations
+are rejected before the provider call. Without `sourceImage`, generation is unchanged. OpenUI image
+fields accept the returned source in images, galleries, cards and slide backgrounds.
 Resolution waits until answer completion, then calls the authenticated message-scoped
 `POST /conversations/:conversationId/messages/:messageId/generated-images/:documentId/url`.
 Only the returned authorized image URL is fetched, without credentials or referrer; a bounded

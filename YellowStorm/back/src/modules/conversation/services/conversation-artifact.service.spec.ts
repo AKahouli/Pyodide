@@ -1,8 +1,9 @@
 import { ConversationArtifactService } from './conversation-artifact.service';
+import { Readable } from 'node:stream';
 
 describe('ConversationArtifactService', () => {
   const messageService = { getMessageDocument: jest.fn(), listRecentArtifactMessages: jest.fn() };
-  const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn() };
+  const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn(), openReadStream: jest.fn() };
   const conversationService = {
     getConversationDocument: jest.fn(),
     filterAccessibleWorkspaceIds: jest.fn(async (_userId: string | undefined, ids: string[]) => ids),
@@ -40,6 +41,7 @@ describe('ConversationArtifactService', () => {
       post.mockResolvedValue({ data: { data: [{ b64_json: png.toString('base64') }] } });
       workspaces.uploadSmallFile.mockResolvedValue({ id });
       workspaces.findById.mockResolvedValue({ originalName: 'generated-test.png', path: 'stored/image.png', mimeType: 'image/png' });
+      documentService.openReadStream.mockImplementation(async () => ({ body: Readable.from([png]) }));
       messageService.getMessageDocument.mockResolvedValue({ conversationId: 'c', conversationType: 'ai',
         content: `Image("AI generated", "generated-image:${id}")` });
     });
@@ -56,6 +58,28 @@ describe('ConversationArtifactService', () => {
       await expect(generator.generateImage(request)).rejects.toThrow('not enabled');
       models.findById.mockResolvedValueOnce({ isActive: false });
       await expect(generator.generateImage(request)).rejects.toThrow('active image');
+      expect(post).not.toHaveBeenCalled();
+    });
+    it('edits only a generated source from this conversation using multipart image bytes and saves a new version', async () => {
+      const result = await generator.generateImage({ ...request, sourceImage: `generated-image:${id}` });
+      expect(workspaces.findById).toHaveBeenCalledWith('w', id);
+      expect(documentService.openReadStream).toHaveBeenCalledWith('stored/image.png');
+      const [endpoint, form, options] = post.mock.calls[0];
+      expect(endpoint).toBe('/v1/images/edits');
+      expect(form).toBeInstanceOf(FormData);
+      expect(form.get('model')).toBe(request.model);
+      expect(form.get('prompt')).toBe(request.prompt);
+      expect(Buffer.from(await form.get('image').arrayBuffer())).toEqual(png);
+      expect(options.headers['Content-Type']).toBe('multipart/form-data');
+      expect(workspaces.uploadSmallFile).toHaveBeenCalledTimes(1);
+      expect(result.imageSource).toBe(`generated-image:${id}`);
+    });
+    it('rejects arbitrary paths, foreign source records and oversized source streams before the provider call', async () => {
+      await expect(generator.generateImage({ ...request, sourceImage: 'https://other.test/image.png' })).rejects.toThrow('not found');
+      workspaces.findById.mockRejectedValueOnce(new Error('Image not found'));
+      await expect(generator.generateImage({ ...request, sourceImage: `generated-image:${id}` })).rejects.toThrow('not found');
+      documentService.openReadStream.mockImplementationOnce(async () => ({ body: Readable.from([Buffer.alloc(20 * 1024 * 1024 + 1)]) }));
+      await expect(generator.generateImage({ ...request, sourceImage: `generated-image:${id}` })).rejects.toThrow('size limit');
       expect(post).not.toHaveBeenCalled();
     });
     it('sanitizes provider failures and rejects non-image bytes', async () => {
