@@ -1559,8 +1559,10 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 
     max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
     retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
+    # Finalization holds a model lock while saving holds another connection;
+    # progress checkpoints must still be able to acquire their own connection.
     pool = await asyncpg.create_pool(
-        os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=2,
+        os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=3,
         command_timeout=10,
         server_settings={"application_name": "semantic-model-population-worker",
                          "statement_timeout": "10s", "lock_timeout": "2s",
