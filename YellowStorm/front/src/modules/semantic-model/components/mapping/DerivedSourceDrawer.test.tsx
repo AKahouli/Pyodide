@@ -56,9 +56,9 @@ const records = Array.from({ length: 10 }, (_, index) => ({
   identity: { customer_id: `c-${index + 1}` },
 }));
 
-function renderDrawer(derived: DerivedSource | undefined = saved) {
+function renderDrawer(derived: DerivedSource | null = saved, initialSourceConceptId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived }} onClose={vi.fn()} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived: derived ?? undefined, initialSourceConceptId }} onClose={vi.fn()} /></QueryClientProvider>);
 }
 
 /** Opens every folded part and field, as a person reading the whole editor; folding is tried on its own. */
@@ -103,6 +103,30 @@ describe('Derived source with the shared field mapping', () => {
     // A source field is shown by its name.
     expect(within(id).getByRole('combobox', { name: 'derived.sourceFieldFor' })).toHaveTextContent('Customer ID');
     expect(within(fieldRow('Country')).getByRole('combobox', { name: 'mapping.methodFor' })).toHaveTextContent('mapping.method.ignore');
+  });
+
+  it('starts a new mapping with the explicitly dragged source without saving', async () => {
+    const alternate = { ...graph.nodes[1], id: 'message', key: 'message', label: 'Message' };
+    useSemanticModelEditorStore.getState().hydrate({
+      ...graph,
+      nodes: [graph.nodes[0], alternate, graph.nodes[1]],
+      relations: [{ id: 'mentions', key: 'mentions', label: 'mentions', inverseLabel: '', description: '', sourceNodeTypeId: 'org', targetNodeTypeId: 'message', cardinality: 'many_to_one', traversable: true, filterable: true, attributes: [] }],
+    });
+    api.listDerivedSources.mockResolvedValue([{ ...saved, id: 'd-2', conceptId: 'contract', sourceConceptId: 'message' }]);
+
+    renderDrawer(null, 'contract');
+
+    expect(await screen.findByRole('combobox', { name: 'derived.source' })).toHaveTextContent('Contract');
+    expect(api.saveDerivedSource).not.toHaveBeenCalled();
+  });
+
+  it('leaves a source out when connecting it would close a derivation cycle', async () => {
+    api.listDerivedSources.mockResolvedValue([{ ...saved, id: 'd-2', conceptId: 'contract', sourceConceptId: 'org' }]);
+
+    renderDrawer(null);
+
+    expect(await screen.findByText('derived.noCandidate')).toBeInTheDocument();
+    expect(api.saveDerivedSource).not.toHaveBeenCalled();
   });
 
   it('opens with every part folded, each title saying what it holds', async () => {

@@ -107,6 +107,40 @@ export interface RuntimeDerivation {
   expand?: DerivedExpand;
 }
 
+type DerivationEdge = { conceptId: string; sourceConceptId: string };
+
+/** Whether adding source -> target would close a path already leading from target back to source. */
+export function closesDerivationCycle(derivations: DerivationEdge[], sourceId: string, targetId: string): boolean {
+  const next = new Map<string, string[]>();
+  for (const derivation of derivations) next.set(derivation.sourceConceptId, [...(next.get(derivation.sourceConceptId) ?? []), derivation.conceptId]);
+  const pending = [targetId];
+  const seen = new Set<string>();
+  while (pending.length) {
+    const conceptId = pending.pop()!;
+    if (conceptId === sourceId) return true;
+    if (seen.has(conceptId)) continue;
+    seen.add(conceptId);
+    pending.push(...(next.get(conceptId) ?? []));
+  }
+  return false;
+}
+
+/** Reachable derivations in stable dependency waves, so every source concept exists before it is read. */
+export function reachableDerivationsInOrder<T extends DerivationEdge & { derivationId: string }>(derivations: T[], sourcedConcepts: Set<string>): T[] {
+  const available = new Set(sourcedConcepts);
+  let remaining = [...derivations].sort((left, right) => left.derivationId.localeCompare(right.derivationId));
+  const ordered: T[] = [];
+  while (remaining.length) {
+    const ready = remaining.filter((derivation) => available.has(derivation.sourceConceptId));
+    if (!ready.length) break;
+    const ids = new Set(ready.map((derivation) => derivation.derivationId));
+    ordered.push(...ready);
+    ready.forEach((derivation) => available.add(derivation.conceptId));
+    remaining = remaining.filter((derivation) => !ids.has(derivation.derivationId));
+  }
+  return ordered;
+}
+
 /**
  * The derivations a refresh of one concept makes again: those making the concept itself (from the kept
  * records of the concept it is made from) and those reading it or a concept made again, down the chain.

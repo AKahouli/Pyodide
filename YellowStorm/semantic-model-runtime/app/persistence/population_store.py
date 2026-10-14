@@ -1037,13 +1037,15 @@ async def list_revision_entities_by_id(pool: Any, revision_id: str,
 
 
 async def list_revision_entities(pool: Any, revision_id: str,
-                                 limit: int = 50000,
-                                 concept_id: str | None = None) -> list[dict[str, Any]]:
+                                  limit: int = 50000,
+                                  concept_id: str | None = None, *,
+                                  timeout: float | None = None) -> list[dict[str, Any]]:
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
         "FROM semantic_population.entities WHERE data_revision_id = $1 "
         "AND ($3::text IS NULL OR concept_id = $3) ORDER BY id LIMIT $2",
-        revision_id, limit, concept_id,
+        revision_id, limit, concept_id, **options,
     )
     result = []
     for row in rows:
@@ -1191,20 +1193,22 @@ def _assertion_row(row: Any) -> dict[str, Any]:
             "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})}
 
 
-async def list_revision_assertions(pool: Any, revision_id: str) -> list[dict[str, Any]]:
+async def list_revision_assertions(pool: Any, revision_id: str, *,
+                                   timeout: float | None = None) -> list[dict[str, Any]]:
     """Every value a revision holds, as a run produced it (value, origin, evidence): the served
     value of each field, then the other sources' values, so a run that keeps them stores them again."""
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertions WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute",
-        revision_id,
+        revision_id, **options,
     )
     others = await pool.fetch(
         "SELECT entity_id, attribute, value, origin, evidence "
         "FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
         "ORDER BY entity_id, attribute, created_at, id",
-        revision_id,
+        revision_id, **options,
     )
     return [_assertion_row(row) for row in rows] + [_assertion_row(row) for row in others]
 
@@ -1242,12 +1246,14 @@ async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,
-                                      limit: int = 20000) -> list[dict[str, Any]]:
+                                      limit: int = 20000, *,
+                                      timeout: float | None = None) -> list[dict[str, Any]]:
+    options = {} if timeout is None else {"timeout": timeout}
     rows = await pool.fetch(
         "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy, state "
         "FROM semantic_population.relationships WHERE data_revision_id = $1 "
         "ORDER BY relation_id, source_entity_id, target_entity_id LIMIT $2",
-        revision_id, limit,
+        revision_id, limit, **options,
     )
     return [{"relationId": row["relation_id"], "sourceEntityId": row["source_entity_id"],
              "targetEntityId": row["target_entity_id"],

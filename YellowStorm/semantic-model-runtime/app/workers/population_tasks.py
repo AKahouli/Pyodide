@@ -1151,12 +1151,22 @@ async def load_carried_data(pool, command_dump: dict) -> dict | None:  # type: i
         return None
     revision_id = current["data_revision_id"]
     payload = command_dump.get("payload") or {}
-    reading = await get_revision_reading(pool, revision_id)
-    return {"revisionId": revision_id, "conceptId": (payload.get("scope") or {}).get("conceptId"),
-            "entities": await list_revision_entities(pool, revision_id, limit=1_000_000),
-            "assertions": await list_revision_assertions(pool, revision_id),
-            "relationships": await list_revision_relationships(pool, revision_id, limit=1_000_000),
-            **reading}
+    # Carry-over reads a full revision, not a job-control row. Large revisions take longer
+    # than the control pool's ten seconds. Scope both limits to these reads; SET LOCAL
+    # restores the short server limit when this transaction exits, including on failure.
+    bulk_read_seconds = 120
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            await connection.execute(f"SET LOCAL statement_timeout = '{bulk_read_seconds}s'")
+            reading = await get_revision_reading(connection, revision_id)
+            return {"revisionId": revision_id, "conceptId": (payload.get("scope") or {}).get("conceptId"),
+                    "entities": await list_revision_entities(connection, revision_id, limit=1_000_000,
+                                                             timeout=bulk_read_seconds),
+                    "assertions": await list_revision_assertions(connection, revision_id,
+                                                                 timeout=bulk_read_seconds),
+                    "relationships": await list_revision_relationships(connection, revision_id, limit=1_000_000,
+                                                                       timeout=bulk_read_seconds),
+                    **reading}
 
 
 async def _populate_manual_source(pool, entry: dict, concept: dict) -> dict:  # type: ignore[no-untyped-def]

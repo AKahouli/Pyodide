@@ -27,11 +27,14 @@ import { ExpandCard } from './ExpandCard';
 import { ReadingTextContext } from './readingText';
 import { adaptToSheet, cellLabelSuggestions, cellValue } from './sheetMapping';
 import { foundSpans, markText, type Highlight } from './SheetSourceMappingDrawer';
+import { closesDerivationCycle } from '../../utils/designer-flow';
 
 export interface DerivedSourceTarget {
   conceptId: string;
   /** The derived source to change; none to add one. */
   derived?: DerivedSource;
+  /** The source explicitly dragged onto this concept when adding a derived source. */
+  initialSourceConceptId?: string;
 }
 
 export const CONFLICT_RULES: DerivedConflictRule[] = ['most_frequent', 'latest', 'longest', 'leave_empty'];
@@ -102,11 +105,9 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const toggleField = (field: string) => setOpenFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field]);
   const paneProps = (pane: Pane) => ({ id: `derived-${pane}`, open: panes[pane], onOpenChange: (open: boolean) => setPane(pane, open) });
 
-  // A concept filled from another one cannot fill a third, so derivations never chain.
   const others = derivedSources.filter((source) => source.id !== target?.derived?.id);
   const candidates = useMemo(() => (graph?.nodes ?? []).filter((node) => !node.systemKey && node.id !== target?.conceptId
-    && node.attributes.length > 0 && !others.some((other) => other.conceptId === node.id)), [graph?.nodes, others, target?.conceptId]);
-  const fillsAnother = others.some((other) => other.sourceConceptId === target?.conceptId);
+    && node.attributes.length > 0 && !closesDerivationCycle(others,node.id,target?.conceptId ?? '')), [graph?.nodes, others, target?.conceptId]);
   const source = graph?.nodes.find((node) => node.id === sourceConceptId);
   const sourceFields = useMemo(() => source?.attributes.map((field) => field.key) ?? [], [source]);
   const sourceLabels = useMemo(() => Object.fromEntries((source?.attributes ?? []).map((field) => [field.key, field.label])), [source]);
@@ -123,7 +124,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     // A concept already linked to this one is the likeliest source: contracts name their customer.
     const linked = graph?.relations.flatMap((relation) => relation.sourceNodeTypeId === concept.id ? [relation.targetNodeTypeId]
       : relation.targetNodeTypeId === concept.id ? [relation.sourceNodeTypeId] : []) ?? [];
-    const start = derived?.sourceConceptId ?? candidates.find((node) => linked.includes(node.id))?.id ?? candidates[0]?.id ?? '';
+    const initial = candidates.find((node) => node.id === target.initialSourceConceptId)?.id;
+    const start = derived?.sourceConceptId ?? initial ?? candidates.find((node) => linked.includes(node.id))?.id ?? candidates[0]?.id ?? '';
     setSourceConceptId(start);
     // A field removed from the source concept since saving is no longer offered, so it is not kept.
     const fromFields = graph?.nodes.find((node) => node.id === start)?.attributes.map((field) => field.key) ?? [];
@@ -145,7 +147,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     setHighlight(null);
     setTextField(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.conceptId, target?.derived?.id, concept?.id, identityRules.length, candidates.length]);
+  }, [target?.conceptId, target?.derived?.id, target?.initialSourceConceptId, concept?.id, identityRules.length, candidates.length]);
 
   const savedOrder = useMemo(() => (target?.derived?.fieldMappings ?? []).map((field) => field.targetAttribute), [target?.derived]);
   const payload = useMemo(() => derivedPayload(rows, savedOrder), [rows, savedOrder]);
@@ -160,7 +162,6 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   }).map((row) => row.targetAttribute);
   const unmappedKey = keys.find((key) => !payload.some((field) => field.targetAttribute === key));
   const problem = !source ? t('derived.problem.source')
-    : fillsAnother ? t('derived.problem.fillsAnother', { concept: concept?.label ?? '' })
     : !payload.length ? t('derived.problem.noField')
     : fieldProblems.length ? t('mapping.cell.saveBlocked', { fields: fieldProblems.map(attributeLabel).join(', ') })
     : !keys.length ? t('derived.problem.noKey')
@@ -576,7 +577,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
           <Trash2 className='mr-1.5 h-4 w-4' />{t('derived.remove')}
         </Button>}
         <div className='min-w-0 flex-1 space-y-0.5'>
-          {problem && (source || fillsAnother) && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
+          {problem && source && <p role='alert' className='flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400'>
             <AlertTriangle className='h-3.5 w-3.5 shrink-0' /><span className='line-clamp-2'>{problem}</span></p>}
           {/* What a run costs in AI, in sight when saving. */}
           {usesAi && source && <p className='flex items-center gap-1.5 text-[11px] text-muted-foreground' title={aiEstimate}>

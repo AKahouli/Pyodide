@@ -28,9 +28,6 @@ permission:
     "*": deny
     "git status*": allow
     "git diff*": allow
-    "git show*": allow
-    "git rev-parse*": allow
-    "git log*": allow
   skill: deny
 ---
 
@@ -52,9 +49,6 @@ The caller supplies the absolute root/branch, checkpoint task ID, exact owned do
 
 - Reuse supplied source evidence; verify only claims that need confirmation. Before editing, reuse a current index Read receipt in this child session if present; otherwise Read the relevant index section even when the owning record is known, as the native preparation gate requires it. Do not re-explore the feature or rerun verification.
 - Patch the owning record, or add the smallest new record and index entry. Supersede an accepted ADR with a new ADR; preserve the original.
-- Follow `docs/agent-context/documentation-workflow.md`. New/changed feature behavior updates its `features/` page: workflows, implemented behavior, reuse paths, limits and relevant checks. A feature update does not need an ADR unless a durable design decision changes.
-- Work in the caller's active branch; documentation travels in the same PR as implementation. Read source at the supplied revision or stable task-scoped diff, exclude unrelated dirty changes, and label unmerged/unverified behavior. Never merge branches, publish docs or accept decisions yourself.
-- Own only the supplied documentation paths. Return required index/shared-page changes to the primary when another task owns them. Start once affected source is stable; a changing source input needs fresh evidence before edits. Record updated paths and remaining work for the primary's checkpoint.
 - Update affected feature behavior even when architecture is unchanged. Link reusable implementation/tests without copying code-owned definitions. Use supplied stable evidence, exclude unrelated dirty changes and label unverified behavior. If inputs change during your task, return stale evidence for reconciliation.
 - For changed boundaries, ownership, persistence, contracts, runtime/deployment or security constraints, update the owning architecture reference as well as any changed decision's ADR. Link source/contracts and verification; report module README/scoped instruction/diagram updates outside your permission scope to `build` as remaining work.
 - A new/changed architectural decision needs an ADR; routine implementation edits do not. The user approving a design is not proof that implementation passed verification. Keep a new ADR proposed until the primary reviews evidence and acceptance; never self-approve the record.

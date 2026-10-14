@@ -20,6 +20,9 @@ def spec() -> dict:
             {"conceptId": "org", "key": "organization", "label": "Organization",
              "identity": {"namespace": "organization", "keyComponents": ["org_id"]},
              "populationMode": "materialized", "allowedFields": ["org_id", "name", "country"]},
+            {"conceptId": "sector", "key": "sector", "label": "Sector",
+             "identity": {"namespace": "sector", "keyComponents": ["sector_id"]},
+             "populationMode": "materialized", "allowedFields": ["sector_id"]},
         ],
         "relations": [
             {"relationId": "r1", "key": "belongs_to", "label": "belongs to",
@@ -35,6 +38,13 @@ def derivation(**overrides) -> dict:
             "fieldMappings": [{"sourceAttribute": "customer_id", "targetAttribute": "org_id"},
                               {"sourceAttribute": "customer_name", "targetAttribute": "name"}],
             "conflictRule": "most_frequent", "orderBy": None, "labelField": "name",
+            "mappingVersion": "2026-09-30T00:00:00.000Z", **overrides}
+
+
+def sector_derivation(**overrides) -> dict:
+    return {"derivationId": "d2", "conceptId": "sector", "sourceConceptId": "org",
+            "fieldMappings": [{"sourceAttribute": "org_id", "targetAttribute": "sector_id"}],
+            "conflictRule": "most_frequent", "orderBy": None, "labelField": "sector_id",
             "mappingVersion": "2026-09-30T00:00:00.000Z", **overrides}
 
 
@@ -127,10 +137,12 @@ def test_derivations_are_checked_before_anything_is_read():
         normalize_derivations([derivation(conflictRule="latest")], concepts)
     with pytest.raises(DerivationError, match="invalid_derivations"):
         normalize_derivations([derivation(sourceConceptId="org")], concepts)
-    with pytest.raises(DerivationError, match="chained_derivation"):
-        normalize_derivations([derivation(), derivation(derivationId="d2", conceptId="contract", sourceConceptId="org",
-                                                        fieldMappings=[{"sourceAttribute": "org_id", "targetAttribute": "contract_no"}],
-                                                        labelField=None)], concepts)
+    ordered = normalize_derivations([sector_derivation(), derivation()], concepts)
+    assert [item["derivationId"] for item in ordered] == ["d1", "d2"]
+    loop = derivation(derivationId="d3", conceptId="contract", sourceConceptId="sector",
+                      fieldMappings=[{"sourceAttribute": "sector_id", "targetAttribute": "contract_no"}], labelField=None)
+    with pytest.raises(DerivationError, match="cyclic_derivation"):
+        normalize_derivations([sector_derivation(), loop, derivation()], concepts)
     # A date to order by is only kept for the "most recent" rule.
     [normalized] = normalize_derivations([derivation(orderBy="signed_on")], concepts)
     assert normalized["orderBy"] is None
@@ -195,6 +207,15 @@ async def test_a_run_makes_the_derived_records_and_links_them():
     assert sorted(entity["label"] for entity in organizations) == ["Acme", "Globex"]
     assert len(outcome["relationships"]) == 3
     assert not [gap for gap in outcome["gaps"] if gap["kind"] != "missing_value"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_makes_an_acyclic_derivation_chain_in_dependency_order():
+    outcome = await run_population_for_task(
+        command([sector_derivation(), derivation()]), fetch=fake_fetch, prepare=fake_prepare, query=fake_query)
+    assert outcome["ok"] is True, outcome
+    assert sorted(entity["identity"]["sector_id"] for entity in outcome["entities"]
+                  if entity["conceptId"] == "sector") == ["c-1", "c-2"]
 
 
 @pytest.mark.asyncio

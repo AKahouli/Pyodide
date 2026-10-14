@@ -85,6 +85,12 @@ lost without a worker finishing:
 
 No operator action is required after a worker or broker death.
 
+A concept refresh first reads the current draft revision to retain the other
+concepts and rerun derived sources against their existing records. These bulk
+carry-over queries have a bounded 120-second client/server timeout per query,
+scoped to one transaction. Job-control queries keep their 10-second timeout;
+the normal server timeout is restored automatically when the transaction ends.
+
 - `SEMANTIC_TASK_MAX_ATTEMPTS` (default 3) bounds worker redelivery and the
   expired-lease cap.
 - `SEMANTIC_TASK_RETRY_SECONDS` (default 30) delays the retry and is the base

@@ -1,6 +1,6 @@
 ---
 id: ADR-0012
-status: accepted
+status: proposed
 scope: feature-context-and-maintenance
 source_paths:
   - AGENTS.md
@@ -8,7 +8,6 @@ source_paths:
   - tools/opencode-harness/config/agents/maintainer.md
   - docs/agent-context/features/
   - docs/agent-context/documentation-workflow.md
-reviewed_at: 2026-10-13
 ---
 
 # Maintain branch-aligned feature documentation with implementation
@@ -49,8 +48,6 @@ feature-document additions remain with their owning implementation task.
 Regression checks require feature-page evidence for mapped code targets and reject
 stale documentation while preserving unrelated scoped routes. Local links resolve.
 Native maintainer permissions include read-only Git revision/diff inspection.
-The user approved initialization and maintainer ownership; bounded review passed
-and all ten focused harness checks passed, including the five feature routes.
 
 Instructions guide documentary impact and quality; they cannot prove semantic
 completeness. The existing guard verifies reads/ownership, not whether every needed

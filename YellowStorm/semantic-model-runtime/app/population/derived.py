@@ -133,11 +133,47 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
+def cyclic_derivation_ids(derivations: list[dict]) -> set[str]:
+    """The derivations whose edge belongs to a cycle in the concept dependency graph."""
+    next_concepts: dict[str, list[str]] = {}
+    for derivation in derivations:
+        next_concepts.setdefault(derivation["sourceConceptId"], []).append(derivation["conceptId"])
+
+    def reaches(start: str, wanted: str) -> bool:
+        pending, seen = [start], set()
+        while pending:
+            concept_id = pending.pop()
+            if concept_id == wanted:
+                return True
+            if concept_id in seen:
+                continue
+            seen.add(concept_id)
+            pending.extend(next_concepts.get(concept_id, []))
+        return False
+
+    return {item["derivationId"] for item in derivations
+            if reaches(item["conceptId"], item["sourceConceptId"])}
+
+
+def _order_derivations(derivations: list[dict]) -> list[dict]:
+    """Stable dependency waves; all producers of a source concept finish before it is consumed."""
+    remaining = sorted(derivations, key=lambda item: item["derivationId"])
+    ordered: list[dict] = []
+    while remaining:
+        targets = {item["conceptId"] for item in remaining}
+        ready = [item for item in remaining if item["sourceConceptId"] not in targets]
+        if not ready:
+            raise DerivationError("cyclic_derivation")
+        ready_ids = {item["derivationId"] for item in ready}
+        ordered.extend(ready)
+        remaining = [item for item in remaining if item["derivationId"] not in ready_ids]
+    return ordered
+
+
 def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]:
     """Checks every derivation and returns it in the one shape both sides hash.
 
-    Raises :class:`DerivationError` with an error code. A concept filled by a derivation cannot
-    itself be the source of another one, so derivations never chain or loop.
+    Raises :class:`DerivationError` with an error code. Acyclic chains are returned in dependency order.
     """
     if entries is None:
         return []
@@ -204,10 +240,7 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         except RuleError as exc:
             raise DerivationError("invalid_derivations", "ai_settings", detail=str(exc)) from exc
         normalized.append(derivation)
-    targets = {derivation["conceptId"] for derivation in normalized}
-    if any(derivation["sourceConceptId"] in targets for derivation in normalized):
-        raise DerivationError("chained_derivation")
-    return normalized
+    return _order_derivations(normalized)
 
 
 def _source_value(entity: dict, attribute: str) -> Any:
