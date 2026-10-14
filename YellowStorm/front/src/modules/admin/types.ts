@@ -865,6 +865,15 @@ export interface AssignPlanRequest {
   planId: string;
 }
 
+export interface InviteUserRequest {
+  email: string;
+}
+export interface InviteUserResponse {
+  message: string;
+  email: string;
+  expiresAt: string;
+}
+
 // Audit Log Types
 
 export type AuditLogStatus = 'success' | 'failure';

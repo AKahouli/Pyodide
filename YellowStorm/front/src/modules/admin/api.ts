@@ -47,6 +47,8 @@ import type {
   AdminUserListResponse,
   AdminUserListParams,
   AssignPlanRequest,
+  InviteUserRequest,
+  InviteUserResponse,
   AuditLogListResponse,
   AuditLogQueryParams,
   LogQueryResult,
@@ -557,6 +559,14 @@ export async function assignPlanToUser(
 ): Promise<AdminUserResponse> {
   const response = await apiClient.post<ApiResponse<AdminUserResponse>>(
     API_ENDPOINTS.adminUsers.assignPlan(userId),
+    data
+  );
+  return response.data.data;
+}
+
+export async function inviteUser(data: InviteUserRequest): Promise<InviteUserResponse> {
+  const response = await apiClient.post<ApiResponse<InviteUserResponse>>(
+    API_ENDPOINTS.adminUsers.invite,
     data
   );
   return response.data.data;
