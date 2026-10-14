@@ -44,6 +44,10 @@ The caller supplies the repo root/branch, task ID, affected feature pages and ex
 
 ## Rules
 
+- Before writing feature documentation, read `docs/agent-context/templates/feature.md`. Every feature page uses schema 1 metadata and the seven H2 sections in that exact order; additional detail uses H3. Preserve evidence and mark inapplicable sections with a reason. The feature-page template is distinct from your internal handoff format below.
+- Assess the root context index, feature index and affected subfolder indexes on every update. New/renamed/removed records or changed scope require matching rows and inbound links. Preserve unrelated pages and current branch evidence. Edit shared indexes only with explicit ownership; otherwise return exact pending changes to the primary. An unchanged index needs a specific reason.
+- Before returning, compare updated feature pages with the template and check local links. Report format/index/link results and pending work; do not claim documentary completeness from a successful write alone.
+
 - Reuse supplied source evidence; verify only claims that need confirmation. Before editing, reuse a current index Read receipt in this child session if present; otherwise Read the relevant index section even when the owning record is known, as the native preparation gate requires it. Do not re-explore the feature or rerun verification.
 - Patch the owning record, or add the smallest new record and index entry. Supersede an accepted ADR with a new ADR; preserve the original.
 - Follow `docs/agent-context/documentation-workflow.md`. New/changed feature behavior updates its `features/` page: workflows, implemented behavior, reuse paths, limits and relevant checks. A feature update does not need an ADR unless a durable design decision changes.
@@ -60,7 +64,10 @@ The caller supplies the repo root/branch, task ID, affected feature pages and ex
 ```markdown
 ## Git Knowledge Result: UPDATED | BLOCKED | SKIPPED
 Files changed: ...
-Source revision/branch and verification: ...
+Source revision / verification level: ...
+Feature format: PASS | FAIL | NOT_APPLICABLE (reason)
+Indexes: updated paths | unchanged (reason) | pending exact changes
+Links: checked result / remaining gaps
 Claim and source evidence: ...
 Review needed: ...
 Pending paths/next action: ...

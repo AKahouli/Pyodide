@@ -39,6 +39,19 @@ so resumed sessions can finish the same work. Never claim pending docs are updat
 
 ## Keep pages small and factual
 
+Use [feature template v1](templates/feature.md) for every feature page. Preserve
+`feature_doc_schema: 1`, a stable `feature_id`, and its seven H2 headings in order.
+Use H3 subsections for extra detail; mark genuinely inapplicable sections with a
+reason. The primary checks this format before accepting a maintainer update.
+
+For every documentation task, maintainer assesses the root context index, feature
+index and any affected subfolder index. Add a row when adding a record, update paths
+and inbound links when moving/renaming, and remove obsolete links when deleting.
+Do not delete unrelated pages or replace folders wholesale. Shared indexes require
+explicit file ownership; otherwise return exact pending edits to the primary.
+Return index changes or a specific no-change reason, format result, link checks and
+remaining work. Full completion includes resolving pending index changes.
+
 Each feature page includes purpose/user workflows, implemented behavior, limits,
 frontend/backend/runtime entry points, existing code to reuse, relevant contracts
 and tests, source revision/date and verification level. Link executable contracts

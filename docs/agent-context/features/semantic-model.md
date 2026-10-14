@@ -1,3 +1,8 @@
+---
+feature_doc_schema: 1
+feature_id: semantic-model
+---
+
 # Semantic models
 
 ## Evidence and scope
@@ -6,7 +11,7 @@ Source baseline: `cc3d0e078dfcb0f535bcfcb28b8041fa9d2251a9`, inspected 2026-10-1
 This is a source-and-test inventory, not evidence of live browser QA or deployed configuration.
 Uncommitted work is excluded. Recheck the current branch's source before implementation; this revision identifies the initialization baseline, not a permanent freshness guarantee.
 
-## Purpose and user workflows
+## Purpose and workflows
 
 Semantic models describe concepts, fields and relationships, map workspace data to those definitions, and produce inspectable population revisions for search and use by agents.
 
@@ -23,7 +28,7 @@ Semantic models describe concepts, fields and relationships, map workspace data 
 Route ownership: [Router.tsx](../../../YellowStorm/front/src/Router.tsx).
 Page ownership: [catalog](../../../YellowStorm/front/src/modules/semantic-model/pages/SemanticModelCatalogPage.tsx), [editor](../../../YellowStorm/front/src/modules/semantic-model/pages/SemanticModelEditorPage.tsx).
 
-## Boundaries and durable data
+## Ownership and boundaries
 
 | Owner | Responsibility and source |
 | --- | --- |
@@ -37,7 +42,7 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
-## Reuse map: inspect these before adding code
+## Reuse map
 
 | Change | Existing owner to extend |
 | --- | --- |
@@ -53,7 +58,7 @@ Keep payload definitions in executable DTOs/types/schemas; this page intentional
 For contract changes, verify the frontend caller, NestJS translator and Python receiver together.
 Reuse existing revision, lease, authorization and idempotency checks instead of adding a parallel persistence/job subsystem.
 
-## Constraints and limitations verified in the baseline
+## Constraints and limitations
 
 - A job request being accepted is not completion; the editor follows terminal states including `completed_with_gaps`, `failed`, `cancelled` and `superseded`.
 - Runtime record/graph reads use scoped POST read contracts; legacy unscoped GET record/graph routes return HTTP 410. Preserve caller scope when extending reads.
