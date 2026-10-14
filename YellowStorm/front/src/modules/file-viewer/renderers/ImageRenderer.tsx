@@ -112,11 +112,11 @@ export function ImageRenderer({ tab }: ImageRendererInternalProps) {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
-              <RotateCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? 'animate-spin' : ''}`} />
+              <RotateCw className={`h-3.5 w-3.5 me-1.5 ${retrying ? 'animate-spin' : ''}`} />
               {t('actions.retry')}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => closeTab(tab.id)}>
-              <X className="h-3.5 w-3.5 mr-1.5" />
+              <X className="h-3.5 w-3.5 me-1.5" />
               {t('actions.closeTab')}
             </Button>
           </div>

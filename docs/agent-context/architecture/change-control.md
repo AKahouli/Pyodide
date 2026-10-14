@@ -77,8 +77,7 @@ does not establish implementation verification or authorize deployment.
 
 ## Enforcement scope
 
-These are agent decision and delivery rules. The native edit gate verifies current
-documentation/source read evidence and file ownership. It does not interpret user
-approval or detect every semantic architecture change. Primary self-review and the
-required high-risk reviewer check approval scope and documentation impact; never
-describe a checkpoint note as independently verified user authorization.
+Architecture approval and documentation impact are agent/review responsibilities.
+Checkpoints are advisory memory. Native OpenCode permissions govern edits; the
+harness does not reserve files, require read receipts or block editing on task
+status or checkpoint health. Agents still consult relevant docs and reuse code.

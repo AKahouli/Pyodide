@@ -188,7 +188,7 @@ export interface NavigationNode {
   position: number;
   visible: boolean;
   launcherVisible?: boolean;
-  labels: { en: string; fr: string };
+  labels: { en: string; fr: string; ar?: string };
   targetKey?: NavigationTargetKey;
 }
 

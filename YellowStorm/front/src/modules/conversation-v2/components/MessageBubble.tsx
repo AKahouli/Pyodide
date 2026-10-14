@@ -59,7 +59,7 @@ export function MessageBubble({
           <Streamdown className='whitespace-pre-wrap break-words'>{content}</Streamdown>
         </div>
         {timestamp && (
-          <span className='pr-1 text-[11px] leading-none text-muted-foreground/70'>
+          <span className='pe-1 text-[11px] leading-none text-muted-foreground/70'>
             {timestamp}
           </span>
         )}

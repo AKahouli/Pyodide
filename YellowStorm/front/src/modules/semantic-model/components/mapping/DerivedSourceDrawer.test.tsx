@@ -56,9 +56,9 @@ const records = Array.from({ length: 10 }, (_, index) => ({
   identity: { customer_id: `c-${index + 1}` },
 }));
 
-function renderDrawer(derived: DerivedSource | null = saved, initialSourceConceptId?: string) {
+function renderDrawer(derived: DerivedSource | null = saved, initialSourceConceptId?: string, props: { pendingSwitch?: boolean; onClose?: () => void; onCancelPendingSwitch?: () => void } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived: derived ?? undefined, initialSourceConceptId }} onClose={vi.fn()} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived: derived ?? undefined, initialSourceConceptId }} onClose={props.onClose ?? vi.fn()} pendingSwitch={props.pendingSwitch} onCancelPendingSwitch={props.onCancelPendingSwitch} /></QueryClientProvider>);
 }
 
 /** Opens every folded part and field, as a person reading the whole editor; folding is tried on its own. */
@@ -136,6 +136,39 @@ describe('Derived source with the shared field mapping', () => {
     // Folded, the key fields still show on the title.
     expect(within(screen.getByRole('region', { name: 'derived.keysTitle' })).getByRole('button', { expanded: false })).toHaveTextContent('ID');
     expect(screen.queryAllByRole('button', { expanded: true })).toHaveLength(0);
+  });
+
+  it('closes an unchanged saved mapping without asking whether to discard it', async () => {
+    const onClose = vi.fn();
+    renderDrawer(saved, undefined, { onClose });
+
+    await screen.findByRole('region', { name: 'derived.fields' });
+    fireEvent.click(screen.getByRole('button', { name: 'action.cancel' }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog', { name: 'leave.title' })).not.toBeInTheDocument();
+  });
+
+  it('asks before switching away from a changed saved mapping and lets Cancel keep it open', async () => {
+    const onClose = vi.fn();
+    const onCancelPendingSwitch = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived: saved }} onClose={onClose} onCancelPendingSwitch={onCancelPendingSwitch} /></QueryClientProvider>);
+    await openAll();
+
+    fireEvent.click(within(fieldRow('Name')).getByRole('combobox', { name: 'mapping.methodFor' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.method.constant' }));
+    view.rerender(<QueryClientProvider client={client}>
+      <DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived: saved }} pendingSwitch onClose={onClose} onCancelPendingSwitch={onCancelPendingSwitch} />
+    </QueryClientProvider>);
+
+    const prompt = await screen.findByRole('dialog', { name: 'leave.title' });
+    fireEvent.click(within(prompt).getByRole('button', { name: 'action.cancel' }));
+
+    expect(onCancelPendingSwitch).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'leave.title' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'derived.fields' })).toBeInTheDocument();
   });
 
   it('shows each field on one line with where and how it reads, opens it, and marks it as a key there', async () => {

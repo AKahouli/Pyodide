@@ -153,7 +153,7 @@ function ReportUserMessage({ content, timestamp, attachedFileIds }: ReportUserMe
     <div>
       <ChatMessageBubble message={chatMessage} showAvatar={false} />
       {attachedFileIds && attachedFileIds.length > 0 && (
-        <p className="text-xs text-muted-foreground mt-1 text-right mr-2">
+        <p className="text-xs text-muted-foreground mt-1 text-end me-2">
           {tAdmin('reports.messages.filesAttached', { count: attachedFileIds.length })}
         </p>
       )}
@@ -184,7 +184,7 @@ function ReportAiMessage({ components, timestamp, inputTokens, outputTokens, dur
   return (
     <div>
       <ChatMessageBubble message={chatMessage} showAvatar={false} />
-      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground mt-2 ml-1">
+      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground mt-2 ms-1">
         {inputTokens !== undefined && (
           <span>{tAdmin('reports.messages.input')}: {inputTokens.toLocaleString()} tokens</span>
         )}
@@ -349,7 +349,7 @@ export function ReportsPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchReports} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -419,7 +419,7 @@ export function ReportsPage() {
               {hasActiveFilters && (
                 <div className="flex items-end">
                   <Button variant="ghost" onClick={clearFilters}>
-                    <X className="mr-1 h-4 w-4" />
+                    <X className="me-1 h-4 w-4" />
                     {t('reports.filters.clear')}
                   </Button>
                 </div>
@@ -454,7 +454,7 @@ export function ReportsPage() {
                   <TableHead className="hidden md:table-cell">{t('reports.table.columns.description')}</TableHead>
                   <TableHead className="w-[100px]">{t('reports.table.columns.status')}</TableHead>
                   <TableHead className="w-[140px] hidden lg:table-cell">{t('reports.table.columns.date')}</TableHead>
-                  <TableHead className="w-[80px] text-right">{t('reports.table.columns.actions')}</TableHead>
+                  <TableHead className="w-[80px] text-end">{t('reports.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -503,7 +503,7 @@ export function ReportsPage() {
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-end">
                           <Button
                             variant="ghost"
                             size="sm"
@@ -697,7 +697,7 @@ export function ReportsPage() {
                     onClick={handleUpdateStatus}
                     disabled={updating}
                   >
-                    {updating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {updating && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
                     {updating ? t('reports.sections.update.actions.saving') : t('reports.sections.update.actions.save')}
                   </Button>
                 </CardContent>

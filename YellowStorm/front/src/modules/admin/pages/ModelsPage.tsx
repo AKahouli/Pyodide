@@ -356,7 +356,7 @@ export function ModelsPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchModels} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -378,12 +378,12 @@ export function ModelsPage() {
           <Button onClick={handleSync} disabled={syncing}>
             {syncing ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="me-2 h-4 w-4 animate-spin" />
                 {t('models.syncing')}
               </>
             ) : (
               <>
-                <Cloud className="mr-2 h-4 w-4" />
+                <Cloud className="me-2 h-4 w-4" />
                 {t('models.actions.sync')}
               </>
             )}
@@ -417,7 +417,7 @@ export function ModelsPage() {
                   <TableHead className="hidden lg:table-cell">{t('models.table.columns.providers')}</TableHead>
                   <TableHead>{t('models.table.columns.enabled')}</TableHead>
                   <TableHead>{t('models.table.columns.default')}</TableHead>
-                  <TableHead className="text-right">{t('models.table.columns.actions')}</TableHead>
+                  <TableHead className="text-end">{t('models.table.columns.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -439,13 +439,13 @@ export function ModelsPage() {
                             <span className="font-medium">{model.name}</span>
                             {model.isDefault && (
                               <Badge variant="default" className="text-xs">
-                                <Star className="mr-1 h-3 w-3" />
+                                <Star className="me-1 h-3 w-3" />
                                 {t('models.table.defaultBadge')}
                               </Badge>
                             )}
                             {model.isConversationV2Default && (
                               <Badge variant="secondary" className="text-xs">
-                                <MessagesSquare className="mr-1 h-3 w-3" />
+                                <MessagesSquare className="me-1 h-3 w-3" />
                                 {t('models.table.conversationV2DefaultBadge')}
                               </Badge>
                             )}
@@ -539,7 +539,7 @@ export function ModelsPage() {
                           </Tooltip>
                         </TooltipProvider>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -732,7 +732,7 @@ export function ModelsPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t('models.edit.actions.saving')}
                 </>
               ) : (

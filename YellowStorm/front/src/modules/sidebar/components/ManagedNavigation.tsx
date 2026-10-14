@@ -133,9 +133,9 @@ function TreeNode({ node, ...props }: { node: NavigationNode } & ManagedNavigati
     return (
       <Collapsible open={open} onOpenChange={setOpen}>
         <SidebarMenuItem>
-          <CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} isActive={active}><Network /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger>
+          <CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} isActive={active}><Network /><span>{label}</span><ChevronRight className={cn('ms-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger>
         </SidebarMenuItem>
-        <CollapsibleContent className='pl-3'><SidebarMenu className='border-l border-sidebar-border pl-1.5'>{children}</SidebarMenu></CollapsibleContent>
+        <CollapsibleContent className='ps-3'><SidebarMenu className='border-l border-sidebar-border ps-1.5'>{children}</SidebarMenu></CollapsibleContent>
       </Collapsible>
     );
   }
@@ -148,8 +148,8 @@ function TreeNode({ node, ...props }: { node: NavigationNode } & ManagedNavigati
     if (props.collapsed) return <SidebarMenuItem><SidebarMenuButton asChild tooltip={label} isActive={active}><NavLink to={NAVIGATION_TARGETS.history.path}><History /><span>{label}</span></NavLink></SidebarMenuButton></SidebarMenuItem>;
     return (
       <Collapsible open={open} onOpenChange={setOpen}>
-        <SidebarMenuItem><CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} isActive={active}><History /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger></SidebarMenuItem>
-        <CollapsibleContent className='pl-2'><RecentChats rows={props.historyRows} loading={props.historyLoading} showAllChatsLink={props.showAllChatsLink} compact /></CollapsibleContent>
+        <SidebarMenuItem><CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} isActive={active}><History /><span>{label}</span><ChevronRight className={cn('ms-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger></SidebarMenuItem>
+        <CollapsibleContent className='ps-2'><RecentChats rows={props.historyRows} loading={props.historyLoading} showAllChatsLink={props.showAllChatsLink} compact /></CollapsibleContent>
       </Collapsible>
     );
   }

@@ -169,7 +169,7 @@ export function WorkspaceContent() {
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
+                  <Input placeholder={t('content.searchPlaceholder')} className="ps-9 h-9" />
                 </div>
                 {isPersonalWorkspace && <UploadButton folderId={currentFolderId ?? undefined} />}
                 {isPersonalWorkspace && (
@@ -258,12 +258,12 @@ export function WorkspaceContent() {
                 <p className="text-sm text-muted-foreground">
                   {draggedItems.length > 0 ? (
                     <>
-                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📁</span>
+                      <span className="h-5 w-5 text-blue-500 me-2 inline-block">📁</span>
                       {t('folder.draggingMultiple', { count: draggedItems.length })}
                     </>
                   ) : (
                     <>
-                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📄</span>
+                      <span className="h-5 w-5 text-blue-500 me-2 inline-block">📄</span>
                       {t('folder.draggingSingle')}
                     </>
                   )}

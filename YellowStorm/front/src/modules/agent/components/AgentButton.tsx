@@ -33,7 +33,7 @@ export function AgentButton() {
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start">
           <DropdownMenuItem onClick={goToHub} className="cursor-pointer">
-            <Settings className="mr-2 h-4 w-4" />
+            <Settings className="me-2 h-4 w-4" />
             {t('button.manageAgents')}
           </DropdownMenuItem>
         </DropdownMenuContent>

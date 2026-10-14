@@ -199,7 +199,7 @@ export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUplo
             {t('appearance.logo.cancel')}
           </Button>
           <Button type='button' onClick={() => void submit()} disabled={!canSubmit || saving}>
-            {saving ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}
+            {saving ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}
             {saving ? t('appearance.logo.uploading') : t('appearance.logo.save')}
           </Button>
         </DialogFooter>

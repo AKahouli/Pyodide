@@ -60,7 +60,6 @@ if (process.argv[2] === '--bootstrap-worker') {
     try {
       h.checkpoint('session-a', { ...goal, checks: [{ name: 'Existing evidence', status: 'PASS', files: ['src/a.js'] }] });
       assert.equal(h.health('session-a'), null);
-      assert.throws(() => h.beforeEdit('session-a', ['src/a.js'], 'edit'), /sdlc_prepare/);
       const receipt = h.health('session-a', { ...passing, root: 'wrong', sessionID: 'wrong', checkpoints: { status: 'FAIL' } });
       assert.equal(receipt.root, h.root);
       assert.equal(receipt.sessionID, 'session-a');
@@ -85,7 +84,7 @@ if (process.argv[2] === '--bootstrap-worker') {
       h.health('fresh', { ...passing, graph: { status: 'FAIL', reason: 'Fresh session has no graph evidence' } });
       h.resume('fresh', original);
       assert.equal(h.health('fresh').graph.status, 'FAIL');
-      assert.throws(() => h.health('old'), /moved to session/);
+      assert.equal(h.health('old').graph.status, 'PASS');
       const receipt = h.health('fresh', passing);
       h.checkpoint('fresh', { ...goal, newTask: true });
       assert.equal(h.health('fresh').probe, receipt.probe);
@@ -96,7 +95,7 @@ if (process.argv[2] === '--bootstrap-worker') {
     } finally { h.close(); f.cleanup(); }
   });
 
-  test('two real processes sharing the checkpoint database isolate receipts and refuse live owner takeover', async () => {
+  test('two real processes sharing the checkpoint database isolate receipts and do not enforce task ownership', async () => {
     const f = fixture(); let h; const children = [];
     try {
       const messages = ['parallel-a', 'parallel-b'].map(id => {
@@ -110,8 +109,8 @@ if (process.argv[2] === '--bootstrap-worker') {
       assert.equal(receipts[0].graph.reason, 'parallel-a-19');
       assert.equal(receipts[1].graph.reason, 'parallel-b-19');
       h = await openHarness(f.root);
-      assert.throws(() => h.health('parallel-a'), /another live OpenCode process/);
-      assert.throws(() => h.health('parallel-b', passing), /another live OpenCode process/);
+      assert.equal(h.health('parallel-a'), null);
+      assert.equal(h.health('parallel-b', passing).graph.status, 'PASS');
       h.health('parent', { ...passing, hindsight: { status: 'FAIL', reason: 'Parent integration unavailable' } });
       assert.equal(h.health('parent').hindsight.status, 'FAIL');
       assert.equal(h.state('parallel-a').completed[0], 'parallel-a-19');

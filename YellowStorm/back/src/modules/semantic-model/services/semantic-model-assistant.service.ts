@@ -1174,7 +1174,8 @@ export class SemanticModelAssistantService {
           snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
           match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
           ...(seed.via ? { via: { entityId: seed.via.entityId, concept: seed.via.conceptLabel, name: seed.via.label, links: seed.via.links, path: seed.via.path } } : {}),
-          ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
+          ...(passages.length ? { passages } : {}),
+          ...(seed.provenance.length ? { provenance: seed.provenance } : {}), sourceCount: seed.provenance.length,
         };
       }),
       coverage: result.coverage, completeness, notes, citationSources,
@@ -1226,6 +1227,7 @@ export class SemanticModelAssistantService {
       records: result.nodes.map((node) => ({
         entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields,
         ...(node.values ? { values: node.values } : {}), ...(node.truncatedFields?.length ? { truncatedFields: node.truncatedFields } : {}),
+        ...(node.provenance?.length ? { provenance: node.provenance } : {}),
         includedBecause: node.inclusionReason === 'seed' ? 'asked_for' : 'linked',
         path: node.path.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
       })),
@@ -1347,7 +1349,10 @@ export class SemanticModelAssistantService {
       paths: result.paths.map((path) => ({
         records: path.records.map((id) => {
           const record = records.get(id);
-          return { entityId: id, concept: record?.conceptLabel ?? '', name: record?.label ?? '', keyFields: record?.keyFields ?? {} };
+          return {
+            entityId: id, concept: record?.conceptLabel ?? '', name: record?.label ?? '', keyFields: record?.keyFields ?? {},
+            ...(record?.provenance?.length ? { provenance: record.provenance } : {}),
+          };
         }),
         steps: path.steps.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
       })),

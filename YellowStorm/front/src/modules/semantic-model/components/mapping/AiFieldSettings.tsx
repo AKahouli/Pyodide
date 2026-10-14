@@ -60,7 +60,7 @@ export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onC
   const summary = `${definitionSummary} · ${agentName}`;
 
   const pane = <div className='rounded-lg border border-dashed'>
-    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
+    <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-start text-[11px] text-muted-foreground hover:bg-muted/50'
       aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
       {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
       <span className='shrink-0 font-medium text-foreground'>{t('mapping.aiField.title')}</span>
@@ -87,7 +87,7 @@ export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onC
           </Select>
           {agent && <Button asChild type='button' size='sm' variant='ghost' className='h-8 px-2 text-xs'>
             <Link to={`/agents?edit=${encodeURIComponent(agent.id)}`} target='_blank' rel='noreferrer'>
-              <ExternalLink className='mr-1 h-3 w-3' />{t('mapping.aiField.openAgent')}
+              <ExternalLink className='me-1 h-3 w-3' />{t('mapping.aiField.openAgent')}
             </Link>
           </Button>}
         </div>

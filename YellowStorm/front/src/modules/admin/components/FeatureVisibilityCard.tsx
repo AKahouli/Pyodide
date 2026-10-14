@@ -101,7 +101,7 @@ export function FeatureVisibilityCard() {
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-4 rounded-xl px-6 py-5 text-left hover:bg-muted/50"
+            className="flex w-full items-center justify-between gap-4 rounded-xl px-6 py-5 text-start hover:bg-muted/50"
           >
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
@@ -157,7 +157,7 @@ export function FeatureVisibilityCard() {
                       {settings.map((setting) => {
                         const settingId = `feature-visibility-${setting.key}`;
                         return (
-                          <div key={setting.key} className="flex items-center justify-between gap-4 border-t bg-muted/20 py-3 pl-11 pr-4">
+                          <div key={setting.key} className="flex items-center justify-between gap-4 border-t bg-muted/20 py-3 ps-11 pe-4">
                             <div className="min-w-0">
                               <Label htmlFor={settingId} className="font-medium">{t(setting.labelKey)}</Label>
                               <p className="text-sm text-muted-foreground">{t(setting.descriptionKey)}</p>
@@ -183,7 +183,7 @@ export function FeatureVisibilityCard() {
 
             {!loadFailed && canManage && (
               <Button type="button" onClick={() => void save()} disabled={loading || saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {saving && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
                 {saving ? t('system.features.actions.saving') : t('system.features.actions.save')}
               </Button>
             )}

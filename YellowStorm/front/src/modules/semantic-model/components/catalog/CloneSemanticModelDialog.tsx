@@ -101,7 +101,7 @@ export function CloneSemanticModelDialog({ model, open, onOpenChange }: Readonly
                     onCheckedChange={(checked) => setInclude((current) => nextCloneInclude(current, option, checked === true))} />
                   <span className='flex-1'>
                     {t(`clone.options.${option}`)}
-                    {typeof count === 'number' && <span className='ml-1.5 rounded-full bg-muted px-1.5 text-[11px] tabular-nums text-muted-foreground'>{count}</span>}
+                    {typeof count === 'number' && <span className='ms-1.5 rounded-full bg-muted px-1.5 text-[11px] tabular-nums text-muted-foreground'>{count}</span>}
                     {option === 'sources' && include.data && <span className='block text-xs text-muted-foreground'>{t('clone.sourcesNeeded')}</span>}
                   </span>
                   <HelpTip text={t(`clone.help.${option}`)} />
@@ -114,7 +114,7 @@ export function CloneSemanticModelDialog({ model, open, onOpenChange }: Readonly
         <DialogFooter>
           <Button variant='outline' disabled={action.isLoading} onClick={() => onOpenChange(false)}>{t('action.cancel')}</Button>
           <Button disabled={!name.trim() || action.isLoading} onClick={() => void action.execute({ name: name.trim(), include })}>
-            {action.isLoading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Copy className='mr-2 h-4 w-4' />}
+            {action.isLoading ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <Copy className='me-2 h-4 w-4' />}
             {action.isLoading ? t('clone.creating') : t('clone.submit')}
           </Button>
         </DialogFooter>

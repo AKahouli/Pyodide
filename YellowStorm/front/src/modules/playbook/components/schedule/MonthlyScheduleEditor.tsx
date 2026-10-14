@@ -217,7 +217,7 @@ function MonthlySlotEditor({
         </div>
       </div>
       {preview ? (
-        <p className="text-xs text-muted-foreground pl-0.5">
+        <p className="text-xs text-muted-foreground ps-0.5">
           {t('schedule.monthlyNextExample' as ModuleTranslationKey<'playbook'>, { date: preview })}
         </p>
       ) : null}

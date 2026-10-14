@@ -24,7 +24,7 @@ export function ColorThemeCard({ value, label, selected, isActive, activeLabel, 
       aria-label={label}
       onClick={() => onSelect(value)}
       className={cn(
-        'group flex flex-col overflow-hidden rounded-2xl border text-left transition-all',
+        'group flex flex-col overflow-hidden rounded-2xl border text-start transition-all',
         'hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         selected ? 'border-primary shadow-md ring-2 ring-primary/20' : 'border-border',
       )}>

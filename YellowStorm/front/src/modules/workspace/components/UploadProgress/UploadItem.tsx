@@ -58,7 +58,7 @@ export function UploadItem({ item }: UploadItemProps) {
         {item.status === 'uploading' && (
           <div className='flex items-center gap-2 mt-1'>
             <Progress value={item.progress} className='h-1.5 flex-1' />
-            <span className='text-xs text-muted-foreground w-10 text-right'>{item.progress}%</span>
+            <span className='text-xs text-muted-foreground w-10 text-end'>{item.progress}%</span>
           </div>
         )}
 

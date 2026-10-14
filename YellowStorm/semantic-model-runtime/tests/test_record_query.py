@@ -9,8 +9,8 @@ from decimal import Decimal
 
 import pytest
 
-from app.graph_search.record_query import (MAX_BUCKETS, compile_query, groups_sql, records_sql, resolve_date,
-                                           stats_sql)
+from app.graph_search.record_query import (MAX_BUCKETS, _record, compile_query, groups_sql, records_sql,
+                                           resolve_date, stats_sql)
 from app.graph_search.retrieval import resolve_concepts
 from app.graph_search.typed_values import near_match, parse_boolean, parse_number, typed_value_sql
 
@@ -207,6 +207,25 @@ def test_visibility_is_applied_in_sql_before_counting() -> None:
     assert "$4::text[] IS NULL OR NOT EXISTS" in scoped
     # The linked record must be readable too.
     assert "jsonb_array_elements(CASE WHEN jsonb_typeof(w1_1.provenance" in plan.where
+
+
+def test_record_queries_return_existing_source_provenance():
+    plan, errors, _ = compile_({"concept": "Invoice"}, allowed=["ws1"])
+    assert not errors and plan is not None
+    row = {
+        "id": "invoice-1", "label": "INV-1", "identity_key": {"number": "INV-1"},
+        "attributes": {"amount": "12"},
+        "provenance": {"sources": [{"assetRef": {"workspaceId": "ws1", "assetId": "doc-1"},
+                                    "filename": "invoice.pdf"}]},
+    }
+
+    record = _record(row, plan, [1000])
+
+    assert record["provenance"] == [{
+        "assetId": "doc-1", "documentId": "doc-1", "workspaceId": "ws1", "filename": "invoice.pdf",
+    }]
+    assert "attributes, provenance FROM matched" in records_sql(plan)
+    assert "e.attributes, e.provenance" not in stats_sql(plan)
 
 
 def test_grouping_by_a_date_bucket_and_default_order() -> None:

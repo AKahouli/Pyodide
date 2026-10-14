@@ -215,6 +215,24 @@ async def test_find_records_searches_the_published_data_by_default(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_record_tools_preserve_provenance_from_the_backend(monkeypatch, actor):
+    provenance = [{"workspaceId": "ws-1", "documentId": "doc-1", "assetId": "doc-1",
+                   "filename": "agreement.pdf"}]
+    backend = Recorder({"seeds": [{"entityId": "e-1", "provenance": provenance}],
+                       "nodes": [{"entityId": "e-1", "provenance": provenance}],
+                       "records": [{"entityId": "e-1", "provenance": provenance}]})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        found = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "agreement"}))
+        related = result_dict(await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"]}))
+        queried = result_dict(await client.call_tool("query_records", {"model_id": "m", "concept": "Contract"}))
+
+    assert found["data"]["seeds"][0]["provenance"] == provenance
+    assert related["data"]["nodes"][0]["provenance"] == provenance
+    assert queried["data"]["records"][0]["provenance"] == provenance
+
+
+@pytest.mark.asyncio
 async def test_find_records_refuses_bad_input_without_calling_the_backend(monkeypatch, actor):
     backend = Recorder()
     monkeypatch.setattr(server, "backend", lambda: backend)
@@ -275,7 +293,10 @@ async def test_record_search_tools_tell_the_agent_how_to_read_results():
     assert "NOT documents" in find and "index_not_ready" in find and "not_represented" in find and "Never infer" in find
     assert "get_related_records" in find
     assert "passages" in find and "query_records" in find and "evidence" in find
+    assert "provenance" in find and "documentId" in find and "filename" in find
+    assert "source-document retrieval guidance" in find and "freshly retrieved source-document content" in find
     assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related
+    assert "provenance" in related and "server instructions" in related
 
 
 @pytest.mark.asyncio
@@ -426,12 +447,17 @@ async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     describe = tools["describe_model"].description
     assert "exact totals" in query and "last_N_days" in query and "<relation>.<field>" in query
     assert "invalid_query" in query and "appliedQuery" in query and "unparsable" in query and "nextOffset" in query
+    assert "provenance" in query and "source-document guidance" in query
     assert "first" in describe and "type" in describe and "inData" in describe
     assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
+    assert "list_workspace_files(source_workspace_id=workspaceId)" in server.INSTRUCTIONS
+    assert "declared by the connected tool" in server.INSTRUCTIONS and "Freshly retrieved source-document text" in server.INSTRUCTIONS
     assert "traverse_records" in server.INSTRUCTIONS and "connect_records" in server.INSTRUCTIONS
     walk = tools["traverse_records"].description
     assert "step" in walk and "hops" in walk and "startRecords" in walk and "complete" in walk
+    assert "provenance" in walk and "source-document guidance" in walk
     assert "search_cut" in tools["connect_records"].description
+    assert "provenance" in tools["connect_records"].description
     assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS
 
 

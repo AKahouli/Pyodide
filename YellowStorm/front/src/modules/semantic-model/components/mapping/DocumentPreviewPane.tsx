@@ -95,7 +95,7 @@ export function DocumentPreviewPane({ documents, shown, onShow, navigation, onPa
       <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0' disabled={index <= 0} aria-label={t('mapping.live.previous')} onClick={() => go(-1)}><ChevronLeft className='h-4 w-4' /></Button>
       {documents.length > 1 && shown ? <Select value={shown.documentId} onValueChange={onShow}>
         <SelectTrigger className={cn(INPUT_COMPACT, 'min-w-0 flex-1 text-xs')} aria-label={t('mapping.live.chooseDocument')}>
-          <FileText className='mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><span className='truncate'><SelectValue /></span>
+          <FileText className='me-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><span className='truncate'><SelectValue /></span>
         </SelectTrigger>
         <SelectContent>{documents.map((asset) => <SelectItem key={asset.documentId} value={asset.documentId} className='text-xs'>{asset.name}</SelectItem>)}</SelectContent>
       </Select> : <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium'><FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' /><span className='truncate'>{shown?.name}</span></span>}
@@ -157,7 +157,7 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
       : <Icon className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', found ? 'text-emerald-600 dark:text-emerald-400' : several ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}
         aria-label={found ? t('mapping.reading.reason.found') : t('mapping.live.notFound')} />}
     <div className='min-w-0 flex-1'>
-      {found ? <button type='button' disabled={!canShow} className='block w-full rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:underline'
+      {found ? <button type='button' disabled={!canShow} className='block w-full rounded text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:underline'
         aria-label={t('mapping.live.showValue', { value: value.slice(0, 80) })} onClick={() => onShow(current)}>
         <span className='line-clamp-2 break-words'>{value}</span>
       </button>
@@ -169,7 +169,7 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
     {canShow && <Button type='button' size='icon' variant='ghost' className='h-5 w-5 shrink-0' aria-label={t('mapping.live.show')} title={t('mapping.live.showWhere')}
       onClick={() => onShow(current)}><Eye className='h-3.5 w-3.5' /></Button>}
     {!found && labels.length > 0 && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onFindLabel(labels[0])}>
-      <Search className='mr-1 h-3 w-3' />{findLabelText ?? t('mapping.live.findLabel')}
+      <Search className='me-1 h-3 w-3' />{findLabelText ?? t('mapping.live.findLabel')}
     </Button>}
   </div>;
 }

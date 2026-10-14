@@ -339,7 +339,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                   <p className="text-sm text-muted-foreground">{t('starter.hint')}</p>
                   <div className="grid gap-2 sm:grid-cols-3">{STARTER_KEYS.map((key) => (
                     <button type="button" key={key} aria-pressed={starterKey === key}
-                      className={cn('rounded-lg border p-3 text-left text-sm', starterKey === key && 'border-primary bg-primary/5')}
+                      className={cn('rounded-lg border p-3 text-start text-sm', starterKey === key && 'border-primary bg-primary/5')}
                       onClick={() => { setStarterKey(key); setName(t(`starter.${key}.title`)); }}>
                       <span className="block font-medium">{t(`starter.${key}.title`)}</span>
                       <span className="mt-1 block text-xs text-muted-foreground">{t(`starter.${key}.description`)}</span>
@@ -393,7 +393,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                   </div>
 
                   <div className="w-full rounded-[32px] border border-border bg-card/85 p-3 shadow-[0_34px_80px_-42px_rgba(15,23,42,0.35)] backdrop-blur-md">
-                    <div className="relative flex min-h-[147px] flex-col rounded-[28px] bg-background/90 px-5 py-4 text-left sm:px-8 sm:py-5">
+                    <div className="relative flex min-h-[147px] flex-col rounded-[28px] bg-background/90 px-5 py-4 text-start sm:px-8 sm:py-5">
                       <div className="mb-3 flex items-center justify-between gap-4">
                         <div>
                           <p className="text-sm font-medium text-foreground">{t('create.promptLabel')}</p>
@@ -493,7 +493,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                     ))}
                   </div>
 
-                  <div className="grid w-full gap-4 text-left lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+                  <div className="grid w-full gap-4 text-start lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
                     <div className="rounded-[24px] border border-border bg-card/70 p-4 backdrop-blur-sm">
                       <div className="mb-3 space-y-1">
                         <Label htmlFor="auto-name" className="text-sm">{t('create.autoNameLabel')}</Label>

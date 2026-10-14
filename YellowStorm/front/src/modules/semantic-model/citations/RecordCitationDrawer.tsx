@@ -79,14 +79,14 @@ function CitedRecord({ target, onClose }: { target: RecordCitationTarget; onClos
 
   return (
     <>
-      <SheetHeader className='border-b px-5 py-4 text-left'>
+      <SheetHeader className='border-b px-5 py-4 text-start'>
         <p className='text-xs font-medium uppercase tracking-wide text-muted-foreground'>{target.concept || t('citedRecord.record')}</p>
-        <SheetTitle className='break-words pr-6 text-base'>{record?.name || target.name}</SheetTitle>
+        <SheetTitle className='break-words pe-6 text-base'>{record?.name || target.name}</SheetTitle>
         <SheetDescription className='text-xs'>
           {t('citedRecord.fromModel', { model: view?.model.name || target.modelName })}{keyText ? ` · ${keyText}` : ''}
         </SheetDescription>
         <Button variant='outline' size='sm' className='mt-2 w-fit' onClick={openGraph}>
-          <Network className='mr-1.5 h-4 w-4' aria-hidden='true' />{t('citedRecord.openInGraph')}
+          <Network className='me-1.5 h-4 w-4' aria-hidden='true' />{t('citedRecord.openInGraph')}
         </Button>
       </SheetHeader>
 
@@ -123,7 +123,7 @@ function CitedRecord({ target, onClose }: { target: RecordCitationTarget; onClos
             <ul className='space-y-1'>
               {record.sources.map((source) => (
                 <li key={source.documentId}>
-                  <button type='button' className='flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted'
+                  <button type='button' className='flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm hover:bg-muted'
                     onClick={() => openDocument(source, source.rows?.length ? { kind: 'source', row: source.rows[0] } : undefined)}>
                     <FileText className='h-4 w-4 shrink-0 text-muted-foreground' aria-hidden='true' />
                     <span className='min-w-0 flex-1 truncate'>{source.name}</span>
@@ -176,7 +176,7 @@ function FieldRow({ field, documents, onOpen }: {
           </button>
         )}
         {document && (
-          <button type='button' className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary hover:underline'
+          <button type='button' className='mt-1 flex max-w-full items-center gap-1 truncate text-start text-[11px] text-primary hover:underline'
             onClick={() => onOpen(document, origin, text)}>
             <ExternalLink className='h-3 w-3 shrink-0' aria-hidden='true' />
             <span className='truncate'>{document.name}{where ? ` · ${where}` : ''}</span>

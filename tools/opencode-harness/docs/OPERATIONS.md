@@ -15,7 +15,7 @@ See [developer user guide](DEVELOPER-SETUP.md) for installation and daily use, a
 | Memory client enrollment/config | `%USERPROFILE%\.hindsight/coding-agent.json` |
 | Experience storage / provider profile | Developer's WSL Hindsight daemon/profile; not the Git repo |
 | Local transcript diagnostics | `%USERPROFILE%\.hindsight/coding-agents-logs/diag.jsonl` |
-| Task state, receipts, ownership, local baselines | `<worktree>/.opencode/sdlc/checkpoints.sqlite` and SQLite WAL/SHM |
+| Task state and integration health; legacy baselines | `<worktree>/.opencode/sdlc/checkpoints.sqlite` and SQLite WAL/SHM |
 | Structural graph | `<worktree>/.code-review-graph/graph.db` |
 | Shared graph watcher enrollment | `%USERPROFILE%\.code-review-graph/watch.toml` |
 | Sanitized browser evidence | `<repo>/qa-artifacts/<task-id>/<run-id>/` |
@@ -31,7 +31,7 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | `sdlc_health` missing | SDK installed, `plugins/sdlc.js` discovered, correct config directory; fully restart the host. Do not list the SDLC plugin twice. |
 | Old loaded version / same failures in new chats | Stop the entire host, reinstall from the intended source commit, restart. New chat alone cannot reload cached plugin code. |
 | Checkpoints FAIL / missing policy | Launch in the intended Git checkout; verify `tools/opencode-harness/policy.json`, committed HEAD, local writable `.opencode/sdlc/` and routed documents. |
-| Checkpoint initialization lock budget exceeded | Identify competing writers, live owner or a nonlocal/symlinked store; recover the environment, then refresh health. Do not delete an active database to clear ownership. |
+| Checkpoint initialization lock budget exceeded | Identify competing writers, live owner or a nonlocal/symlinked store; recover the environment, then refresh health. Continue normal coding while recovering checkpoint memory. |
 | Graph FAIL / MCP connection | Continue coding using focused source/search/tests. Check the current host's `code-review-graph` MCP, Windows PATH, pinned core package and index in parallel; rebuild only for a missing/empty/corrupt index. |
 | Graph nonempty but stale | Verify watcher registration/running state, branch/source changes; run scoped incremental `update --repo`. Startup availability is not freshness. |
 | Graph failure mentioning PyTorch/DLL | Use core `code-review-graph==2.3.9`, without `[embeddings]`; vector embeddings are optional. |
@@ -46,13 +46,13 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Specialist model unavailable | Change/remove its explicit `model:` override, select an accessible primary model, restart the host. |
 | `Task(background: true)` unsupported/foreground only | Enable `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1` in the launching process and restart the host; verify the tested OpenCode version. |
 | Maintainer Task rejected | Use `background:true` for initial and resumed `task_id` calls. If unsupported, keep documentation pending and continue coding; no foreground fallback. |
-| Shell command denied | Inspect the current agent's native permissions. Restricted specialists return runtime/log needs to the primary; the plugin no longer filters shell commands. Authored source changes still use guarded native edit tools. |
+| Shell command denied | Inspect the current agent's native permissions. Restricted specialists return runtime/log needs to the primary; the plugin no longer filters shell commands. Authored source changes still use native edit tools. |
 | Resume has several candidates | Select the real task ID; reconcile source/check fingerprints before continuing. An active old process must park/interrupt its task first. |
 
 After repairing a real failure, `sdlc_health(refresh: true)` reruns native checks.
 Repeated health reads do not repair services. Never manufacture PASS or borrow
 another session's receipt. Graph/memory failures remain visible and advisory;
-actual checkpoint persistence and parallel ownership protection remain enforced.
+checkpoint failures are advisory and parallel editing uses normal coordination.
 
 ## Updates and rollback
 

@@ -113,7 +113,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
             event.stopPropagation();
             openPlaybook();
           }}>
-          <Eye className='mr-2 h-4 w-4' />
+          <Eye className='me-2 h-4 w-4' />
           {t('card.view')}
         </Button>
         <DropdownMenu>
@@ -129,29 +129,29 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end' onClick={(event) => event.stopPropagation()}>
             <DropdownMenuItem onSelect={() => openPlaybook('?triggers=1')}>
-              <CalendarClock className='mr-2 h-4 w-4' />
+              <CalendarClock className='me-2 h-4 w-4' />
               {t('card.openTriggers')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setIntegrationLinkOpen(true)}>
-              <Link2 className='mr-2 h-4 w-4' />
+              <Link2 className='me-2 h-4 w-4' />
               {t('card.integration.open')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onClone(playbook.id)}>
-              <Copy className='mr-2 h-4 w-4' />
+              <Copy className='me-2 h-4 w-4' />
               {t('card.clone')}
             </DropdownMenuItem>
             {onEditDetails ? (
               <DropdownMenuItem onSelect={() => onEditDetails(playbook.id)}>
-                <Pencil className='mr-2 h-4 w-4' />
+                <Pencil className='me-2 h-4 w-4' />
                 {t('card.edit')}
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onSelect={() => onToggleFavorite(playbook.id)}>
-              <Star className={`mr-2 h-4 w-4 ${playbook.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+              <Star className={`me-2 h-4 w-4 ${playbook.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
               {t(playbook.isFavorite ? 'card.unfavorite' : 'card.favorite')}
             </DropdownMenuItem>
             <DropdownMenuItem className='text-destructive focus:text-destructive' onSelect={() => setDeleteConfirmOpen(true)}>
-              <Trash2 className='mr-2 h-4 w-4' />
+              <Trash2 className='me-2 h-4 w-4' />
               {t('card.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -173,9 +173,9 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
                 {copyingIntegrationLink ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : integrationLinkCopied ? (
-                  <Check className='h-4 w-4 mr-1' />
+                  <Check className='h-4 w-4 me-1' />
                 ) : (
-                  <Copy className='h-4 w-4 mr-1' />
+                  <Copy className='h-4 w-4 me-1' />
                 )}
                 {t('card.integration.copy')}
               </Button>

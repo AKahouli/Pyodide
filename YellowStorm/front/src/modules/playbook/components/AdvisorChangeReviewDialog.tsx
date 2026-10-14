@@ -154,7 +154,7 @@ export function AdvisorChangeReviewDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+        <div className="flex-1 overflow-y-auto space-y-4 pe-1">
           {items.length === 0 ? (
             <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
               {t('detail.remediation.noItems')}
@@ -200,12 +200,12 @@ export function AdvisorChangeReviewDialog({
                       </Tooltip>
                       <span className="text-xs text-muted-foreground">{t('detail.remediation.suggestionCount', { count: groupItems.length })}</span>
                       {recommendedCount > 0 && (
-                        <Badge variant="outline" className="ml-auto text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
+                        <Badge variant="outline" className="ms-auto text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
                           {t('detail.remediation.recommendedCount', { count: recommendedCount })}
                         </Badge>
                       )}
                     </CollapsibleTrigger>
-                    <CollapsibleContent className="mt-2 space-y-2 pl-2">
+                    <CollapsibleContent className="mt-2 space-y-2 ps-2">
                       {groupItems.map((item) => {
                         const selected = selections.has(item.id);
                         const isEditing = editingId === item.id;
@@ -275,16 +275,16 @@ export function AdvisorChangeReviewDialog({
                                       {isEditing ? (
                                         <>
                                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={saveEdit}>
-                                            <Check className="mr-1 h-3 w-3" />
+                                            <Check className="me-1 h-3 w-3" />
                                             {t('common.save')}
                                           </Button>
                                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={cancelEdit}>
-                                            <X className="mr-1 h-3 w-3" />
+                                            <X className="me-1 h-3 w-3" />
                                             {t('common.cancel')}
                                           </Button>
                                         </>
                                       ) : (
-                                        <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => startEdit(item)}>
+                                        <Button size="sm" variant="ghost" className="ms-auto h-6 px-2 text-xs" onClick={() => startEdit(item)}>
                                           <Pencil className="h-3 w-3" />
                                         </Button>
                                       )}
@@ -309,7 +309,7 @@ export function AdvisorChangeReviewDialog({
             {t('common.cancel')}
           </Button>
           <Button onClick={handleApply} disabled={applying || loading}>
-            {(applying || loading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {(applying || loading) && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
             {t('detail.remediation.applySelected', { count: selections.size })}
           </Button>
         </DialogFooter>

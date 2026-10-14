@@ -31,7 +31,7 @@ export function SearchIndexPanel({ modelId, building, onClose, onStop, stopping 
     </header>
     <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-3 pb-28'>
       {building && onStop && <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
-        {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+        {stopping ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='me-1.5 h-4 w-4' />}
         {stopping ? t('runStop.stopping') : t('runStop.stop')}
       </Button>}
       <SearchIndexProgress modelId={modelId} />

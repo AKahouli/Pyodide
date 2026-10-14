@@ -69,7 +69,7 @@ function TreeNode({
           type='button'
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs transition-colors',
+            'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-start text-xs transition-colors',
             'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
           )}
           style={{ paddingLeft: 8 + depth * 12 }}
@@ -102,7 +102,7 @@ function TreeNode({
       onClick={() => path && onSelect(path)}
       title={node.name}
       className={cn(
-        'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs transition-colors',
+        'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-start text-xs transition-colors',
         selected
           ? 'bg-primary/10 text-foreground ring-1 ring-inset ring-primary/20'
           : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
@@ -212,7 +212,7 @@ export function AppSourceFileTree({ tree, selectedPath, onSelect, className }: A
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('nodepod.searchFiles')}
-            className='h-8 bg-background/90 pl-8 pr-8 text-xs shadow-none'
+            className='h-8 bg-background/90 ps-8 pe-8 text-xs shadow-none'
             aria-label={t('nodepod.searchFiles')}
           />
           {search && (

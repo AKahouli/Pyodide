@@ -441,6 +441,10 @@ export type RuntimeSearchIndexState = 'ready' | 'queued' | 'indexing' | 'failed'
 export interface RuntimeRecordProvenance {
   assetId: string;
   workspaceId?: string;
+  documentId?: string;
+  filename?: string;
+  assetVersionId?: string;
+  mappingVersion?: string;
   rowNumbers?: number[];
 }
 
@@ -694,6 +698,7 @@ export interface RuntimeQueriedRecord {
   name: string;
   keyFields: Record<string, unknown>;
   values: Record<string, unknown>;
+  provenance?: RuntimeRecordProvenance[];
   truncated?: boolean;
   truncatedFields?: string[];
 }
@@ -798,7 +803,10 @@ export interface RuntimeConnectResult {
     records: string[];
     steps: Array<{ fromEntityId: string; relationId: string; relationKey: string; direction: 'outgoing' | 'incoming'; toEntityId: string }>;
   }>;
-  records: Array<{ entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown> }>;
+  records: Array<{
+    entityId: string; conceptId: string; conceptLabel: string; label: string; keyFields: Record<string, unknown>;
+    provenance?: RuntimeRecordProvenance[];
+  }>;
   unknownRecords?: string[];
   morePaths?: boolean;
   /** The search stopped at a limit: a chain may exist that it did not reach. */
@@ -821,7 +829,7 @@ export interface RuntimeCitedRecord {
     conceptLabel: string;
     label: string;
     keyFields: Record<string, unknown>;
-    provenance: Array<{ assetId: string; workspaceId?: string; rowNumbers?: number[] }>;
+    provenance: RuntimeRecordProvenance[];
     values: Record<string, unknown>;
     truncatedFields: string[];
     origins: Record<string, RuntimeValueOrigin>;

@@ -287,14 +287,13 @@ continue.
 ```
 
 Expected runtime for this guide: `2026-10-13-background-handoff`.
-The SDLC tools are `sdlc_checkpoint`, `sdlc_prepare`, `sdlc_resume`,
-`sdlc_diff` and `sdlc_health`.
+The SDLC tools are `sdlc_checkpoint`, `sdlc_resume` and `sdlc_health`.
 
 | Startup result | Expected action |
 | --- | --- |
 | All PASS | Start work; no repeated diagnostics |
 | Graph/Hindsight FAIL or pending | Report the problem; continue with source/tests and Git docs/checkpoints |
-| Checkpoint storage/ownership FAIL | Investigate and repair before native edits |
+| Checkpoint storage FAIL | Continue coding; repair checkpoint memory separately |
 | Missing tools or old runtime | Repair installation and fully restart the host |
 
 After recovery, request `sdlc_health(refresh: true)`. Health proves availability,
@@ -402,7 +401,7 @@ The agent reconciles source/environment and child state before continuing.
 Passed checks can be reused only for unchanged inputs. A stopped host may interrupt
 background work; saved IDs do not guarantee it completed. Never guess or relaunch
 before establishing the previous task's state. An active owner must first park or
-interrupt its task; never delete its database to bypass ownership.
+interrupt its task; preserve its database and coordinate changes through normal handoffs.
 
 ## Parallel work
 
@@ -448,8 +447,8 @@ them through a new ADR; resolve numbering collisions before acceptance.
 [Operations and recovery](OPERATIONS.md) covers missing tools, stale runtime,
 graph/memory failures, unavailable models, browser isolation, ownership and rollback.
 Graph/memory failures never justify refusing authorized runtime scripts or tests.
-Shell commands follow the current agent's native permissions; guarded native edits
-still require preparation and ownership.
+Shell commands follow the current agent's native permissions; native edits
+require no harness preparation or file reservation.
 
 To upgrade: save active checkpoints, finish/park child tasks, fetch the reviewed
 source, back up personal config, reinstall, reapply personal overrides and fully

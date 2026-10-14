@@ -81,7 +81,7 @@ export function GovernanceReadinessPanel({ className, overview, onNavigateTab }:
         <div className='min-w-0'>
           <h2 className='text-sm font-medium'>{t(`scopeShell.readiness.status.${visibleStatus}`)}</h2>
           {nextActionLabel && nextActionTab ? (
-            <button type='button' onClick={() => onNavigateTab(nextActionTab)} className='mt-0.5 min-h-11 text-left text-xs font-medium text-foreground underline-offset-2 hover:underline'>{t('scopeShell.readiness.nextAction', { action: nextActionLabel })}</button>
+            <button type='button' onClick={() => onNavigateTab(nextActionTab)} className='mt-0.5 min-h-11 text-start text-xs font-medium text-foreground underline-offset-2 hover:underline'>{t('scopeShell.readiness.nextAction', { action: nextActionLabel })}</button>
           ) : (
             <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.readiness.readyAction')}</p>
           )}
@@ -118,7 +118,7 @@ function ReadinessLine({ icon, label, onClick }: Readonly<{ icon: 'check' | 'war
   const Icon = icon === 'check' ? Check : AlertTriangle;
   if (onClick) {
     return (
-      <button type='button' onClick={onClick} className='flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-muted-foreground transition hover:bg-muted/60 hover:text-foreground'>
+      <button type='button' onClick={onClick} className='flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm text-muted-foreground transition hover:bg-muted/60 hover:text-foreground'>
         <Icon className='h-4 w-4 flex-none' /> <span>{label}</span>
       </button>
     );
@@ -129,7 +129,7 @@ function ReadinessLine({ icon, label, onClick }: Readonly<{ icon: 'check' | 'war
 function CycleLine({ state, label, onClick }: Readonly<{ state: 'done' | 'now' | 'todo'; label: string; onClick: () => void }>): JSX.Element {
   const Icon = state === 'done' ? Check : state === 'now' ? AlertTriangle : Circle;
   return (
-    <button type='button' onClick={onClick} className={cn('flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-muted/60', state === 'now' && 'bg-accent text-accent-foreground hover:bg-accent/80', state === 'done' && 'text-muted-foreground', state === 'todo' && 'text-muted-foreground')}>
+    <button type='button' onClick={onClick} className={cn('flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm transition hover:bg-muted/60', state === 'now' && 'bg-accent text-accent-foreground hover:bg-accent/80', state === 'done' && 'text-muted-foreground', state === 'todo' && 'text-muted-foreground')}>
       <span className={cn('grid h-5 w-5 flex-none place-items-center rounded-full', state === 'done' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', state === 'now' && 'bg-background text-foreground', state === 'todo' && 'bg-muted text-muted-foreground')}>
         <Icon className='h-3 w-3' />
       </span>

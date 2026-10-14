@@ -30,7 +30,7 @@ export function SelectedSkillsPills({ skills, selectedIds, onRemove }: SelectedS
   return (
     <div className='flex flex-wrap items-center gap-1.5 px-1 pt-2'>
       {visible.map((skill) => (
-        <span key={skill.id} className='inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 pl-1.5 pr-1 text-xs'>
+        <span key={skill.id} className='inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 ps-1.5 pe-1 text-xs'>
           <SkillLogo skill={skill} size={14} />
           <span className='max-w-[140px] truncate'>{skill.name}</span>
           <button

@@ -125,7 +125,7 @@ export function CategoryFormDialog({
               {t('card.cancel')}
             </Button>
             <Button type='submit' disabled={busy || !name.trim()}>
-              {busy ? <Loader2 className='mr-2 size-4 animate-spin' aria-hidden /> : null}
+              {busy ? <Loader2 className='me-2 size-4 animate-spin' aria-hidden /> : null}
               {isEdit ? t('categories.save') : t('categories.create')}
             </Button>
           </DialogFooter>

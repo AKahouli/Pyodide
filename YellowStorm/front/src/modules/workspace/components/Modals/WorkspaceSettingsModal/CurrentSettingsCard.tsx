@@ -39,7 +39,7 @@ export function CurrentSettingsCard({ currentSettings, onClear }: CurrentSetting
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant='ghost' size='sm' className='text-destructive hover:text-destructive h-8 px-2 sm:px-3 self-end sm:self-auto'>
-              <Trash2 className='h-4 w-4 sm:mr-1' />
+              <Trash2 className='h-4 w-4 sm:me-1' />
               <span className='hidden sm:inline'>{t('settings.current.clear')}</span>
             </Button>
           </AlertDialogTrigger>

@@ -111,7 +111,7 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
       <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground' role='status'>
         {save.isPending ? <><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('relationMatching.saving')}</> : ruleId ? <><CheckCircle2 className='h-3.5 w-3.5 text-emerald-600' />{t('relationMatching.autoSaved')}</> : null}
       </span>
-      <Button size='sm' className='h-9 flex-1' variant='outline' disabled={!ruleId || preview.isPending || save.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
+      <Button size='sm' className='h-9 flex-1' variant='outline' disabled={!ruleId || preview.isPending || save.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='me-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
     </div>
     {preview.data && <div className='space-y-3'>
       <div className='grid grid-cols-3 gap-2 text-center text-xs'>

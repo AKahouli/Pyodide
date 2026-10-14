@@ -177,7 +177,7 @@ function TeamOrgChartInner() {
             </span>
           )}
           <Button size='sm' variant='outline' onClick={autoLayout} disabled={nodes.length === 0}>
-            <LayoutGrid className='mr-1 h-4 w-4' />
+            <LayoutGrid className='me-1 h-4 w-4' />
             {t('orgChart.autoLayout')}
           </Button>
           {canModify && (
@@ -187,14 +187,14 @@ function TeamOrgChartInner() {
                 onAdd={addMember}
               />
               <Button size='sm' variant='outline' onClick={revert} disabled={!isDirty || isSaving}>
-                <Undo2 className='mr-1 h-4 w-4' />
+                <Undo2 className='me-1 h-4 w-4' />
                 {t('orgChart.revert')}
               </Button>
               <Button size='sm' onClick={save} disabled={!isDirty || isSaving}>
                 {isSaving ? (
-                  <Loader2 className='mr-1 h-4 w-4 animate-spin' />
+                  <Loader2 className='me-1 h-4 w-4 animate-spin' />
                 ) : (
-                  <Save className='mr-1 h-4 w-4' />
+                  <Save className='me-1 h-4 w-4' />
                 )}
                 {isSaving ? t('orgChart.saving') : t('orgChart.save')}
               </Button>

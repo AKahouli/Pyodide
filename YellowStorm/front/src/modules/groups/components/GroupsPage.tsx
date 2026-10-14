@@ -45,7 +45,7 @@ export function GroupsPage() {
           </h1>
           <p className='text-sm text-muted-foreground'>{t('page.subtitle')}</p>
         </div>
-        <Button onClick={openCreate}><Plus className='mr-2 size-4' /> {t('page.newGroup')}</Button>
+        <Button onClick={openCreate}><Plus className='me-2 size-4' /> {t('page.newGroup')}</Button>
       </div>
 
       <div className='mb-6'>
@@ -59,7 +59,7 @@ export function GroupsPage() {
           <Users className='mx-auto mb-3 size-8 text-muted-foreground' />
           <p className='text-sm text-muted-foreground'>{t('page.emptyState')}</p>
           <Button variant='outline' className='mt-4' onClick={openCreate}>
-            <Plus className='mr-2 size-4' /> {t('page.createFirst')}
+            <Plus className='me-2 size-4' /> {t('page.createFirst')}
           </Button>
         </div>
       ) : (
@@ -67,7 +67,7 @@ export function GroupsPage() {
           {groups.map((g) => (
             <div key={g.id} className='flex flex-col rounded-lg border bg-card p-4 shadow-sm'>
               <div className='mb-2 flex items-start justify-between gap-2'>
-                <button type='button' onClick={() => openEdit(g)} className='truncate text-left font-medium hover:underline'>
+                <button type='button' onClick={() => openEdit(g)} className='truncate text-start font-medium hover:underline'>
                   {g.name}
                 </button>
                 <Badge variant='secondary' className='shrink-0'>

@@ -37,7 +37,7 @@ export function ExecutiveBriefCard({ model, onTaskClick }: { model: WorkyExecuti
           <div className='mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
             <Target className='size-4 text-primary' />
             {t('executive.brief.goal')}
-            <button type='button' className='-my-3 ml-1 flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary @4xl:hidden' onClick={() => setGoalExpanded((value) => !value)} aria-expanded={goalExpanded} aria-controls={goalId} aria-label={t(goalExpanded ? 'executive.brief.collapseGoal' : 'executive.brief.expandGoal')}>
+            <button type='button' className='-my-3 ms-1 flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary @4xl:hidden' onClick={() => setGoalExpanded((value) => !value)} aria-expanded={goalExpanded} aria-controls={goalId} aria-label={t(goalExpanded ? 'executive.brief.collapseGoal' : 'executive.brief.expandGoal')}>
               <ChevronDown className={cn('size-4 transition-transform', goalExpanded && 'rotate-180')} />
             </button>
           </div>

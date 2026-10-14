@@ -295,7 +295,7 @@ function AgentComposerInner({
                             <ModelSelectorLogo provider={m.chefSlug} />
                             <ModelSelectorName>{m.name}</ModelSelectorName>
                             {activeModel?.id === m.id && (
-                              <CheckIcon className='ml-auto size-4 text-muted-foreground' />
+                              <CheckIcon className='ms-auto size-4 text-muted-foreground' />
                             )}
                           </ModelSelectorItem>
                         ))}

@@ -155,7 +155,7 @@ export function CreateEditToolDialog({
             onSubmit={handleSubmit(onSave, scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
-            <div className="overflow-y-auto flex-1 min-h-0 pr-2">
+            <div className="overflow-y-auto flex-1 min-h-0 pe-2">
               <div className="grid gap-4 py-4">
                 {/* Name */}
                 <div className="space-y-2">
@@ -345,7 +345,7 @@ export function CreateEditToolDialog({
               <Button type="submit" disabled={saving}>
                 {saving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
                     {t("defaultTools.form.actions.saving")}
                   </>
                 ) : tool ? (

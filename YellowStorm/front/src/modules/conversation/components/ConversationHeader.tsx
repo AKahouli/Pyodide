@@ -217,20 +217,20 @@ export function ConversationHeader() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
                       {conversation.createdBy === user?.id && <><DropdownMenuItem onClick={handleShare}>
-                        <Share2 className='h-3.5 w-3.5 mr-2' />
+                        <Share2 className='h-3.5 w-3.5 me-2' />
                         {t('header.tooltips.share')}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator /></>}
                       <DropdownMenuItem onClick={() => void handleExportDocx()}>
-                        <FileText className='h-3.5 w-3.5 mr-2' />
+                        <FileText className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportDocx')}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => void handleExportPdf()}>
-                        <FileDown className='h-3.5 w-3.5 mr-2' />
+                        <FileDown className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportPdf')}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => void handleExportHtml()}>
-                        <Globe className='h-3.5 w-3.5 mr-2' />
+                        <Globe className='h-3.5 w-3.5 me-2' />
                         {t('messageActions.exportHtml')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>

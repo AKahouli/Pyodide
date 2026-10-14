@@ -202,7 +202,7 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
                     key={table}
                     type='button'
                     className={cn(
-                      'mb-1 w-full truncate rounded px-2 py-1 text-left text-xs',
+                      'mb-1 w-full truncate rounded px-2 py-1 text-start text-xs',
                       selectedTable === table ? 'bg-muted font-medium' : 'hover:bg-muted/60',
                     )}
                     onClick={() => setSelectedTable(table)}

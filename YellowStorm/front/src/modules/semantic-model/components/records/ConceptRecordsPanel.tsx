@@ -222,29 +222,29 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
         {!mappings.length && !typedCount && !madeFrom.length && <span className='text-[11px] text-muted-foreground'>{t('records.table.noSource')}</span>}
       </div>
       {filtering && <Button variant='ghost' size='sm' className='h-7 px-2 text-xs' onClick={() => setFilters({})}>
-        <FilterX className='mr-1 h-3.5 w-3.5' />{t('records.table.clearFilters')}
+        <FilterX className='me-1 h-3.5 w-3.5' />{t('records.table.clearFilters')}
       </Button>}
       <div className='relative w-52 max-w-full'>
         <Search className='pointer-events-none absolute left-2 top-1.5 h-3.5 w-3.5 text-muted-foreground' />
         <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('records.table.search')} aria-label={t('records.table.search')}
-          className='h-7 pl-7 text-xs' />
+          className='h-7 ps-7 text-xs' />
         {records.isFetching && <Loader2 className='absolute right-2 top-1.5 h-3.5 w-3.5 animate-spin text-muted-foreground' />}
       </div>
       {onRefresh && <Button variant='outline' size='sm' className='h-7 px-2 text-xs' onClick={onRefresh} disabled={refreshing || (!mappings.length && !typedCount && !madeFrom.length)}
         title={t('records.table.refreshHint')}>
-        <RefreshCw className={cn('mr-1 h-3.5 w-3.5', refreshing && 'animate-spin')} />
+        <RefreshCw className={cn('me-1 h-3.5 w-3.5', refreshing && 'animate-spin')} />
         {refreshing ? t('records.table.refreshing') : t('records.table.refresh')}
       </Button>}
       <Button variant='ghost' size='icon' className='h-7 w-7' onClick={onClose} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>
     </header>
 
-    <div className='min-h-0 flex-1 overflow-auto pb-16 pr-16'>
+    <div className='min-h-0 flex-1 overflow-auto pb-16 pe-16'>
       {records.isError ? <p role='alert' className='p-6 text-center text-xs text-destructive'>{t('records.table.error', { message: parseApiError(records.error).message })}</p>
         : records.isLoading ? <div className='flex justify-center p-8'><Loader2 className='h-5 w-5 animate-spin text-primary' /></div>
         : !data?.dataRevisionId ? <p className='p-6 text-center text-xs text-muted-foreground'>{t('records.table.noData')}</p>
         : <table className='table-fixed border-separate border-spacing-0 text-xs' style={{ width: tableWidth }}>
           <colgroup>{headers.map((header) => <col key={header.key} style={{ width: widthOf(header.key) }} />)}</colgroup>
-          <thead className='sticky top-0 z-[1] bg-background text-left text-[11px] text-muted-foreground'>
+          <thead className='sticky top-0 z-[1] bg-background text-start text-[11px] text-muted-foreground'>
             <tr>
               {headers.map((header) => <th key={header.key} className='relative border-b px-2 py-1 font-medium'>
                 <span className='block truncate' title={header.label}>{header.label}</span>
@@ -285,9 +285,9 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
                   return <td key={column.key} title={own ? [tip, originText(origin, t, concepts)].filter(Boolean).join('\n') : key ? t('records.table.keyValue') : t('records.table.missing')}
                     className={cn('truncate border-b px-2 py-1', origin?.correction && 'text-primary', key && 'font-mono text-[11px] text-amber-800 dark:text-amber-300')}>
                     {long
-                      ? <button type='button' className='block w-full truncate text-left hover:underline'
+                      ? <button type='button' className='block w-full truncate text-start hover:underline'
                         onClick={() => setReading({ record: record.label, field: column.label || column.key, text: own })}>
-                        <FileText className='mr-1 inline h-3 w-3 align-[-2px] text-muted-foreground' />{own.slice(0, LONG_VALUE)}
+                        <FileText className='me-1 inline h-3 w-3 align-[-2px] text-muted-foreground' />{own.slice(0, LONG_VALUE)}
                       </button>
                       : value || <span className='text-muted-foreground/60'>—</span>}
                   </td>;
@@ -299,7 +299,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
         </table>}
     </div>
 
-    {total > PAGE_SIZE && <footer className='flex items-center justify-end gap-2 border-t py-1 pl-4 pr-20 text-[11px] text-muted-foreground'>
+    {total > PAGE_SIZE && <footer className='flex items-center justify-end gap-2 border-t py-1 ps-4 pe-20 text-[11px] text-muted-foreground'>
       <span className='tabular-nums'>{t('records.table.range', { from: from.toLocaleString(), to: to.toLocaleString(), total: total.toLocaleString() })}</span>
       <Button variant='ghost' size='icon' className='h-6 w-6' disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))} aria-label={t('records.table.previous')}><ChevronLeft className='h-4 w-4' /></Button>
       <Button variant='ghost' size='icon' className='h-6 w-6' disabled={page + 1 >= pages} onClick={() => setPage((current) => current + 1)} aria-label={t('records.table.next')}><ChevronRight className='h-4 w-4' /></Button>

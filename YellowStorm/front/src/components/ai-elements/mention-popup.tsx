@@ -194,7 +194,7 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
                   >
                     <span className='truncate'>{team.name}</span>
                     {typeof team.agentCount === 'number' && (
-                      <Badge variant='secondary' className='text-[10px] px-1 py-0 ml-auto shrink-0'>
+                      <Badge variant='secondary' className='text-[10px] px-1 py-0 ms-auto shrink-0'>
                         {team.agentCount}
                       </Badge>
                     )}
@@ -246,7 +246,7 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
                     className={cn('flex items-center gap-2 cursor-pointer data-[selected=true]:bg-transparent data-[selected=true]:text-inherit', isHighlighted && '!bg-accent !text-accent-foreground')}
                   >
                     <span className='truncate'>{agent.name}</span>
-                    <Badge variant='secondary' className='text-[10px] px-1 py-0 ml-auto shrink-0'>
+                    <Badge variant='secondary' className='text-[10px] px-1 py-0 ms-auto shrink-0'>
                       {agent.agentType?.name || ''}
                     </Badge>
                   </CommandItem>
@@ -279,7 +279,7 @@ export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, 
                       onSelect={() => onSelect(agent)}
                       className={cn('flex items-center gap-2 cursor-pointer data-[selected=true]:bg-transparent data-[selected=true]:text-inherit', isHighlighted && '!bg-accent !text-accent-foreground')}>
                       <span className='truncate'>{agent.name}</span>
-                      <Badge variant='secondary' className='text-[10px] px-1 py-0 ml-auto shrink-0'>
+                      <Badge variant='secondary' className='text-[10px] px-1 py-0 ms-auto shrink-0'>
                         {agent.agentType?.name || ''}
                       </Badge>
                     </CommandItem>

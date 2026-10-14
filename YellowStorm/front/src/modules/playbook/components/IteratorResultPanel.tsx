@@ -66,7 +66,7 @@ export function IteratorResultPanel({ step }: Props) {
             className="rounded-lg border bg-background"
           >
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="flex h-auto w-full items-start justify-between rounded-lg px-4 py-3 text-left">
+              <Button variant="ghost" className="flex h-auto w-full items-start justify-between rounded-lg px-4 py-3 text-start">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{t('iterator.results.iterationLabel', { index: iteration.index + 1 })}</span>

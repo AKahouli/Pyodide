@@ -254,14 +254,14 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
                   <Label htmlFor='conversation-share-search'>{t('dialogs.share.form.recipientLabel')}</Label>
                   <div className='relative rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring'>
                     <Search className='absolute left-3 top-3 h-4 w-4 text-muted-foreground' aria-hidden='true' />
-                    <div className='flex flex-wrap gap-2 pl-9 pr-3'>
+                    <div className='flex flex-wrap gap-2 ps-9 pe-3'>
                       {selected.map((user) => <span key={user.id} className='my-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs'>{user.email}<button type='button' aria-label={`${t('dialogs.share.removeRecipient')} ${user.email}`} onClick={() => setSelected(selected.filter((item) => item.id !== user.id))}><X className='size-3' /></button></span>)}
                       <input id='conversation-share-search' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('dialogs.share.form.searchPlaceholder')} className='min-w-36 flex-1 border-0 bg-transparent py-2 text-sm outline-none' />
                     </div>
                     {searching && <Loader2 className='absolute right-3 top-3 size-4 animate-spin' />}
                   </div>
                   {query.trim().length >= 3 && !searching && <div className='max-h-48 overflow-y-auto rounded-md border'>
-                    {results.filter((user) => !selected.some((item) => item.id === user.id)).map((user) => <button key={user.id} type='button' className='flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted focus-visible:bg-muted' onClick={() => { setSelected([...selected, user]); setQuery(''); }}><span className='flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary'>{(user.firstName || user.email)[0]?.toUpperCase()}</span><span className='min-w-0'><span className='block truncate text-sm font-medium'>{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.email}</span><span className='block truncate text-xs text-muted-foreground'>{user.email}</span></span></button>)}
+                    {results.filter((user) => !selected.some((item) => item.id === user.id)).map((user) => <button key={user.id} type='button' className='flex w-full items-center gap-3 px-3 py-2 text-start hover:bg-muted focus-visible:bg-muted' onClick={() => { setSelected([...selected, user]); setQuery(''); }}><span className='flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary'>{(user.firstName || user.email)[0]?.toUpperCase()}</span><span className='min-w-0'><span className='block truncate text-sm font-medium'>{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.email}</span><span className='block truncate text-xs text-muted-foreground'>{user.email}</span></span></button>)}
                     {results.length === 0 && <p className='p-3 text-sm text-muted-foreground'>{t('dialogs.share.noResults')}</p>}
                   </div>}
                 </div>
@@ -286,7 +286,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
               <Button onClick={handleShare} disabled={isLoading || (activeTab === 'private' && !canSharePrivate)}>
                 {isLoading ? (
                   <>
-                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    <Loader2 className='me-2 h-4 w-4 animate-spin' />
                     {t('dialogs.share.actions.sharing')}
                   </>
                 ) : activeTab === 'public' ? (

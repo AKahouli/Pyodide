@@ -154,13 +154,13 @@ function LinkedRecords({ index, record, onSelect }: Readonly<{ index: GraphIndex
       const isOpen = open[key] ?? group.records.length <= 3;
       const Arrow = group.outgoing ? ArrowRight : ArrowLeft;
       return <li key={key}>
-        <button type='button' aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })} className='flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-xs text-white/70 hover:bg-white/5'>
+        <button type='button' aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })} className='flex w-full items-center gap-1.5 rounded px-1 py-1 text-start text-xs text-white/70 hover:bg-white/5'>
           {isOpen ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
           <span className='truncate'>{group.label}</span><Arrow className='h-3 w-3 shrink-0 text-white/40' />
           <span className='truncate font-medium text-white/90'>{group.records.length} {group.conceptLabel}</span>
         </button>
-        {isOpen && <ul className='ml-5 border-l border-white/10 pl-2'>{group.records.slice(0, LINKED_SHOWN).map((other) => <li key={other.id}>
-          <button type='button' onClick={() => onSelect(other.id)} className='w-full truncate rounded px-1.5 py-0.5 text-left text-xs text-sky-300 hover:bg-white/5 hover:underline' title={other.label}>{other.label}</button>
+        {isOpen && <ul className='ms-5 border-l border-white/10 ps-2'>{group.records.slice(0, LINKED_SHOWN).map((other) => <li key={other.id}>
+          <button type='button' onClick={() => onSelect(other.id)} className='w-full truncate rounded px-1.5 py-0.5 text-start text-xs text-sky-300 hover:bg-white/5 hover:underline' title={other.label}>{other.label}</button>
         </li>)}
           {group.records.length > LINKED_SHOWN && <li className='px-1.5 py-0.5 text-[11px] text-white/40'>{t('graphViewer.andMore', { count: group.records.length - LINKED_SHOWN })}</li>}
         </ul>}

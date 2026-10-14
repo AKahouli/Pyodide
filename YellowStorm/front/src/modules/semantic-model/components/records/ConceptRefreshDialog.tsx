@@ -51,7 +51,7 @@ export function ConceptRefreshDialog({ open, onOpenChange, conceptLabel, onConfi
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("action.cancel")}</Button>
           <Button onClick={() => void confirm()} disabled={busy}>
-            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {busy ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <RefreshCw className="me-2 h-4 w-4" />}
             {t("records.table.refreshConfirm")}
           </Button>
         </DialogFooter>

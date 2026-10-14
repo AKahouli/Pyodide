@@ -68,7 +68,7 @@ export function TypewriterStreamdown({
         {slice}
       </Streamdown>
       {!fullyRevealed && (
-        <span className='ml-0.5 inline-block h-3 w-[2px] animate-pulse bg-muted-foreground/60 align-baseline motion-reduce:animate-none' />
+        <span className='ms-0.5 inline-block h-3 w-[2px] animate-pulse bg-muted-foreground/60 align-baseline motion-reduce:animate-none' />
       )}
     </div>
   );

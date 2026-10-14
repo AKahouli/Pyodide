@@ -51,8 +51,8 @@ export function MissingValueGuide({ entity, field, onOpenMapping }: Readonly<{ e
     <p className='font-medium text-foreground'>{where}</p>
     <p className='mt-1 text-muted-foreground'>{t(source ? 'dataGuide.missingHint' : 'dataGuide.missingHintNoSource', { field: name })}</p>
     {source && <div className='mt-2 flex flex-wrap gap-2'>
-      {source.documentId && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => openFile(source, Number.parseInt(provenance?.field?.page ?? '1', 10) || 1)}><ExternalLink className='mr-1 h-3 w-3' />{t('dataGuide.openFile', { document: source.documentName })}</Button>}
-      {provenance?.mappingId && onOpenMapping && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => onOpenMapping(provenance.mappingId)}><Settings2 className='mr-1 h-3 w-3' />{t('dataGuide.changeReading', { field: name })}</Button>}
+      {source.documentId && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => openFile(source, Number.parseInt(provenance?.field?.page ?? '1', 10) || 1)}><ExternalLink className='me-1 h-3 w-3' />{t('dataGuide.openFile', { document: source.documentName })}</Button>}
+      {provenance?.mappingId && onOpenMapping && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => onOpenMapping(provenance.mappingId)}><Settings2 className='me-1 h-3 w-3' />{t('dataGuide.changeReading', { field: name })}</Button>}
     </div>}
   </div>;
 }
@@ -69,7 +69,7 @@ export function RejectedRowsGuide({ conceptId, conceptLabel, gaps, onOpenMapping
         <h3 className='font-semibold'>{t('dataGuide.rowsTitle', { count, concept: conceptLabel })}</h3>
         <p className='mt-1 text-sm text-muted-foreground'>{t('dataGuide.rowsHelp', { concept: conceptLabel })}</p>
       </div>
-      {onOpenIdentity && <Button size='sm' variant='outline' onClick={() => onOpenIdentity(conceptId)}><KeyRound className='mr-1.5 h-3.5 w-3.5' />{t('dataGuide.changeUnique', { concept: conceptLabel })}</Button>}
+      {onOpenIdentity && <Button size='sm' variant='outline' onClick={() => onOpenIdentity(conceptId)}><KeyRound className='me-1.5 h-3.5 w-3.5' />{t('dataGuide.changeUnique', { concept: conceptLabel })}</Button>}
     </div>
     {samples.length === 0
       ? <p className='mt-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground'>{t('dataGuide.rowsRunAgain')}</p>
@@ -101,8 +101,8 @@ function RejectedRow({ sample, onOpenMapping }: Readonly<{ sample: RowSample; on
       })}
     </dl>
     {sample.source && <div className='mt-2 flex flex-wrap gap-2'>
-      <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => openFile(sample.source!)}><ExternalLink className='mr-1 h-3 w-3' />{t('dataGuide.openFile', { document: sample.source.documentName })}</Button>
-      {onOpenMapping && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => onOpenMapping(sample.source!.mappingId)}><Settings2 className='mr-1 h-3 w-3' />{t('dataGuide.editMapping')}</Button>}
+      <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => openFile(sample.source!)}><ExternalLink className='me-1 h-3 w-3' />{t('dataGuide.openFile', { document: sample.source.documentName })}</Button>
+      {onOpenMapping && <Button size='sm' variant='outline' className='h-7 px-2 text-xs' onClick={() => onOpenMapping(sample.source!.mappingId)}><Settings2 className='me-1 h-3 w-3' />{t('dataGuide.editMapping')}</Button>}
     </div>}
   </li>;
 }
@@ -138,13 +138,13 @@ export function UnmatchedLinksGuide({ relationId, relationLabel, targetLabel, ga
         <h3 className='font-semibold'>{t('dataGuide.linksTitle', { count, relationship: relationLabel })}</h3>
         <p className='mt-1 text-sm text-muted-foreground'>{t('dataGuide.linksHelp', { target: targetLabel })}</p>
       </div>
-      {onOpenMatching && <Button size='sm' variant='outline' onClick={() => onOpenMatching(relationId)}><Settings2 className='mr-1.5 h-3.5 w-3.5' />{t('dataGuide.changeMatching')}</Button>}
+      {onOpenMatching && <Button size='sm' variant='outline' onClick={() => onOpenMatching(relationId)}><Settings2 className='me-1.5 h-3.5 w-3.5' />{t('dataGuide.changeMatching')}</Button>}
     </div>
     {!samples.length && <p className='mt-3 text-xs text-muted-foreground'>{t('dataGuide.linksFromSample')}</p>}
     {rows.length > 0 && <ul className='mt-3 max-h-72 space-y-1 overflow-y-auto'>{rows.map(({ id, sample }, index) => {
       const label = entityLabel(id);
       return <li key={`${id}-${index}`}>
-        <button type='button' disabled={!label} onClick={() => onPick(id)} className='flex w-full flex-wrap items-baseline gap-x-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent'>
+        <button type='button' disabled={!label} onClick={() => onPick(id)} className='flex w-full flex-wrap items-baseline gap-x-2 rounded-lg px-3 py-2 text-start text-sm hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent'>
           <span className='font-medium'>{label ?? t('dataGuide.recordOutsideSample')}</span>
           <span className='text-xs text-muted-foreground'>{why(sample)}</span>
         </button>

@@ -54,7 +54,7 @@ export function RootWorkPanel({ conversationId, creatorId, variant = 'dock' }: {
     <p className='line-clamp-2 break-words text-sm font-medium' title={group.title}>{group.title || t('rootWork.request')}</p>
     <p className='mt-1 text-xs text-muted-foreground'>
       {t(group.state === 'preparing' ? 'rootWork.preparing' : `rootWork.status.${group.state}`)}
-      {group.publicationMessageId && unread?.includes(group.publicationMessageId) && <span className='ml-2 text-primary'>{t('rootWork.newResult')}</span>}
+      {group.publicationMessageId && unread?.includes(group.publicationMessageId) && <span className='ms-2 text-primary'>{t('rootWork.newResult')}</span>}
     </p>
     <div className='mt-2 text-xs'><WorkerSummary jobs={group.jobs} /></div>
     <WorkerAssignments jobs={group.jobs} />

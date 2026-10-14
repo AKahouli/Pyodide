@@ -42,7 +42,7 @@ export function ReasoningEffortSelector({
           className={fullWidth ? 'w-full justify-between' : undefined}
         >
           <BrainCircuit className='h-4 w-4' />
-          <span className={fullWidth ? 'flex-1 text-left' : 'hidden sm:inline'}>
+          <span className={fullWidth ? 'flex-1 text-start' : 'hidden sm:inline'}>
             {efforts.find((effort) => effort.id === value)?.name ?? label}
           </span>
           <ChevronDown className='h-3 w-3 opacity-60' />

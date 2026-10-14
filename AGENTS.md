@@ -13,7 +13,7 @@
 
 ## Checkpoints and background handoff
 
-- Before edits: `sdlc_checkpoint` goal/criteria/next action, read routed docs/code, then `sdlc_prepare` exact owned targets and reuse decision. Storage/ownership failures still block native edits. Use guarded tools; never bypass guards through shell writes.
+- Checkpoints are advisory memory. Save goal/criteria/next action and meaningful progress; editing requires no SDLC permission, read receipt, reservation or task cancellation. Resume creates an independent continuation and preserves existing tasks. Coordinate overlapping edits through normal agent handoffs and source checks.
 - Save milestones, check inputs and child references before replies. Resume the matching checkpoint and reconcile source/environment; never guess among tasks. Unrelated requests use `newTask: true`; corrections reopen the same task with `status: active`. Commit approved instructions/docs before creating worktrees.
 - Workers own disjoint files; `build` owns shared contracts, manifests, translations and integration. Preserve unrelated dirty/staged work. Separate browser contexts/page IDs, test data, reports and cleanup across runs; respect shared processes/ports. Recipes: [delivery workflow](tools/opencode-harness/docs/WORKFLOW.md).
 - Prefer concurrent independent reads/checks. Delegate useful long work through native `Task(background: true)`: independent workers, diagnostics, frontend QA and required review. Foreground calls are for immediately required results. Default to at most two useful specialists; do small fixes directly.

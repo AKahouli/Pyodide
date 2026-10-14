@@ -39,7 +39,7 @@ export function WidgetSuggestionEditor({ suggestions, labels, onChange }: Widget
       <div className="flex items-center justify-between gap-3">
         <Label>{labels.title}</Label>
         <Button type="button" variant="outline" size="sm" onClick={addSuggestion} disabled={suggestions.length >= 6}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          <Plus className="me-1.5 h-3.5 w-3.5" />
           {labels.add}
         </Button>
       </div>

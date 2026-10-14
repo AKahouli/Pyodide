@@ -85,7 +85,7 @@ export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ar
       >
         <span className={cn(badgeVariants({ variant: 'outline' }), 'inline-flex h-4 min-w-4 max-w-20 items-center justify-center rounded-full border-primary/40 bg-background px-1 text-foreground transition-colors hover:bg-primary/10')}>
           <span className='truncate'>{visibleLabel}</span>
-          {sources.length > 1 && <span className='ml-0.5 shrink-0'>+{sources.length - 1}</span>}
+          {sources.length > 1 && <span className='ms-0.5 shrink-0'>+{sources.length - 1}</span>}
         </span>
       </button>
     </HoverCardTrigger>
@@ -210,7 +210,7 @@ export const InlineCitationSource = ({ title, url, description, className, child
 export type InlineCitationQuoteProps = ComponentProps<'blockquote'>;
 
 export const InlineCitationQuote = ({ children, className, ...props }: InlineCitationQuoteProps) => (
-  <blockquote className={cn('line-clamp-5 border-muted border-l-2 pl-3 text-muted-foreground text-sm italic leading-relaxed', className)} {...props}>
+  <blockquote className={cn('line-clamp-5 border-muted border-l-2 ps-3 text-muted-foreground text-sm italic leading-relaxed', className)} {...props}>
     {children}
   </blockquote>
 );

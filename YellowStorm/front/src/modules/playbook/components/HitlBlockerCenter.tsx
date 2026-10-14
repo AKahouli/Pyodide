@@ -39,7 +39,7 @@ export function HitlBlockerCenter({ flowId, nodeId = null, showMemory = true }: 
             <p className="text-xs text-muted-foreground">{t('hitl.blockers.description')}</p>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={() => setEditorOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" />
+            <Plus className="me-1 h-4 w-4" />
             {t('hitl.blockers.add')}
           </Button>
         </div>

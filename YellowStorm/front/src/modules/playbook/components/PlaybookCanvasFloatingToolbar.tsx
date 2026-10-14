@@ -454,7 +454,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
         aria-orientation={collapsed ? 'horizontal' : 'vertical'}
         aria-labelledby={titleId}
       >
-        <div className={cn('flex items-center gap-1', collapsed ? 'pr-1' : 'mb-2 justify-between')}>
+        <div className={cn('flex items-center gap-1', collapsed ? 'pe-1' : 'mb-2 justify-between')}>
           <span id={titleId} className={cn('px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground', collapsed && 'sr-only')}>
             {t('toolbar.canvasTools')}
           </span>
@@ -497,7 +497,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               title={collapsed ? t('toolbar.addBlankStep') : undefined}
             >
               <Plus className="h-4 w-4 shrink-0" />
-              {!collapsed && <span className="ml-2 truncate">{t('toolbar.addBlankStep')}</span>}
+              {!collapsed && <span className="ms-2 truncate">{t('toolbar.addBlankStep')}</span>}
             </Button>
 
             <DropdownMenu>
@@ -517,25 +517,25 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="bottom" className="w-56">
                 <DropdownMenuItem onClick={onAddStep}>
-                  <Plus className="mr-2 h-4 w-4" />
+                  <Plus className="me-2 h-4 w-4" />
                   {t('toolbar.addBlankStep')}
                 </DropdownMenuItem>
                 {onAddRouterNode && !flowNodeTemplates.some((template) => template.nodeType === 'router') && (
                   <DropdownMenuItem onClick={onAddRouterNode}>
-                    <GitBranch className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <GitBranch className="me-2 h-4 w-4 text-muted-foreground" />
                     {t('taskChoice.router')}
                   </DropdownMenuItem>
                 )}
                 {onAddHumanApprovalNode && !flowNodeTemplates.some((template) => template.nodeType === 'human_approval') && (
                   <DropdownMenuItem onClick={onAddHumanApprovalNode}>
-                    <Hand className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <Hand className="me-2 h-4 w-4 text-muted-foreground" />
                     {t('taskChoice.approval')}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
                 {flowNodeTemplatesLoading ? (
                   <DropdownMenuItem disabled>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="me-2 h-4 w-4 animate-spin" />
                     {t('common.loading')}
                   </DropdownMenuItem>
                 ) : flowNodeTemplates.length === 0 ? (
@@ -545,7 +545,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                     const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
                     return (
                       <DropdownMenuItem key={template.id} onClick={() => onAddStepFromTemplate(template)}>
-                        <KindIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <KindIcon className="me-2 h-4 w-4 text-muted-foreground" />
                         {taskChoiceLabel(template, t)}
                       </DropdownMenuItem>
                     );
@@ -575,7 +575,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                 data-playbook-designer-trigger={action.key === 'designer' ? true : undefined}
               >
                 <Icon className="h-4 w-4 shrink-0" />
-                {!collapsed && <span className="ml-2 truncate">{action.label}</span>}
+                {!collapsed && <span className="ms-2 truncate">{action.label}</span>}
               </Button>
             );
           })}
@@ -591,7 +591,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                   title={collapsed ? t('toolbar.moreActions') : undefined}
                 >
                   <MoreHorizontal className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span className="ml-2 truncate">{t('toolbar.moreActions')}</span>}
+                  {!collapsed && <span className="ms-2 truncate">{t('toolbar.moreActions')}</span>}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="right" className="max-h-[min(28rem,calc(100vh-2rem))] w-60 overflow-y-auto">
@@ -606,7 +606,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                         disabled={action.disabled}
                         className={cn(action.key === 'removeAll' && 'text-destructive focus:text-destructive')}
                       >
-                        <Icon className="mr-2 h-4 w-4" />
+                        <Icon className="me-2 h-4 w-4" />
                         <span className="flex-1">{action.label}</span>
                         {action.active && <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />}
                       </DropdownMenuItem>

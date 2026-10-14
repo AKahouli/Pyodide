@@ -126,23 +126,57 @@ def is_visible(entity: dict[str, Any], allowed_workspaces: list[str] | None) -> 
                if ((source or {}).get("assetRef") or {}).get("workspaceId"))
 
 
-def describe_entity(entity: dict[str, Any], compiled: dict[str, Any]) -> dict[str, Any]:
-    concept = compiled["concepts"].get(entity["conceptId"]) or {}
-    provenance = []
-    for source in (entity.get("provenance") or {}).get("sources") or []:
-        asset = (source or {}).get("assetRef") or {}
-        if not asset.get("assetId"):
+def describe_provenance(provenance: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Expose source-document handles from existing provenance without changing AssetRef."""
+    result: list[dict[str, Any]] = []
+    positions: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for source in (provenance or {}).get("sources") or []:
+        source = source or {}
+        asset = source.get("assetRef") or {}
+        asset_id = asset.get("assetId")
+        document_id = source.get("documentId") or asset.get("documentId") or asset_id
+        workspace_id = source.get("workspaceId") or asset.get("workspaceId")
+        filename = (source.get("filename") or source.get("fileName") or source.get("originalName")
+                    or asset.get("filename"))
+        if not asset_id and not document_id:
             continue
-        item: dict[str, Any] = {"assetId": asset["assetId"]}
-        if asset.get("workspaceId"):
-            item["workspaceId"] = asset["workspaceId"]
+        item: dict[str, Any] = {}
+        if asset_id:
+            item["assetId"] = asset_id
+        if document_id:
+            item["documentId"] = document_id
+        if workspace_id:
+            item["workspaceId"] = workspace_id
+        if filename:
+            item["filename"] = filename
+        if asset.get("assetVersionId"):
+            item["assetVersionId"] = asset["assetVersionId"]
+        if source.get("mappingVersion"):
+            item["mappingVersion"] = source["mappingVersion"]
+        key = (workspace_id, document_id, asset_id, asset.get("assetVersionId"), source.get("mappingVersion"))
+        existing = positions.get(key)
+        if existing is None:
+            positions[key] = item
+            result.append(item)
+            existing = item
+        elif filename and not existing.get("filename"):
+            existing["filename"] = filename
         rows = source.get("rowNumbers")
         if isinstance(rows, list) and rows:
-            item["rowNumbers"] = rows[:MAX_ROW_NUMBERS]
-        provenance.append(item)
+            kept_rows = existing.setdefault("rowNumbers", [])
+            for row in rows:
+                if row not in kept_rows:
+                    kept_rows.append(row)
+            del kept_rows[MAX_ROW_NUMBERS:]
+    return result
+
+
+def describe_entity(entity: dict[str, Any], compiled: dict[str, Any]) -> dict[str, Any]:
+    concept = compiled["concepts"].get(entity["conceptId"]) or {}
     return {"entityId": entity["entityId"], "conceptId": entity["conceptId"],
             "conceptLabel": concept.get("label", ""), "label": entity.get("label", ""),
-            "keyFields": entity.get("identity") or {}, "provenance": provenance}
+            "keyFields": entity.get("identity") or {},
+            "provenance": describe_provenance(entity.get("provenance"))}
 
 
 def _fold_map(text: str) -> tuple[str, list[int]]:

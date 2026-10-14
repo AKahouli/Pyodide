@@ -144,7 +144,7 @@ export function PendingApprovalCard({ streamId, approval }: { streamId: string; 
                   <div key={field.key} className='break-words text-sm leading-relaxed'>
                     {value
                       ? (field.markdown
-                          ? <div className='space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5'><ReactMarkdown>{value}</ReactMarkdown></div>
+                          ? <div className='space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:ps-5 [&_ul]:list-disc [&_ul]:ps-5'><ReactMarkdown>{value}</ReactMarkdown></div>
                           : <p className='whitespace-pre-wrap'>{value}</p>)
                       : <span className='text-muted-foreground'>—</span>}
                   </div>

@@ -956,7 +956,9 @@ async def populate_document(
         return ({**computed_evidence, "recipeSources": joined_sources[field]} if field in joined_sources
                 else computed_evidence)
     source_ref = {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
-                  "labelField": entry.get("labelField")}
+                  "labelField": entry.get("labelField"),
+                  **({"filename": current["originalName"]}
+                     if isinstance(current.get("originalName"), str) and current["originalName"] else {})}
 
     if extracted["records"]:
         # Several records: what the document says once (metadata, constants, rules) is shared by

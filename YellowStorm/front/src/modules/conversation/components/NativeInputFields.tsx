@@ -78,7 +78,7 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
   const numeric = schema.type === 'number' || schema.type === 'integer';
   return <div className='space-y-2 text-sm'>
     <label className='block space-y-1'>
-    <span>{label}{!required && <span className='ml-2 text-muted-foreground'>{t('rootInput.optional')}</span>}</span>
+    <span>{label}{!required && <span className='ms-2 text-muted-foreground'>{t('rootInput.optional')}</span>}</span>
     {schema.description && <span className='block text-muted-foreground'>{schema.description}</span>}
     {numeric ? <Input type='number' step={schema.type === 'integer' ? 1 : 'any'}
       required={required} disabled={disabled} maxLength={Math.min(2000, schema.maxLength ?? 2000)}
@@ -95,7 +95,7 @@ export function NativeInputFields({ schema, value, onChange, label, required = f
     {!!schema.examples?.length && <div className='flex flex-wrap gap-2' role='group' aria-label={t('rootInput.suggestions')}>
       {schema.examples.filter((example) => numeric ? typeof example === 'number' : typeof example === 'string').map((example, index) =>
         <Button key={index} type='button' variant={value === example ? 'secondary' : 'outline'} size='sm'
-          className='h-auto min-h-9 max-w-full whitespace-normal text-left' disabled={disabled}
+          className='h-auto min-h-9 max-w-full whitespace-normal text-start' disabled={disabled}
           aria-pressed={value === example} onClick={() => onChange(example)}>{String(example)}</Button>)}
     </div>}
   </div>;

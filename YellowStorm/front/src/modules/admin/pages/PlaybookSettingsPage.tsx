@@ -138,7 +138,7 @@ function SettingsPane({ title, description, icon, contentClassName = 'space-y-6'
     <Collapsible defaultOpen={false}>
       <Card>
         <CollapsibleTrigger asChild>
-          <button type="button" className="group w-full text-left">
+          <button type="button" className="group w-full text-start">
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1.5">
@@ -498,7 +498,7 @@ export function PlaybookSettingsPage() {
               onClick={() => void handleSave({ playbookExecution: settings.playbookExecution })}
               disabled={saving || !executionSettingsValid}
             >
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
               {t('playbookSettings.actions.save')}
             </Button>
           </div>
@@ -655,7 +655,7 @@ export function PlaybookSettingsPage() {
                   })}
                   disabled={saving}
                 >
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>
@@ -699,7 +699,7 @@ export function PlaybookSettingsPage() {
                   onClick={() => void handleSave({ intentNormalizationLimits: settings.intentNormalizationLimits })}
                   disabled={saving}
                 >
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>
@@ -744,7 +744,7 @@ export function PlaybookSettingsPage() {
                   })}
                   disabled={saving}
                 >
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {saving ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Save className="me-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>

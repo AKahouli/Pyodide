@@ -419,7 +419,7 @@ export function AuthProvidersPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={fetchProviders} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           {tCommon('actionRetry')}
         </Button>
       </div>
@@ -445,7 +445,7 @@ export function AuthProvidersPage() {
           </Button>
           {canCreate && (
             <Button onClick={openCreateDialog}>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="me-2 h-4 w-4" />
               {t('authProviders.actions.create')}
             </Button>
           )}
@@ -459,7 +459,7 @@ export function AuthProvidersPage() {
           placeholder={t('authProviders.search.placeholder')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
+          className="ps-9"
         />
       </div>
 
@@ -491,7 +491,7 @@ export function AuthProvidersPage() {
                     {t('authProviders.table.scopes')}
                   </TableHead>
                   <TableHead>{t('authProviders.table.enabled')}</TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="text-end">
                     {t('authProviders.table.actions')}
                   </TableHead>
                 </TableRow>
@@ -546,7 +546,7 @@ export function AuthProvidersPage() {
                           />
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex justify-end gap-1">
                           {canUpdate && (
                             <Button
@@ -806,7 +806,7 @@ export function AuthProvidersPage() {
             <Button onClick={handleSave} disabled={saving || !isFormValid}>
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {editingProvider
                     ? t('authProviders.dialog.saving')
                     : t('authProviders.dialog.creating')}
@@ -877,7 +877,7 @@ export function AuthProvidersPage() {
             <Button onClick={handleClassicSave} disabled={classicSaving}>
               {classicSaving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t('authProviders.dialog.saving')}
                 </>
               ) : (
@@ -951,7 +951,7 @@ export function AuthProvidersPage() {
             >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
                   {t('authProviders.delete.deleting')}
                 </>
               ) : (

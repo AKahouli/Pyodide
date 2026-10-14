@@ -26,7 +26,7 @@ export function PlaybookCardsView({ vms, actions }: { vms: PlaybookVM[]; actions
             <button
               type="button"
               onClick={() => actions.onOpen(vm)}
-              className="min-w-0 flex-1 truncate text-left text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              className="min-w-0 flex-1 truncate text-start text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
               title={vm.name}
             >
               {vm.name}

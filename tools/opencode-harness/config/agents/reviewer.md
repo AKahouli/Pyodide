@@ -12,7 +12,6 @@ permission:
   hindsight_diagnose: allow
   sdlc_checkpoint: allow
   sdlc_resume: allow
-  sdlc_diff: allow
   read:
     "*": allow
     "*.env": deny

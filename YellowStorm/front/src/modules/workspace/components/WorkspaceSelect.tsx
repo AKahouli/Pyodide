@@ -74,7 +74,7 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className, wo
         handleToggle(ws.id);
       }}
       className='cursor-pointer'>
-      <div className={cn('mr-2 h-4 w-4 rounded border border-primary flex items-center justify-center', selectedIds.includes(ws.id) && 'bg-primary text-primary-foreground')}>
+      <div className={cn('me-2 h-4 w-4 rounded border border-primary flex items-center justify-center', selectedIds.includes(ws.id) && 'bg-primary text-primary-foreground')}>
         {selectedIds.includes(ws.id) && (
           <svg className='h-3 w-3' fill='currentColor' viewBox='0 0 20 20'>
             <path d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' />
@@ -86,7 +86,7 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className, wo
         {subtitle && <span className='block truncate text-xs text-muted-foreground'>{subtitle}</span>}
       </div>
       {ws.documentCount > 0 && (
-        <Badge variant='outline' className='ml-2 text-xs'>
+        <Badge variant='outline' className='ms-2 text-xs'>
           {ws.documentCount}
         </Badge>
       )}
@@ -161,7 +161,7 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className, wo
       <PopoverContent className='w-75 p-0' align='start' sideOffset={4}>
         <Command>
           <div className='flex items-center border-b px-3'>
-            <Layers className='mr-2 h-4 w-4 text-muted-foreground' />
+            <Layers className='me-2 h-4 w-4 text-muted-foreground' />
             <CommandInput placeholder={t('select.searchPlaceholder')} className='border-0 focus:ring-0' />
           </div>
           <CommandList>{renderContent()}</CommandList>

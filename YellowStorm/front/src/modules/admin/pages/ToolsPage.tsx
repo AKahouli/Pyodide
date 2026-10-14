@@ -266,7 +266,7 @@ export function ToolsPage() {
         <AlertCircle className="h-12 w-12 text-destructive" />
         <p className="text-muted-foreground">{error}</p>
         <Button onClick={() => fetchTools()} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
+          <RefreshCw className="me-2 h-4 w-4" />
           Retry
         </Button>
       </div>
@@ -286,11 +286,11 @@ export function ToolsPage() {
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button variant="outline" onClick={() => setShowCategoriesDialog(true)}>
-            <FolderTree className="mr-2 h-4 w-4" />
+            <FolderTree className="me-2 h-4 w-4" />
             Manage Categories
           </Button>
           <Button onClick={openCreate}>
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="me-2 h-4 w-4" />
             {t("defaultTools.actions.add")}
           </Button>
         </div>
@@ -304,7 +304,7 @@ export function ToolsPage() {
             placeholder={t("defaultTools.search.placeholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="ps-9"
           />
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -402,7 +402,7 @@ export function ToolsPage() {
                           </Button>
                         </div>
 
-                        <div className="flex items-start gap-3 pr-12">
+                        <div className="flex items-start gap-3 pe-12">
                           <div
                             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
                             style={{ backgroundColor: tool.color || "transparent" }}

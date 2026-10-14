@@ -161,7 +161,7 @@ export function MentionMessageJump() {
       variant="outline"
       type="button"
     >
-      <ChevronUp className="mr-2 h-4 w-4" />
+      <ChevronUp className="me-2 h-4 w-4" />
       <span>
         {unseenMentions.length} {unseenMentions.length > 1 ? 'mentions' : 'mention'}
       </span>

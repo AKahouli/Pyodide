@@ -178,7 +178,7 @@ function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: 
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
           <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{summary}</span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
@@ -335,7 +335,7 @@ function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivi
 
   return (
     <Collapsible open={open} className='md:hidden'>
-      <button type='button' aria-expanded={open} aria-controls={contentId} aria-label={t('stream.activity.mobileDetailsAria', { status: statusLabel })} onClick={() => setOpen((value) => !value)} className='flex min-h-11 w-full items-center gap-2 rounded-md px-1 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+      <button type='button' aria-expanded={open} aria-controls={contentId} aria-label={t('stream.activity.mobileDetailsAria', { status: statusLabel })} onClick={() => setOpen((value) => !value)} className='flex min-h-11 w-full items-center gap-2 rounded-md px-1 text-start text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
         <span aria-hidden='true'>{statusIcon(status, current.type === 'toolActivity' ? true : isStreaming)}</span>
         <span className='min-w-0 flex-1 truncate text-muted-foreground'>{label}</span>
         <span className='shrink-0 text-xs tabular-nums text-muted-foreground'>{t('stream.activity.stepProgress', { current: currentIndex + 1, total: components.length })}</span>
@@ -630,7 +630,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
               aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               onClick={() => setPaneCollapsed((value) => !value)}
-              className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
+              className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-start text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
             >
               <span className='flex size-8 shrink-0 items-center justify-center' aria-hidden='true'><Bot className='size-4' /></span>
               <span className='shrink-0 font-medium text-foreground'>{actorName}</span>

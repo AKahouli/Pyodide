@@ -65,7 +65,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
       </Button>
       {/* Desktop: full button with text */}
       <Button variant='outline' size='sm' className='hidden md:flex' onClick={handleClick} disabled={!selectedWorkspace || isUploading}>
-        <Plus className='h-4 w-4 mr-2' />
+        <Plus className='h-4 w-4 me-2' />
         {t('upload.button.add')}
       </Button>
     </>

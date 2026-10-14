@@ -149,13 +149,13 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
     <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-3 pb-28'>
       {tone === 'running' && onStop && (canStop
         ? <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
-          {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+          {stopping ? <Loader2 className='me-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='me-1.5 h-4 w-4' />}
            {stopping ? t('runStop.stopping') : t(queued ? 'myJobs.removeQueued' : 'runStop.stop')}
         </Button>
         // Saving cannot be undone half way: the button stays, disabled, and says why.
         : <TooltipProvider><Tooltip>
           <TooltipTrigger asChild><span className='block w-full' tabIndex={0}>
-            <Button variant='outline' size='sm' className='w-full' disabled aria-label={`${t('runStop.stop')}: ${t('runStop.notNow')}`}><StopCircle className='mr-1.5 h-4 w-4' />{t('runStop.stop')}</Button>
+            <Button variant='outline' size='sm' className='w-full' disabled aria-label={`${t('runStop.stop')}: ${t('runStop.notNow')}`}><StopCircle className='me-1.5 h-4 w-4' />{t('runStop.stop')}</Button>
           </span></TooltipTrigger>
           <TooltipContent>{t('runStop.notNow')}</TooltipContent>
         </Tooltip></TooltipProvider>)}
@@ -169,7 +169,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
       {serving && serving.blocking.length > 0 && tone !== 'running' && <section role='status' className='rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300'>
         <p className='font-semibold'>{t(serving.decision === 'keep_previous' ? 'runServing.kept' : 'runServing.firstIncomplete')}</p>
         <p className='mt-1'>{t(serving.decision === 'keep_previous' ? 'runServing.keptHint' : 'runServing.firstIncompleteHint')}</p>
-        <ul className='mt-2 list-disc space-y-0.5 pl-4'>
+        <ul className='mt-2 list-disc space-y-0.5 ps-4'>
           {serving.blocking.map((kind) => <li key={kind}>{t((KNOWN_BLOCKING.has(kind) ? `runServing.kind_${kind}` : 'runServing.kind_other') as 'runServing.kind_other')}</li>)}
         </ul>
       </section>}
@@ -177,7 +177,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
       {serving?.samples && tone !== 'running' && <section role='note' className='rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground'>
         <p className='font-semibold text-foreground'>{t('runServing.sampleTitle')}</p>
         <p className='mt-1'>{t('runServing.sampleHint')}</p>
-        <ul className='mt-2 list-disc space-y-0.5 pl-4'>
+        <ul className='mt-2 list-disc space-y-0.5 ps-4'>
           {serving.samples.map((sample) => <li key={sample.conceptId}>{t(sample.total === undefined ? 'runServing.userSampleUnknownTotal' : 'runServing.userSample', {
             concept: conceptLabels?.[sample.conceptId] ?? '', read: sample.read.toLocaleString(), total: (sample.total ?? 0).toLocaleString() })}</li>)}
         </ul>

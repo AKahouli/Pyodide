@@ -375,7 +375,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
 
         <div className="flex items-center gap-2 px-4 pb-2 shrink-0">
           <Button variant="outline" size="sm" onClick={() => void loadGraph()} disabled={loading}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin me-1" /> : <RefreshCw className="h-3.5 w-3.5 me-1" />}
             {t('graphPanel.refresh')}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowConcepts((p) => !p)} className={showConcepts ? 'bg-primary text-primary-foreground' : ''}>

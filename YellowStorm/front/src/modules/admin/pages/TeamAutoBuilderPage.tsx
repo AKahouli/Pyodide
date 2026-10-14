@@ -164,7 +164,7 @@ export function TeamAutoBuilderPage() {
           {canUpdate && (
             <div className='flex justify-end pt-2'>
               <Button onClick={handleSave} disabled={saving || !modelId || !systemPrompt}>
-                {saving ? <Loader2 className='mr-1 h-4 w-4 animate-spin' /> : <Save className='mr-1 h-4 w-4' />}
+                {saving ? <Loader2 className='me-1 h-4 w-4 animate-spin' /> : <Save className='me-1 h-4 w-4' />}
                 {saving ? t('teamAutoBuilder.actions.saving') : t('teamAutoBuilder.actions.save')}
               </Button>
             </div>

@@ -209,8 +209,8 @@ export function AppEndUsersDialog({
               <Users className='h-5 w-5 text-primary' />
             </div>
             <div className='min-w-0 flex-1 space-y-1'>
-              <DialogTitle className='text-left'>{t('endUsers.title')}</DialogTitle>
-              <DialogDescription className='text-left'>
+              <DialogTitle className='text-start'>{t('endUsers.title')}</DialogTitle>
+              <DialogDescription className='text-start'>
                 {appTitle
                   ? t('endUsers.descriptionNamed', { title: appTitle })
                   : t('endUsers.description')}
@@ -235,7 +235,7 @@ export function AppEndUsersDialog({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={t('endUsers.searchPlaceholder')}
-                className='pl-9'
+                className='ps-9'
                 disabled={loading}
               />
             </div>
@@ -247,7 +247,7 @@ export function AppEndUsersDialog({
               disabled={loading}
               onClick={() => void loadUsers()}
             >
-              <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
+              <RefreshCw className={cn('me-2 h-4 w-4', loading && 'animate-spin')} />
               {t('endUsers.refresh')}
             </Button>
           </div>

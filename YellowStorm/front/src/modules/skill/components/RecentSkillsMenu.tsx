@@ -50,7 +50,7 @@ export function RecentSkillsMenu({ skills, loading, selectedIds, onSelectSkill, 
   return (
     <PromptInputActionMenuSub>
       <PromptInputActionMenuSubTrigger>
-        <Sparkles className='mr-2 size-4' /> {t('input.skills') || 'Skills'}
+        <Sparkles className='me-2 size-4' /> {t('input.skills') || 'Skills'}
       </PromptInputActionMenuSubTrigger>
       <PromptInputActionMenuSubContent className='min-w-64'>
         <DropdownMenuLabel className='text-xs font-normal text-muted-foreground'>

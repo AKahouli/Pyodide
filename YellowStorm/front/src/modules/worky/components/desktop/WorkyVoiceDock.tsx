@@ -173,10 +173,10 @@ export function WorkyVoiceDock({
           aria-label={t('nav.voice')}
           aria-describedby='worky-voice-dock-instructions'
           style={dockStyle}
-          className="pointer-events-auto absolute bottom-6 left-1/2 flex touch-none select-none cursor-grab items-center gap-3 rounded-full border border-border bg-card/95 py-2 pr-2 pl-4 shadow-lg backdrop-blur transition-colors hover:bg-accent/40 active:cursor-grabbing"
+          className="pointer-events-auto absolute bottom-6 left-1/2 flex touch-none select-none cursor-grab items-center gap-3 rounded-full border border-border bg-card/95 py-2 pe-2 ps-4 shadow-lg backdrop-blur transition-colors hover:bg-accent/40 active:cursor-grabbing"
           {...dragProps}
         >
-          <span className="flex flex-col text-left">
+          <span className="flex flex-col text-start">
             <span className="text-sm font-semibold text-foreground">{t('voice.manager')}</span>
             <span className="text-xs text-muted-foreground">{t('voice.tapToTalk')}</span>
           </span>
@@ -204,7 +204,7 @@ export function WorkyVoiceDock({
         aria-label={t('voice.manager')}
         aria-describedby='worky-voice-dock-instructions'
         style={dockStyle}
-        className="pointer-events-auto absolute bottom-6 left-1/2 flex touch-none select-none cursor-grab items-center gap-3 rounded-full border border-border bg-card/95 py-2 pr-2 pl-4 shadow-lg backdrop-blur active:cursor-grabbing"
+        className="pointer-events-auto absolute bottom-6 left-1/2 flex touch-none select-none cursor-grab items-center gap-3 rounded-full border border-border bg-card/95 py-2 pe-2 ps-4 shadow-lg backdrop-blur active:cursor-grabbing"
         {...dragProps}
       >
         <span

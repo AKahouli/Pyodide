@@ -48,7 +48,7 @@ export function AddMemberPopover({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button size='sm' variant='outline'>
-          <Plus className='mr-1 h-4 w-4' />
+          <Plus className='me-1 h-4 w-4' />
           {t('orgChart.addAgent')}
         </Button>
       </PopoverTrigger>
@@ -60,7 +60,7 @@ export function AddMemberPopover({
               placeholder={t('orgChart.searchAgents')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className='pl-8 h-9'
+              className='ps-8 h-9'
             />
           </div>
         </div>
@@ -74,7 +74,7 @@ export function AddMemberPopover({
               {availableAgents.map((agent) => (
                 <button
                   key={agent.id}
-                  className='flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent cursor-pointer text-left'
+                  className='flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm hover:bg-accent cursor-pointer text-start'
                   onClick={() => handleSelect(agent.id)}
                 >
                   <Bot className='h-4 w-4 shrink-0 text-muted-foreground' />

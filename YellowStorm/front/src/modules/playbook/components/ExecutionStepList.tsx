@@ -70,7 +70,7 @@ function StepRow({
       type="button"
       aria-label={`Step ${showOrder}`}
       className={cn(
-        'flex w-full items-center justify-center rounded-lg border px-1.5 py-2 text-left transition-colors',
+        'flex w-full items-center justify-center rounded-lg border px-1.5 py-2 text-start transition-colors',
         isSelected
           ? 'border-primary/30 bg-primary/10 shadow-sm'
           : 'border-transparent hover:border-border hover:bg-muted/40',
@@ -149,7 +149,7 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
                 <button
                   type="button"
                   className={cn(
-                    'flex w-full items-center justify-center gap-1 rounded-lg border px-1.5 py-2 text-left transition-colors',
+                    'flex w-full items-center justify-center gap-1 rounded-lg border px-1.5 py-2 text-start transition-colors',
                     isGroupSelected
                       ? 'border-primary/30 bg-primary/10 shadow-sm'
                       : 'border-transparent hover:border-border hover:bg-muted/40',
@@ -169,7 +169,7 @@ export function ExecutionStepList({ taskResults, selectedStepId, selectedIterati
                 </button>
 
                 {isOpen && (
-                  <div className="space-y-0.5 mt-0.5 pl-1">
+                  <div className="space-y-0.5 mt-0.5 ps-1">
                     {group.iterations.map((result, idx) => {
                       const isIterSelected = isGroupSelected && idx === selectedIterationIndex;
                       const taskDecisions = decisionsByTask.get(group.taskId) || [];

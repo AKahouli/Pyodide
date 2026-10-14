@@ -76,7 +76,7 @@ export function AgentCardSelectable({
           />
         </div>
       )}
-      <div className={cn('h-full', selectMode && (layout === 'list' ? 'pl-8' : 'pl-6'))}>
+      <div className={cn('h-full', selectMode && (layout === 'list' ? 'ps-8' : 'ps-6'))}>
         <AgentCardRich
           agent={agent}
           layout={layout}

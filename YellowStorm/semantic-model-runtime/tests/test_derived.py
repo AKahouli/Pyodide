@@ -92,6 +92,37 @@ def test_one_record_per_distinct_key_with_the_evidence_of_the_value_kept():
     assert kept["evidence"]["derivedFrom"]["records"] == 2
 
 
+def test_chained_derived_records_keep_every_deduplicated_workspace_document():
+    first = contract("k1", "C-1", "Acme")
+    first["provenance"]["sources"][0].update({
+        "assetRef": {"workspaceId": "ws-1", "assetId": "doc-1", "assetVersionId": "same-version"},
+        "filename": "contract-a.pdf",
+    })
+    second = contract("k2", "C-1", "Acme")
+    second["provenance"]["sources"][0].update({
+        "assetRef": {"workspaceId": "ws-2", "assetId": "doc-2", "assetVersionId": "same-version"},
+        "filename": "contract-b.pdf",
+    })
+    duplicate = contract("k3", "C-1", "Acme")
+    duplicate["provenance"]["sources"][0].update({
+        "assetRef": {"workspaceId": "ws-1", "assetId": "doc-1", "assetVersionId": "same-version"},
+        "filename": "contract-a.pdf", "rowNumbers": [4],
+    })
+    first["provenance"]["sources"][0]["rowNumbers"] = [2]
+    organization = derive([first, second, duplicate])
+    concepts = compiled_concepts()
+    [normalized] = normalize_derivations([sector_derivation()], concepts)
+    sector = derive_concept(concepts["sector"], normalized, organization["entities"], [])
+
+    assert {(source["assetRef"]["workspaceId"], source["assetRef"]["assetId"], source["filename"])
+            for source in organization["entities"][0]["provenance"]["sources"]} == {
+                ("ws-1", "doc-1", "contract-a.pdf"), ("ws-2", "doc-2", "contract-b.pdf")}
+    first_source = next(source for source in organization["entities"][0]["provenance"]["sources"]
+                        if source["assetRef"]["assetId"] == "doc-1")
+    assert first_source["rowNumbers"] == [2, 4]
+    assert sector["entities"][0]["provenance"]["sources"] == organization["entities"][0]["provenance"]["sources"]
+
+
 @pytest.mark.parametrize(("rule", "expected"), [
     ("most_frequent", "Acme"),
     ("longest", "Acme Corporation"),

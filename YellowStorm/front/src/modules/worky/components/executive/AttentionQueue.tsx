@@ -25,8 +25,8 @@ export function AttentionQueue({ items, onTaskClick }: { items: WorkyCurrentWork
               <span className={`size-2 shrink-0 rounded-full ${item.status === 'waiting_external' ? 'bg-sky-500' : 'bg-amber-500'}`} />
               <p className='truncate text-sm font-semibold text-foreground' title={item.task.title}>{item.task.title}</p>
             </div>
-            <p className='mt-1 pl-4 text-xs text-muted-foreground'>{t(`executive.workStatus.${item.status}`)}{owner ? ` · ${owner}` : ''}{item.downstreamCount ? ` · ${t('command.queue.downstream', { count: item.downstreamCount })}` : ''}</p>
-            {reason && <p className='mt-1 line-clamp-2 pl-4 text-xs text-amber-600 dark:text-amber-400'>{reason}</p>}
+            <p className='mt-1 ps-4 text-xs text-muted-foreground'>{t(`executive.workStatus.${item.status}`)}{owner ? ` · ${owner}` : ''}{item.downstreamCount ? ` · ${t('command.queue.downstream', { count: item.downstreamCount })}` : ''}</p>
+            {reason && <p className='mt-1 line-clamp-2 ps-4 text-xs text-amber-600 dark:text-amber-400'>{reason}</p>}
           </div>
           <button type='button' onClick={() => onTaskClick(item.task)} className='inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-border px-3 text-xs font-semibold text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary'>
             {t(item.status === 'waiting_external' ? 'command.queue.inspectWait' : 'command.queue.investigate')}<ArrowUpRight className='size-3.5' />

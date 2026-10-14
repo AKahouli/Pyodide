@@ -123,13 +123,13 @@ export function SharePlaybookDialog({ open, onOpenChange, playbookId, playbookNa
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && closeDialog()}>
       <DialogContent className="w-[95vw] max-w-2xl p-0 gap-0 max-h-[80vh] flex flex-col">
         <DialogHeader className="p-4 pb-3 border-b">
-          <DialogTitle className="text-base pr-8">{t('sharing.title', { name: playbookName })}</DialogTitle>
+          <DialogTitle className="text-base pe-8">{t('sharing.title', { name: playbookName })}</DialogTitle>
         </DialogHeader>
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-4">
             <div className="relative rounded-md border bg-background px-2 py-1 transition focus-within:ring-2 focus-within:ring-ring">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <div className="flex flex-wrap items-center gap-2 pl-8 pr-8">
+              <div className="flex flex-wrap items-center gap-2 ps-8 pe-8">
                 {pendingShares.map((share) => (
                   <span key={share.id} className="flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs font-medium">
                     {share.email}

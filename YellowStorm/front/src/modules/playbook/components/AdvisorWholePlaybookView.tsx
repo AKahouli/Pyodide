@@ -152,10 +152,10 @@ export function AdvisorWholePlaybookHistory({ points }: Readonly<{
                 <div className="h-2 min-w-20 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden="true">
                   {point.overallScore !== null && <div className={cn('h-full rounded-full', point.overallScore >= 80 ? 'bg-emerald-500' : point.overallScore >= 60 ? 'bg-amber-500' : 'bg-rose-500')} style={{ width: `${point.overallScore}%` }} />}
                 </div>
-                <span className="w-10 text-right font-semibold">{formatPercent(point.overallScore, unavailableLabel)}</span>
+                <span className="w-10 text-end font-semibold">{formatPercent(point.overallScore, unavailableLabel)}</span>
               </div>
               <span>{t('evaluationWorkspace.whole.history.coverage' as any, { evaluated: point.evaluatedCount, eligible: point.eligibleCount })}</span>
-              <span className={cn('font-medium sm:text-right', stateTone(point.state))}>{t(`evaluationWorkspace.whole.state.${point.state}` as any)}</span>
+              <span className={cn('font-medium sm:text-end', stateTone(point.state))}>{t(`evaluationWorkspace.whole.state.${point.state}` as any)}</span>
             </div>
           ))}
         </div>
@@ -164,23 +164,23 @@ export function AdvisorWholePlaybookHistory({ points }: Readonly<{
       <section className="overflow-x-auto rounded-lg border bg-background p-4">
         <EvaluationDefinitionTooltip label={t('evaluationWorkspace.whole.health.title' as any)} definition={t('evaluationWorkspace.whole.tooltip.health' as any)} className="font-semibold" />
         <table className="mt-4 min-w-[620px] w-full text-sm">
-          <thead className="text-left text-xs text-muted-foreground">
+          <thead className="text-start text-xs text-muted-foreground">
             <tr className="border-b">
               <th className="pb-2 font-medium">{t('evaluationWorkspace.whole.health.step' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.kpi.average' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.kpi.variation' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.kpi.passRate' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.kpi.coverage' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.kpi.average' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.kpi.variation' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.kpi.passRate' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.kpi.coverage' as any)}</th>
             </tr>
           </thead>
           <tbody>
             {taskHealth.map(({ taskId, title, metrics: taskMetrics }) => (
               <tr key={taskId} className="border-b last:border-0">
                 <td className="py-2 font-medium">{title}</td>
-                <td className="py-2 text-right">{formatPercent(taskMetrics.averageScore, unavailableLabel)}</td>
-                <td className="py-2 text-right">{taskMetrics.variation === null ? unavailableLabel : t('evaluationWorkspace.kpi.variationValue' as any, { value: Math.round(taskMetrics.variation) })}</td>
-                <td className="py-2 text-right">{taskMetrics.passedCount} / {taskMetrics.evaluatedCount}</td>
-                <td className="py-2 text-right">{taskMetrics.evaluatedCount} / {taskMetrics.eligibleCount}</td>
+                <td className="py-2 text-end">{formatPercent(taskMetrics.averageScore, unavailableLabel)}</td>
+                <td className="py-2 text-end">{taskMetrics.variation === null ? unavailableLabel : t('evaluationWorkspace.kpi.variationValue' as any, { value: Math.round(taskMetrics.variation) })}</td>
+                <td className="py-2 text-end">{taskMetrics.passedCount} / {taskMetrics.evaluatedCount}</td>
+                <td className="py-2 text-end">{taskMetrics.evaluatedCount} / {taskMetrics.eligibleCount}</td>
               </tr>
             ))}
           </tbody>

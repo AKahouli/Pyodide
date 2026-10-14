@@ -51,7 +51,7 @@ export function WidgetRestApiPanel(props: WidgetRestApiPanelProps) {
     <div className="grid min-w-0 max-w-full gap-2">
       <div className="flex items-center justify-end">
         <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleCopy()}>
-          {copied ? <Check className="mr-1 h-3 w-3" /> : <Copy className="mr-1 h-3 w-3" />}
+          {copied ? <Check className="me-1 h-3 w-3" /> : <Copy className="me-1 h-3 w-3" />}
           {t("createEdit.actions.copyDeploymentSnippet")}
         </Button>
       </div>

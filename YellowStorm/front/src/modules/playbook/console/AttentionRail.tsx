@@ -53,7 +53,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                   <button
                     type="button"
                     onClick={() => actions.onWatchRun(vm)}
-                    className="min-w-0 truncate text-left text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    className="min-w-0 truncate text-start text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     {vm.name}
                   </button>
@@ -82,7 +82,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                       </p>
                       <div className="flex shrink-0 items-center gap-1">
                         <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => actions.onWatchRun(vm)}>
-                          <Eye className="mr-1 h-3 w-3" aria-hidden />
+                          <Eye className="me-1 h-3 w-3" aria-hidden />
                           {t('console.rail.watch')}
                         </Button>
                         <Button
@@ -91,7 +91,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                           className="h-6 px-2 text-[11px] text-destructive hover:text-destructive"
                           onClick={() => actions.onStop(vm)}
                         >
-                          <Square className="mr-1 h-3 w-3" aria-hidden />
+                          <Square className="me-1 h-3 w-3" aria-hidden />
                           {t('console.rail.stop')}
                         </Button>
                       </div>
@@ -121,7 +121,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                   <button
                     type="button"
                     onClick={() => actions.onWatchRun(vm)}
-                    className="min-w-0 truncate text-left text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    className="min-w-0 truncate text-start text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     {vm.name}
                   </button>
@@ -137,7 +137,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                 )}
                 <div className="flex items-center gap-1">
                   <Button size="sm" className="h-6 px-2 text-[11px]" onClick={() => actions.onApprove(vm)}>
-                    <CheckCircle2 className="mr-1 h-3 w-3" aria-hidden />
+                    <CheckCircle2 className="me-1 h-3 w-3" aria-hidden />
                     {t('console.rail.approve')}
                   </Button>
                   <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => actions.onWatchRun(vm)}>
@@ -167,19 +167,19 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                   <button
                     type="button"
                     onClick={() => actions.onWatchRun(vm)}
-                    className="min-w-0 truncate text-left text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    className="min-w-0 truncate text-start text-[13px] font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     {vm.name}
                   </button>
                 </div>
                 {vm.failure?.message && (
-                  <p className="line-clamp-2 border-l-2 border-fail pl-2 text-[11px] text-muted-foreground" data-testid="rail-error">
+                  <p className="line-clamp-2 border-l-2 border-fail ps-2 text-[11px] text-muted-foreground" data-testid="rail-error">
                     {vm.failure.message}
                   </p>
                 )}
                 <div className="flex items-center gap-1">
                   <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => actions.onRetry(vm)}>
-                    <RefreshCw className="mr-1 h-3 w-3" aria-hidden />
+                    <RefreshCw className="me-1 h-3 w-3" aria-hidden />
                     {t('console.rail.retry')}
                   </Button>
                   <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => actions.onWatchRun(vm)}>

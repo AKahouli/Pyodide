@@ -121,13 +121,13 @@ export function AdvisorWholePlaybookComparison({ points, drillableTaskIds, onDri
       <section className="overflow-x-auto rounded-lg border bg-background p-4">
         <EvaluationDefinitionTooltip label={t('evaluationWorkspace.whole.compare.matrixTitle' as any)} definition={t('evaluationWorkspace.whole.tooltip.matrix' as any)} className="font-semibold" />
         <table className="mt-4 min-w-[680px] w-full text-sm">
-          <thead className="text-left text-xs text-muted-foreground">
+          <thead className="text-start text-xs text-muted-foreground">
             <tr className="border-b">
               <th className="pb-2 font-medium">{t('evaluationWorkspace.whole.health.step' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.compare.leftColumn' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.compare.rightColumn' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.compare.change' as any)}</th>
-              <th className="pb-2 text-right font-medium">{t('evaluationWorkspace.whole.compare.status' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.compare.leftColumn' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.compare.rightColumn' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.compare.change' as any)}</th>
+              <th className="pb-2 text-end font-medium">{t('evaluationWorkspace.whole.compare.status' as any)}</th>
             </tr>
           </thead>
           <tbody>
@@ -144,18 +144,18 @@ export function AdvisorWholePlaybookComparison({ points, drillableTaskIds, onDri
                     <button
                       type="button"
                       disabled={!canDrillDown}
-                      className="text-left font-medium underline-offset-4 enabled:hover:underline disabled:cursor-default"
+                      className="text-start font-medium underline-offset-4 enabled:hover:underline disabled:cursor-default"
                       onClick={() => onDrillDown(row.taskId, leftExecutionId, rightExecutionId)}
                     >
                       {row.title}
                     </button>
                   </td>
-                  <td className={cn('py-2 text-right font-medium', scoreTone(leftScore))}>{formatPercent(leftScore, unavailableLabel)}</td>
-                  <td className={cn('py-2 text-right font-medium', scoreTone(rightScore))}>{formatPercent(rightScore, unavailableLabel)}</td>
-                  <td className={cn('py-2 text-right font-medium', delta === null || Math.abs(delta) < 0.5 ? 'text-muted-foreground' : delta > 0 ? 'text-emerald-600' : 'text-rose-600')}>
+                  <td className={cn('py-2 text-end font-medium', scoreTone(leftScore))}>{formatPercent(leftScore, unavailableLabel)}</td>
+                  <td className={cn('py-2 text-end font-medium', scoreTone(rightScore))}>{formatPercent(rightScore, unavailableLabel)}</td>
+                  <td className={cn('py-2 text-end font-medium', delta === null || Math.abs(delta) < 0.5 ? 'text-muted-foreground' : delta > 0 ? 'text-emerald-600' : 'text-rose-600')}>
                     <span className="inline-flex items-center justify-end gap-1"><DeltaIcon className="h-3.5 w-3.5" aria-hidden="true" />{delta === null ? unavailableLabel : `${delta > 0 ? '+' : ''}${Math.round(delta)}`}</span>
                   </td>
-                  <td className="py-2 text-right text-xs text-muted-foreground">{status ? t(`evaluationWorkspace.whole.compare.${status}` as any) : t('evaluationWorkspace.whole.compare.comparable' as any)}</td>
+                  <td className="py-2 text-end text-xs text-muted-foreground">{status ? t(`evaluationWorkspace.whole.compare.${status}` as any) : t('evaluationWorkspace.whole.compare.comparable' as any)}</td>
                 </tr>
               );
             })}

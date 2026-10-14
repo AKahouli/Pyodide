@@ -50,6 +50,17 @@ answer. `describe_model` gives the names it may use; `find_records` answers "whi
 `query_records` answers everything that filters, counts or compares, and fetches the records a summary is
 written from (the assistant writes the summary and cites the records).
 
+Record provenance identifies source workspaces and, when available, source documents as
+`{workspaceId, documentId, assetId, filename}` (`assetId` remains compatible with existing clients).
+`find_records`, `get_related_records`, `query_records`, `traverse_records`, and `connect_records`
+preserve provenance on returned records. Provenance is a locator, not evidence of document contents.
+When original text is needed, use only connected document tools and follow their declared schemas: map
+`workspaceId` to a declared workspace scope, `filename` to `file_name` when accepted, and `documentId`
+to `document_id` only when accepted. If old provenance lacks a filename, use
+`list_workspace_files(source_workspace_id=workspaceId)` and match the returned document; never guess or
+fabricate a filename. Facts directly supported by freshly retrieved document text may be answered with
+a filename/section citation, distinguished from values stored in the semantic model.
+
 `find_records` matches each record's own search text (type, name, keys, and the start of each field)
 and, for a text field longer than 300 characters, overlapping passages of about 1000 characters that
 cover the whole field (up to 20 per field and 50 per record; a field longer than that is searched only

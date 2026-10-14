@@ -837,7 +837,7 @@ export function CreateEditConnectorDialog({
                       onClick={() => handleOAuth(app.appKey, app.displayName)}
                       disabled={oauthConnecting}
                     >
-                      {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}
+                      {oauthConnecting ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : null}
                       {t('connectors.form.auth.connectAction', { app: app.displayName })}
                     </Button>
                   ) : (
@@ -848,7 +848,7 @@ export function CreateEditConnectorDialog({
                       onClick={() => handleDisconnect(app.appKey, app.displayName)}
                       disabled={oauthConnecting}
                     >
-                      {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <X className='mr-2 h-4 w-4' />}
+                      {oauthConnecting ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <X className='me-2 h-4 w-4' />}
                       {t('connectors.form.auth.disconnectAction', { app: app.displayName })}
                     </Button>
                   )}
@@ -893,7 +893,7 @@ export function CreateEditConnectorDialog({
                     <div className='flex items-center justify-between'>
                       <Label>{t('connectors.form.auth.headerMappingsLabel')}</Label>
                       <Button type='button' variant='outline' size='sm' onClick={() => addMappingRow('runtimeHeaderMappings')}>
-                        <Plus className='mr-2 h-4 w-4' />
+                        <Plus className='me-2 h-4 w-4' />
                         {t('connectors.form.auth.addHeader')}
                       </Button>
                     </div>
@@ -916,7 +916,7 @@ export function CreateEditConnectorDialog({
                     <div className='flex items-center justify-between'>
                       <Label>{t('connectors.form.auth.envMappingsLabel')}</Label>
                       <Button type='button' variant='outline' size='sm' onClick={() => addMappingRow('runtimeEnvMappings')}>
-                        <Plus className='mr-2 h-4 w-4' />
+                        <Plus className='me-2 h-4 w-4' />
                         {t('connectors.form.auth.addVariable')}
                       </Button>
                     </div>
@@ -970,7 +970,7 @@ export function CreateEditConnectorDialog({
                 disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}
                 className='mt-2'
               >
-                {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
+                {inspecting ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <TestTube2 className='me-2 h-4 w-4' />}
                 {t('connectors.form.inspect.action')}
               </Button>
             </div>
@@ -990,7 +990,7 @@ export function CreateEditConnectorDialog({
                 </p>
               </div>
               <Button type='button' variant='outline' size='sm' onClick={addDynamicHeader}>
-                <Plus className='mr-2 h-4 w-4' />
+                <Plus className='me-2 h-4 w-4' />
                 Add header
               </Button>
             </div>
@@ -1065,7 +1065,7 @@ export function CreateEditConnectorDialog({
                       {connectorActions.map((action) => (
                         <TableRow key={action.key} data-state={selectedActionKeyForDisplay === action.key ? 'selected' : undefined}>
                           <TableCell className='break-all font-medium'>
-                            <Button type='button' variant='link' className='h-auto max-w-full break-all p-0 text-left font-medium' onClick={() => setSelectedActionKey(action.key)}>
+                            <Button type='button' variant='link' className='h-auto max-w-full break-all p-0 text-start font-medium' onClick={() => setSelectedActionKey(action.key)}>
                               {action.label || action.key}
                             </Button>
                             {action.label !== action.key ? <p className='font-mono text-xs text-muted-foreground'>{action.key}</p> : null}

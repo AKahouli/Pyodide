@@ -58,7 +58,7 @@ export const AppCard = memo(function AppCard({ app }: AppCardProps) {
               <h3 className="font-medium truncate">{app.displayName}</h3>
               {app.connected && (
                 <Badge variant="outline" className="shrink-0 text-green-600 border-green-300">
-                  <Check className="mr-1 h-3 w-3" />
+                  <Check className="me-1 h-3 w-3" />
                   {t('card.connected')}
                 </Badge>
               )}
@@ -92,7 +92,7 @@ export const AppCard = memo(function AppCard({ app }: AppCardProps) {
                 size="sm"
                 onClick={() => setConfirmDisconnect(true)}
               >
-                <Unplug className="mr-1.5 h-4 w-4" />
+                <Unplug className="me-1.5 h-4 w-4" />
                 {t('card.disconnect')}
               </Button>
             ) : (
@@ -102,9 +102,9 @@ export const AppCard = memo(function AppCard({ app }: AppCardProps) {
                 disabled={isConnecting}
               >
                 {isConnecting ? (
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  <Loader2 className="me-1.5 h-4 w-4 animate-spin" />
                 ) : (
-                  <Plug className="mr-1.5 h-4 w-4" />
+                  <Plug className="me-1.5 h-4 w-4" />
                 )}
                 {t('card.connect')}
               </Button>

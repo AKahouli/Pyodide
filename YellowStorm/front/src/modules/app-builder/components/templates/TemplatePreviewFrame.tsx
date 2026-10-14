@@ -51,7 +51,7 @@ export function TemplatePreviewFrame({
           <span className='size-1.5 rounded-full bg-border' />
           <span className='size-1.5 rounded-full bg-border' />
           {chrome === 'bar' ? (
-            <span className='ml-1.5 truncate text-[10px] leading-none text-muted-foreground'>
+            <span className='ms-1.5 truncate text-[10px] leading-none text-muted-foreground'>
               {title}
             </span>
           ) : null}

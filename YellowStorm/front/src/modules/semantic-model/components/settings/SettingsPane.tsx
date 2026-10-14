@@ -54,8 +54,8 @@ export function SettingsPane({ id, title, help, icon, summary, attention, open: 
     writeOpen(OPEN_KEY, { ...readOpen(), [id]: next });
   };
   return <section className={cn('rounded-lg border bg-card', className)} aria-label={typeof title === 'string' ? title : undefined}>
-    <div className='flex items-center gap-1 pr-3'>
-      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-4 py-3 text-left hover:bg-muted/40'
+    <div className='flex items-center gap-1 pe-3'>
+      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-4 py-3 text-start hover:bg-muted/40'
         aria-expanded={open} aria-controls={`settings-pane-${id}`} onClick={toggle}>
         {open ? <ChevronDown className='h-4 w-4 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' />}
         {icon}

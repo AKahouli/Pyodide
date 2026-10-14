@@ -51,7 +51,7 @@ const knowledge = {
 } as unknown as KnowledgeLinkingController;
 
 const healthy = (...ids: string[]): MappingHealthItem[] => ids.map((id) => ({ id, conceptId:'contract', conceptLabel:'Contract', documentName:'', state:'healthy', missingFields:[], availableFields:[] } as unknown as MappingHealthItem));
-const renderCanvas = (sourceMappings?: ConceptSourceMapping[], mappingHealth?: MappingHealthItem[]) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} mappingHealth={mappingHealth} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+const renderCanvas = (sourceMappings?: ConceptSourceMapping[], mappingHealth?: MappingHealthItem[], onSelectRelation?: (relationId: string) => void) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} mappingHealth={mappingHealth} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onSelectRelation={onSelectRelation} />);
 
 function mapping(overrides: Partial<ConceptSourceMapping>): ConceptSourceMapping {
   return {
@@ -90,6 +90,25 @@ describe('SemanticModelCanvas', () => {
     // Both documents appear as their own source steps.
     expect(screen.getByText('master-agreement-0041.pdf')).toBeInTheDocument();
     expect(screen.getByText('master-agreement-0099.pdf')).toBeInTheDocument();
+  });
+
+  it('routes relation line and label clicks through the same parent selection callback', () => {
+    const relationGraph: SemanticGraph = {
+      ...contractGraph,
+      nodes: [contractGraph.nodes[0], { ...contractGraph.nodes[0], id: 'customer', key: 'customer', label: 'Customer' }],
+      relations: [{ id: 'contract-customer', key: 'contract_customer', label: 'has customer', inverseLabel: '', description: '',
+        sourceNodeTypeId: 'contract', targetNodeTypeId: 'customer', cardinality: 'many_to_one', traversable: true, filterable: true, attributes: [] }],
+    };
+    useSemanticModelEditorStore.getState().hydrate(relationGraph);
+    const onSelectRelation = vi.fn();
+    renderCanvas(undefined, undefined, onSelectRelation);
+
+    act(() => (flow.props.onEdgeClick as (event: unknown, edge: { id: string }) => void)({}, { id: 'contract-customer' }));
+    fireEvent.click(screen.getByText('has customer'));
+
+    expect(onSelectRelation).toHaveBeenNthCalledWith(1, 'contract-customer');
+    expect(onSelectRelation).toHaveBeenNthCalledWith(2, 'contract-customer');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
   });
 
   it('shows the key badge for a unique field chosen on the concept, before any source is mapped', () => {

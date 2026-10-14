@@ -53,7 +53,7 @@ export function WorkspaceHubFilters({
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={t('hub.filters.search')}
           aria-label={t('hub.filters.search')}
-          className="border-transparent bg-transparent pl-9 pr-8 shadow-none focus-visible:border-border focus-visible:bg-background"
+          className="border-transparent bg-transparent ps-9 pe-8 shadow-none focus-visible:border-border focus-visible:bg-background"
         />
         {searchInput && (
           <button
@@ -94,7 +94,7 @@ export function WorkspaceHubFilters({
         </SelectContent>
       </Select>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         {hasActiveFilters && (
           <Button
             variant="ghost"

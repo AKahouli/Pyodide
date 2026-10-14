@@ -40,31 +40,31 @@ export function CommandPalette({
         <CommandEmpty>{t('console.palette.empty')}</CommandEmpty>
         <CommandGroup heading={t('console.palette.commands')}>
           <CommandItem onSelect={run(actions.onNew)}>
-            <Zap className="mr-2 h-4 w-4" aria-hidden />
+            <Zap className="me-2 h-4 w-4" aria-hidden />
             {t('list.newPlaybook')}
           </CommandItem>
           <CommandItem onSelect={run(actions.onNeedsHuman)}>
-            <UserCheck className="mr-2 h-4 w-4" aria-hidden />
+            <UserCheck className="me-2 h-4 w-4" aria-hidden />
             {t('console.palette.needsHuman')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onSegment('live'))}>
-            <Search className="mr-2 h-4 w-4" aria-hidden />
+            <Search className="me-2 h-4 w-4" aria-hidden />
             {t('console.segment.live')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onSegment('fav'))}>
-            <Star className="mr-2 h-4 w-4" aria-hidden />
+            <Star className="me-2 h-4 w-4" aria-hidden />
             {t('console.segment.fav')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onView('table'))}>
-            <Rows className="mr-2 h-4 w-4" aria-hidden />
+            <Rows className="me-2 h-4 w-4" aria-hidden />
             {t('console.view.table')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onView('board'))}>
-            <SquareKanban className="mr-2 h-4 w-4" aria-hidden />
+            <SquareKanban className="me-2 h-4 w-4" aria-hidden />
             {t('console.view.board')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onView('cards'))}>
-            <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
+            <LayoutGrid className="me-2 h-4 w-4" aria-hidden />
             {t('console.view.cards')}
           </CommandItem>
           <CommandItem onSelect={run(() => actions.onSort('reliability'))}>{t('console.palette.sortReliability')}</CommandItem>

@@ -30,7 +30,7 @@ export function GraphOverviewPanel({ index, colorOf, onSelect, highlight, onHigh
   const { t } = useModuleTranslation('semantic-model');
   const [open, setOpen] = useState<Record<string, boolean>>({ concepts: true });
   const section = (id: string, title: string, summary: string, body: () => React.ReactNode) => <section key={id} className='border-b border-white/10'>
-    <button type='button' aria-expanded={Boolean(open[id])} onClick={() => setOpen((current) => ({ ...current, [id]: !current[id] }))} className='flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-white/5'>
+    <button type='button' aria-expanded={Boolean(open[id])} onClick={() => setOpen((current) => ({ ...current, [id]: !current[id] }))} className='flex w-full items-center gap-2 px-4 py-2.5 text-start hover:bg-white/5'>
       {open[id] ? <ChevronDown className='h-4 w-4 shrink-0 text-white/50' /> : <ChevronRight className='h-4 w-4 shrink-0 text-white/50' />}
       <span className='min-w-0 flex-1'><span className='block text-xs font-semibold text-white'>{title}</span><span className='block truncate text-[11px] text-white/45'>{summary}</span></span>
     </button>
@@ -89,9 +89,9 @@ interface BarRow { id: string; label: string; sub?: string; value: number; displ
 function BarList({ rows }: Readonly<{ rows: BarRow[] }>) {
   const max = Math.max(1, ...rows.map((row) => row.value));
   return <ul className='space-y-1'>{rows.map((row) => <li key={row.id}>
-    <button type='button' disabled={!row.onClick} onClick={row.onClick} title={row.title} className='group w-full rounded px-1 py-0.5 text-left hover:bg-white/5 disabled:cursor-default'>
+    <button type='button' disabled={!row.onClick} onClick={row.onClick} title={row.title} className='group w-full rounded px-1 py-0.5 text-start hover:bg-white/5 disabled:cursor-default'>
       <span className='flex items-baseline gap-2 text-xs'>
-        <span className='min-w-0 flex-1 truncate text-white/85 group-hover:text-white'>{row.label}{row.sub && <span className='ml-1 text-white/40'>· {row.sub}</span>}</span>
+        <span className='min-w-0 flex-1 truncate text-white/85 group-hover:text-white'>{row.label}{row.sub && <span className='ms-1 text-white/40'>· {row.sub}</span>}</span>
         <span className='shrink-0 tabular-nums text-white/70'>{row.display ?? row.value}</span>
       </span>
       <span className='mt-0.5 block h-1.5 rounded-full bg-white/5'><span className='block h-full rounded-full' style={{ width: `${Math.max(2, (row.value / max) * 100)}%`, background: row.color }} /></span>
@@ -103,7 +103,7 @@ function RecordList({ records, colorOf, onSelect, limit = 30 }: Readonly<{ recor
   const { t } = useModuleTranslation('semantic-model');
   return <ul className='space-y-0.5'>
     {records.slice(0, limit).map((record) => <li key={record.id}>
-      <button type='button' onClick={() => onSelect(record.id)} className='flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-white/5' title={record.label}>
+      <button type='button' onClick={() => onSelect(record.id)} className='flex w-full items-center gap-2 rounded px-1 py-0.5 text-start text-xs hover:bg-white/5' title={record.label}>
         <span className='h-2 w-2 shrink-0 rounded-full' style={{ background: colorOf(record.concept) }} />
         <span className='min-w-0 flex-1 truncate text-sky-300'>{record.label}</span>
         <span className='shrink-0 text-[11px] text-white/40'>{record.conceptLabel}</span>
@@ -219,9 +219,9 @@ function RecordPicker({ index, value, onChange, label, colorOf }: Readonly<{ ind
   </div>;
   return <div className='relative'>
     <Search className='pointer-events-none absolute left-2 top-1.5 h-3.5 w-3.5 text-white/40' />
-    <input className={`${SELECT} pl-7`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={label} aria-label={label} />
+    <input className={`${SELECT} ps-7`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={label} aria-label={label} />
     {results.length > 0 && <ul className='mt-1 rounded-md border border-white/10 bg-[#1a1a2b]'>{results.map(({ record }) => <li key={record.id}>
-      <button type='button' onClick={() => { onChange(record.id); setQuery(''); }} className='flex w-full items-center gap-2 px-2 py-1 text-left text-xs hover:bg-white/10'>
+      <button type='button' onClick={() => { onChange(record.id); setQuery(''); }} className='flex w-full items-center gap-2 px-2 py-1 text-start text-xs hover:bg-white/10'>
         <span className='h-2 w-2 shrink-0 rounded-full' style={{ background: colorOf(record.concept) }} />
         <span className='min-w-0 flex-1 truncate'>{record.label}</span><span className='shrink-0 text-[11px] text-white/40'>{record.conceptLabel}</span>
       </button>
@@ -245,10 +245,10 @@ function PathFinder({ index, colorOf, onSelect, onHighlight }: Readonly<{ index:
         const record = index.byId.get(id)!;
         const link = path.links[step];
         return <li key={id}>
-          <button type='button' onClick={() => onSelect(id)} className='flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-white/5'>
+          <button type='button' onClick={() => onSelect(id)} className='flex w-full items-center gap-2 rounded px-1 py-0.5 text-start hover:bg-white/5'>
             <span className='h-2 w-2 shrink-0 rounded-full' style={{ background: colorOf(record.concept) }} /><span className='min-w-0 flex-1 truncate text-sky-300'>{record.label}</span>
           </button>
-          {link && <p className='ml-4 border-l border-white/15 pl-2 text-[11px] text-white/45'>{link.source === id ? '↓' : '↑'} {link.label}</p>}
+          {link && <p className='ms-4 border-l border-white/15 ps-2 text-[11px] text-white/45'>{link.source === id ? '↓' : '↑'} {link.label}</p>}
         </li>;
       })}</ol>
       <button type='button' className='flex items-center gap-1 rounded-md bg-sky-500/20 px-2 py-1 text-xs text-sky-200 hover:bg-sky-500/30' onClick={() => show(path)}><Route className='h-3.5 w-3.5' />{t('graphViewer.showOnGraph')}</button>

@@ -58,6 +58,19 @@ Indexes are built by a third worker on queue `semantic-model-search.index`
 one automatically, and `POST /v1/semantic-model-search/indexes` backfills a
 model that was populated before.
 
+Semantic record search and relationship reads return existing source provenance.
+Each source reference retains its `workspaceId` and compatible `assetId`, exposes
+`documentId` as the corresponding document handle, and includes `filename` when
+the source provides `originalName` (including workspace/tabular sources). Derived and merged records carry the deduplicated
+references of their source records. `query_records` includes the same provenance
+on each returned record; grouped aggregate results have no record rows. MCP
+document connectors should use only declared tool arguments: map `workspaceId` to
+a declared workspace scope, `filename` to `file_name` when accepted, and
+`documentId` to `document_id` only when accepted (`assetId` remains an alias). If
+legacy provenance omits `filename`, resolve it with
+`list_workspace_files(source_workspace_id=workspaceId)` and match the returned file.
+`AssetRef` itself remains unchanged.
+
 Feature switches default off:
 
 - `SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED=true` permits durable admission.

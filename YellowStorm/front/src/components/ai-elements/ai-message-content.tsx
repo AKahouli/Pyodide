@@ -421,10 +421,10 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     return <p className='my-0 leading-relaxed'>{children}</p>;
   },
   ul({ children }) {
-    return <ul className='my-2 list-disc pl-5 space-y-1'>{children}</ul>;
+    return <ul className='my-2 list-disc ps-5 space-y-1'>{children}</ul>;
   },
   ol({ children }) {
-    return <ol className='my-2 list-decimal pl-5 space-y-1'>{children}</ol>;
+    return <ol className='my-2 list-decimal ps-5 space-y-1'>{children}</ol>;
   },
   li({ children }) {
     return <li className='my-0 leading-relaxed'>{children}</li>;
@@ -442,7 +442,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
   },
   blockquote({ children }) {
-    return <blockquote className='border-l-4 border-muted-foreground/30 pl-4 italic my-4'>{children}</blockquote>;
+    return <blockquote className='border-l-4 border-muted-foreground/30 ps-4 italic my-4'>{children}</blockquote>;
   },
   table({ children }) {
     return (
@@ -452,7 +452,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
     );
   },
   th({ children }) {
-    return <th className='border border-border bg-muted px-3 py-2 text-left font-semibold'>{children}</th>;
+    return <th className='border border-border bg-muted px-3 py-2 text-start font-semibold'>{children}</th>;
   },
   td({ children }) {
     return <td className='border border-border px-3 py-2'>{children}</td>;
@@ -807,7 +807,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 
   const hasStable = stable.length > 0;
   return (
-    <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
+    <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ms-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
       {hasStable && (
         <MarkdownSegment content={stable} components={componentsWithCite} hasInline={hasInline} outlineKey={outlineKey} seqBase={0} slot='stable' onSegmentHeadings={outlineKey ? handleSegmentHeadings : undefined} />
       )}
@@ -887,7 +887,7 @@ export const CitationsInline = ({ citations, citationScope }: { citations: Citat
   };
 
   return (
-    <span className='inline-flex flex-wrap gap-0 ml-1'>
+    <span className='inline-flex flex-wrap gap-0 ms-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
@@ -946,7 +946,7 @@ const AgentActivityPartRenderer = ({ part, isStreaming }: { part: AgentActivityP
       ? <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />
       : <Circle className='size-3 fill-primary/15 text-primary' aria-hidden='true' />}
     <span>{part.summary}</span>
-    {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+    {part.durationMs !== undefined && <span className='ms-auto tabular-nums'>{part.durationMs} ms</span>}
   </div>
 );
 
@@ -1079,7 +1079,7 @@ const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPar
       {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-green-500' aria-hidden='true' />}
       <span className='font-medium text-foreground'>{label}</span>
       {part.summary && <span className='truncate'>- {part.summary}</span>}
-      {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+      {part.durationMs !== undefined && <span className='ms-auto tabular-nums'>{part.durationMs} ms</span>}
     </div>
   );
 };
@@ -1225,7 +1225,7 @@ const SandboxPartRenderer = ({ code, output, error, outputAvailable }: { code: s
                   <Button
                     variant='ghost'
                     size='sm'
-                    className='h-8 w-8 p-0 mr-2'
+                    className='h-8 w-8 p-0 me-2'
                     onClick={() =>
                       downloadCode({
                         content: code,

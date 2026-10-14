@@ -474,11 +474,11 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
             onKeyDown={(event) => { if (event.key === 'Enter' && results[0]) pick(results[0].record.id); if (event.key === 'Escape') { setQuery(''); (event.target as HTMLInputElement).blur(); } }}
             placeholder={t('graphViewer.searchPlaceholder')} aria-label={t('graphViewer.search')}
-            className="h-8 w-full rounded-md border border-white/15 bg-white/5 pl-8 pr-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-sky-400" />
+            className="h-8 w-full rounded-md border border-white/15 bg-white/5 ps-8 pe-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-sky-400" />
           {searchOpen && query.trim() && <ul role="listbox" aria-label={t('graphViewer.searchResults')} className="absolute left-0 right-0 top-9 z-20 max-h-80 overflow-y-auto rounded-md border border-white/10 bg-[#1a1a2b] py-1 shadow-xl">
             {!results.length && !searching && <li className="px-3 py-2 text-xs text-white/45">{t('graphViewer.noMatch')}</li>}
             {results.map(({ record, field, value }) => <li key={record.id} role="option" aria-selected={false}>
-              <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => pick(record.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-white/10">
+              <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => pick(record.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-start hover:bg-white/10">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorOf(record.concept) }} />
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm text-white">{record.label}</span>
                   {field && <span className="block truncate text-[11px] text-white/45">{field}: {value}</span>}</span>
@@ -496,8 +496,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="z-[60]">
-            <DropdownMenuItem onSelect={() => setViewExportOpen(true)} title={t('graphViewer.exportViewHelp')}><FileCode2 className="mr-2 h-4 w-4" />{t('graphViewer.exportView')}</DropdownMenuItem>
-            <DropdownMenuItem disabled={windowed} onSelect={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}><Download className="mr-2 h-4 w-4" />{t('graphViewer.exportWhole')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setViewExportOpen(true)} title={t('graphViewer.exportViewHelp')}><FileCode2 className="me-2 h-4 w-4" />{t('graphViewer.exportView')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={windowed} onSelect={() => setExportOpen(true)} title={windowed ? t('graphViewer.exportWindowed') : t('graphViewer.exportHelpShort')}><Download className="me-2 h-4 w-4" />{t('graphViewer.exportWhole')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>}
         <Button variant="ghost" size="sm" className="gap-1.5 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => void load()} disabled={loading} aria-label={t('graphViewer.refresh')} title={t('graphViewer.refresh')}>
@@ -508,7 +508,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
         </Button>
       </div>
         {/* Legend: each concept with its records; clicking shows or hides them. */}
-        <div className="-ml-2 flex flex-wrap items-center gap-1" aria-label={t('graphViewer.legend')} role="group">
+        <div className="-ms-2 flex flex-wrap items-center gap-1" aria-label={t('graphViewer.legend')} role="group">
           {index.concepts.map((concept) => {
             const isShown = !hidden.has(concept.key);
             return <button key={concept.key} type="button" aria-pressed={isShown} onClick={() => toggleConcept(concept.key)}
@@ -519,7 +519,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             </button>;
           })}
           {hidden.size > 0 && <button type="button" onClick={() => setHidden(new Set())} className="px-2 text-xs text-sky-300 hover:underline">{t('graphViewer.showAll')}</button>}
-          {totals && (windowed || serverConcept) && <label className="ml-auto flex items-center gap-1.5 text-xs text-white/50" title={t('graphViewer.loadConceptHelp')}>{t('graphViewer.loadConcept')}
+          {totals && (windowed || serverConcept) && <label className="ms-auto flex items-center gap-1.5 text-xs text-white/50" title={t('graphViewer.loadConceptHelp')}>{t('graphViewer.loadConcept')}
             <select value={serverConcept} disabled={loading} onChange={(event) => setServerConcept(event.target.value)} className="h-7 max-w-[16rem] rounded-md border border-white/15 bg-[#1a1a2b] px-1.5 text-xs text-white disabled:opacity-40">
               <option value="">{t('graphViewer.allConcepts')}</option>
               {Object.entries(totals.concepts).map(([conceptId, count]) => <option key={conceptId} value={conceptId}>{t('graphViewer.conceptOption', { concept: conceptName(conceptId), records: count.toLocaleString(language) })}</option>)}
@@ -579,7 +579,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
             {expandError && <span className="rounded-full bg-red-400/15 px-2 py-0.5 text-red-200" role="alert">{t('graphViewer.loadNeighboursFailed', { message: expandError })}</span>}
             {focusDepth > 0 && selected && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.focusOn', { record: selected.label, count: focusDepth })}</span>}
             {period && <span className="rounded-full bg-white/10 px-2 py-0.5">{t('graphViewer.periodActive', { from: period.from, to: period.to })}</span>}
-            {highlight && !overviewOpen && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">{highlight.reason} <button type="button" className="ml-1 underline" onClick={() => setHighlight(null)}>{t('graphViewer.clearHighlight')}</button></span>}
+            {highlight && !overviewOpen && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">{highlight.reason} <button type="button" className="ms-1 underline" onClick={() => setHighlight(null)}>{t('graphViewer.clearHighlight')}</button></span>}
             {filtered && <button type="button" onClick={clearFilters} className="text-sky-300 hover:underline">{t('graphViewer.clearFilters')}</button>}
             {!summary && <span className="flex items-center gap-1 text-white/40"><span className="inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: MISSING_RING }} />{t('graphViewer.missingLegend')}</span>}
           </div>}

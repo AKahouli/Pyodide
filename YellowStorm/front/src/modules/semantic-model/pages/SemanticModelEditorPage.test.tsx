@@ -113,11 +113,14 @@ vi.mock("../components/editor/EditorDialogs", () => ({
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
-  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void }) => <div>
+  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource, onDataConnectRequest, onSelectRelation, onSelectConcept }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void; onDataConnectRequest?: (connection: { sourceId: string; targetId: string }) => void; onSelectRelation?: (relationId: string) => void; onSelectConcept?: (conceptId: string, details: boolean) => void }) => <div>
     semantic-model-canvas
     <button onClick={() => onMapStructuredDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-1', name: 'customers.xlsx', structured: true, mappable: true }, 'customer')}>map-source</button>
     <button onClick={() => onPaneDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-2', name: 'suppliers.xlsx', structured: true, mappable: true })}>drop-on-pane</button>
     <button onClick={() => onOpenSource?.({ id: 'typed:customer', kind: 'typed', mappings: [] })}>open-typed</button>
+    <button onClick={() => onDataConnectRequest?.({ sourceId: 'contract', targetId: 'customer' })}>open-derived-edge</button>
+    <button onClick={() => onSelectRelation?.('relation-1')}>select-relation-edge</button>
+    <button onClick={() => onSelectConcept?.('customer', false)}>select-concept</button>
   </div>,
 }));
 vi.mock("../components/records/ManualTableEditor", () => ({
@@ -140,6 +143,12 @@ vi.mock("../components/mapping/SourceMappingDrawer", () => ({
     assetKind: 'excel_sheet', conceptId,
   }),
   SourceMappingDrawer: ({ target }: { target: { documentName: string } | null }) => target ? <div>{target.documentName}</div> : null,
+}));
+vi.mock('../components/mapping/DerivedSourceDrawer', () => ({
+  DerivedSourceDrawer: ({ target, pendingSwitch, onClose, onCancelPendingSwitch }: { target: { conceptId: string } | null; pendingSwitch?: boolean; onClose: () => void; onCancelPendingSwitch?: () => void }) => target ? <div data-testid="derived-drawer">
+    <span>{target.conceptId}</span><span>{pendingSwitch ? 'pending-switch' : 'no-pending-switch'}</span>
+    <button onClick={onClose}>resolve-derived-switch</button><button onClick={onCancelPendingSwitch}>cancel-derived-switch</button>
+  </div> : null,
 }));
 vi.mock('../components/mapping/SemanticMappingsView', () => ({
   SemanticMappingsView: ({ onPopulationAccepted }: { onPopulationAccepted?: (jobId: string) => void }) =>
@@ -243,6 +252,43 @@ describe("SemanticModelEditorPage", () => {
     expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
+  it('keeps relation selection pending until the derived inspector resolves the switch', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    expect(await screen.findByTestId('derived-drawer')).toHaveTextContent('no-pending-switch');
+
+    fireEvent.click(screen.getByRole('button', { name: 'select-relation-edge' }));
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'resolve-derived-switch' }));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().selectedId).toBe('relation-1'));
+    expect(screen.queryByTestId('derived-drawer')).not.toBeInTheDocument();
+  });
+
+  it('cancels a pending relation selection without closing the derived inspector', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'select-relation-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'cancel-derived-switch' }));
+
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('no-pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+  });
+
+  it('keeps a concept selection pending until the derived inspector resolves the switch', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'open-derived-edge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'select-concept' }));
+
+    expect(screen.getByTestId('derived-drawer')).toHaveTextContent('pending-switch');
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'resolve-derived-switch' }));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().selectedId).toBe('customer'));
+    expect(screen.queryByTestId('derived-drawer')).not.toBeInTheDocument();
+  });
+
   it('opens model health in place of the canvas and goes back to it', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
@@ -251,9 +297,24 @@ describe("SemanticModelEditorPage", () => {
 
     expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /health.button/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByText('semantic-model-canvas')).not.toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
     expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
+  });
+
+  it('keeps records and sources inside Trust center and removes them from the Data menu', async () => {
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'dataWorkflow.dataGraph' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'mode.records' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'designer.sourceList' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /health.button/ }));
+    expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.records' }));
+    expect(screen.getByText('revision:none')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.sourcesLineage' }));
+    expect(screen.getByRole('button', { name: 'accept-population' })).toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
   it('establishes an origin workspace before opening source mapping', async () => {
