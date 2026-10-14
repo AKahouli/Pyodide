@@ -629,7 +629,7 @@ Assign a subscription plan to a user.
 
 ### POST /admin/users/invite
 
-Super Admin only (`*`). Emails a new address a unique invitation link. Rejects an address that already has an account with `409 USER_ALREADY_EXISTS`. Sends best-effort but surfaces a transport failure as `503 ERR_1203`, and always audits `users.invite` on success.
+Super Admin only (`*`). Emails a new address a unique invitation link. Rejects an address that already has an account with `409 USER_ALREADY_EXISTS`. Re-inviting the same address supersedes any still-pending invitation, so only the newest link stays usable. A transport failure surfaces as `503 ERR_1203` and the just-created row is removed, so no undiscoverable pending invite is left behind. Audits `users.invite` on success.
 
 **Request:**
 ```json
@@ -655,10 +655,11 @@ A Super Admin invites a user by email from `/#/admin/users`. The invitee receive
 1. Super Admin → POST /admin/users/invite { email }
    ├── address already has an account → 409 USER_ALREADY_EXISTS
    ├── UserInvitationService.invite()
+   │   ├── supersede still-pending invites for the address (consumePendingForEmail)
    │   ├── randomBytes(32) base64url  → raw token (email only)
    │   ├── SHA-256 hash               → identity.user_invitations.token_hash
    │   ├── expires_at = now + 24h, invited_by = acting admin
-   │   └── render EmailTemplate.USER_INVITE + send
+   │   └── render EmailTemplate.USER_INVITE + send (row deleted if the send fails)
    └── audit users.invite
 
 2. Invitee opens the link → frontend GET /auth/invite?token=<token>
@@ -677,8 +678,13 @@ A Super Admin invites a user by email from `/#/admin/users`. The invitee receive
 - The raw token exists **only** in the email link; only its SHA-256 hash is stored (same at-rest rule as the password-reset / app-share tokens).
 - Validity is **exactly 24 hours** (`USER_INVITATION_TTL_HOURS`), enforced server-side against `expires_at`.
 - Single use is enforced by an atomic conditional claim (`PgUserInvitationStore.consumeIfValid` — `UPDATE ... WHERE consumed_at IS NULL AND expires_at > now()`), so two concurrent registrations can never both win.
-- The invitation is claimed **after** the user row is created, so a failed or rejected registration never burns the link. A lost concurrent claim is a handled outcome (warned as a correlated `http.request.failed` 409), never a thrown error.
+- Re-inviting an address supersedes its still-pending invitations (`consumePendingForEmail` marks them consumed), so at most one invitation is usable at a time. If the invitation email cannot be sent, the just-created row is deleted (best-effort) so no undiscoverable pending invite lingers.
+- The invitation is claimed **after** the user row is created, so a failed or rejected registration never burns the link. A lost concurrent claim is a handled outcome — the account already exists, so it is neither thrown nor reported as an HTTP failure (the `201` registration response is the terminal outcome).
 - The invite is a pre-fill/binding only: the invitee still verifies their email and waits for Super Admin approval (`POST /admin/users/:id/approve-registration`).
+
+### Refused-invite telemetry
+
+`GET /auth/invite` and the `inviteToken` branch of `POST /auth/register` emit `http.request.failed` (method, route, status) on refusal; a failed send emits `dependency.request.failed` (`dependency: 'smtp'`, `operation: 'user_invitation.send'`, `attempt`). A lost single-use claim after the user is created is not reported as an `http.request.failed`, since the registration request itself succeeded. No new event names are registered.
 
 ### Refused-invite telemetry
 

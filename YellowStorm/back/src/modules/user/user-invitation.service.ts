@@ -59,17 +59,30 @@ export class UserInvitationService {
       );
     }
 
-    const { token, hash } = this.issueToken();
-    const expiresAt = new Date(Date.now() + USER_INVITATION_TTL_HOURS * 60 * 60 * 1000);
+    // Issuing a fresh invitation supersedes any previously pending one for the
+    // same address, so only the newest link stays usable (one pending invite).
+    const now = new Date();
+    await this.store.consumePendingForEmail(email, now);
 
-    await this.store.create({
+    const { token, hash } = this.issueToken();
+    const expiresAt = new Date(now.getTime() + USER_INVITATION_TTL_HOURS * 60 * 60 * 1000);
+
+    const invitation = await this.store.create({
       email,
       tokenHash: hash,
       invitedBy: params.invitedById,
       expiresAt,
     });
 
-    await this.sendInviteEmail({ to: email, token });
+    try {
+      await this.sendInviteEmail({ to: email, token });
+    } catch (error) {
+      // The link never reached the invitee, so its pending row must not linger
+      // (the previous invitations were already superseded above). Cleanup is
+      // best-effort: the send failure is the error that must surface.
+      await this.store.deleteById(invitation.id).catch(() => undefined);
+      throw error;
+    }
 
     return { email, expiresAt };
   }
@@ -99,20 +112,14 @@ export class UserInvitationService {
   /**
    * Atomically claim the invitation for registration (phase 2, after the user
    * row exists). The conditional store update is the single-use enforcement
-   * point: a lost claim means another request used the token first, which is
-   * a handled outcome here — the account already exists, so it is warned, not
-   * thrown.
+   * point. A lost claim is a handled outcome — the account is already created,
+   * so it is neither thrown nor reported as an HTTP failure: the registration
+   * request itself completed successfully.
    */
   async markConsumed(token: string): Promise<void> {
     const hash = this.hashToken(token);
-    const claimed = hash ? await this.store.consumeIfValid(hash, new Date()) : false;
-
-    if (!claimed) {
-      logDomainEvent('warn', 'http.request.failed', {
-        method: INVITE_REGISTER_ROUTE.method,
-        route: INVITE_REGISTER_ROUTE.route,
-        status_code: 409,
-      });
+    if (hash) {
+      await this.store.consumeIfValid(hash, new Date());
     }
   }
 

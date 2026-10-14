@@ -37,6 +37,29 @@ export class PgUserInvitationStore implements UserInvitationStore {
     return row ? this.toRecord(row) : null;
   }
 
+  async consumePendingForEmail(email: string, now: Date): Promise<number> {
+    // Re-invite semantics: supersede the still-pending links for this address
+    // before a new one is issued, so at most one invitation stays usable.
+    const superseded = await this.q
+      .update(schema.identityUserInvitations)
+      .set({ consumedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.identityUserInvitations.email, email),
+          isNull(schema.identityUserInvitations.consumedAt),
+          gt(schema.identityUserInvitations.expiresAt, now),
+        ),
+      )
+      .returning({ id: schema.identityUserInvitations.id });
+    return superseded.length;
+  }
+
+  async deleteById(id: string): Promise<void> {
+    await this.q
+      .delete(schema.identityUserInvitations)
+      .where(eq(schema.identityUserInvitations.id, id));
+  }
+
   async consumeIfValid(tokenHash: string, now: Date): Promise<boolean> {
     // Conditional UPDATE: the WHERE clause is the entire single-use guarantee —
     // the first statement to match flips consumed_at and the rest match nothing.

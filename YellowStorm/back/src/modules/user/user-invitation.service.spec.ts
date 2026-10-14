@@ -36,8 +36,10 @@ describe('UserInvitationService', () => {
     consumeResult?: boolean;
   } = {}) => {
     const store = {
-      create: jest.fn().mockResolvedValue({}),
+      create: jest.fn().mockResolvedValue({ id: 'inv-1' }),
       findByTokenHash: jest.fn().mockResolvedValue(overrides.stored ?? null),
+      consumePendingForEmail: jest.fn().mockResolvedValue(0),
+      deleteById: jest.fn().mockResolvedValue(undefined),
       consumeIfValid: jest.fn().mockResolvedValue(overrides.consumeResult ?? true),
     };
     const email = {
@@ -119,6 +121,17 @@ describe('UserInvitationService', () => {
       );
     });
 
+    it('supersedes any pending invitation for the same address before creating a new one', async () => {
+      const { service, store } = makeService();
+
+      await service.invite({ email: ' Jane@Acme.io ', invitedById: 'admin-1' });
+
+      expect(store.consumePendingForEmail).toHaveBeenCalledWith('jane@acme.io', expect.any(Date));
+      expect(store.consumePendingForEmail.mock.invocationCallOrder[0]).toBeLessThan(
+        store.create.mock.invocationCallOrder[0],
+      );
+    });
+
     it('refuses when the email service is unavailable and does not create a row', async () => {
       const { service, store, email } = makeService({ emailAvailable: false });
 
@@ -126,6 +139,7 @@ describe('UserInvitationService', () => {
         service.invite({ email: 'jane@acme.io', invitedById: 'admin-1' }),
       ).rejects.toMatchObject({ code: ErrorCode.USER_INVITE_EMAIL_FAILED });
 
+      expect(store.consumePendingForEmail).not.toHaveBeenCalled();
       expect(store.create).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
     });
@@ -142,6 +156,16 @@ describe('UserInvitationService', () => {
         'dependency.request.failed',
         expect.objectContaining({ dependency: 'smtp', attempt: 3 }),
       );
+    });
+
+    it('removes the just-created row when the send fails, leaving no orphan invite', async () => {
+      const { service, store } = makeService({ sendResult: { success: false, attempts: 1 } });
+
+      await expect(
+        service.invite({ email: 'jane@acme.io', invitedById: 'admin-1' }),
+      ).rejects.toMatchObject({ code: ErrorCode.USER_INVITE_EMAIL_FAILED });
+
+      expect(store.deleteById).toHaveBeenCalledWith('inv-1');
     });
   });
 
@@ -224,16 +248,14 @@ describe('UserInvitationService', () => {
       expect(logDomainEvent).not.toHaveBeenCalled();
     });
 
-    it('warns without throwing when the claim is lost to a concurrent request', async () => {
+    it('does not throw or emit an HTTP failure when the claim is lost to a concurrent request', async () => {
       const { service } = makeService({ consumeResult: false });
 
       await expect(service.markConsumed('raw-token')).resolves.toBeUndefined();
 
-      expect(logDomainEvent).toHaveBeenCalledWith(
-        'warn',
-        'http.request.failed',
-        expect.objectContaining({ route: '/auth/register', status_code: 409 }),
-      );
+      // The registration request itself succeeded, so a lost claim must not be
+      // reported as a failed HTTP request (no bogus 409 on a 201 response).
+      expect(logDomainEvent).not.toHaveBeenCalled();
     });
   });
 });

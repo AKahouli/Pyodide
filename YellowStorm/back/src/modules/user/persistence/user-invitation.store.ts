@@ -28,6 +28,14 @@ export interface UserInvitationStore {
   create(init: NewUserInvitation): Promise<UserInvitationRecord>;
   findByTokenHash(tokenHash: string): Promise<UserInvitationRecord | null>;
   /**
+   * Supersede every still-pending invitation for `email` (marks them consumed)
+   * so issuing a fresh invitation invalidates the previous links — only the
+   * latest one keeps working. Returns the number of invitations superseded.
+   */
+  consumePendingForEmail(email: string, now: Date): Promise<number>;
+  /** Drop a row whose invitation email never went out (orphan cleanup). */
+  deleteById(id: string): Promise<void>;
+  /**
    * Atomic single-use claim: marks the invitation consumed only when it is
    * still unconsumed and not expired. Returns true exactly when THIS call
    * consumed it (false for unknown, expired, or already-consumed tokens), so
