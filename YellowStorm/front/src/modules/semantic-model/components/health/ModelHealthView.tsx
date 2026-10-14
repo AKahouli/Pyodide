@@ -9,23 +9,32 @@ import { HealthIssueCard } from './HealthIssueCard';
 import { CAUSES, badgeOf, formatNumber, flowLine, readable, STATUS_CLASSES, type Translate } from './healthModel';
 import { RowJourney } from './RowJourney';
 
+export type TrustCenterSection = 'overview' | 'records' | 'sources';
+
 /**
  * Model health: what the last run did to each concept's rows and what to change. A verdict for the run,
  * the concepts worst first, and for the one picked its row journey and one card per problem.
  * `setup` is shown below: what blocks the next run before any row is read.
  */
-export function ModelHealthView({ modelId, canEdit, onAction, setup }: Readonly<{
+export function ModelHealthView({ modelId, canEdit, onAction, setup, section, onSectionChange, records, sources }: Readonly<{
   modelId: string;
   canEdit: boolean;
   /** Opens where an action is done; "go to concept" is handled here, by picking that concept. */
   onAction: (action: HealthAction) => void;
   setup: ReactNode;
+  section?: TrustCenterSection;
+  onSectionChange?: (section: TrustCenterSection) => void;
+  records?: ReactNode;
+  sources?: ReactNode;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const translate = t as Translate;
   const health = useModelHealth(modelId);
   const [pickedId, setPickedId] = useState<string>();
   const [cause, setCause] = useState<HealthCause | 'all'>('all');
+  const [localSection, setLocalSection] = useState<TrustCenterSection>('overview');
+  const activeSection = section ?? localSection;
+  const selectSection = onSectionChange ?? setLocalSection;
   const data = health.data;
   const concepts = useMemo(() => data?.concepts ?? [], [data?.concepts]);
   const selected = concepts.find((concept) => concept.conceptId === pickedId)
@@ -36,36 +45,52 @@ export function ModelHealthView({ modelId, canEdit, onAction, setup }: Readonly<
   const pick = (conceptId: string) => { setPickedId(conceptId); setCause('all'); };
   const act = (action: HealthAction) => (action.kind === 'go_to_concept' ? pick(action.conceptId) : onAction(action));
 
-  if (health.isLoading) return <div className='flex h-full items-center justify-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-5 w-5 animate-spin' />{translate('health.loading')}</div>;
-  if (health.isError || !data) return <div className='flex h-full items-center justify-center p-6'><div className='max-w-md rounded-2xl border bg-background p-6 text-center'>
-    <p className='text-sm text-muted-foreground'>{translate('health.unavailable')}</p>
-    <Button className='mt-4' onClick={() => void health.refetch()}>{translate('health.retry')}</Button>
-  </div></div>;
-
+  const overview = health.isLoading
+    ? <div className='flex h-full min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-5 w-5 animate-spin' />{translate('health.loading')}</div>
+    : health.isError || !data
+      ? <div className='flex h-full min-h-64 items-center justify-center p-6'><div className='max-w-md rounded-2xl border bg-background p-6 text-center'>
+        <p className='text-sm text-muted-foreground'>{translate('health.unavailable')}</p>
+        <Button className='mt-4' onClick={() => void health.refetch()}>{translate('health.retry')}</Button>
+      </div></div>
+      : <div className='space-y-5'>
+        {data.state === 'no_data'
+          ? <div className='mx-auto max-w-md rounded-2xl border bg-background p-6 text-center'>
+            <Database className='mx-auto h-6 w-6 text-muted-foreground' />
+            <h2 className='mt-3 font-semibold'>{translate('health.noData.title')}</h2>
+            <p className='mt-1 text-sm text-muted-foreground'>{translate('health.noData.hint')}</p>
+          </div>
+          : <>
+            <Verdict data={data} translate={translate} />
+            <div className='flex flex-col gap-5 lg:flex-row lg:items-start'>
+              <aside className='w-full shrink-0 lg:w-80'>
+                <HealthConceptRail concepts={concepts} selectedId={selected?.conceptId} onSelect={pick} />
+              </aside>
+              <main className='min-w-0 flex-1 space-y-4'>
+                {selected && <ConceptDetail concept={selected} concepts={concepts} cause={cause} onCause={setCause} canEdit={canEdit} onAction={act} />}
+              </main>
+            </div>
+          </>}
+        <section aria-label={translate('health.setup.title')} className='rounded-2xl border bg-background p-5'>
+          <h2 className='text-lg font-semibold'>{translate('health.setup.title')}</h2>
+          <p className='mb-4 text-sm text-muted-foreground'>{translate('health.setup.description')}</p>
+          {setup}
+        </section>
+      </div>;
+  const sectionContent = activeSection === 'records' ? records : activeSection === 'sources' ? sources : overview;
+  const tabs: Array<{ id: TrustCenterSection; key: string }> = [
+    { id: 'overview', key: 'trustCenter.overview' },
+    { id: 'records', key: 'trustCenter.records' },
+    { id: 'sources', key: 'trustCenter.sourcesLineage' },
+  ];
   return <div className='h-full overflow-y-auto bg-muted/20 p-4 sm:p-6'>
     <div className='mx-auto max-w-7xl space-y-5'>
-      {data.state === 'no_data'
-        ? <div className='mx-auto max-w-md rounded-2xl border bg-background p-6 text-center'>
-          <Database className='mx-auto h-6 w-6 text-muted-foreground' />
-          <h2 className='mt-3 font-semibold'>{translate('health.noData.title')}</h2>
-          <p className='mt-1 text-sm text-muted-foreground'>{translate('health.noData.hint')}</p>
-        </div>
-        : <>
-          <Verdict data={data} translate={translate} />
-          <div className='flex flex-col gap-5 lg:flex-row lg:items-start'>
-            <aside className='w-full shrink-0 lg:w-80'>
-              <HealthConceptRail concepts={concepts} selectedId={selected?.conceptId} onSelect={pick} />
-            </aside>
-            <main className='min-w-0 flex-1 space-y-4'>
-              {selected && <ConceptDetail concept={selected} concepts={concepts} cause={cause} onCause={setCause} canEdit={canEdit} onAction={act} />}
-            </main>
-          </div>
-        </>}
-      <section aria-label={translate('health.setup.title')} className='rounded-2xl border bg-background p-5'>
-        <h2 className='text-lg font-semibold'>{translate('health.setup.title')}</h2>
-        <p className='mb-4 text-sm text-muted-foreground'>{translate('health.setup.description')}</p>
-        {setup}
-      </section>
+      <nav role='tablist' aria-label={translate('trustCenter.sections')} className='flex flex-wrap gap-1 rounded-xl border bg-background p-1'>
+        {tabs.map((tab) => <button key={tab.id} type='button' role='tab' aria-selected={activeSection === tab.id} onClick={() => selectSection(tab.id)}
+          className={`rounded-lg px-3 py-2 text-sm font-medium transition ${activeSection === tab.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+          {translate(tab.key)}
+        </button>)}
+      </nav>
+      <div role='tabpanel' className='min-h-0'>{sectionContent}</div>
     </div>
   </div>;
 }

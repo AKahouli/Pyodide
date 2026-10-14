@@ -7,23 +7,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
-import { useMappingHealth, useRelationResolutionRules, useSourceMappings, useSourceResolutionPolicies } from '../../query/hooks';
+import { useDerivedSources, useMappingHealth, useRelationResolutionRules, useSourceMappings, useSourceResolutionPolicies } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
-import type { ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SourceResolutionPolicy } from '../../types';
+import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, SemanticNodeType, SourceResolutionPolicy } from '../../types';
 import { useSemanticModelChannel } from '../../data-plane/use-semantic-model-channel';
 import { useSemanticModelSources } from '../../data-plane/use-semantic-model-sources';
 import { useSemanticModelSummary } from '../../data-plane/use-semantic-model-summary';
 import { PopulationRefreshPanel } from './PopulationRefreshPanel';
 import type { SemanticSourceSummaryRow } from '../../data-plane/semantic-api.types';
 
-export function SemanticMappingsView({ modelId, canEdit, onRepairMapping, onBulkEditMappings, onPopulationAccepted, onOpenGraph }: Readonly<{ modelId: string; canEdit: boolean; onRepairMapping?: (mapping: ConceptSourceMapping) => void; onBulkEditMappings?: (mapping: ConceptSourceMapping) => void; onPopulationAccepted?: (jobId: string) => void; onOpenGraph?: () => void }>) {
+export function SemanticMappingsView({ modelId, canEdit, onRepairMapping, onBulkEditMappings, onPopulationAccepted, onOpenGraph, onRepairDerived }: Readonly<{ modelId: string; canEdit: boolean; onRepairMapping?: (mapping: ConceptSourceMapping) => void; onBulkEditMappings?: (mapping: ConceptSourceMapping) => void; onPopulationAccepted?: (jobId: string) => void; onOpenGraph?: () => void; onRepairDerived?: (derived: DerivedSource) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const mappings = useSourceMappings(modelId);
   const rules = useRelationResolutionRules(modelId);
   const policies = useSourceResolutionPolicies(modelId);
   const health = useMappingHealth(modelId);
+  const derivedSources = useDerivedSources(modelId);
   const sources = useSemanticModelSources(modelId);
   const summary = useSemanticModelSummary(modelId);
   useSemanticModelChannel(modelId, summary.data?.[0]?.active_data_revision);
@@ -47,6 +48,20 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping, onBulk
     <MappingHealth modelId={modelId} items={health.data?.items ?? []} canEdit={canEdit} mappings={mappings.data ?? []} onRepairMapping={onRepairMapping} />
     {mappedConcepts.map((concept) => <ConceptMappings key={concept.id} modelId={modelId} concept={concept} mappings={(mappings.data ?? []).filter((mapping) => mapping.conceptId === concept.id)} policy={(policies.data ?? []).find((policy) => policy.conceptId === concept.id)} canEdit={canEdit} onBulkEditMappings={onBulkEditMappings} />)}
     {!mappedConcepts.length && <div className='rounded-2xl border border-dashed bg-background p-10 text-center text-sm text-muted-foreground'>{t('mappingsView.empty')}</div>}
+    <section className='rounded-2xl border bg-background p-5'>
+      <h3 className='font-semibold'>{t('mappingsView.derivedFeeds')}</h3>
+      <p className='mt-1 text-xs text-muted-foreground'>{t('mappingsView.derivedFeedsDescription')}</p>
+      {(derivedSources.data ?? []).length === 0 && <p className='mt-4 text-sm text-muted-foreground'>{t('mappingsView.noDerivedFeeds')}</p>}
+      {(derivedSources.data ?? []).length > 0 && <div className='mt-4 space-y-2'>{(derivedSources.data ?? []).map((derived) => {
+        const source = graph?.nodes.find((node) => node.id === derived.sourceConceptId)?.label ?? derived.sourceConceptId;
+        const concept = graph?.nodes.find((node) => node.id === derived.conceptId)?.label ?? derived.conceptId;
+        return <div key={derived.id} className='flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center'>
+          <div className='min-w-0 flex-1'><p className='truncate text-sm font-medium'>{t('mappingsView.derivedFeed', { source, concept })}</p>
+            <p className='text-xs text-muted-foreground'>{t(derived.fieldMappings.length === 1 ? 'mappingsView.derivedFeedFields_one' : 'mappingsView.derivedFeedFields_other', { count: derived.fieldMappings.length })}</p></div>
+          {canEdit && onRepairDerived && <Button size='sm' variant='outline' onClick={() => onRepairDerived(derived)}>{t('mappingsView.editDerivedFeed')}</Button>}
+        </div>;
+      })}</div>}
+    </section>
     {/* Ingestion detail duplicates Source health; only show it when the data plane actually answered. */}
     {!sources.isError && (sources.data?.length ?? 0) > 0 && <SourceStatus rows={sources.data ?? []} loading={sources.isLoading} error={false} retry={() => void sources.refetch()} />}
     <section className='rounded-2xl border bg-background p-5'><h3 className='font-semibold'>{t('mappingsView.relationships')}</h3><div className='mt-3 space-y-2'>{(graph?.relations ?? []).map((relation) => {

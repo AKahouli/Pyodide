@@ -10,7 +10,6 @@ import { ListOrdered,
   History,
   LayoutDashboard,
   HeartPulse,
-  ListChecks,
   Loader2,
   Network,
   PanelRightOpen,
@@ -72,7 +71,7 @@ import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView
 import { SemanticDataPreview, type DataPreviewFocus } from '../components/preview/SemanticDataPreview';
 import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { CanvasPalette } from '../components/editor/CanvasPalette';
-import { ModelHealthView } from '../components/health/ModelHealthView';
+import { ModelHealthView, type TrustCenterSection } from '../components/health/ModelHealthView';
 import { ModelSetupChecks } from '../components/health/ModelSetupChecks';
 import { conceptsRefreshedWith } from '../components/population/runScope';
 import { PopulationStartedPanel, populationServing, runCanStop, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
@@ -231,6 +230,7 @@ export function SemanticModelEditorPage() {
   // The review item being fixed, and the records to show for a missing value.
   const [reviewFocus, setReviewFocus] = useState<ReviewQueueItem | null>(null);
   const [dataFocus, setDataFocus] = useState<DataPreviewFocus | null>(null);
+  const [healthSection, setHealthSection] = useState<TrustCenterSection>('overview');
   const [choosingFor, setChoosingFor] = useState<SourceSuggestion | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const sourceSuggestions = useSourceSuggestions(modelId);
@@ -272,9 +272,48 @@ export function SemanticModelEditorPage() {
   useEffect(() => { if (population) { setLastRun(population); setIndexPanelOpen(false); } }, [population]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
+  const [pendingInspector, setPendingInspector] = useState<{ kind: 'derived'; target: DerivedSourceTarget } | { kind: 'relation'; relationId: string } | { kind: 'concept'; conceptId: string; details: boolean } | null>(null);
+  const consumedPendingInspectorRef = useRef<typeof pendingInspector>(null);
   // The mapping drawers share the right edge with the manual table: opening one closes the other.
   useEffect(() => { if (mappingTarget || derivedTarget) setManualConceptId(null); }, [mappingTarget, derivedTarget]);
-  const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); if (knowledgeOpen) closeKnowledge(); setDerivedTarget(target); };
+  const applyInspectorSelection = (selection: NonNullable<typeof pendingInspector>) => {
+    setPendingInspector(null);
+    setMappingTarget(null);
+    if (selection.kind === 'derived') {
+      select(null);
+      if (knowledgeOpen) closeKnowledge();
+      setDerivedTarget(selection.target);
+    } else {
+      setDerivedTarget(null);
+      if (selection.kind === 'relation') select(selection.relationId, { details: true });
+      else select(selection.conceptId, { details: selection.details });
+    }
+  };
+  const openDerived = (target: DerivedSourceTarget) => {
+    if (derivedTarget) {
+      if (derivedTarget.conceptId === target.conceptId && derivedTarget.derived?.id === target.derived?.id
+        && derivedTarget.initialSourceConceptId === target.initialSourceConceptId) return;
+      setPendingInspector({ kind: 'derived', target });
+      return;
+    }
+    applyInspectorSelection({ kind: 'derived', target });
+  };
+  const selectRelation = (relationId: string) => {
+    if (derivedTarget) { setPendingInspector({ kind: 'relation', relationId }); return; }
+    setMappingTarget(null);
+    select(relationId, { details: true });
+  };
+  const selectConcept = (conceptId: string, details: boolean) => {
+    if (derivedTarget) { setPendingInspector({ kind: 'concept', conceptId, details }); return; }
+    setMappingTarget(null);
+    select(conceptId, { details });
+  };
+  const closeDerived = useCallback(() => setDerivedTarget(null), []);
+  useEffect(() => {
+    if (derivedTarget || !pendingInspector || consumedPendingInspectorRef.current === pendingInspector) return;
+    consumedPendingInspectorRef.current = pendingInspector;
+    applyInspectorSelection(pendingInspector);
+  }, [derivedTarget, pendingInspector]);
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
   const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
   // Removing a source happens at once, without asking: Undo puts it back with the same settings.
@@ -424,6 +463,7 @@ export function SemanticModelEditorPage() {
     setSuggestionsOpen(false);
     setVersionsOpen(false);
     setMappingTarget(null);
+    setDerivedTarget(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
     // An open records table follows the concept being looked at.
@@ -435,7 +475,7 @@ export function SemanticModelEditorPage() {
   // A concept's properties open on the right; the app's left navigation folds away to leave the canvas room.
   const appSidebar = useOptionalSidebar();
   const setAppSidebarOpen = appSidebar?.setOpen;
-  const conceptDetailsShown = detailsOpen && Boolean(selectedId && graph?.nodes.some((node) => node.id === selectedId));
+  const conceptDetailsShown = detailsOpen && Boolean((selectedId && graph?.nodes.some((node) => node.id === selectedId)) || (selectedId && graph?.relations.some((relation) => relation.id === selectedId)));
   useEffect(() => {
     if (conceptDetailsShown) { setAppSidebarOpen?.(false); appSidebar?.setOpenMobile(false); }
   // Only opening a concept folds it; the user can unfold it again while the panel stays open.
@@ -720,7 +760,7 @@ export function SemanticModelEditorPage() {
   const published = Boolean(model.data?.currentPublishedVersionId);
   const repairMapping = (mappingId: string, bulkEdit?: boolean) => {
     const mapping = sourceMappings.data?.find((candidate) => candidate.id === mappingId);
-    if (!mapping) { setMode('mappings'); return; }
+    if (!mapping) { setHealthSection('sources'); setMode('health'); return; }
     void openMappingTarget({ ...mappingTarget_(mapping), ...(bulkEdit ? { bulkEdit } : {}) });
   };
   // The editors open over the canvas, not over the health screen.
@@ -811,7 +851,7 @@ export function SemanticModelEditorPage() {
     setMappingTarget(next);
   };
   const closeSidePanels = () => { setVersionsOpen(false); closeRunPanel(); setSuggestionsOpen(false); setRunHistoryOpen(false); };
-  const openReview = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setMode('health'); };
+  const openReview = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setHealthSection('overview'); setMode('health'); };
   const openRunHistory = () => { setKnowledgeOpen(false); closeRunPanel(); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
   const fieldKey = (conceptId: string, label: unknown) => {
@@ -832,12 +872,12 @@ export function SemanticModelEditorPage() {
       case 'choose_unique_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       case 'set_up_link': setMode('structure'); focus(action.relationId, 'matching'); break;
       // Links that found nothing are looked at in the records: which ones, and the value they looked for.
-      case 'check_links': setMode('records'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
-      case 'review_rows': setMode('records'); setDataFocus({ conceptId: action.conceptId, rows: true, at: Date.now() }); break;
+      case 'check_links': setHealthSection('records'); setMode('health'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
+      case 'review_rows': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, rows: true, at: Date.now() }); break;
       case 'add_source':
-      case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
-      case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
-      case 'view_data': setMode('records'); setDataFocus(null); break;
+      case 'open_sources': setHealthSection('sources'); setMode('health'); break;
+      case 'fix_values': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
+      case 'view_data': setHealthSection('records'); setMode('health'); setDataFocus(null); break;
       case 'open_run_history': openRunHistory(); break;
       case 'choose_label_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       default: break;
@@ -850,10 +890,10 @@ export function SemanticModelEditorPage() {
         setMode('structure');
         if (action.suggestedFields?.length) suggestIdentity(action.conceptId, action.suggestedFields); else focus(action.conceptId, 'identity');
         break;
-      case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
-      case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute, at: Date.now() }); break;
-      case 'check_links': setMode('records'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
-      case 'view_records': setMode('records'); setDataFocus({ conceptId: action.conceptId, at: Date.now() }); break;
+      case 'open_sources': setHealthSection('sources'); setMode('health'); break;
+      case 'fix_values': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute, at: Date.now() }); break;
+      case 'check_links': setHealthSection('records'); setMode('health'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
+      case 'view_records': setHealthSection('records'); setMode('health'); setDataFocus({ conceptId: action.conceptId, at: Date.now() }); break;
       // The limits are the admins' to change, in the settings for every model.
       case 'raise_ai_limit':
       case 'open_run_limits': navigate('/admin/semantic-model-settings'); break;
@@ -950,14 +990,9 @@ export function SemanticModelEditorPage() {
         {modelId && <GraphStatusTooltip modelId={modelId} />}
         <div className="flex shrink-0 items-center gap-1.5">
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
-          {onCanvas && <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost' aria-label={t('designer.data')} title={t('designer.data')}><Table2 className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('designer.data')}</span><ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
-            <DropdownMenuContent align='end' onCloseAutoFocus={(event) => event.preventDefault()}>
-              <DropdownMenuItem onSelect={() => setMode('records')}><Table2 className='h-4 w-4' />{t('mode.records')}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={openGraphViewer}><Network className='h-4 w-4' />{t('dataWorkflow.dataGraph')}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setMode('mappings')}><ListChecks className='h-4 w-4' />{t('designer.sourceList')}</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>}
+          {onCanvas && <Button size='sm' variant='ghost' aria-label={t('dataWorkflow.dataGraph')} title={t('dataWorkflow.dataGraph')} onClick={openGraphViewer}>
+            <Network className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('dataWorkflow.dataGraph')}</span>
+          </Button>}
           {suggestionList.length > 0 && <Button variant='ghost' size='sm' onClick={() => (suggestionsOpen ? setSuggestionsOpen(false) : openSuggestions())}>
             {t('assistantSources.toolbar')}
             {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
@@ -1024,8 +1059,8 @@ export function SemanticModelEditorPage() {
       <main className="relative flex min-h-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
           {reviewFocus && mode !== 'health' && <ReviewFocusBar item={reviewFocus} items={modelHealth.data?.setup ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
-          {onCanvas && <div className='relative min-h-0 flex-1'>
-            {canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
+          {(onCanvas || mode === 'health') && <div aria-hidden={!onCanvas} className={cn('relative min-h-0 flex-1', mode === 'health' && 'pointer-events-none absolute inset-0 invisible')}>
+            {onCanvas && canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
             <SemanticModelCanvas
             sourceMappings={sourceMappings.data}
             derivedSources={derivedSources.data}
@@ -1045,6 +1080,8 @@ export function SemanticModelEditorPage() {
               initialSourceConceptId: sourceId,
               derived: derivedSources.data?.find((source) => source.sourceConceptId === sourceId && source.conceptId === targetId),
             })}
+            onSelectRelation={selectRelation}
+            onSelectConcept={selectConcept}
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
@@ -1070,14 +1107,16 @@ export function SemanticModelEditorPage() {
             onRefresh={canEdit ? () => setRefreshConceptId(recordsConceptId) : undefined}
             refreshing={Boolean(populationJobId)}
           />}
-          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
-            onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
-          {mode === 'health' && modelId && <ModelHealthView modelId={modelId} canEdit={canEdit} onAction={openHealthAction}
+          {mode === 'health' && modelId && <ModelHealthView modelId={modelId} canEdit={canEdit} onAction={openHealthAction} section={healthSection} onSectionChange={setHealthSection}
+            records={<SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
+              onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
+            sources={<SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
+              onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })}
+              onRepairDerived={(derived) => openDerived({ conceptId: derived.conceptId, derived })} />}
             setup={<ModelSetupChecks modelId={modelId} canEdit={canEdit && pending.length === 0} items={modelHealth.data?.setup ?? []} activeKey={reviewFocus?.key}
               modelCheck={checkResult} modelCheckFailed={modelCheck.isError && !checkResult} checkMappings={sourceMappings.data} checkDerivedSources={derivedSources.data}
               onOpenCheckIssue={openCheckIssue} onOpenIssue={openIssue} validation={validation} onOpenValidationIssue={(id) => { setMode('structure'); focus(id); }}
               canRunCheck={canValidate} checking={checking} onRunCheck={() => void validate()} />} />}
-          {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
           {onCanvas && conceptCount === 0 && !hasSources && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
               {/* Like the first step of a scenario: one big +, and the choices it opens. */}
@@ -1151,7 +1190,8 @@ export function SemanticModelEditorPage() {
         />}
         {(knowledgeOpen || (onCanvas && detailsOpen)) && !runPanelOpen && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
         <ManualTableEditor conceptId={manualConceptId} canEdit={canEdit} onClose={() => setManualConceptId(null)} />
-        {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
+        {modelId && derivedTarget && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} pendingSwitch={Boolean(pendingInspector)}
+          onCancelPendingSwitch={() => setPendingInspector(null)} onClose={closeDerived} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={mappingClosed} onSaved={mappingSaved} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />

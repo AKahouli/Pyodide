@@ -257,7 +257,7 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?3.5:2.25,stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY+(parallel?16:0)}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id,{details:true})}>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY+(parallel?16:0)}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=> (data?.onDetails as ((relationId:string)=>void)|undefined)?.(id)}>
         {Array.isArray(data?.checkIssues)&&data.checkIssues.length>0&&<CheckBadge issues={data.checkIssues as ModelCheckIssue[]} onOpen={data.onCheckIssue as ((issue:ModelCheckIssue)=>void)|undefined} className='absolute -left-3 -top-2 z-20' />}
         {typeof data?.onDelete==='function'&&!selected&&<HoverDelete label={String(data?.deleteLabel??'')} className='-right-3 -top-2' onDelete={()=>(data.onDelete as (id:string)=>void)(id)} />}
         {label&&<span className={cn('max-w-40 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',selected?'border-primary text-primary':'border-border text-foreground')}>{label}</span>}
@@ -292,13 +292,13 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,onDataConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onOpenManualTable,onPaneClick,refreshingConcepts,checkIssues,onOpenCheckIssue }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,onDataConnectRequest,onSelectRelation,onSelectConcept,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onOpenManualTable,onPaneClick,refreshingConcepts,checkIssues,onOpenCheckIssue }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
   /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
   identityRules?:{conceptId:string;fields:string[]}[];
   /** Concepts made from another concept's records; each draws a line from that concept. */
   derivedSources?:DerivedSource[];onOpenDerived?:(derived:DerivedSource)=>void;
   /** Records per concept from the last Run; manual table rows are counted until a Run has happened. */
-  recordCounts?:Record<string,number>;mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;onDataConnectRequest?:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
+  recordCounts?:Record<string,number>;mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;onDataConnectRequest?:(connection:{sourceId:string;targetId:string})=>void;onSelectRelation?:(relationId:string)=>void;onSelectConcept?:(conceptId:string,details:boolean)=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
   /** A source box or its line was clicked; the mapping is set when a specific line was chosen. */
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
@@ -370,7 +370,7 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   };
   const setCardinality = (relationId:string,cardinality:SemanticRelationType['cardinality']) =>
     commit({type:'relation_type.update',id:relationId,changes:{cardinality}},(current)=>({...current,relations:current.relations.map((relation)=>relation.id===relationId?{...relation,cardinality}:relation)}));
-  const openDetails = (id:string) => select(id,{details:true});
+  const openDetails = (id:string) => onSelectConcept ? onSelectConcept(id,true) : select(id,{details:true});
   const checkIndex = useMemo(()=>indexModelCheck(checkIssues),[checkIssues]);
   const keyFieldsByConcept = useMemo(()=>Object.fromEntries((identityRules??[]).map((rule)=>[rule.conceptId,rule.fields])),[identityRules]);
   const deleteRelation = (relationId:string) => {
@@ -632,9 +632,9 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
     const relationPairs = new Set(graph.relations.map((relation)=>pairKey(relation.sourceNodeTypeId,relation.targetNodeTypeId)));
     const feedPairs = new Set(flow.feeds.filter((feed)=>feed.derived).map((feed)=>pairKey(feed.sourceId,feed.conceptId)));
     const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,sourceHandle:DATA_SOURCE_HANDLE,targetHandle:DATA_TARGET_HANDLE,type:'feed',markerEnd:dataMarker,data:{feed,parallel:Boolean(feed.derived&&relationPairs.has(pairKey(feed.sourceId,feed.conceptId))),onRemove:removeFeed,onOpen:openFeed,checkIssues:[...(feed.mapping?checkIndex.mappings[feed.mapping.id]??[]:[]),...(feed.derived?checkIndex.sources[feed.derived.id]??[]:[])],onCheckIssue:onOpenCheckIssue}}));
-    const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,sourceHandle:RELATION_SOURCE_HANDLE,targetHandle:RELATION_TARGET_HANDLE,type:'relation',animated:false,markerEnd:relationMarker,data:{label:relation.label,cardinality:relation.cardinality,parallel:feedPairs.has(pairKey(relation.sourceNodeTypeId,relation.targetNodeTypeId)),onDelete:canEdit?deleteRelation:undefined,deleteLabel:t('designer.delete.relation',{name:relation.label}),onCardinality:canEdit?setCardinality:undefined,onDetails:openDetails,checkIssues:checkIndex.relations[relation.id],onCheckIssue:onOpenCheckIssue}}))];
+    const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,sourceHandle:RELATION_SOURCE_HANDLE,targetHandle:RELATION_TARGET_HANDLE,type:'relation',animated:false,markerEnd:relationMarker,data:{label:relation.label,cardinality:relation.cardinality,parallel:feedPairs.has(pairKey(relation.sourceNodeTypeId,relation.targetNodeTypeId)),onDelete:canEdit?deleteRelation:undefined,deleteLabel:t('designer.delete.relation',{name:relation.label}),onCardinality:canEdit?setCardinality:undefined,onDetails:onSelectRelation ?? openDetails,checkIssues:checkIndex.relations[relation.id],onCheckIssue:onOpenCheckIssue}}))];
     return quickConcept?[...modelEdges,{id:`quick-${quickConcept.id}`,source:quickConcept.sourceId,target:quickConcept.id,label:t('relation.defaultWording'),animated:true,style:{strokeDasharray:'5 5',stroke:EDGE_COLOR_SELECTED,strokeWidth:2}}]:modelEdges;
-  },[canEdit,checkIndex,flow,graph,mode,onOpenCheckIssue,onOpenSource,onOpenDerived,onRemoveSource,quickConcept,t]);
+  },[canEdit,checkIndex,flow,graph,mode,onOpenCheckIssue,onOpenSource,onOpenDerived,onRemoveSource,onSelectRelation,quickConcept,t]);
 
   // Selection lives in the editor store (a click on a line's label selects it too), so lines follow it.
   const shownEdges = useMemo(()=>edges.filter((edge)=>mode==='records'||edgeView==='both'||(edgeView==='data'&&edge.type==='feed')||(edgeView==='relationships'&&edge.type!=='feed'))
@@ -690,9 +690,9 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
       }}
       nodeDragThreshold={5}
       // A click opens the item's details in the side panel, replacing whatever panel was open.
-      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:false});}}
+      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(onSelectConcept)onSelectConcept(node.id,false);else select(node.id,{details:false});}}
       onNodeDoubleClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}openDetails(node.id);}}
-      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>{select(null);onPaneClick?.();}}
+      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}if(onSelectRelation)onSelectRelation(edge.id);else select(edge.id,{details:true});}} onPaneClick={()=>{select(null);onPaneClick?.();}}
       onNodesChange={followDrag}
       onNodeDragStop={(_,node)=>{setDragPositions((current)=>{const next={...current};delete next[node.id];return next;});if(isDesignerSourceId(node.id)){onMoveSource?.(node.id,node.position);return;}if(!graph||node.id===quickConcept?.id)return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
     ><Background gap={24} size={1} color='hsl(var(--muted-foreground) / 0.18)' /><Controls showInteractive={false} /></ReactFlow>
