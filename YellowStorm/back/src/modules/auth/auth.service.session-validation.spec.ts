@@ -23,6 +23,7 @@ describe('AuthService.isSessionValid error classification (F01)', () => {
     const service = new AuthService(
       sessionStore as never,
       {} as never,
+      {} as never, // userInvitations
       { sign: jest.fn() } as never,
       { get: jest.fn((_k: string, def: unknown) => def) } as never,
       logger as never,

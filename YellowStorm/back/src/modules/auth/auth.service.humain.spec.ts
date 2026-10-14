@@ -47,6 +47,7 @@ describe('AuthService human-agent creation', () => {
     const service = new AuthService(
       makeSessionStoreFake() as never,
       userService as never,
+      {} as never, // userInvitations
       jwtService as never,
       configService as never,
       logger as never,

@@ -18,6 +18,7 @@ describe('AuthController throttling', () => {
         resetPassword: rule(2),
         oauthStart: rule(2),
         oauthCallback: rule(2),
+        inviteLookup: rule(2),
       },
       account: { login: rule(100), forgotPassword: rule(1), resendVerification: rule(2) },
     },
@@ -25,6 +26,7 @@ describe('AuthController throttling', () => {
 
   let limiter: RateLimiterService;
   let authService: Record<string, jest.Mock>;
+  let userInvitations: Record<string, jest.Mock>;
   let controller: AuthController;
 
   const req = (ip = '203.0.113.9') =>
@@ -41,9 +43,13 @@ describe('AuthController throttling', () => {
       forgotPassword: jest.fn().mockResolvedValue(undefined),
       getRefreshTokenExpiryMs: jest.fn().mockReturnValue(1000),
     };
+    userInvitations = {
+      resolve: jest.fn().mockResolvedValue({ email: 'jane@acme.io', expiresAt: new Date() }),
+    };
     controller = new AuthController(
       authService as never,
       {} as never,
+      userInvitations as never,
       { get: jest.fn((_k: string, def: unknown) => def) } as never,
       new AuthThrottleService(limiter, config),
     );
@@ -91,5 +97,15 @@ describe('AuthController throttling', () => {
       code: ErrorCode.TOO_MANY_REQUESTS,
     });
     expect(authService.refreshTokens).toHaveBeenCalledTimes(2);
+  });
+
+  it('throttles the public invite lookup per IP', async () => {
+    await controller.getInvitation('token-a', req(), res());
+    await controller.getInvitation('token-b', req(), res());
+
+    await expect(controller.getInvitation('token-c', req(), res())).rejects.toMatchObject({
+      code: ErrorCode.TOO_MANY_REQUESTS,
+    });
+    expect(userInvitations.resolve).toHaveBeenCalledTimes(2);
   });
 });

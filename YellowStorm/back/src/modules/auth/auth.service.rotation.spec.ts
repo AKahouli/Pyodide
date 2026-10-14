@@ -53,6 +53,7 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
     const service = new AuthService(
       store as never,
       { findById: jest.fn().mockResolvedValue(user) } as never,
+      {} as never, // userInvitations
       jwtService as never,
       configService as never,
       logger as never,

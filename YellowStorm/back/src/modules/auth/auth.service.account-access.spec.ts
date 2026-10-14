@@ -66,6 +66,7 @@ describe('AuthService account access', () => {
     const service = new AuthService(
       sessionStore as never,
       userService as never,
+      {} as never, // userInvitations
       jwtService as never,
       configService as never,
       logger as never,

@@ -38,6 +38,7 @@ import {
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
 import { PgSessionStore } from './persistence/pg-session.store';
 import { LoginLockoutService } from './throttle/login-lockout.service';
+import { UserInvitationService } from '../user/user-invitation.service';
 
 const REGISTER_RESPONSE_MESSAGE =
   'If this email can be registered, a verification link has been sent. Please check your inbox.';
@@ -63,6 +64,7 @@ export class AuthService implements OnModuleInit {
   constructor(
     private readonly sessionStore: PgSessionStore,
     private readonly userService: UserService,
+    private readonly userInvitations: UserInvitationService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -118,6 +120,13 @@ export class AuthService implements OnModuleInit {
       );
     }
 
+    // Invitation-gated registration: the invitee holds the link, so expired /
+    // used / mismatched invitations get their own explicit errors instead of
+    // the anti-enumeration generic body used below for uninvited emails.
+    if (dto.inviteToken) {
+      await this.userInvitations.assertUsableForEmail(dto.inviteToken, dto.email);
+    }
+
     let user: Awaited<ReturnType<UserService['create']>>;
     try {
       user = await this.userService.create({
@@ -129,6 +138,12 @@ export class AuthService implements OnModuleInit {
         return await this.registerResultForExistingEmail(dto.password, startedAt);
       }
       throw error;
+    }
+
+    // Phase 2: claim the invitation now that the account exists, so a failed
+    // registration never burns the link.
+    if (dto.inviteToken) {
+      await this.userInvitations.markConsumed(dto.inviteToken);
     }
     // Assign default (free) plan to new user
     let defaultPlan;

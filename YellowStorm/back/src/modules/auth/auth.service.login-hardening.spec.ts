@@ -42,6 +42,7 @@ describe('AuthService login hardening', () => {
     const service = new AuthService(
       makeSessionStoreFake() as never,
       userService as never,
+      {} as never, // userInvitations
       { sign: jest.fn().mockReturnValue('signed.jwt') } as never,
       { get: jest.fn((_key: string, def: unknown) => def) } as never,
       logger as never,

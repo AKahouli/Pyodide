@@ -24,7 +24,7 @@ describe('AuthController refresh cookie path', () => {
       getRefreshTokenExpiryMs: jest.fn().mockReturnValue(1000),
     };
     const throttle = { enforceIp: jest.fn().mockResolvedValue(undefined) };
-    return new AuthController(authService as never, {} as never, configWith(values), throttle as never);
+    return new AuthController(authService as never, {} as never, {} as never, configWith(values), throttle as never);
   };
   const req = { ip: '127.0.0.1', headers: {}, socket: { remoteAddress: '127.0.0.1' }, cookies: {} } as never;
   const res = () => ({ cookie: jest.fn(), clearCookie: jest.fn(), setHeader: jest.fn() });

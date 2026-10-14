@@ -16,6 +16,7 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
+import { UserInvitationService } from '../user/user-invitation.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -41,6 +42,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly userService: UserService,
+    private readonly userInvitations: UserInvitationService,
     private readonly configService: ConfigService,
     private readonly throttle: AuthThrottleService,
   ) {
@@ -55,10 +57,28 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new user' })
   @ApiResponse({ status: 201, description: 'Generic result, identical whether or not the email already has an account' })
+  @ApiResponse({ status: 400, description: 'Invalid, used, or expired invitation (only when inviteToken is sent)' })
   @ApiResponse({ status: 429, description: 'Too many registration attempts' })
   async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.throttle.enforceIp('register', req, res);
     return this.authService.register(dto);
+  }
+
+  @Public()
+  @Get('invite')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resolve a super-admin invitation token for the landing page' })
+  @ApiQuery({ name: 'token', required: true, description: 'Invitation token from the invite link' })
+  @ApiResponse({ status: 200, description: 'Invitation is valid: invited email and expiry returned' })
+  @ApiResponse({ status: 400, description: 'Invitation is invalid, already used, or expired' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  async getInvitation(
+    @Query('token') token: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.throttle.enforceIp('inviteLookup', req, res);
+    return this.userInvitations.resolve(token ?? '');
   }
 
   @Public()
