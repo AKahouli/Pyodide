@@ -615,6 +615,25 @@
     pointer-events: auto !important;
   }
 
+  /*
+   * Our password fields render their own show/hide toggle. Hide the browser's
+   * native reveal/clear affordances (Edge `::-ms-reveal`, WebKit/Chromium
+   * credential buttons) so the eye icon is not duplicated.
+   */
+  input[type='password']::-ms-reveal,
+  input[type='password']::-ms-clear {
+    display: none;
+  }
+
+  input[type='password']::-webkit-credentials-auto-fill-button,
+  input[type='password']::-webkit-strong-password-auto-fill-button {
+    visibility: hidden;
+    display: none !important;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+  }
+
   /* Shimmer reflection for light mode */
   :root {
     --shimmer-reflection: rgba(0, 0, 0, 0.6);
