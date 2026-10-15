@@ -62,15 +62,22 @@ async function main() {
     }
 
     const revisions = await client.query(
-      `SELECT model_id,
+      `SELECT id, model_id,
               jsonb_path_query_array(source_observations, '$[*].assetRef.workspaceId') AS observed
        FROM semantic_population.data_revisions WHERE model_id = ANY($1::uuid[])`, [cloneIds]);
+    // Provenance is correlated PER REVISION, so a single bad revision does not
+    // inflate the count across all of the clone's revisions.
     const provenance = await client.query(
-      `SELECT r.model_id, LOWER(s.workspace_id) AS workspace_id FROM semantic_population.data_revisions r,
-       LATERAL (SELECT DISTINCT e -> 'assetRef' ->> 'workspaceId' AS workspace_id
-                FROM semantic_population.entities ent, jsonb_array_elements(ent.provenance -> 'sources') e
-                WHERE ent.data_revision_id = r.id AND e -> 'assetRef' ->> 'workspaceId' IS NOT NULL) s
-       WHERE r.model_id = ANY($1::uuid[])`, [cloneIds]);
+      `SELECT ent.data_revision_id AS revision_id, LOWER(s.workspace_id) AS workspace_id
+       FROM semantic_population.entities ent,
+            jsonb_array_elements(ent.provenance -> 'sources') s
+       WHERE ent.data_revision_id IN (SELECT id FROM semantic_population.data_revisions WHERE model_id = ANY($1::uuid[]))
+         AND s -> 'assetRef' ->> 'workspaceId' IS NOT NULL`, [cloneIds]);
+    const provenanceByRevision = new Map();
+    for (const row of provenance.rows) {
+      if (!provenanceByRevision.has(row.revision_id)) provenanceByRevision.set(row.revision_id, new Set());
+      provenanceByRevision.get(row.revision_id).add(String(row.workspace_id).toLowerCase());
+    }
 
     const findings = [];
     for (const clone of clones.rows) {
@@ -98,9 +105,7 @@ async function main() {
         const observedRaw = revision.observed ?? [];
         const observed = (Array.isArray(observedRaw) ? observedRaw : JSON.parse(observedRaw))
           .map((value) => String(value).toLowerCase());
-        const provenanceWorkspaces = provenance.rows
-          .filter((row) => row.model_id === clone.clone_id)
-          .map((row) => String(row.workspace_id).toLowerCase());
+        const provenanceWorkspaces = [...(provenanceByRevision.get(revision.id) ?? [])];
         const outside = [...observed, ...provenanceWorkspaces].filter((id) => id && !accessible.has(id));
         if (outside.length) {
           revisionsOutside += 1;
