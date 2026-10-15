@@ -19,6 +19,43 @@ and records an audit event. Ordinary workspace owner edits cannot change quotas.
 Upload size checks use current settings for both direct and presigned flows; the
 separate small multipart transport threshold is unchanged.
 
+### Upload isolation and concurrency
+
+Workspace guards authorize each request; document reads additionally match both
+document ID and workspace ID before creating a signed download URL. Private
+workspaces require ownership or an explicit share. Read-only/public access does
+not permit uploads. An already-issued signed URL remains a bearer capability until
+its expiry; revoking a share prevents new URLs, not use of an existing URL.
+
+PostgreSQL upload admission locks the workspace row and includes pending upload
+reservations, so overlapping requests cannot each spend the same free capacity.
+Upload confirmation claims a pending document and updates counters atomically;
+duplicate completion cannot count the same bytes twice. Expired pending uploads
+are reclaimed by the existing cleanup job only after their upload URL expiry.
+New uploads use a document-ID-prefixed stored filename to prevent distinct display
+names that sanitize identically from overwriting each other. Display names and
+existing object paths remain intact; consumers must use the stored canonical path.
+
+Coverage: `document/document-isolation.spec.ts`,
+`stores/postgres/workspace-pg-stores.integration.spec.ts`, and
+`document/document-upload-concurrency.integration.spec.ts`. Principal tests and PostgreSQL fixtures do not
+establish isolation inside the external code-interpreter coordinator. Presigned
+completion's declared-size trust and its existing HeadObject 403 fallback remain
+separate hardening work; the concurrency checks do not establish resistance to
+malicious size declarations.
+
+Remaining upload hardening (bounded follow-up):
+
+- Reconcile actual object length at presigned confirmation, including transient
+  metadata failures; declared length alone cannot enforce physical storage usage.
+- Recover `UPLOADING` reservations after a process crash. Normal direct-upload
+  exceptions release their reservation; abrupt process termination cannot run that
+  cleanup. An explicit reconciliation policy must avoid deleting a live transfer.
+- Clean up link-conversion blobs if post-download quota admission rejects them.
+- Denied workspace routes currently retain the empty workspace controls while
+  showing an access-error toast; the backend denies mutations, but a dedicated
+  access-denied view would make that outcome clearer.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -91,7 +128,7 @@ workspace/
 
 ### Design Decisions
 
-1. **Documents in Separate Collection**: Avoids MongoDB 16MB document limit, enables efficient pagination/search, and document updates don't touch workspace document.
+1. **Documents in a Separate PostgreSQL Table**: Workspace and document stores use the existing Drizzle schema. Document rows support scoped reads, pagination and transactional upload admission independently of workspace metadata.
 
 2. **Presigned URLs for Large Files**: Files >10MB are uploaded directly to Azure Blob Storage using SAS URLs, reducing server load and enabling large file support (up to 500MB default).
 
@@ -103,11 +140,15 @@ workspace/
 
 ```
 # Regular workspace uploads
-/{userId}/{workspaceId}/{documentId}/{filename}
+/{ownerUserId}/{storagePrefix}/{documentId}-{sanitizedFilename}
 
 # Conversation file attachments (system workspaces)
-/{userId}/{conversationId}/{documentId}/{filename}
+/{userId}/{conversationId}/{documentId}-{sanitizedFilename}
 ```
+
+Existing paths are retained. Generated-image staging separately copies the exact
+authorized object to the existing `generated-images/{imageId}.{ext}` mount receipt;
+the display name must never be used to reconstruct either path.
 
 ---
 
