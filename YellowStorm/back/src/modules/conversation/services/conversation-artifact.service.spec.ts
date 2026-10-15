@@ -25,7 +25,7 @@ describe('ConversationArtifactService', () => {
     const agents = { findByIds: jest.fn() };
     const tools = { findAllActive: jest.fn() };
     const models = { findById: jest.fn() };
-    const workspaces = { uploadSmallFile: jest.fn(), findById: jest.fn(), findByMultipleWorkspaces: jest.fn() };
+    const workspaces = { uploadSmallFile: jest.fn(), findById: jest.fn(), findByMultipleWorkspaces: jest.fn(), mergeMetadata: jest.fn() };
     const conversations = { getConversationDocument: jest.fn(), ensureSystemWorkspace: jest.fn(),
       filterAccessibleWorkspaceIds: jest.fn() };
     const downloader = { assertUrlIsSafe: jest.fn(), download: jest.fn() };
@@ -225,6 +225,13 @@ describe('ConversationArtifactService', () => {
       await expect(generator.generateImage({ ...input, preparedImage: png.toString('base64') })).rejects.toThrow('not found');
       await expect(generator.generateImage({ ...input, preparedImage: Buffer.from('bad').toString('base64') })).rejects.toThrow('Unsupported source image');
       await expect(generator.generateImage({ ...input, sourcePage: 0 })).rejects.toThrow('Invalid PDF');
+    });
+    it('records the exact parent of each newly saved edit without changing the original', async () => {
+      const child = 'abcdef1234567890abcdef12';
+      workspaces.uploadSmallFile.mockResolvedValueOnce({ id: child, path: 'stored/child.png' });
+      await generator.generateImage({ ...request, sourceImage: `generated-image:${id}` });
+      expect(workspaces.mergeMetadata).toHaveBeenCalledWith('w', child, { imageParentId: id });
+      expect(workspaces.mergeMetadata).not.toHaveBeenCalledWith('w', id, expect.anything());
     });
     it('does not label imported originals as generated after reload', async () => {
       workspaces.findById.mockResolvedValueOnce({ id, originalName: 'generated-import-original.png', path: 'stored/image.png', mimeType: 'image/png' });

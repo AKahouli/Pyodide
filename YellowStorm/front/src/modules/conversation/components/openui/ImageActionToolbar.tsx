@@ -25,6 +25,7 @@ export interface ImageActionToolbarProps {
   resolveImage: (source: string) => Promise<Blob>;
   resolveAspectRatio?: () => Promise<'square' | 'landscape' | 'portrait'>;
   onSend: (content: string) => Promise<void>;
+  onHistory?: () => void;
 }
 
 type ActionLabel = 'toolbar' | 'edit' | 'compare' | 'reuse' | 'docx' | 'pptx' | 'slides' |
@@ -32,7 +33,7 @@ type ActionLabel = 'toolbar' | 'edit' | 'compare' | 'reuse' | 'docx' | 'pptx' | 
   'cancel' | 'submit' | 'compareDescription' | 'comparisonImage' | 'loading' | 'selectedImage' | 'reuseDescription' | 'working';
 
 export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNotice, connectorName, alt, scope, url, streaming = false, canEdit = false,
-  canReuse = false, canReuseSlides = canReuse, peers = [], resolveImage, resolveAspectRatio, onSend }: ImageActionToolbarProps) {
+  canReuse = false, canReuseSlides = canReuse, peers = [], resolveImage, resolveAspectRatio, onSend, onHistory }: ImageActionToolbarProps) {
   const { t } = useModuleTranslation('conversation');
   const inputId = useId();
   const label = (key: ActionLabel) => t(`openui.image.actions.${key}`);
@@ -81,6 +82,7 @@ export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNo
     {sourceNotice && <p className='text-sm text-muted-foreground'>{sourceNotice}</p>}
   </figure>;
   return <div className='mt-2 flex flex-wrap items-center gap-2' aria-label={label('toolbar')}>
+    {onHistory && <Button type='button' variant='outline' size='sm' disabled={disabled} onClick={onHistory}>{t('openui.image.history.title')}</Button>}
     <Button type='button' variant='outline' size='sm' disabled={disabled || !canEdit}
       onClick={() => { setError(false); setEditing(true); }}>{label('edit')}</Button>
     <Button type='button' variant='outline' size='sm' disabled={disabled || !candidates.length}

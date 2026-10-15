@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getActiveConnectors, getActiveTools } from '@/modules/agent/api';
 import { useAgentStore } from '@/modules/agent/store';
@@ -6,12 +6,15 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useConversationStore } from '../../store';
 import { OpenUiCitationContext, type OpenUiCitationScope } from './citations';
 import { ImageActionToolbar } from './ImageActionToolbar';
+import { ImageVersionHistory } from './ImageVersionHistory';
 
 export function ConversationImageActions({ source, alt, scope, url, streaming, peers = [], resolveImage }: {
   source: string; alt: string; scope: OpenUiCitationScope; url?: string; streaming?: boolean;
   peers?: { source: string; label: string }[]; resolveImage: (source: string) => Promise<Blob>;
 }) {
   const { t } = useModuleTranslation('conversation');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => setHistoryOpen(false), [source, scope.conversationId, scope.messageId]);
   const conversation = useConversationStore((state) => state.currentConversation);
   const isStreaming = useConversationStore((state) => state.isStreaming);
   const messages = useConversationStore((state) => state.messages);
@@ -93,7 +96,11 @@ export function ConversationImageActions({ source, alt, scope, url, streaming, p
     {pdfPageNotice && <p className='text-xs text-muted-foreground'>{pdfPageNotice}</p>}
     <ImageActionToolbar source={source} requestSource={requestSource} sourcePage={sourcePage} sourceNotice={pdfPageNotice} connectorName={interpreter?.slug || interpreter?.name} alt={alt} scope={scope}
       url={url} streaming={streaming || isStreaming || !enabled} canEdit={canEdit} canReuse={canReuse} canReuseSlides={canEdit}
-      peers={comparisonPeers} resolveImage={resolveComparisonImage} resolveAspectRatio={resolveAspectRatio} onSend={onSend} />
+      peers={comparisonPeers} resolveImage={resolveComparisonImage} resolveAspectRatio={resolveAspectRatio} onSend={onSend}
+      onHistory={enabled && /^generated-image:[a-f\d]{24}$/.test(source) ? () => setHistoryOpen(true) : undefined} />
+    {enabled && /^generated-image:[a-f\d]{24}$/.test(source) && <ImageVersionHistory key={`${scope.conversationId}:${scope.messageId}:${source}`} open={historyOpen} onClose={() => setHistoryOpen(false)}
+      source={source} alt={alt} scope={scope} streaming={streaming || isStreaming} canEdit={canEdit} canReuse={canReuse} canReuseSlides={canEdit}
+      connectorName={interpreter?.slug || interpreter?.name} resolveImage={resolveComparisonImage} onSend={onSend} />}
     {(capabilities.isError || directoryError || (enabled && initialized && !agent)) && <p role='status' className='text-xs text-muted-foreground'>{t('openui.image.actions.unavailable')}</p>}
   </div>;
 }

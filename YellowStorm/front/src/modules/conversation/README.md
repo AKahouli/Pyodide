@@ -1,5 +1,18 @@
 # Conversation Module
 
+### Saved image version history
+
+`ImageVersionHistory` lazily loads the saved image's authorized family through
+`getGeneratedImageHistory`. Each newly edited document stores its exact parent in
+existing metadata; legacy images without lineage stay separate. The dialog lists
+saved versions and uses the selected source for preview, download, edit and reuse.
+Closing or changing scope aborts requests and revokes preview blobs. Reload loads
+persisted lineage, without a frontend history store. The endpoint validates the
+saved-answer anchor and conversation ownership before workspace enumeration;
+foreign or unrelated selectors are rejected. Families above the bounded 1,000
+image scan fail explicitly. See `ImageVersionHistory.test.tsx` and the backend
+`conversation-image-history.spec.ts`.
+
 Stream recovery checkpoints partial content with the existing lease heartbeat every
 30 seconds. Interrupted answers retain the last checkpoint and show an incomplete
 status after reload; retry creates a new answer. The last uncheckpointed tail may be

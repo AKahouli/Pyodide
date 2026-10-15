@@ -8,7 +8,7 @@ function makeGuard(conversationStore: Record<string, jest.Mock>, hasAccess = jes
 }
 
 describe('ConversationOwnerGuard', () => {
-  it.each(['files/upload-url', 'files/upload', 'files/confirm', 'messages/m/generated-images/d/url'])(
+  it.each(['files/upload-url', 'files/upload', 'files/confirm', 'messages/m/generated-images/d/url', 'messages/m/generated-images/d/history'])(
     'denies foreign conversation POST %s even with project read access', async (route) => {
       const conversationId = new Types.ObjectId().toString();
       const store = { findActiveAccessById: jest.fn().mockResolvedValue({

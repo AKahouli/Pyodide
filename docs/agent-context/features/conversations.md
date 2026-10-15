@@ -154,6 +154,16 @@ dialogs never fetch model-authored URLs directly or start tools merely by openin
 Thumbnail/capture views do not host interactive controls. The module README and
 toolbar, integration, document-image and report tests cover these boundaries.
 
+Saved images expose a lazy Image history dialog. New edits record their exact
+parent document in existing document metadata; originals remain unchanged. The
+owner-authorized history endpoint validates the saved-answer anchor, then returns
+only its family in the same conversation system workspace. Selecting a version
+previews, downloads, edits or reuses that exact image. Reload reconstructs the
+family from persisted metadata. Legacy images without lineage remain independent;
+relationships are never inferred. Enumeration is bounded to 1,000 saved images
+and fails explicitly rather than returning partial history. Coverage lives in
+`conversation-image-history.spec.ts` and `ImageVersionHistory.test.tsx`.
+
 Run only the checks affected by the change. These commands identify existing coverage; they were not executed during initialization.
 
 | Area | Command from owning package | Existing coverage |

@@ -303,6 +303,18 @@ export async function getGeneratedImageUrl(conversationId: string, messageId: st
   return response.data.data;
 }
 
+export type ConversationImageVersion = { source: string; fileName: string; createdAt: string; parentSource?: string; generated: boolean };
+
+export async function getGeneratedImageHistory(conversationId: string, messageId: string, documentId: string,
+  versionSource?: string, signal?: AbortSignal): Promise<{
+    versions: ConversationImageVersion[]; selected: ConversationImageVersion & { url: string; mimeType: string };
+  }> {
+  const response = await apiClient.post<ApiResponse<{
+    versions: ConversationImageVersion[]; selected: ConversationImageVersion & { url: string; mimeType: string };
+  }>>(API_ENDPOINTS.conversations.generatedImageHistory(conversationId, messageId, documentId), { versionSource }, { signal });
+  return response.data.data;
+}
+
 export async function fetchComposerSuggestions(partialText: string, signal?: AbortSignal): Promise<{ content: string }> {
   const response = await apiClient.post<ApiResponse<{ content: string }>>(API_ENDPOINTS.conversations.composerSuggestions, { partialText }, { signal });
   return response.data.data;

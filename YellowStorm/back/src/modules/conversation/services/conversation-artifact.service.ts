@@ -22,6 +22,7 @@ type ImageReceipt = { imageSource: string; fileName: string; mimeType: string; g
   sandboxPath: string; originalImageSource?: string };
 type PreparedPdfSource = { sourcePdf: string; mimeType: 'application/pdf'; page: number };
 type StoredImage = { id: string; path?: string; originalName: string; mimeType: string };
+type ImageVersion = { source: string; fileName: string; createdAt: string; generated: boolean; parentSource?: string };
 
 @Injectable()
 export class ConversationArtifactService {
@@ -115,6 +116,9 @@ export class ConversationArtifactService {
     signal?.throwIfAborted();
     const document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, request.userId,
       bytes, fileName, mimeType, undefined, undefined, false);
+    if (source && source.document.id !== document.id) {
+      await this.workspaceDocumentService.mergeMetadata(workspaceId, document.id, { imageParentId: source.document.id });
+    }
     const receipt = await this.stageGeneratedImage(request, { ...document, originalName: fileName, mimeType }, signal);
     return source?.imported ? { ...receipt, originalImageSource: `generated-image:${source.document.id}` } : receipt;
   }
@@ -280,6 +284,49 @@ export class ConversationArtifactService {
     }
     return { url: await this.documentService.generateSasUrl(document.path, { expiryMinutes: 10, checkExists: true }),
       fileName: document.originalName, mimeType: document.mimeType, generated: !document.originalName.startsWith('generated-import-') };
+  }
+
+  async resolveGeneratedImageHistory(conversationId: string, messageId: string, documentId: string,
+    versionSource?: string): Promise<{ versions: ImageVersion[]; selected: ImageVersion & { url: string; mimeType: string } }> {
+    // Reuse the saved-answer authorization before enumerating any image metadata.
+    const anchor = await this.resolveGeneratedImage(conversationId, messageId, documentId);
+    const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const workspaceId = conversation.systemWorkspaceId!;
+    // ponytail: bounded conversation scan; add an indexed lineage query if a
+    // conversation needs more than 1,000 saved images. Never return partial history.
+    const result = await this.workspaceDocumentService.findByMultipleWorkspaces([workspaceId],
+      { search: 'generated-', searchFilename: true, page: 1, limit: 1000 });
+    if (result.pagination.total > result.documents.length) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Image history exceeds the supported limit');
+    }
+    const images = new Map(result.documents.filter(image => image.workspaceId === workspaceId
+      && image.status === DocumentStatus.COMPLETED && !image.isFolder && image.path
+      && image.originalName.startsWith('generated-') && ['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType))
+      .map(image => [image.id, image]));
+    const rootOf = (id: string): string | undefined => {
+      const seen = new Set<string>();
+      while (images.has(id)) {
+        if (seen.has(id)) return undefined;
+        seen.add(id);
+        const parent = images.get(id)!.metadata?.imageParentId;
+        if (!parent || !/^[a-f0-9]{24}$/.test(parent) || !images.has(parent)) return id;
+        id = parent;
+      }
+      return undefined;
+    };
+    const root = rootOf(documentId);
+    if (!root) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image history not found');
+    const family = [...images.values()].filter(image => rootOf(image.id) === root)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const versions: ImageVersion[] = family.map(image => ({ source: `generated-image:${image.id}`,
+      fileName: image.originalName, createdAt: image.createdAt, generated: !image.originalName.startsWith('generated-import-'),
+      ...(images.has(image.metadata?.imageParentId ?? '') ? { parentSource: `generated-image:${image.metadata!.imageParentId}` } : {}) }));
+    const selectedIndex = versions.findIndex(version => version.source === (versionSource ?? `generated-image:${documentId}`));
+    if (selectedIndex < 0) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Image version not found');
+    const selected = family[selectedIndex];
+    const url = selected.id === documentId ? anchor.url
+      : await this.documentService.generateSasUrl(selected.path!, { expiryMinutes: 10, checkExists: true });
+    return { versions, selected: { ...versions[selectedIndex], url, mimeType: selected.mimeType } };
   }
 
   async resolveSlideImage(conversationId: string, messageId: string, url: string): Promise<{ dataUrl: string }> {

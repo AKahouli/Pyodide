@@ -22,6 +22,7 @@ import { MessageFeedbackDto } from '../dto/message-feedback.dto';
 import { UpdateMessageDto } from '../dto/update-message.dto';
 import { ReportFrontendLatencyDto } from '../dto/report-frontend-latency.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
+import { ImageHistoryDto } from '../dto/image-history.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { ServiceUnavailableException, BadRequestException, NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -98,6 +99,13 @@ export class MessageController {
   getGeneratedImageUrl(@Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string, @Param('documentId') documentId: string) {
     return this.conversationArtifactService.resolveGeneratedImage(conversationId, messageId, documentId);
+  }
+
+  @Post(':messageId/generated-images/:documentId/history')
+  getGeneratedImageHistory(@Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string, @Param('documentId') documentId: string,
+    @Body() dto: ImageHistoryDto) {
+    return this.conversationArtifactService.resolveGeneratedImageHistory(conversationId, messageId, documentId, dto.versionSource);
   }
 
   @Post(':messageId/artifacts/:artifactId/url')
