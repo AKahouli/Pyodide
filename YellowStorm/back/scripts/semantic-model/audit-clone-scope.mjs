@@ -94,7 +94,10 @@ async function main() {
 
       let revisionsOutside = 0;
       for (const revision of revisions.rows.filter((row) => row.model_id === clone.clone_id)) {
-        const observed = JSON.parse(revision.observed ?? '[]').map((value) => String(value).toLowerCase());
+        // node-postgres already decodes jsonb; only plain-text deployments need a parse.
+        const observedRaw = revision.observed ?? [];
+        const observed = (Array.isArray(observedRaw) ? observedRaw : JSON.parse(observedRaw))
+          .map((value) => String(value).toLowerCase());
         const provenanceWorkspaces = provenance.rows
           .filter((row) => row.model_id === clone.clone_id)
           .map((row) => String(row.workspace_id).toLowerCase());

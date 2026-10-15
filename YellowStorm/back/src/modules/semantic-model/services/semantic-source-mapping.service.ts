@@ -476,12 +476,16 @@ export class SemanticSourceMappingService {
        LEFT JOIN semantic_model.identity_rules i ON i.model_id = m.model_id AND i.concept_id = m.concept_id
        WHERE m.model_id=$1
        ORDER BY m.created_at`, [model.id]);
-    const documentIds = [...new Set(result.rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
+    // WP-03: rows of workspaces the person cannot read show a neutral
+    // placeholder before ANY document metadata is fetched — no workspace id,
+    // file names, paths, ids, mime types, sheet names, selections or counts
+    // leak, and no document of an unauthorized workspace is looked up.
+    const allowed = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
+    const documentIds = [...new Set(result.rows
+      .filter((row) => row.scope !== 'workspace' && allowed.has(row.workspaceId))
+      .map((row) => row.documentId))];
     const documents = documentIds.length ? await this.documents.findByIds(documentIds) : [];
     const names = new Map(documents.map((document) => [document.id, document.originalName]));
-    // WP-03: rows of workspaces the person cannot read now show a neutral
-    // placeholder — no file names, paths, mime types or counts leak.
-    const allowed = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
     // A workspace mapping shows how many files it covers today; each workspace is listed once.
     const fileCounts = new Map<string, Promise<{ fileCount: number; waitingCount: number }>>();
     const countFiles = (row: SourceMappingRow) => {
@@ -497,16 +501,25 @@ export class SemanticSourceMappingService {
     return Promise.all(result.rows.map(async (row) => {
       const { scope, folderId, selection, sourceLabel, ...rest } = row;
       if (!allowed.has(row.workspaceId)) {
+        // Model-structural fields only: the restricted row carries no
+        // workspace id, sheet name, field mappings, selections or source ids.
         return {
-          ...rest,
-          // The private file's own id never leaves the server.
-          documentId: '',
-          ...(scope === 'workspace' ? { scope, folderId: folderId ?? null, selection: mappingSelection({ folderId, selection }) } : { scope: 'document' as const }),
+          id: row.id,
+          conceptId: row.conceptId,
+          assetKind: row.assetKind,
+          status: row.status,
+          createdBy: row.createdBy,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
           identityFields: row.identityFields ?? [],
+          fieldMappings: [],
+          scope: 'document' as const,
+          documentId: '',
           documentName: 'Restricted source',
           documentPath: '',
           mimeType: '',
-          ...(scope === 'workspace' ? { fileCount: 0, waitingCount: 0 } : {}),
+          fileCount: 0,
+          waitingCount: 0,
         };
       }
       if (scope === 'workspace') {
@@ -653,12 +666,15 @@ export class SemanticSourceMappingService {
     const issues: SourcePreviewIssue[] = [];
     const incompleteConceptIds = new Set<string>();
     const previewRows = result.rows.slice(0, MAX_PREVIEW_MAPPINGS);
-    // WP-03: sources of workspaces the person cannot read now resolve as a
-    // neutral restricted issue — no document lookup, runtime call or sample.
+    // WP-03: sources of workspaces the person cannot read resolve as a neutral
+    // restricted issue BEFORE any document metadata is fetched — names are
+    // only ever looked up for the workspaces the person can read.
     const allowedWorkspaces = new Set(await this.access.accessibleWorkspaceIds(userId, model.id));
-    const documentNames = await this.documentNames(previewRows);
+    const documentNames = await this.documentNames(previewRows.filter((row) => allowedWorkspaces.has(row.workspaceId)));
     for (const mapping of previewRows) {
-      const documentName = documentNames.get(mapping.documentId) ?? '';
+      const documentName = allowedWorkspaces.has(mapping.workspaceId)
+        ? documentNames.get(mapping.documentId) ?? ''
+        : '';
       const source = documentName || 'This source';
       if (!allowedWorkspaces.has(mapping.workspaceId)) {
         issues.push({

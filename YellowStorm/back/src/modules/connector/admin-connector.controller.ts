@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Body,
   Controller,
@@ -130,7 +131,16 @@ export class AdminConnectorController {
     const draftStaticHeaders = !connector
       ? this.resolveDraftStaticHeaders(body.runtimeAuthConfig)
       : undefined;
-    const resolvedAuthHeaders = resolvedAuth?.headers ?? draftStaticHeaders;
+    const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
+      user._id.toString(),
+      body.dynamicHeaders ?? connector?.dynamicHeaders ?? [],
+    );
+    const resolvedAuthHeaders = { ...(resolvedAuth?.headers ?? draftStaticHeaders), ...dynamicHeaders };
+    // Sandbox discovery requires a session even outside a conversation.
+    // Use a fresh inspection-only scope rather than an actual chat session.
+    if (Object.keys(dynamicHeaders).some((name) => name.toLowerCase() === 'x-user-id')) {
+      resolvedAuthHeaders['x-conversation-id'] = `admin-connector-inspection-${randomUUID()}`;
+    }
     const inspectionHeaders = trustedServer
       ? {
           ...resolvedAuthHeaders,

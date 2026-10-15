@@ -439,6 +439,7 @@ export function CreateEditConnectorDialog({
         form.authSourceType === 'connected_app' ? form.connectedAppKey || undefined : undefined,
         runtimeAuthConfig,
         connector?.id,
+        dynamicRowsToPayload(form.dynamicHeaders),
       );
       if (result.error) {
         toast.error(t('connectors.form.inspect.title'), { description: result.error });

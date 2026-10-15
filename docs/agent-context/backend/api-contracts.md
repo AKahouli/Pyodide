@@ -79,6 +79,9 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 ### Headers
 `X-Request-ID`, `X-Correlation-ID` (response). `X-RateLimit-*` + `Retry-After` on rate-limited routes.
 
+### Admin MCP inspection authentication
+`POST /api/v1/admin/connectors/inspect` inspects a remote MCP server to discover its available tools; it does not execute tools. Its optional `dynamicHeaders` payload reuses the validated connector dynamic-header DTO. For an existing connector, omitted headers use the connector's saved configuration; for a draft inspection, the caller supplies the current draft. An explicit empty array clears the saved-header fallback. Header values are resolved for the authenticated user before being sent for discovery. If resolved dynamic headers include `x-user-id` (case-insensitive), the backend adds a fresh `x-conversation-id` in the `admin-connector-inspection-<UUID>` scope, used only for this discovery request and not as a chat session. See [`InspectMcpDto`](../../../YellowStorm/back/src/modules/connector/dto/inspect-mcp.dto.ts) and [`AdminConnectorController.inspectMcp`](../../../YellowStorm/back/src/modules/connector/admin-connector.controller.ts).
+
 ## 11. Errors & Exceptions
 
 Custom hierarchy in `src/modules/exceptions/exceptions/`. All extend `AppException extends HttpException`:

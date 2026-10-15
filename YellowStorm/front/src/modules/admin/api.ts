@@ -90,6 +90,7 @@ import type {
   SkillQueryParams,
   ConnectorListResponse,
   ConnectorResponse,
+  ConnectorDynamicHeader,
   CreateConnectorRequest,
   UpdateConnectorRequest,
   ConnectorQueryParams,
@@ -1256,10 +1257,11 @@ export async function inspectMcp(
   connectedAppKey?: string,
   runtimeAuthConfig?: Record<string, unknown>,
   connectorId?: string,
+  dynamicHeaders?: ConnectorDynamicHeader[],
 ): Promise<McpInspectResult> {
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.inspect,
-    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId },
+    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig, connectorId, dynamicHeaders },
   );
   return response.data.data;
 }

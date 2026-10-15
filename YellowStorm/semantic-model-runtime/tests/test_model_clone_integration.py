@@ -109,10 +109,11 @@ async def pool():
     await value.close()
 
 
-async def _clone(pool: asyncpg.Pool) -> dict:
+async def _clone(pool: asyncpg.Pool, allowed_workspace_ids: list[str] | None = ['ws1']) -> dict:
     return await clone_model_data(pool, source_model_id=SOURCE, target_model_id=TARGET,
                                   target_model_version_id=TARGET_VERSION,
-                                  id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION})
+                                  id_map={CONCEPT: NEW_CONCEPT, RELATION: NEW_RELATION},
+                                  allowed_workspace_ids=allowed_workspace_ids)
 
 
 @pytest.mark.asyncio

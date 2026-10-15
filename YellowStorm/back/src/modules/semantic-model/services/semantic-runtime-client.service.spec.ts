@@ -395,7 +395,7 @@ describe('SemanticRuntimeClientService purgeModelData', () => {
 
 describe('SemanticRuntimeClientService cloneModelData', () => {
   let fetchMock: jest.Mock;
-  const command = { targetModelId: 't1', targetModelVersionId: 'v1', idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
+  const command = { targetModelId: 't1', targetModelVersionId: 'v1', allowedWorkspaceIds: ['ws-1'], idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
   beforeEach(() => {
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;

@@ -863,22 +863,45 @@ describe('SemanticSourceMappingService source authorization (SEC-03/SEC-04 / WP-
   });
 
   it('lists configured sources of inaccessible workspaces with neutral placeholders only', async () => {
-    const { service } = buildMixedAccess();
+    const { service, documents } = buildMixedAccess();
     const database = (service as unknown as { database: { query: jest.Mock } }).database;
     database.query.mockResolvedValue({ rows: [
-      { id: 'mapping-private', conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc', sheetName: '', assetKind: 'document',
-        fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
+      { id: 'mapping-private', conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc', sheetName: 'Payroll',
+        assetKind: 'document', fieldMappings: [{ sourceField: 'salary', targetAttribute: 'amount', mode: 'direct' }],
+        identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
+      { id: 'mapping-private-ws', conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'workspace:ws-private', sheetName: '',
+        assetKind: 'document', fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1',
+        scope: 'workspace', folderId: 'folder-payroll', selection: { folderIds: ['folder-payroll'], documentIds: [] },
+        sourceLabel: 'Payroll workspace' },
       { id: 'mapping-allowed', conceptId: 'concept-1', workspaceId: ALLOWED, documentId: 'allowed-doc', sheetName: '', assetKind: 'document',
         fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
     ] });
+    documents.findByIds.mockResolvedValue([allowedDocument]);
 
     const rows = await service.list('viewer-1', 'model-1') as Array<Record<string, unknown>>;
-    expect(rows).toHaveLength(2);
-    const restricted = rows.find((row) => row.id === 'mapping-private')!;
-    expect(restricted).toMatchObject({ documentName: 'Restricted source', documentPath: '', mimeType: '', documentId: '' });
+    expect(rows).toHaveLength(3);
+    const serialized = JSON.stringify(rows);
+    // No private workspace id, file/sheet/selection/label metadata, or mapping columns.
+    expect(serialized).not.toContain('secret-payroll');
+    expect(serialized).not.toContain(PRIVATE);
+    expect(serialized).not.toContain('Payroll');
+    expect(serialized).not.toContain('salary');
+    expect(serialized).not.toContain('folder-payroll');
+    for (const restricted of rows.filter((row) => row.id !== 'mapping-allowed')) {
+      expect(restricted).toMatchObject({
+        documentName: 'Restricted source', documentPath: '', mimeType: '', documentId: '',
+        fieldMappings: [],
+      });
+      // Private identifiers and selections are absent, not just blanked.
+      for (const key of ['workspaceId', 'sheetName', 'selection', 'sourceLabel', 'folderId', 'expand', 'aiSettings']) {
+        expect(restricted).not.toHaveProperty(key);
+      }
+    }
+    // The visible mapping keeps its metadata.
     const visible = rows.find((row) => row.id === 'mapping-allowed')!;
     expect(visible).toMatchObject({ documentName: 'public-sales.csv', documentPath: '/sales/public-sales.csv' });
-    expect(JSON.stringify(restricted)).not.toContain('secret-payroll');
+    // Names were looked up for the readable document only — never for the private one.
+    expect(documents.findByIds).toHaveBeenCalledWith(['allowed-doc']);
   });
 
   it('resolves restricted configured sources as a neutral issue without touching their documents', async () => {
@@ -894,6 +917,8 @@ describe('SemanticSourceMappingService source authorization (SEC-03/SEC-04 / WP-
     expect(result.entities).toEqual([]);
     expect(result.issues).toEqual([expect.objectContaining({ mappingId: 'mapping-private', code: 'source_restricted', documentName: '' })]);
     expect(result.incompleteConceptIds).toEqual(['concept-1']);
+    // The restricted document is never looked up, not even for a display name.
+    expect(documents.findByIds).not.toHaveBeenCalled();
     expect(documents.findById).not.toHaveBeenCalledWith(PRIVATE, 'private-doc');
   });
 });

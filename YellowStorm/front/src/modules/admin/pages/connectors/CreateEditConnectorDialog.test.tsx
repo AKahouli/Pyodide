@@ -128,6 +128,7 @@ describe('CreateEditConnectorDialog tool table', () => {
       undefined,
       undefined,
       'playbook-connector',
+      [],
     ));
 
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));

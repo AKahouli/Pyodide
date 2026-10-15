@@ -23,6 +23,7 @@ describe('AdminConnectorController MCP inspection', () => {
 
   function createController(connector: unknown = playbookConnector) {
     const connectorAuthService = {
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       resolveRuntimeAuth: jest.fn().mockResolvedValue({
         headers: { Authorization: 'Bearer server-secret' },
         env: {},
@@ -102,6 +103,25 @@ describe('AdminConnectorController MCP inspection', () => {
     expect(headers).toEqual({ Authorization: 'Bearer server-secret' });
     expect(headers).not.toHaveProperty('X-YellowStorm-User-Id');
   });
+
+  it.each([undefined, [], [{ headerName: 'X-user-id', source: 'user_id', enabled: true }]])(
+    'resolves saved/draft identity headers with an isolated inspection session (%j)', async (draft) => {
+      const saved = [{ headerName: 'X-user-id', source: 'user_id', enabled: true }];
+      const { controller, connectorService, connectorAuthService } = createController({
+        ...playbookConnector, mcpServerUrl: 'http://localhost:8099/mcp', dynamicHeaders: saved,
+      });
+      connectorAuthService.resolveDynamicHeaders.mockResolvedValue(draft?.length === 0 ? {} : { 'X-user-id': 'user-1' });
+      const inspect = jest.spyOn(connectorService, 'inspectMcp').mockResolvedValue({ serverName: '', tools: [] });
+      await controller.inspectMcp({ connectorId: 'connector-1', transportType: 'streamable_http', serverUrl: 'http://localhost:8099/mcp', dynamicHeaders: draft as never }, user);
+      expect(connectorAuthService.resolveDynamicHeaders).toHaveBeenCalledWith('user-1', draft ?? saved);
+      const headers = inspect.mock.calls[0][7];
+      if (draft?.length === 0) {
+        expect(headers).not.toHaveProperty('x-conversation-id');
+      } else {
+        expect(headers).toEqual(expect.objectContaining({ 'X-user-id': 'user-1', 'x-conversation-id': expect.stringMatching(/^admin-connector-inspection-/) }));
+      }
+    },
+  );
 
   it('denies stored stdio connectors on :id/inspect before any inspection side effect', async () => {
     const { controller, store, connectorAdminAuthService, connectorAuthService } = createController({
