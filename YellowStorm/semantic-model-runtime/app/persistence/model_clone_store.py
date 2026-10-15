@@ -27,6 +27,23 @@ class CloneTargetNotEmpty(Exception):
     """The target model already holds data; a clone only ever fills an empty model."""
 
 
+class CloneScopeRequired(Exception):
+    """The clone command carried no authorized workspace scope; refusing an unscoped copy."""
+
+    def __init__(self, source_model_id: str) -> None:
+        super().__init__(source_model_id)
+        self.source_model_id = source_model_id
+
+
+class CloneScopeExceeded(Exception):
+    """The revision references source workspaces outside the authorized scope."""
+
+    def __init__(self, source_model_id: str, outside: list[str]) -> None:
+        super().__init__(source_model_id, ",".join(outside))
+        self.source_model_id = source_model_id
+        self.outside = outside
+
+
 class IdRemapper:
     """Rewrite every mapped id found in a string or a JSON value; other text is left as is."""
 
@@ -59,10 +76,37 @@ def clone_snapshot_id(target_model_id: str, source_snapshot_id: str) -> str:
     return "m" + hashlib.sha1(f"clone:{target_model_id}:{source_snapshot_id}".encode()).hexdigest()
 
 
+async def _assert_revision_in_scope(connection: Any, source_revision_id: str, scope: set[str],
+                                    source_model_id: str) -> None:
+    """WP04.5 defense in depth: every workspace a revision's source observations and
+    entity provenance point at must sit inside the caller-authorized scope. Rows that
+    name no workspace (manual, source-free records) are allowed explicitly. Raises
+    ``CloneScopeExceeded`` — before any row is copied — when data falls outside."""
+    outside: set[str] = set()
+    observations = await connection.fetchval(
+        "SELECT jsonb_path_query_array("
+        "  source_observations, '$[*].assetRef.workspaceId' ) "
+        "FROM semantic_population.data_revisions WHERE id = $1", source_revision_id)
+    for value in json.loads(observations or "[]"):
+        if value and str(value).lower() not in scope:
+            outside.add(str(value).lower())
+    provenance = await connection.fetch(
+        "SELECT DISTINCT LOWER(e -> 'assetRef' ->> 'workspaceId') AS workspace_id "
+        "FROM semantic_population.entities, jsonb_array_elements(provenance -> 'sources') e "
+        "WHERE data_revision_id = $1 AND e -> 'assetRef' ->> 'workspaceId' IS NOT NULL",
+        source_revision_id)
+    for row in provenance:
+        if row["workspace_id"] and row["workspace_id"] not in scope:
+            outside.add(str(row["workspace_id"]).lower())
+    if outside:
+        raise CloneScopeExceeded(source_model_id, sorted(outside))
+
+
 async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: str,
                            target_model_version_id: str,
                            id_map: dict[str, str],
-                           planned: dict[str, Any] | None = None) -> dict[str, Any]:
+                           planned: dict[str, Any] | None = None,
+                           allowed_workspace_ids: list[str] | None = None) -> dict[str, Any]:
     """Copy the source's draft data into ``target_model_id`` in one transaction.
 
     Returns ``{"copied": False, "reason": "no_data"}`` when the source has no draft data,
@@ -70,8 +114,16 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
     activates the revision afterwards (``activate_cloned_revision``).
     ``planned`` (the clone's own specification, hash, home workspace and execution fingerprint)
     replaces the remapped source specification, so the copy reads as current for the back.
-    Raises ``ModelJobsRunning`` while a job of the source runs and ``CloneTargetNotEmpty``
-    when the target already has data."""
+    ``allowed_workspace_ids`` is the source-workspace scope the calling back authorized
+    (WP04.5): the revision's source observations and entity provenance must stay inside
+    it — manual, source-free rows carry no workspace and are always allowed. Raises
+    ``CloneScopeRequired`` for an unscoped command, ``CloneScopeExceeded`` when data
+    falls outside the scope, ``ModelJobsRunning`` while a job of the source runs and
+    ``CloneTargetNotEmpty`` when the target already has data."""
+    if allowed_workspace_ids is None:
+        raise CloneScopeRequired(source_model_id)
+    scope = {str(workspace).lower() for workspace in allowed_workspace_ids if workspace}
+
     async with pool.acquire() as connection:
         async with connection.transaction():
             await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -98,6 +150,7 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
                 "SELECT * FROM semantic_population.data_revisions WHERE id = $1", source_revision_id)
             if revision is None:
                 return {"copied": False, "reason": "no_data"}
+            await _assert_revision_in_scope(connection, source_revision_id, scope, source_model_id)
             remap = IdRemapper({**id_map, source_model_id: target_model_id,
                                 revision["model_version_id"]: target_model_version_id,
                                 binding["model_version_id"]: target_model_version_id})

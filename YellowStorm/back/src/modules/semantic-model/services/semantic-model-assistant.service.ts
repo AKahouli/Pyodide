@@ -386,12 +386,14 @@ export class SemanticModelAssistantService {
     return { modelId: model.id, name: model.name, model: this.modelRef(model), editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model) };
   }
 
-  /** Copy a model into a new one the user owns; the data needs the sources and is copied by the runtime. */
+  /** Copy a model into a new one the user owns; the data needs the sources and is copied by the runtime.
+   * WP04.2: structure-only unless sources (and data) are explicitly requested — the MCP default
+   * never silently inherits source access. */
   async cloneModel(actor: AssistantActor, modelId: string, options: { name?: string; includeSources?: boolean; includeData?: boolean; includeShares?: boolean }) {
     const source = await this.models.get(actor.userId, modelId);
     const name = options.name?.trim() || `${source.name} (copy)`;
     const copy = await this.models.clone(actor.userId, source.id, name, {
-      sources: options.includeSources ?? true,
+      sources: options.includeSources ?? false,
       data: options.includeData ?? false,
       shares: options.includeShares ?? false,
     });

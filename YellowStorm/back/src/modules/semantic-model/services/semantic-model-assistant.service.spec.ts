@@ -616,8 +616,17 @@ describe('SemanticModelAssistantService cloneModel', () => {
     const clone = jest.fn().mockResolvedValue({ id: 'copy-1', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'copied', records: 5 } });
     Object.assign(models, { clone });
     const result = await service.cloneModel(actor, 'model-1', { includeData: true });
-    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: true, data: true, shares: false });
+    // WP04.2: explicit data still carries its sources; the MCP default is structure-only.
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: false, data: true, shares: false });
     expect(result).toMatchObject({ modelId: 'copy-1', sourceModelId: 'model-1', dataCopy: { status: 'copied' } });
+  });
+
+  it('clones the structure only unless sources are explicitly requested (WP04.2)', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-3', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'skipped' } });
+    Object.assign(models, { clone });
+    await service.cloneModel(actor, 'model-1', {});
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: false, data: false, shares: false });
   });
 
   it('keeps a given name and leaves out what is not asked', async () => {

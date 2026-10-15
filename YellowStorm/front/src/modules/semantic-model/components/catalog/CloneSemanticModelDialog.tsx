@@ -39,13 +39,14 @@ export function CloneSemanticModelDialog({ model, open, onOpenChange }: Readonly
   const queryClient = useQueryClient();
   const isOwner = model.role === 'owner' || !model.role;
   const [name, setName] = useState('');
-  const [include, setInclude] = useState<SemanticModelCloneInclude>({ sources: true, data: false, shares: false });
+  // WP04.2: structure-only by default — sources and data are explicit choices.
+  const [include, setInclude] = useState<SemanticModelCloneInclude>({ sources: false, data: false, shares: false });
   const suffix = t('clone.copySuffix');
   // Reset each time the dialog opens (the translated suffix is read then, not tracked).
   useEffect(() => {
     if (!open) return;
     setName(`${model.name} (${suffix})`);
-    setInclude({ sources: true, data: false, shares: false });
+    setInclude({ sources: false, data: false, shares: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, model.name]);
   const preview = useQuery({

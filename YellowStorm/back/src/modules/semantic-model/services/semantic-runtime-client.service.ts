@@ -101,6 +101,10 @@ export interface RuntimeDataSummary {
 export interface RuntimeCloneDataCommand {
   targetModelId: string;
   targetModelVersionId: string;
+  /** The workspaces the cloning actor is authorized for: the runtime refuses to copy
+   *  revision data whose source observations or entity provenance fall outside this
+   *  scope (WP04.5 defense in depth). */
+  allowedWorkspaceIds: string[];
   idMap: { concepts: Record<string, string>; relations: Record<string, string>; mappings: Record<string, string> };
   /** The clone's own build plan, when the source data is current: the copy then reads as current. */
   homeWorkspaceId?: string;

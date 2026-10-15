@@ -759,6 +759,9 @@ class CloneDataCommand(BaseModel):
 
     target_model_id: str = Field(alias="targetModelId", min_length=1, max_length=200)
     target_model_version_id: str = Field(alias="targetModelVersionId", min_length=1, max_length=200)
+    # WP04.5: the source-workspace scope the calling back authorized. Required — an
+    # unscoped copy is refused, never assumed to be unlimited.
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=200)
     id_map: CloneDataIdMap = Field(alias="idMap", default_factory=CloneDataIdMap)
     # The clone's own build plan, sent when the source data is current, so the copy reads as current.
     home_workspace_id: str | None = Field(default=None, alias="homeWorkspaceId", max_length=200)
@@ -772,7 +775,8 @@ async def clone_model_data(model_id: str, command: CloneDataCommand,
                            request: Request) -> dict[str, object]:
     """Copy the draft data revision of ``model_id`` into the (empty) clone, project its
     graph and serve it as the clone's draft data. The search index is requested, not copied.
-    Refused (409) while a job of the source runs. Source documents are never copied."""
+    Refused (409) while a job of the source runs or when the revision reads sources outside
+    the authorized workspace scope. Source documents are never copied."""
     from app.persistence import model_clone_store as clone_store
 
     if not model_id or len(model_id) > 200 or command.target_model_id == model_id:
@@ -792,11 +796,14 @@ async def clone_model_data(model_id: str, command: CloneDataCommand,
     try:
         result = await clone_store.clone_model_data(
             pool, source_model_id=model_id, target_model_id=command.target_model_id,
-            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned)
+            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned,
+            allowed_workspace_ids=command.allowed_workspace_ids)
     except store.ModelJobsRunning as exc:
         raise HTTPException(status_code=409, detail="model_jobs_running") from exc
     except clone_store.CloneTargetNotEmpty as exc:
         raise HTTPException(status_code=409, detail="target_has_data") from exc
+    except clone_store.CloneScopeExceeded as exc:
+        raise HTTPException(status_code=409, detail="clone_scope_exceeded") from exc
     if not result["copied"]:
         return result
     try:
