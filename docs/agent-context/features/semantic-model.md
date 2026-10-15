@@ -46,6 +46,19 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
+P0 concurrency hardening uses independent task guards for datasource, population
+and search, with one serialized renewal-loop connection per guard. Search retains
+its progress-only generation lease/watchdog; task heartbeats cannot conceal a
+stalled build. Index writes fence task → generation → batch/cache in one
+transaction, including generation-only fencing for standalone index builds.
+Population finalization holds task → job → short per-model cutover mutex before
+freshness checks, binding CAS and atomic terminal completion. Correction INSERTs,
+selected specifications and other binding changes share that mutex; optimistic
+correction API prechecks remain compatible. Post-lock lease checks use PostgreSQL
+wall time. See the [P0 invariant/release checklist](../testing/semantic-runtime-p0-release-gate.md)
+for exact tests and pending deployment evidence; implementation is not a claim
+that multi-replica staging has passed.
+
 Semantic AI extraction is runtime-owned: API and population workers call LiteLLM directly, using deployment-owned extraction configuration and a non-secret profile identity. Prompts and response shaping live in [runtime extraction](../../../YellowStorm/semantic-model-runtime/app/datasource/attribute_extraction.py) and [prompt instructions](../../../YellowStorm/semantic-model-runtime/app/datasource/extraction_prompt.py); document/cell/derived readers retain grounding and provenance. NestJS obtains the runtime profile before fingerprinting AI requests. The backend inference bridge/default extraction-agent bootstrap and ADK semantic extraction package/router/settings are removed. Generic ADK document extraction is independent. See [ADR-0015](../decisions/ADR-0015-runtime-owned-semantic-ai-extraction.md).
 
 Semantic record provenance originates in existing source provenance. Backend assistant retrieval forwards non-empty provenance for `find_records` and `get_related_records`, preserves record provenance in query/traversal rows, and includes it on records along connection paths. Runtime locators expose available `workspaceId`, `documentId`, compatibility `assetId` and `filename`; `filename` may be absent. Chained and merged derived concepts carry their underlying document references; canonical and MCP provenance can retain distinct mapping/version references to the same document. MCP treats provenance as a locator, not evidence: follow connected document-tool schemas, use workspace scope and a declared `file_name`/document identifier only when accepted, and resolve missing filenames through `list_workspace_files(source_workspace_id=workspaceId)` by matching returned file identity/name rather than fabricating one. Facts supported by freshly retrieved document text may be answered with file/section citations and must be distinguished from model-record fields. Record search and graph reads retain existing acting-user workspace visibility filtering; locators do not grant document access.
@@ -98,6 +111,7 @@ Use the existing entry points below for affected behavior. Only rows with explic
 | Backend boundary | From `YellowStorm/back`: `npm test -- semantic-model.controller.spec.ts`; service tests are colocated under `src/modules/semantic-model/services/` |
 | Runtime population | From `YellowStorm/semantic-model-runtime`: `conda run -n meta pytest tests/test_population_commands.py tests/test_population_tabular.py tests/test_document_population.py -q` |
 | Durable runtime / search | Existing `tests/test_jobs.py`, `tests/test_concept_refresh.py`, `tests/test_scoped_population_reads.py`, `tests/test_graph_search.py`; integration variants require their configured database/services |
+| P0 multi-worker correctness | `scripts/run_p0_gate.py`: isolated PostgreSQL, fail on missing prerequisites/skips, JUnit plus commit/source digest; [invariants and staging status](../testing/semantic-runtime-p0-release-gate.md). Workflow: `.github/workflows/semantic-runtime-p0.yml` |
 | Autonomous AI extraction | Runtime `tests/test_attribute_extraction_client.py` and `tests/test_semantic_ai_runtime.py`: direct LiteLLM transport, service authentication, reference filtering, grounded cell values, runtime profile admission, fail-closed queued identities before cache/fetch/metadata, fingerprint invalidation and unsupported-JSON failure behavior passed. Backend: 200 focused cases and build passed; required review found no critical/major issues |
 | AGE projection/exposure | Focused projection/exposure tests, 34 passed; isolated AGE direct-Cypher integration, 1 passed (4 unrelated tests deselected); cleanup verified (caller-reported) |
 | Graph record API | `npm test -- graph-outline.spec.ts --runInBand`: 7 passed; metadata remains separate from editable values and distinguishes missing metadata from an empty array |

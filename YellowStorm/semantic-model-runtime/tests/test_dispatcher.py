@@ -164,12 +164,21 @@ def _tls_options(options: dict) -> ssl.SSLContext:
 def broker_tls_fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict:
     """A test CA, a server certificate it signed, and an untrusted self-signed
     certificate, generated once for the TLS handshake cases."""
-    openssl = Path("C:/Program Files/Git/usr/bin/openssl.exe")
-    if not openssl.is_file():
+    import shutil
+
+    openssl = shutil.which("openssl")
+    if not openssl and Path("C:/Program Files/Git/usr/bin/openssl.exe").is_file():
+        openssl = "C:/Program Files/Git/usr/bin/openssl.exe"
+    if not openssl:
         pytest.skip("openssl not available for the TLS fixture")
     directory = tmp_path_factory.mktemp("broker-tls")
+    config = directory / "openssl.cnf"
+    config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ca\n"
+                      "[dn]\n[ca]\nbasicConstraints=critical,CA:TRUE\n"
+                      "keyUsage=critical,keyCertSign,cRLSign\n", encoding="utf-8")
     def run(*args: str) -> None:
-        subprocess.run([str(openssl), *args], check=True, capture_output=True)
+        subprocess.run([str(openssl), *args], check=True, capture_output=True, timeout=15,
+                       env={**os.environ, "OPENSSL_CONF": str(config)})
     run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
         "-subj", "/CN=test-ca", "-keyout", str(directory / "ca.key"),
         "-out", str(directory / "ca.pem"))

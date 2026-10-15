@@ -1,6 +1,6 @@
 # semantic-model-runtime
 
-One FastAPI application with separate datasource and population Celery worker
+One FastAPI application with separate datasource, population and graph-search Celery worker
 processes. PostgreSQL is the durable source of truth; RabbitMQ carries task
 references only.
 
@@ -152,6 +152,22 @@ Feature switches default off:
 
 ## Retry and lease recovery
 
+All three worker families renew task ownership independently through
+`TaskLeaseGuard`. Its private renewal loop serializes PostgreSQL queries,
+reconnects and connection shutdown; an explicit ownership assertion must complete
+a real fenced DB check. Timed-out checks do not authorize effects, and a lost or
+stopped attempt cannot restart. Common task windows are
+`SEMANTIC_TASK_LEASE_SECONDS` (default 180) and
+`SEMANTIC_TASK_LEASE_RENEW_SECONDS` (default 20, clamped to at most one third
+of the lease). These are configuration defaults, not measured takeover SLAs.
+
+Search retains a separate **progress-based generation lease** and stall watchdog.
+A healthy task heartbeat does not refresh that generation lease. Search mutations
+lock task then generation then batch/cache rows, checking current ownership and
+PostgreSQL wall-clock expiry inside the transaction. Standalone index builds use
+generation ownership fencing. A retry may reconcile an already-ready generation;
+only a current task can fail an abandoned generation on retry exhaustion.
+
 Broker delivery is only a hint; PostgreSQL stays authoritative. Under Celery
 5.3.6 a failed task is rejected with `requeue=False`, so a bare raise would
 discard the delivery; the worker therefore retries through Celery's retry path,
@@ -208,18 +224,49 @@ Realtime tables, publications, replication slots, triggers, or CDC.
 - Requeue: fenced task back to `queued` (outbox row stays published).
 - Recovery: fenced task/job terminal state, or outbox row reset to unpublished.
 - Completion: fenced task + terminal job state + terminal event.
+- Population activation: task → job → short per-model cutover advisory lock →
+  current specification/correction checks → binding CAS → task/job terminal event,
+  in one commit. Ownership is checked against PostgreSQL wall time after lock
+  waits and again at the terminal update; expiry rolls back the binding too.
+
+Correction INSERTs, selected-specification writes and binding-changing flows
+share `semantic:model:cutover:{model_id}` as a short transaction advisory mutex.
+This complements the existing long population staging/finalization lock; it is
+not held while parsing or projecting candidate graphs. Corrections retain their
+existing optimistic API sequence precheck: already accepted concurrent requests
+may both insert. Different models have independent cutover mutexes.
 
 Idempotency is scoped by `(actor_user_id, idempotency_key)`. Reusing a key with
 a different canonical command hash returns `409`.
 
 ## Rollback
 
-Disable writes and dispatch first. The additive schema can then be removed only
-after confirming no queued/running jobs are needed:
+The P0 concurrency changes require no migration or destructive schema rollback.
+Before rollout record the deployed image digest and migration version. Stop new
+admissions, drain writes and let owned work finish or expire before changing
+worker versions. Reconcile durable task leases and the outbox before restoring
+the previously validated version/topology; do not mix incompatible ownership
+implementations on the same queues or manually mark unfinished work completed.
+Failed/rejected cutovers leave existing bindings and immutable sources unchanged.
 
-```sql
-DROP SCHEMA semantic_jobs CASCADE;
+## P0 verification and release gate
+
+Use an isolated disposable PostgreSQL instance with pgvector >= 0.7 and pg_trgm.
+The following command deliberately runs schema-resetting fixtures; it accepts only
+the loopback database `semantic_p0_test` with explicit disposable opt-in:
+
+```powershell
+$env:SEMANTIC_P0_DISPOSABLE = '1'
+$env:SEMANTIC_RUNTIME_TEST_DATABASE_URL = '<disposable-local-test-DSN>/semantic_p0_test'
+$env:SEMANTIC_RUNTIME_GUARD_TEST_DATABASE_URL = $env:SEMANTIC_RUNTIME_TEST_DATABASE_URL
+conda run -n meta python scripts/run_p0_gate.py
 ```
 
-This does not modify `semantic_model`, AGE, logicalsearch, PostgREST, or the
-Realtime control database.
+The runner binds all included runtime/test connections to that validated target,
+does not load deployment `.env`, fails on missing prerequisites or any skipped
+test, and writes JUnit plus revision/source-digest evidence under
+`qa-artifacts/semantic-runtime-p0/` at the repository root. CI runs the same gate
+in `.github/workflows/semantic-runtime-p0.yml` using repository requirements.
+The local/CI database gate does not establish live broker/provider/AGE chaos
+behavior. See the [invariant checklist and M1–M10 staging evidence](../../docs/agent-context/testing/semantic-runtime-p0-release-gate.md).
+Production multi-worker scale-out remains gated on that complete evidence.

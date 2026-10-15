@@ -1,4 +1,4 @@
-"""Task-owned integration coverage against existing schemas; never resets shared fixtures.
+"""Task-owned integration coverage against explicitly configured test schemas.
 
 Run this file explicitly from the runtime. Jobs use a unique actor/model/queue and
 no worker consumes that queue. Cleanup only removes this fixture's own job rows.
@@ -6,21 +6,19 @@ no worker consumes that queue. Cleanup only removes this fixture's own job rows.
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
 import pytest
 import pytest_asyncio
-from dotenv import load_dotenv
 
 from app.jobs.models import JobCommand
 from app.jobs.service import JobService
 from app.persistence.postgres_jobs import PostgresJobRepository
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
-DSN = os.environ.get("SEMANTIC_RUNTIME_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DSN, reason="Existing local semantic runtime database unavailable")
+# Never import deployment .env settings from an integration-test collection.
+DSN = os.environ.get("SEMANTIC_RUNTIME_TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(not DSN, reason="Explicit semantic runtime test database unavailable")
 
 
 @pytest_asyncio.fixture
