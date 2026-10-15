@@ -31,7 +31,7 @@ describeIntegration('simultaneous upload lifecycle', () => {
         blobs.set(path, Buffer.from(file));
         return { storedName: options.customFileName, blobPath: path, url: path, contentHash: 'qa' };
       }),
-      generateSasUrl: jest.fn(async (path: string) => `https://example.invalid/${path}`),
+      generateSasUrl: jest.fn(async (path: string, _options?: { createOnly?: boolean }) => `https://example.invalid/${path}`),
       exists: jest.fn(async () => true),
       getMetadata: jest.fn(async (path: string) => {
         const record = (await documents.findAllByWorkspaceId(workspace.id)).find(d => d.path === path);
@@ -65,6 +65,21 @@ describeIntegration('simultaneous upload lifecycle', () => {
     if (fixtures.length) await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, fixtures.splice(0)));
   });
   afterAll(close);
+
+  it('single, conversation-path and bulk URLs all request storage-enforced create-only writes', async () => {
+    const t = await setup();
+    await t.write.requestUploadUrl(t.workspace.id, owner,
+      { filename: 'single.png', mimeType: 'image/png', size: 100 });
+    await t.write.requestUploadUrlWithPath(t.workspace.id, owner,
+      { filename: 'conversation.png', mimeType: 'image/png', size: 100 }, `${owner}/conversation-qa`);
+    await t.bulk.initiateBulkUpload(t.workspace.id, owner, { files: [
+      { filename: 'bulk.png', mimeType: 'image/png', size: 100 },
+    ] });
+    expect(t.storage.generateSasUrl).toHaveBeenCalledTimes(3);
+    for (const call of t.storage.generateSasUrl.mock.calls) {
+      expect(call[1]).toEqual(expect.objectContaining({ createOnly: true }));
+    }
+  });
 
   it('simultaneous direct uploads reserve before blob writes and reject the overflow', async () => {
     const t = await setup();

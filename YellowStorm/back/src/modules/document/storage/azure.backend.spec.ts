@@ -109,6 +109,18 @@ describe('AzureStorageBackend SAS signing', () => {
     expect(url).toContain('skoid=oid');
   });
 
+  it('issues account-key create-only SAS without overwrite permission', async () => {
+    const { instance, generateSasUrl } = backend(false);
+    await instance.signedUrl('report.pdf', { expirySeconds: 60, write: true, createOnly: true });
+    expect(generateSasUrl.mock.calls[0][0].permissions.toString()).toBe('c');
+  });
+
+  it('issues delegated create-only SAS without overwrite permission', async () => {
+    const { instance } = backend(true);
+    const url = await instance.signedUrl('report.pdf', { expirySeconds: 60, write: true, createOnly: true });
+    expect(new URL(url).searchParams.get('sp')).toBe('c');
+  });
+
   it('reuses one delegation key across SAS URLs it can outlive', async () => {
     const { instance, getUserDelegationKey } = backend(true);
 

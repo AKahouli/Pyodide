@@ -652,10 +652,11 @@ export function uploadToAzure(
     });
 
     xhr.open('PUT', uploadUrl);
-    // x-ms-blob-type is mandatory on an Azure Blob PUT — without it Azure answers
-    // 400 MissingRequiredHeader. It is safe to send unconditionally: an S3
-    // presigned URL only signs `host` (X-Amz-SignedHeaders=host), so Ceph ignores
-    // the extra header and still answers 200.
+    // Conditional S3 writes must carry the exact precondition bound into the signature.
+    // Azure enforces create-only through its signed `c` permission instead.
+    if (new URL(uploadUrl).searchParams.get('X-Amz-SignedHeaders')?.split(';').includes('if-none-match')) {
+      xhr.setRequestHeader('If-None-Match', '*');
+    }
     xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.send(file);

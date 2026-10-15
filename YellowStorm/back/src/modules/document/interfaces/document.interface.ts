@@ -66,6 +66,9 @@ export interface DocumentReadStream {
 }
 
 export interface SasUrlOptions {
+  /** Restrict write URLs to creating a new object; existing content cannot be replaced. */
+  createOnly?: boolean;
+
   /** Expiry time in minutes (default: from config) */
   expiryMinutes?: number;
 

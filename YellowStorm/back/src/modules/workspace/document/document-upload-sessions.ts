@@ -139,6 +139,7 @@ export class WorkspaceDocumentUploadSessions {
         // Generate presigned URL
         const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
           permissions: 'cw',
+          createOnly: true,
           expiryMinutes: this.sasUrlExpiryMinutes,
         });
 

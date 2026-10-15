@@ -153,6 +153,9 @@ export function useConversationFileUpload({ conversationId: externalConvId, crea
           };
 
           xhr.open('PUT', uploadUrl);
+          if (new URL(uploadUrl).searchParams.get('X-Amz-SignedHeaders')?.split(';').includes('if-none-match')) {
+            xhr.setRequestHeader('If-None-Match', '*');
+          }
           xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
           xhr.setRequestHeader('Content-Type', file.type);
           xhr.send(file);

@@ -699,6 +699,19 @@ describe('DocumentService', () => {
       expect(command.constructor.name).toBe('PutObjectCommand');
     });
 
+    it('binds create-only write preconditions into the storage signature', async () => {
+      await service.generateSasUrl(testObjectKey, { permissions: 'cw', createOnly: true });
+      const command = mockGetSignedUrl.mock.calls[0][1];
+      expect(command.input).toMatchObject({ Key: testObjectKey, IfNoneMatch: '*' });
+      expect(mockGetSignedUrl.mock.calls[0][2].signableHeaders).toEqual(new Set(['if-none-match']));
+    });
+
+    it('keeps read URLs unchanged when createOnly is supplied', async () => {
+      await service.generateSasUrl(testObjectKey, { permissions: 'r', createOnly: true });
+      expect(mockGetSignedUrl.mock.calls[0][1].constructor.name).toBe('GetObjectCommand');
+      expect(mockGetSignedUrl.mock.calls[0][2].signableHeaders).toBeUndefined();
+    });
+
     it('should use custom expiry minutes', async () => {
       await service.generateSasUrl(testObjectKey, { expiryMinutes: 30 });
 

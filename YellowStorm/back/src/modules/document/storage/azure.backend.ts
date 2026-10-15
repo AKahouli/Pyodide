@@ -269,8 +269,8 @@ export class AzureStorageBackend implements StorageBackend {
   async signedUrl(key: string, options: SignedUrlOptions): Promise<string> {
     return this.sasUrl(
       key,
-      // "cw" mirrors the S3 presigned PutObject this replaces: create + write.
-      BlobSASPermissions.parse(options.write ? 'cw' : 'r'),
+      // Create permission permits a new block blob, while overwriting requires write.
+      BlobSASPermissions.parse(options.write ? (options.createOnly ? 'c' : 'cw') : 'r'),
       new Date(Date.now() + options.expirySeconds * 1000),
       options.contentDisposition,
     );

@@ -49,11 +49,26 @@ crash-abandoned rows. Converted PDFs use document-ID keys and delete unregistere
 blobs if quota admission fails. Focused integrity and concurrency tests cover these
 boundaries, including independent owners and simultaneous uploads.
 
+### Create-only presigned uploads
+
+Workspace single, conversation-path and bulk upload URLs request `createOnly`.
+S3 signs `If-None-Match: *` into the PUT; clients must send that exact header and
+cannot remove or alter it without invalidating the signature. Azure SAS grants
+only `c`, excluding the `w` permission required to overwrite an existing blob.
+The first successful PUT creates the object; later PUTs through that URL cannot
+replace it, including after confirmation. A lost upload response can therefore
+produce a precondition error on retry; confirmation remains idempotent, and a new
+upload needs a new reservation/key. Existing actual-size checks still apply.
+
+URLs issued before deployment retain their former permissions until their
+original expiry. This change does not revoke bearer URLs already issued. S3
+deployments must support conditional PutObject and allow `If-None-Match` in their
+browser CORS configuration; unsupported storage must fail the upload rather than
+fall back to overwrite permission. Azure enforcement is covered by provider
+contract tests; live Ceph and browser tests validate the configured deployment.
+
 Remaining upload hardening (bounded follow-up):
 
-- Presigned PUT URLs remain replayable until expiry: metadata verification proves
-  size at confirmation time, not immutable bytes afterward. Create-only storage
-  permissions or finalization to a separate key needs provider/CORS verification.
 - Denied workspace routes currently retain the empty workspace controls while
   showing an access-error toast; the backend denies mutations, but a dedicated
   access-denied view would make that outcome clearer.

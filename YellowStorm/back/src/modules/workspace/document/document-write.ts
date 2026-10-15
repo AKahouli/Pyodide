@@ -790,7 +790,7 @@ export class WorkspaceDocumentWrite {
   private async generateReservedUploadUrl(workspaceId: string, documentId: string, blobPath: string): Promise<string> {
     try {
       const url = await this.documentService.generateSasUrl(blobPath, {
-        permissions: 'cw', expiryMinutes: this.sasUrlExpiryMinutes,
+        permissions: 'cw', createOnly: true, expiryMinutes: this.sasUrlExpiryMinutes,
       });
       await this.documentStore.mergeMetadata(workspaceId, documentId, {
         uploadExpiresAt: new Date(Date.now() + (this.sasUrlExpiryMinutes + 1) * 60000).toISOString(),

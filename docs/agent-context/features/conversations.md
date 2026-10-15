@@ -164,6 +164,12 @@ relationships are never inferred. Enumeration is bounded to 1,000 saved images
 and fails explicitly rather than returning partial history. Coverage lives in
 `conversation-image-history.spec.ts` and `ImageVersionHistory.test.tsx`.
 
+Conversation presigned file uploads request storage-enforced create-only URLs,
+like workspace single and bulk uploads. S3 requires a signed `If-None-Match: *`
+header; Azure SAS omits overwrite permission. Reusing a new URL cannot replace
+the saved object. Pre-deployment URLs keep their former permissions until expiry.
+See the workspace module README for provider and retry constraints.
+
 Run only the checks affected by the change. These commands identify existing coverage; they were not executed during initialization.
 
 | Area | Command from owning package | Existing coverage |
