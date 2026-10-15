@@ -147,7 +147,7 @@ class TestConnectorMcpAndImport:
         }
         result = _buffer_mcp_images_for_model(response, tool_context)
         assert "mcp_content_parts" not in result
-        assert any(key.startswith("_pending_tool_images_") for key in tool_context.state)
+        assert any(key.startswith("temp:_pending_tool_images_") for key in tool_context.state)
 
 class TestSaveFileToWorkspace:
     @pytest.mark.asyncio

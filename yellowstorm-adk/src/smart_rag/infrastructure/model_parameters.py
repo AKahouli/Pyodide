@@ -10,6 +10,9 @@ from typing import Any
 _model_input_modalities: ContextVar[dict[str, frozenset[str]]] = ContextVar(
     "model_input_modalities", default={}
 )
+_model_input_aliases: ContextVar[dict[str, str]] = ContextVar(
+    "model_input_aliases", default={}
+)
 _model_reasoning_efforts: ContextVar[dict[str, str]] = ContextVar(
     "model_reasoning_efforts", default={}
 )
@@ -92,7 +95,11 @@ def normalize_messages_for_model(model_name: object, messages: Any) -> Any:
     server-side ("messages.content.type is invalid"). Mirrors the gRPC default
     input_modalities=["text"].
     """
-    modalities = _model_input_modalities.get().get(str(model_name or ""))
+    model_key = str(model_name or "")
+    registry = _model_input_modalities.get()
+    modalities = registry.get(model_key)
+    if modalities is None:
+        modalities = registry.get(_model_input_aliases.get().get(model_key))
     if not isinstance(messages, list):
         return messages
     if modalities is None:
@@ -138,6 +145,16 @@ def register_model_input_modalities(model_name: object, modalities: Any) -> None
     registry = dict(_model_input_modalities.get())
     registry[model_key] = normalized
     _model_input_modalities.set(registry)
+
+
+def register_model_input_alias(model_name: str, routed_model_name: str) -> None:
+    """Carry configured capabilities across an explicit proxy routing decision.
+
+    LiteLLM's async implementation reenters the sync completion wrapper using
+    the qualified model name. Both wrappers must see the same request settings.
+    """
+    if model_name != routed_model_name and model_name in _model_input_modalities.get():
+        _model_input_aliases.set({**_model_input_aliases.get(), routed_model_name: model_name})
 
 
 def get_reasoning_effort_for_model(model_name: object) -> str | None:

@@ -114,11 +114,12 @@ class TestCallbackHelper:
     def test_inject_images_before_model_limits_total_images_to_50(self):
         """Test MCP forwarding uses only capacity left in the whole request."""
         image_base64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode("ascii")
-        image = {"mime": "image/png", "data": image_base64}
+        images = [{"mime": "image/png", "data": base64.b64encode(
+            b"\x89PNG\r\n\x1a\n" + str(i).encode()).decode()} for i in range(51)]
         state = {
-            "_pending_tool_images_response-1": [image] * 30,
+            "_pending_tool_images_response-1": images[:30],
             "_list_of_filenames_response-1": [f"first-{i}" for i in range(30)],
-            "_pending_tool_images_response-2": [image] * 21,
+            "_pending_tool_images_response-2": images[30:],
             "_list_of_filenames_response-2": [f"second-{i}" for i in range(21)],
         }
         callback_context = MagicMock()

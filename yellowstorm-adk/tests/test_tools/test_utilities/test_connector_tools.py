@@ -907,13 +907,13 @@ def test_connector_tool_buffers_mcp_image_parts_for_model(
     assert "__mcp_content_parts" not in response
     assert response["images"][0]["image_content_index"] == 1
     image_keys = [
-        key for key in tool_context.state if key.startswith("_pending_tool_images_")
+        key for key in tool_context.state if key.startswith("temp:_pending_tool_images_")
     ]
     assert len(image_keys) == 1
-    response_id = image_keys[0].replace("_pending_tool_images_", "")
+    response_id = image_keys[0].replace("temp:_pending_tool_images_", "")
     assert tool_context.state[image_keys[0]] == [
         {"mime": "image/png", "data": "YWJjMTIz"}
     ]
-    assert tool_context.state[f"_list_of_filenames_{response_id}"] == [
+    assert tool_context.state[f"temp:_list_of_filenames_{response_id}"] == [
         "image_id=img-1, image_content_index=1"
     ]

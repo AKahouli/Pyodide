@@ -232,6 +232,76 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('model,qualified', [
+    ('gpt-5.6-sol-alias-regression', 'azure/gpt-5.6-sol-alias-regression'),
+    ('glm-alias-regression', 'openai/glm-alias-regression'),
+])
+async def test_async_to_sync_routing_preserves_configured_image_capabilities(monkeypatch, model, qualified):
+    import litellm
+    import litellm.main
+    from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+
+    captured = []
+
+    def provider_completion(*args, **kwargs):
+        captured.append(kwargs['messages'])
+        assert kwargs['model'] == qualified
+        return 'intercepted'
+
+    async def real_async_shape(*args, **kwargs):
+        # The real LiteLLM async path invokes its sync completion implementation.
+        return litellm.completion(*args, **kwargs)
+
+    monkeypatch.setattr(litellm, 'acompletion', real_async_shape)
+    monkeypatch.setattr(litellm, 'completion', provider_completion)
+    for attr in ('acompletion', 'completion', '_ys_async_patched', '_ys_sync_patched'):
+        monkeypatch.setattr(litellm.main, attr, getattr(litellm.main, attr, None), raising=False)
+    monkeypatch.delattr(litellm, '_is_yellowstorm_patched', raising=False)
+    apply_litellm_debug_patch()
+    messages = [{'role': 'user', 'content': [
+        {'type': 'text', 'text': 'question'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cGl4ZWxz'}},
+    ]}]
+    # A later text-only selection must overwrite the earlier alias registration.
+    for modalities, expected in [(['text', 'image'], 2), (['text'], 1)]:
+        register_model_input_modalities(model, modalities)
+        assert await litellm.acompletion(model=model, messages=messages) == 'intercepted'
+        assert len(captured[-1][0]['content']) == expected
+    assert len(messages[0]['content']) == 2
+
+
+def test_routed_input_alias_preserves_explicit_admin_configuration():
+    from src.smart_rag.infrastructure.model_parameters import register_model_input_alias
+    model = 'gpt-alias-explicit-policy'
+    alias = 'azure/' + model
+    messages = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'redacted'}}]}]
+    register_model_input_modalities(model, ['text', 'image'])
+    register_model_input_modalities(alias, ['text'])
+    register_model_input_alias(model, alias)
+    assert normalize_messages_for_model(alias, messages)[0]['content'] is None
+
+
+@pytest.mark.asyncio
+async def test_routed_input_aliases_are_request_local_and_unknown_stays_text_only():
+    import asyncio
+    from src.smart_rag.infrastructure.model_parameters import register_model_input_alias
+    model = 'gpt-alias-request-isolation'
+    alias = 'azure/' + model
+    messages = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'redacted'}}]}]
+
+    async def request(modalities):
+        register_model_input_modalities(model, modalities)
+        register_model_input_alias(model, alias)
+        await asyncio.sleep(0)
+        return normalize_messages_for_model(alias, messages)[0]['content'] is not None
+
+    assert await asyncio.gather(request(['text', 'image']), request(['text'])) == [True, False]
+    register_model_input_alias('unknown-route-model', 'azure/unknown-route-model')
+    assert normalize_messages_for_model('azure/unknown-route-model', messages)[0]['content'] is None
+    assert normalize_messages_for_model(alias, messages)[0]['content'] is None
+
+
+@pytest.mark.asyncio
 async def test_litellm_patch_qualifies_non_azure_model_as_openai(monkeypatch):
     import litellm
 

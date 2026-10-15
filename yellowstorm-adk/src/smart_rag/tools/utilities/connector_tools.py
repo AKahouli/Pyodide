@@ -205,10 +205,14 @@ def _buffer_mcp_images_for_model(response: Any, tool_context: Optional[ToolConte
     if not images:
         return _strip_mcp_content_parts(response)
 
+    from src.smart_rag.infrastructure.processing.tool_image_state import (
+        IMAGE_PREFIX, LABEL_PREFIX, prepare_tool_image_turn,
+    )
+    prepare_tool_image_turn(tool_context)
     response_id = str(uuid.uuid4())
     labels = _build_image_reference_labels(response)
-    tool_context.state[f"_pending_tool_images_{response_id}"] = images
-    tool_context.state[f"_list_of_filenames_{response_id}"] = labels
+    tool_context.state[f"{IMAGE_PREFIX}{response_id}"] = images
+    tool_context.state[f"{LABEL_PREFIX}{response_id}"] = labels
     logger.info(
         "CONVERSATION_MCP_IMAGE_BRIDGE_BUFFERED response_id=%s total_content_parts=%s text_parts=%s image_parts=%s images=%s",
         response_id,
