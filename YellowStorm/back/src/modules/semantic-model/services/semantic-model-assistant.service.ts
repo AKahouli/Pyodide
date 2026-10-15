@@ -1053,9 +1053,11 @@ export class SemanticModelAssistantService {
   }
 
   private async ensureWorkspaceLinked(userId: string, modelId: string, workspaceId: string) {
+    // WP03.6: "already linked" is never proof of continued access — the
+    // actor's current workspace permission is rechecked on every call.
+    await this.requireWorkspaceAccess(userId, workspaceId);
     const links = await this.modelWorkspaces.list(userId, modelId) as { workspaceId: string; enabled: boolean; role: string }[];
     if (links.some((link) => link.workspaceId === workspaceId && link.enabled) && links.some((link) => link.role === 'origin' && link.enabled)) return;
-    await this.requireWorkspaceAccess(userId, workspaceId);
     const model = await this.models.get(userId, modelId);
     await this.modelWorkspaces.connect(userId, modelId, { expectedRevision: model.revision, workspaceId, addToDocumentsFallback: false });
   }

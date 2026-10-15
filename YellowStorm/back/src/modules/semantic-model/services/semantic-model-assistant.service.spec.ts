@@ -1,3 +1,4 @@
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelValidationService } from './semantic-model-validation.service';
 import { businessKey, SemanticModelAssistantService } from './semantic-model-assistant.service';
 import type { SemanticGraph } from '../domain/semantic-model.types';
@@ -13,7 +14,7 @@ const recordProvenance = [
   { workspaceId: 'ws-2', documentId: 'doc-2', assetId: 'doc-2', filename: 'contract-two.pdf' },
 ];
 
-type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents' | 'graphSearch', unknown>>;
+type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents' | 'graphSearch' | 'modelWorkspaces', unknown>>;
 
 function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-1', revision: 3, nodes: [customer, documents], relations: [], records: [], recordRelations: [] }, deps: Deps = {}) {
   const database = { query: jest.fn(async (sql: string, _params?: unknown[]) => sql.includes('INSERT INTO semantic_model.assistant_change_sets') ? { rows: [{ id: 'change-1' }] } : { rows: [] }) };
@@ -26,7 +27,7 @@ function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-
   const crossSource = { listIdentityRules: jest.fn().mockResolvedValue([]), saveIdentityRule: jest.fn().mockResolvedValue({ revision: 8 }) };
   const service = new SemanticModelAssistantService(
     database as never, models as never, graphService as never, new SemanticModelValidationService(), crossSource as never,
-    (deps.sourceMappings ?? {}) as never, {} as never, (deps.population ?? {}) as never, {} as never, (deps.workspaces ?? {}) as never,
+    (deps.sourceMappings ?? {}) as never, (deps.modelWorkspaces ?? {}) as never, (deps.population ?? {}) as never, {} as never, (deps.workspaces ?? {}) as never,
     (deps.workspaceShares ?? {}) as never, (deps.documents ?? {}) as never, (deps.graphSearch ?? {}) as never,
   );
   return { service, database, graphService, crossSource, models };
@@ -625,5 +626,38 @@ describe('SemanticModelAssistantService cloneModel', () => {
     Object.assign(models, { clone });
     await service.cloneModel(actor, 'model-1', { name: ' Lean ', includeSources: false });
     expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Lean', { sources: false, data: false, shares: false });
+  });
+});
+
+describe('SemanticModelAssistantService already-linked workspace access (SEC-04 / WP03.6)', () => {
+  const linkedModelWorkspaces = {
+    list: jest.fn().mockResolvedValue([
+      { workspaceId: 'ws-1', enabled: true, role: 'origin' },
+    ]),
+  };
+
+  it('rechecks current workspace access even when the workspace is already linked', async () => {
+    const sourceMappings = { profileAsset: jest.fn().mockResolvedValue({ fields: [] }) };
+    const { service } = setup(undefined, {
+      sourceMappings,
+      modelWorkspaces: linkedModelWorkspaces,
+      workspaceShares: { hasAccess: jest.fn().mockResolvedValue(false) },
+      documents: {},
+    });
+    await expect(service.profileSpreadsheet(actor, 'model-1', 'ws-1', 'doc-1'))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(sourceMappings.profileAsset).not.toHaveBeenCalled();
+  });
+
+  it('profiles an already-linked workspace the actor can still read', async () => {
+    const sourceMappings = { profileAsset: jest.fn().mockResolvedValue({ sheets: [], fields: [], sampleRows: [] }) };
+    const { service } = setup(undefined, {
+      sourceMappings,
+      modelWorkspaces: linkedModelWorkspaces,
+      workspaceShares: { hasAccess: jest.fn().mockResolvedValue(true) },
+      documents: {},
+    });
+    await expect(service.profileSpreadsheet(actor, 'model-1', 'ws-1', 'doc-1')).resolves.toBeDefined();
+    expect(sourceMappings.profileAsset).toHaveBeenCalledWith(actor.userId, 'model-1', 'ws-1', 'doc-1', { workspaceId: 'ws-1' });
   });
 });

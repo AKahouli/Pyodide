@@ -1,3 +1,5 @@
+import { ForbiddenException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   computeFieldProfiles,
   identityKeyOf,
@@ -124,6 +126,13 @@ describe('semantic source mapping domain', () => {
 });
 
 describe('SemanticSourceMappingService boundaries', () => {
+  /** WP-03 source authorization: allowed workspaces per test, assertions per test. */
+  const sourceAccess = (allowed: string[] = ['workspace-1', 'ws-1']) => ({
+    accessibleWorkspaceIds: jest.fn().mockResolvedValue(allowed),
+    assertSourceReadable: jest.fn(),
+    assertSourceEditable: jest.fn(),
+  } as never);
+
   const buildService = (mimeType = 'application/pdf') => {
     const database = { query: jest.fn() };
     const models = {
@@ -140,6 +149,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       documents as never,
       runtime as never,
       { preview: jest.fn() } as never,
+      sourceAccess(),
     );
     return { service, database, models, documents, runtime };
   };
@@ -187,7 +197,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     };
     const workspaces = { findById: jest.fn().mockResolvedValue({ name: 'Legal' }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      {} as never, { preview: jest.fn() } as never, workspaces as never);
+      {} as never, { preview: jest.fn() } as never, sourceAccess(), workspaces as never);
     await expect(service.createWorkspace('user-1', 'model-1', {
       expectedRevision: 7, conceptId: 'concept-1', workspaceId: 'ws-1', folderId: 'folder-1',
       fieldMappings: [{ sourceField: 'Contract number', targetAttribute: 'number', mode: 'extract' }],
@@ -214,7 +224,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       ]),
     };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      {} as never, { preview: jest.fn() } as never, { findById: jest.fn().mockResolvedValue({ name: 'Legal' }) } as never);
+      {} as never, { preview: jest.fn() } as never, sourceAccess(), { findById: jest.fn().mockResolvedValue({ name: 'Legal' }) } as never);
     const dto = { expectedRevision: 7, conceptId: 'concept-1', workspaceId: 'ws-1', folderIds: ['f1'], documentIds: ['loose'],
       fieldMappings: [{ sourceField: null, targetAttribute: 'number', mode: 'extract' }] };
     await expect(service.createWorkspace('user-1', 'model-1', dto as never)).resolves.toEqual({ revision: 8, fileCount: 2, waitingCount: 0 });
@@ -360,7 +370,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'gpt', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      { ...runtime, getAiExtractionIdentity } as never, {} as never, undefined, settings as never);
+      { ...runtime, getAiExtractionIdentity } as never, {} as never, sourceAccess(), undefined, settings as never);
 
     const result = await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -391,7 +401,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       fields: { contract: { method: 'rules', reason: 'found', value: 'CNT-7' }, number: { method: 'rules', reason: 'found', value: '1', matches: 2 } },
       records: [{ values: { contract: 'CNT-7', number: '1' } }, { values: { contract: 'CNT-7', number: '2' } }], recordCount: 2, unevenFields: ['date'] }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      runtime as never, {} as never, undefined, undefined);
+      runtime as never, {} as never, sourceAccess(), undefined, undefined);
 
     const result = await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -419,7 +429,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {} }) };
     const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'gpt', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
-      { ...runtime, getAiExtractionIdentity } as never, {} as never, undefined, undefined);
+      { ...runtime, getAiExtractionIdentity } as never, {} as never, sourceAccess(), undefined, undefined);
 
     await service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -460,7 +470,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       number: { method: 'rules', reason: 'found', value: 'CNT-1' },
       year: { method: 'computed', reason: 'found', input: 'ACME_2024', value: '2024' },
       code: { method: 'computed', reason: 'no_match', input: 'CNT-1' } } }) };
-    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never, sourceAccess());
     const year = { sourceField: null, targetAttribute: 'year', mode: 'computed' as const,
       computed: { input: { kind: 'file' as const, name: 'document_name' as const }, method: 'split' as const, delimiter: '_', part: -1 } };
     const code = { sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
@@ -487,7 +497,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'ACME_2024.pdf',
       size: 10, createdBy: 'u-2', indexingStatus: 'ready', contentHash: 'sha256:1' }) };
     const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {} }) };
-    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never, sourceAccess());
     const metadata = [
       { sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' as const },
       { sourceField: 'workspace_id', targetAttribute: 'workspace', mode: 'metadata' as const },
@@ -596,7 +606,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     const getAiExtractionIdentity = jest.fn().mockResolvedValue({ profileId: 'semantic-runtime', model: 'm', contractVersion: 'ai-attribute-v2', promptVersion: 'semantic-attributes-v1', maxTokens: 4096 });
     const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
     const service = new SemanticSourceMappingService(database as never, models as never, documents as never, { ...runtime, getAiExtractionIdentity } as never, {} as never,
-      undefined, settings as never);
+      sourceAccess(), undefined, settings as never);
     const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'ai' as const };
     await service.previewSheetFields('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
@@ -633,7 +643,7 @@ describe('SemanticSourceMappingService boundaries', () => {
       id, originalName: `${id}.pdf`, createdBy: 'u-2', mimeType: 'application/pdf', size: 10, indexingStatus: 'ready', contentHash: 'h' })) };
     const labels = { documentsRead: 2, unread: [], labels: [{ label: 'DEFINITION', kind: 'heading', documents: 2, page: 3, example: 'Un prêt' }] };
     const runtime = { suggestDocumentLabels: jest.fn().mockResolvedValue(labels) };
-    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never, sourceAccess());
 
     await expect(service.documentLabels('user-1', 'model-1', { workspaceId: 'workspace-1', documentIds: ['a', 'b', 'a'] })).resolves.toEqual(labels);
     expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
@@ -730,5 +740,160 @@ describe('SemanticSourceMappingService boundaries', () => {
       issues: [{ mappingId: 'mapping-1', code: 'source_disabled', documentName: 'Source.pdf' }],
     });
     expect(documents.findById).not.toHaveBeenCalled();
+  });
+});
+
+describe('SemanticSourceMappingService source authorization (SEC-03/SEC-04 / WP-03)', () => {
+  const PRIVATE = 'ws-private';
+  const ALLOWED = 'ws-allowed';
+  const privateDocument = { id: 'private-doc', workspaceId: PRIVATE, isFolder: false, mimeType: 'text/csv', originalName: 'secret-payroll.csv', path: '/payroll/secret-payroll.csv', size: 10, updatedAt: 'now', indexingStatus: 'ready', createdBy: 'owner-1', contentHash: 'ph' };
+  const allowedDocument = { id: 'allowed-doc', workspaceId: ALLOWED, isFolder: false, mimeType: 'text/csv', originalName: 'public-sales.csv', path: '/sales/public-sales.csv', size: 10, updatedAt: 'now', indexingStatus: 'ready', createdBy: 'owner-1', contentHash: 'ah' };
+
+  function buildMixedAccess(allowed: string[] = [ALLOWED]) {
+    const access = {
+      accessibleWorkspaceIds: jest.fn().mockResolvedValue(allowed),
+      assertSourceReadable: jest.fn(async (_user: string, _model: string, workspaceId: string) => {
+        if (!allowed.includes(workspaceId)) throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
+      }),
+      assertSourceEditable: jest.fn(async (_user: string, _model: string, workspaceId: string) => {
+        if (!allowed.includes(workspaceId)) throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
+      }),
+    };
+    const documents = {
+      findAllByWorkspace: jest.fn(async (workspaceId: string) => ({
+        documents: workspaceId === ALLOWED ? [allowedDocument] : [privateDocument],
+        pagination: { page: 1, limit: 200, total: 1, totalPages: 1 },
+      })),
+      findById: jest.fn(async (workspaceId: string) => workspaceId === ALLOWED ? allowedDocument : privateDocument),
+      findByIds: jest.fn(async (ids: string[]) => ids.map((id) => id === 'allowed-doc' ? allowedDocument : privateDocument)),
+      listAllInWorkspace: jest.fn(async (workspaceId: string) => workspaceId === ALLOWED ? [allowedDocument] : [privateDocument]),
+    };
+    const runtime = { requestDatasourceDiscovery: jest.fn().mockResolvedValue({ jobId: 'job-1' }), getJob: jest.fn(), getAiExtractionIdentity: jest.fn(),
+      previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', fields: {} }),
+      previewSheetFields: jest.fn().mockResolvedValue({ rows: [], ai: {} }),
+      suggestDocumentLabels: jest.fn().mockResolvedValue({ documentsRead: 0, unread: [], labels: [] }) };
+    const database = {
+      query: jest.fn(async (sql: string) => {
+        if (sql.includes('FROM semantic_model.workspace_links')) {
+          // Linked-workspace checks succeed (the access service owns denial).
+          return sql.includes('workspace_id=$2')
+            ? { rows: [{ 1: 1 }] }
+            : { rows: [{ workspaceId: ALLOWED }, { workspaceId: PRIVATE }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const service = new SemanticSourceMappingService(
+      database as never,
+      { requireRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }),
+        requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) } as never,
+      documents as never,
+      runtime as never,
+      { preview: jest.fn() } as never,
+      access as never,
+    );
+    return { service, access, documents, runtime, database };
+  }
+
+  it('shows a viewer only the linked workspaces they can still read, with no trace of the private one', async () => {
+    const { service, documents } = buildMixedAccess();
+    const { assets } = await service.listAssets('viewer-1', 'model-1');
+
+    expect(assets).toHaveLength(1);
+    expect(assets[0]).toMatchObject({ workspaceId: ALLOWED, documentId: 'allowed-doc', name: 'public-sales.csv' });
+    const serialized = JSON.stringify(assets);
+    expect(serialized).not.toContain('secret-payroll');
+    expect(serialized).not.toContain(PRIVATE);
+    expect(documents.findAllByWorkspace).not.toHaveBeenCalledWith(PRIVATE, expect.anything());
+  });
+
+  it('hides a revoked workspace from the source list on the very next call', async () => {
+    const { service } = buildMixedAccess([ALLOWED, PRIVATE]);
+    expect((await service.listAssets('viewer-1', 'model-1')).assets).toHaveLength(2);
+
+    // Revocation takes effect on the next request: the helper rechecks current access.
+    const { service: revoked } = buildMixedAccess([ALLOWED]);
+    expect((await revoked.listAssets('viewer-1', 'model-1')).assets).toHaveLength(1);
+  });
+
+  it('denies a viewer the profile of a private document without reading the profile store', async () => {
+    const { service, runtime, access } = buildMixedAccess();
+    const database = (service as unknown as { database: { query: jest.Mock } }).database;
+    database.query.mockResolvedValue({ rows: [{ profile: { fields: [] } }] });
+
+    await expect(service.profileAsset('viewer-1', 'model-1', PRIVATE, 'private-doc', {} as never))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(access.assertSourceReadable).toHaveBeenCalledWith('viewer-1', 'model-1', PRIVATE, 'private-doc');
+    expect(database.query).not.toHaveBeenCalled();
+    expect(runtime.requestDatasourceDiscovery).not.toHaveBeenCalled();
+  });
+
+  it('never enqueues a profile job for a private document, even for a model editor', async () => {
+    const { service, runtime } = buildMixedAccess();
+
+    await expect(service.requestProfile('editor-1', 'model-1', PRIVATE, 'private-doc', {} as never))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(runtime.requestDatasourceDiscovery).not.toHaveBeenCalled();
+
+    // The authorized editor's own workspace still profiles.
+    await expect(service.requestProfile('editor-1', 'model-1', ALLOWED, 'allowed-doc', {} as never))
+      .resolves.toMatchObject({ jobId: 'job-1' });
+  });
+
+  it('denies an editor preview of a private document before any document lookup or runtime call', async () => {
+    const { service, documents, runtime } = buildMixedAccess();
+
+    await expect(service.preview('editor-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc',
+      fieldMappings: [{ sourceField: 'name', targetAttribute: 'id', mode: 'direct' }],
+    } as never)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(documents.findById).not.toHaveBeenCalledWith(PRIVATE, 'private-doc');
+    expect(runtime.previewDocumentFields).not.toHaveBeenCalled();
+    expect(runtime.requestDatasourceDiscovery).not.toHaveBeenCalled();
+  });
+
+  it('denies mapping creation for a private workspace without advancing the revision', async () => {
+    const { service, documents } = buildMixedAccess();
+
+    await expect(service.create('editor-1', 'model-1', {
+      expectedRevision: 3, conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc', sheetName: 'data',
+      fieldMappings: [{ sourceField: 'name', targetAttribute: 'id', mode: 'direct' }],
+    } as never)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID });
+    expect(documents.findById).not.toHaveBeenCalledWith(PRIVATE, 'private-doc');
+  });
+
+  it('lists configured sources of inaccessible workspaces with neutral placeholders only', async () => {
+    const { service } = buildMixedAccess();
+    const database = (service as unknown as { database: { query: jest.Mock } }).database;
+    database.query.mockResolvedValue({ rows: [
+      { id: 'mapping-private', conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc', sheetName: '', assetKind: 'document',
+        fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
+      { id: 'mapping-allowed', conceptId: 'concept-1', workspaceId: ALLOWED, documentId: 'allowed-doc', sheetName: '', assetKind: 'document',
+        fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
+    ] });
+
+    const rows = await service.list('viewer-1', 'model-1') as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    const restricted = rows.find((row) => row.id === 'mapping-private')!;
+    expect(restricted).toMatchObject({ documentName: 'Restricted source', documentPath: '', mimeType: '', documentId: '' });
+    const visible = rows.find((row) => row.id === 'mapping-allowed')!;
+    expect(visible).toMatchObject({ documentName: 'public-sales.csv', documentPath: '/sales/public-sales.csv' });
+    expect(JSON.stringify(restricted)).not.toContain('secret-payroll');
+  });
+
+  it('resolves restricted configured sources as a neutral issue without touching their documents', async () => {
+    const { service, documents } = buildMixedAccess();
+    const database = (service as unknown as { database: { query: jest.Mock } }).database;
+    database.query.mockResolvedValue({ rows: [
+      { id: 'mapping-private', conceptId: 'concept-1', workspaceId: PRIVATE, documentId: 'private-doc', sheetName: '', assetKind: 'document',
+        fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true, createdBy: 'owner-1', scope: 'document' },
+    ] });
+    documents.findByIds.mockResolvedValue([]);
+
+    const result = await service.resolveConfigured('viewer-1', 'model-1');
+    expect(result.entities).toEqual([]);
+    expect(result.issues).toEqual([expect.objectContaining({ mappingId: 'mapping-private', code: 'source_restricted', documentName: '' })]);
+    expect(result.incompleteConceptIds).toEqual(['concept-1']);
+    expect(documents.findById).not.toHaveBeenCalledWith(PRIVATE, 'private-doc');
   });
 });

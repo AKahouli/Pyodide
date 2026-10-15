@@ -31,6 +31,7 @@ import { SemanticModelValidationService } from './services/semantic-model-valida
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from './services/semantic-model-workspace.service';
 import { SemanticSourceMappingService } from './services/semantic-source-mapping.service';
+import { SemanticSourceAccessService } from './services/semantic-source-access.service';
 import { SemanticModelShareService } from './services/semantic-model-share.service';
 import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
 import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
@@ -64,6 +65,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticModelNativeSearchClient,
     SemanticModelShareService,
     SemanticSourceMappingService,
+    SemanticSourceAccessService,
     DocumentExtractionConceptResolver,
     SemanticCrossSourceService,
     SemanticBusinessTrustService,
