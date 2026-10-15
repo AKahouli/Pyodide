@@ -117,6 +117,9 @@ Coverage: OpenUI action/answer/renderer tests, file-viewer store and floating-wi
 
 ### Consistent saved-answer exports (2026-10-15)
 
+HTML/PDF exports show literal captions beneath each image, in saved image order,
+and keep image paragraphs with their following captions where print space permits.
+
 Answer/conversation DOCX, HTML and print/PDF use a shared saved-program AST projection,
 including collapsed/offscreen content, ordered image captions, native tables and chart
 data tables. Existing scoped asset resolvers embed images; missing/unsupported content

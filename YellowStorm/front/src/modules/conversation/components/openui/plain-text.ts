@@ -180,7 +180,15 @@ export async function projectOpenUiProgram(program: string): Promise<OpenUiExpor
 }
 
 export function exportPartsToMarkdown(parts: readonly OpenUiExportPart[]): string {
-  return parts.map((part) => part.kind === 'markdown' ? part.markdown : `![${part.caption.replace(/[\\\[\]]/g, '\\$&')}](${part.source.replaceAll('(', '%28').replaceAll(')', '%29')})`).join('\n\n');
+  return parts.map((part) => {
+    if (part.kind === 'markdown') return part.markdown;
+    // Alt text is not visible in HTML/PDF when an image loads. Keep a literal
+    // caption immediately beneath its image as well, escaping Markdown syntax
+    // so a saved label cannot become an extra link, image or HTML element.
+    const caption = part.caption.replace(/[\\`*_[\]{}()#+.!><|~&\-]/g, '\\$&').replace(/\r?\n/g, ' ');
+    const image = `![${caption}](${part.source.replaceAll('(', '%28').replaceAll(')', '%29')})`;
+    return caption.trim() ? `${image}\n\n${caption}` : image;
+  }).join('\n\n');
 }
 
 const COLLAPSED_SECTION = '.openui-foldable-section-item[data-state="closed"]';

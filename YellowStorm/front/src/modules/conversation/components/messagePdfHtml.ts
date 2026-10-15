@@ -27,6 +27,7 @@ export function buildMessagePdfDocument(title: string, bodyHtml: string, subtitl
     th, td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
     a { color: #2563eb; }
     img { max-width: 100%; max-height: 240mm; width: auto; height: auto; object-fit: contain; break-inside: avoid; }
+    p:has(> img) { break-after: avoid; }
     @media print { body { margin: 0; max-width: none; } }
   </style>
 </head>

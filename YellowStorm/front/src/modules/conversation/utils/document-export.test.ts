@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '../types';
 import { buildMcpExportManifest, buildStructuredExportBlocks } from './document-export';
-import { projectOpenUiProgram } from '../components/openui/plain-text';
+import { exportPartsToMarkdown, projectOpenUiProgram } from '../components/openui/plain-text';
 import { exportBlocksToHtml } from './html-export';
 
 const receipt = 'generated-image:123456789012345678901234';
@@ -131,5 +131,23 @@ describe('saved OpenUI export projection', () => {
     expect(html).toContain('Original chart [1]');
     expect(html).not.toContain('javascript:');
     expect(html).not.toContain('root =');
+  });
+
+  it('prints visible captions directly beneath their matching images in saved order', async () => {
+    const captions = ['Original PDF chart [1]', 'Edited **style** [2](javascript:alert(1)) <script> &copy; back\\slash'];
+    const sources = ['https://example.test/original(a).png', 'https://example.test/edited.png'];
+    const markdown = exportPartsToMarkdown(captions.map((caption, index) => ({ kind: 'image', source: sources[index], caption })));
+    expect(markdown).toContain('https://example.test/original%28a%29.png');
+    const blob = exportBlocksToHtml([{ label: 'Assistant', markdown }], 'Images');
+    const html = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const images = Array.from(doc.querySelectorAll('main section img'));
+    expect(images).toHaveLength(2);
+    images.forEach((element, index) => {
+      expect(element.getAttribute('src')).toBe(sources[index].replaceAll('(', '%28').replaceAll(')', '%29'));
+      expect(element.getAttribute('alt')).toBe(captions[index]);
+      expect(element.parentElement?.nextElementSibling?.textContent).toBe(captions[index]);
+    });
+    expect(doc.querySelectorAll('main section a, main section script, main section strong')).toHaveLength(0);
   });
 });

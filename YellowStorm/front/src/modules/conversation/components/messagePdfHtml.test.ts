@@ -15,6 +15,7 @@ describe('PDF image preparation', () => {
     const frame = printFrame(() => new Promise<void>((resolve) => { finish = resolve; }));
     const html = buildMessagePdfDocument('Images', '<img src="data:image/png;base64,AA==" alt="Chart">');
     expect(html).toContain('max-width: 100%'); expect(html).toContain('height: auto');
+    expect(html).toContain('p:has(> img) { break-after: avoid; }');
     const pending = printHtmlDocument(html);
     expect(frame.contentWindow.print).not.toHaveBeenCalled();
     finish(); await pending;

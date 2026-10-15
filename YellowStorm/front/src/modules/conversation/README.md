@@ -63,6 +63,8 @@ data as editable tables. Images are embedded through existing answer-scoped
 generated-image, citation and guarded web-image resolvers. Missing assets and
 unsupported dynamic programs fail explicitly instead of producing partial files.
 Regenerated answers are selected before resolving their assets.
+HTML/PDF image labels are visible captions beneath each image as well as alt text;
+print pagination keeps the image paragraph with its following caption where possible.
 
 The answer Export menu also offers agent-generated DOCX and editable PPTX. These
 send a structured content manifest and citation/page mapping through the existing
