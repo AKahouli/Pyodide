@@ -185,6 +185,7 @@ describe('WorkspaceDocumentWrite direct upload reserves the name before writing 
     const support = {
       validateFile: jest.fn(async () => undefined),
       sanitizeFilename: (n: string) => n,
+      uploadFilename: (id: string, name: string) => `${id}-${name}`,
       mapToResponse: (d: unknown) => d,
       createWithUniqueName: jest.fn(async (_ws: string, name: string, build: (n: string) => Record<string, unknown>) => {
         const input = build(name);

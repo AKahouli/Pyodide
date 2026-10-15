@@ -94,11 +94,15 @@ export interface DocumentStore {
   /** Dotted metadata merge ($set: { 'metadata.<key>': value }), workspace-scoped. */
   mergeMetadata(workspaceId: string, documentId: string, patch: Record<string, string>): Promise<void>;
   /** save()-path mutations preserved as semantic operations (find → set → save in Mongo). */
+  /** Claim PENDING completion and account workspace bytes/count atomically; null if already claimed. */
   markUploaded(id: string, fields: { status: string; uploadedAt: Date; url?: string; metadata?: Record<string, string> }): Promise<WorkspaceDocumentRecord | null>;
   renameOriginalName(id: string, originalName: string): Promise<WorkspaceDocumentRecord | null>;
   renameFolder(id: string, folderName: string): Promise<WorkspaceDocumentRecord | null>;
   /** null parent = move to root. */
   setParent(id: string, parentId: string | null): Promise<void>;
+  findExpiredPendingUploads(now: Date, legacyCreatedBefore: Date): Promise<WorkspaceDocumentRecord[]>;
+  /** Atomically claim a pending upload for cleanup; never delete an already completed upload. */
+  deletePendingUpload(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null>;
   deleteById(id: string): Promise<void>;
   deleteByIdAndWorkspace(id: string, workspaceId: string): Promise<void>;
   deleteManyByWorkspace(workspaceId: string): Promise<number>;

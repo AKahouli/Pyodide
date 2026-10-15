@@ -47,6 +47,44 @@ describeIntegration('workspace PG stores (internal write paths)', () => {
   });
   afterAll(close);
 
+  it('simultaneous upload reservations cannot exceed quota and remain workspace isolated', async () => {
+    const id = await createWorkspace({ allocatedStorage: 1024 });
+    const other = await createWorkspace({ allocatedStorage: 1024, createdBy: USER2 });
+    const upload = (workspaceId: string, filename: string, createdBy = OWNER) => documentStore.create({
+      originalName: filename, mimeType: 'image/png', size: 700, workspaceId, createdBy, status: 'uploading',
+    });
+    const results = await Promise.allSettled([
+      upload(id, 'concurrent-a.png'), upload(id, 'concurrent-b.png'), upload(other, 'concurrent-a.png', USER2),
+    ]);
+    expect(results.slice(0, 2).filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.slice(0, 2).find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason.message).toContain('Insufficient storage');
+    expect(results[2].status).toBe('fulfilled');
+    const [reserved] = await documentStore.findAllByWorkspaceId(id);
+    expect(reserved.size).toBe(700);
+    expect(await workspaceStore.findById(id)).toMatchObject({ usedStorage: 0 });
+    expect(await workspaceStore.updateStorageQuota(id, 699, 1024)).toBe(false);
+    expect(await workspaceStore.updateStorageQuota(id, 700, 1024)).toBe(true);
+    const reloaded = new PgDocumentStore(db as never);
+    await expect(reloaded.create({ originalName: 'after-reload.png', mimeType: 'image/png', size: 325,
+      workspaceId: id, createdBy: OWNER, status: 'pending' })).rejects.toThrow('Insufficient storage');
+    await documentStore.deleteById(reserved.id);
+    await expect(upload(id, 'retry.png')).resolves.toMatchObject({ size: 700 });
+  });
+
+  it('completed rows and counters are not double counted; size increases cannot bypass admission', async () => {
+    const id = await createWorkspace({ allocatedStorage: 1024 });
+    await documentStore.create({ originalName: 'done.png', mimeType: 'image/png', size: 700,
+      workspaceId: id, createdBy: OWNER, status: 'completed' });
+    await expect(documentStore.create({ originalName: 'overflow.png', mimeType: 'image/png', size: 325,
+      workspaceId: id, createdBy: OWNER, status: 'pending' })).rejects.toThrow('Insufficient storage');
+    await workspaceStore.incrementCounters(id, { usedStorage: 700, documentCount: 1 });
+    const pending = await documentStore.create({ originalName: 'exact.png', mimeType: 'image/png', size: 324,
+      workspaceId: id, createdBy: OWNER, status: 'pending' });
+    await expect(documentStore.updateById(pending.id, { size: 325 })).rejects.toThrow('Insufficient storage');
+    expect((await documentStore.findById(pending.id))?.size).toBe(324);
+  });
+
   it('workspace quota update checks both expected allocation and live usage atomically', async () => {
     const id = await createWorkspace({ allocatedStorage: 52428800, usedStorage: 52323990 });
     const other = await createWorkspace({ allocatedStorage: 52428800 });

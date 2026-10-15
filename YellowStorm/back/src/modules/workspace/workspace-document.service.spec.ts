@@ -30,7 +30,10 @@ function makeFakeDocumentStore(overrides: Record<string, unknown> = {}) {
       id: input.id ?? 'doc1',
     })),
     findById: jest.fn(async () => null),
-    findByIdAndWorkspace: jest.fn(async () => null),
+    findByIdAndWorkspace: jest.fn(async (id: string, workspaceId: string) => {
+      const document = await store.findById(id);
+      return document?.workspaceId === workspaceId ? document : null;
+    }),
     findByIds: jest.fn(async () => []),
     findByIdsInWorkspace: jest.fn(async () => []),
     originalNameExists: jest.fn(async () => false),
@@ -67,6 +70,8 @@ function makeFakeDocumentStore(overrides: Record<string, unknown> = {}) {
     renameFolder: jest.fn(async (id: string, folderName: string) => ({ id, folderName, originalName: folderName })),
     mergeMetadata: jest.fn(async () => undefined),
     setParent: jest.fn(async () => undefined),
+    findExpiredPendingUploads: jest.fn(async () => []),
+    deletePendingUpload: jest.fn(async (id: string) => store.findById(id)),
     deleteById: jest.fn(async () => undefined),
     deleteByIdAndWorkspace: jest.fn(async () => undefined),
     deleteManyByWorkspace: jest.fn(async () => 0),
@@ -1007,7 +1012,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
 
     const [, opts] = mockedAxios.get.mock.calls[0];
     const headers = (opts as { headers: Record<string, string> }).headers;
-    expect(headers).toEqual({ Authorization: 'Bearer ok' });
+    expect(headers).toEqual({ Authorization: 'Bearer ok', 'User-Agent': expect.any(String) });
     expect(opts).toEqual(
       expect.objectContaining({
         maxRedirects: 0,

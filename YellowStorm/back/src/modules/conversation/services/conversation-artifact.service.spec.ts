@@ -88,6 +88,31 @@ describe('ConversationArtifactService', () => {
       await expect(generator.generateImage(request)).rejects.toThrow('active image');
       expect(post).not.toHaveBeenCalled();
     });
+    it.each([
+      {},
+      { sourceImage: `generated-image:${id}` },
+      { reuseImage: `generated-image:${id}` },
+    ])('blocks another user before reading, editing or staging an image (%j)', async (mode) => {
+      conversations.getConversationDocument.mockResolvedValueOnce({ createdBy: 'other-user', systemWorkspaceId: 'other-workspace' });
+      await expect(generator.generateImage({ ...request, ...mode })).rejects.toThrow('not found');
+      expect(workspaces.findById).not.toHaveBeenCalled();
+      expect(workspaces.findByMultipleWorkspaces).not.toHaveBeenCalled();
+      expect(documentService.openReadStream).not.toHaveBeenCalled();
+      expect(documentService.copy).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    });
+    it.each(['sourceImage', 'reuseImage'] as const)('rejects a foreign generated-image ID in an owned conversation (%s)', async (mode) => {
+      // The owning conversation has workspace w; the foreign ID exists only in another workspace.
+      workspaces.findById.mockImplementationOnce(async (workspaceId: string) => {
+        if (workspaceId === 'other-workspace') return { id, path: 'other-user/private.png', mimeType: 'image/png' };
+        throw new Error('Image not found');
+      });
+      await expect(generator.generateImage({ ...request, [mode]: `generated-image:${id}` })).rejects.toThrow('not found');
+      expect(workspaces.findById).toHaveBeenCalledWith('w', id);
+      expect(documentService.openReadStream).not.toHaveBeenCalled();
+      expect(documentService.copy).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    });
     it('edits only a generated source from this conversation using multipart image bytes and saves a new version', async () => {
       const result = await generator.generateImage({ ...request, sourceImage: `generated-image:${id}` });
       if (!('imageSource' in result)) throw new Error('Expected image receipt');

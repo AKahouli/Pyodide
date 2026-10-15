@@ -105,92 +105,111 @@ export class WorkspaceDocumentUploadSessions {
       workspaceId,
     );
 
-    // Create document records and generate URLs for each file.
-    // Names resolve sequentially so duplicates within the same batch also get
-    // auto-incremented suffixes (e.g., uploading two "report.pdf" yields
-    // "report.pdf" + "report (1).pdf").
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const documentId = newObjectId();
-      let effectiveName = file.filename;
-      let blobPath = '';
+    const reservedIds: string[] = [];
+    try {
+      // Create document records and generate URLs for each file.
+      // Names resolve sequentially so duplicates within the same batch also get
+      // auto-incremented suffixes (e.g., uploading two "report.pdf" yields
+      // "report.pdf" + "report (1).pdf").
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const documentId = newObjectId();
+        let effectiveName = file.filename;
+        let blobPath = '';
 
-      // Create pending document (url is set after upload completes)
-      await this.support.createWithUniqueName(workspaceId, file.filename, (resolvedName) => {
-        effectiveName = resolvedName;
-        blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, resolvedName);
-        return {
-          id: documentId,
-          filename: this.support.sanitizeFilename(resolvedName),
-          originalName: resolvedName,
+        // Create pending document (url is set after upload completes)
+        await this.support.createWithUniqueName(workspaceId, file.filename, (resolvedName) => {
+          effectiveName = resolvedName;
+          blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, this.support.uploadFilename(documentId, resolvedName));
+          return {
+            id: documentId,
+            filename: this.support.uploadFilename(documentId, resolvedName),
+            originalName: resolvedName,
+            mimeType: file.mimeType,
+            size: file.size,
+            path: blobPath,
+            workspaceId,
+            createdBy: userId,
+            status: DocumentStatus.PENDING,
+          };
+        });
+
+        reservedIds.push(documentId);
+
+        // Generate presigned URL
+        const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
+          permissions: 'cw',
+          expiryMinutes: this.sasUrlExpiryMinutes,
+        });
+
+        await this.documentStore.mergeMetadata(workspaceId, documentId, {
+          uploadExpiresAt: new Date(Date.now() + (this.sasUrlExpiryMinutes + 1) * 60000).toISOString(),
+        });
+
+        sessionFiles.push({
+          index: i,
+          filename: effectiveName,
           mimeType: file.mimeType,
           size: file.size,
-          path: blobPath,
-          workspaceId,
-          createdBy: userId,
-          status: DocumentStatus.PENDING,
-        };
+          documentId,
+          uploadUrl,
+          status: 'pending',
+          progress: 0,
+        });
+
+        responseFiles.push({
+          index: i,
+          filename: effectiveName,
+          uploadUrl,
+          documentId,
+        });
+      }
+
+      // Create session record
+      const session = await this.uploadSessionStore.create({
+        workspaceId,
+        userId,
+        status: UploadSessionStatus.PENDING,
+        files: sessionFiles.map((f) => ({
+          index: f.index,
+          filename: f.filename,
+          mimeType: f.mimeType,
+          size: f.size,
+          documentId: f.documentId,
+          uploadUrl: f.uploadUrl,
+          status: f.status,
+          progress: f.progress,
+        })),
+        totalFiles: files.length,
+        totalSize,
+        completedFiles: 0,
+        failedFiles: 0,
+        expiresAt,
       });
 
-      // Generate presigned URL
-      const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
-        permissions: 'cw',
-        expiryMinutes: this.sasUrlExpiryMinutes,
+      this.logger.debug('Bulk upload session created', {
+        sessionId: session.id,
+        workspaceId,
+        fileCount: files.length,
+        totalSize,
       });
 
-      sessionFiles.push({
-        index: i,
-        filename: effectiveName,
-        mimeType: file.mimeType,
-        size: file.size,
-        documentId,
-        uploadUrl,
-        status: 'pending',
-        progress: 0,
-      });
-
-      responseFiles.push({
-        index: i,
-        filename: effectiveName,
-        uploadUrl,
-        documentId,
-      });
+      return {
+        sessionId: session.id,
+        files: responseFiles,
+        expiresAt: expiresAt.toISOString(),
+      };
+    } catch (error) {
+      // No URLs were returned to the client, so these pending rows can be released.
+      for (const documentId of reservedIds) {
+        await this.documentStore.deleteById(documentId).catch((cleanupError: unknown) => {
+          this.logger.warn('Failed to release document reservation after bulk initiation failure', {
+            documentId, error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        });
+      }
+      throw error;
     }
-
-    // Create session record
-    const session = await this.uploadSessionStore.create({
-      workspaceId,
-      userId,
-      status: UploadSessionStatus.PENDING,
-      files: sessionFiles.map((f) => ({
-        index: f.index,
-        filename: f.filename,
-        mimeType: f.mimeType,
-        size: f.size,
-        documentId: f.documentId,
-        uploadUrl: f.uploadUrl,
-        status: f.status,
-        progress: f.progress,
-      })),
-      totalFiles: files.length,
-      totalSize,
-      completedFiles: 0,
-      failedFiles: 0,
-      expiresAt,
-    });
-
-    this.logger.debug('Bulk upload session created', {
-      sessionId: session.id,
-      workspaceId,
-      fileCount: files.length,
-      totalSize,
-    });
-
-    return {
-      sessionId: session.id,
-      files: responseFiles,
-      expiresAt: expiresAt.toISOString(),
-    };
   }
 
   /**
@@ -276,7 +295,7 @@ export class WorkspaceDocumentUploadSessions {
 
     // Process each file
     for (const file of session.files) {
-      const document = await this.documentStore.findById(file.documentId!);
+      const document = await this.documentStore.findByIdAndWorkspace(file.documentId!, workspaceId);
 
       if (!document) {
         failed.count++;
@@ -285,6 +304,12 @@ export class WorkspaceDocumentUploadSessions {
           filename: file.filename,
           error: 'Document record not found',
         });
+        continue;
+      }
+
+      if (document.status === DocumentStatus.COMPLETED) {
+        successful.count++;
+        successful.documents.push(this.support.mapToResponse(document));
         continue;
       }
 
@@ -329,6 +354,17 @@ export class WorkspaceDocumentUploadSessions {
             autoIndexRequested: String(autoIndex),
           },
         });
+        if (!updated) {
+          const completed = await this.documentStore.findByIdAndWorkspace(document.id, workspaceId);
+          if (completed?.status === DocumentStatus.COMPLETED) {
+            successful.count++;
+            successful.documents.push(this.support.mapToResponse(completed));
+          } else {
+            failed.count++;
+            failed.files.push({ index: file.index, filename: file.filename, error: 'Document is not pending' });
+          }
+          continue;
+        }
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
 
@@ -343,16 +379,22 @@ export class WorkspaceDocumentUploadSessions {
           });
         }
 
-        // Update workspace storage
-        await this.workspaceService.updateStorageUsage(workspaceId, updated!.size, 1);
-
         successful.count++;
         successful.documents.push(this.support.mapToResponse(updated!));
       } else {
+        const claimed = await this.documentStore.deletePendingUpload(document.id, workspaceId);
+        if (!claimed) {
+          const completed = await this.documentStore.findByIdAndWorkspace(document.id, workspaceId);
+          if (completed?.status === DocumentStatus.COMPLETED) {
+            successful.count++;
+            successful.documents.push(this.support.mapToResponse(completed));
+            continue;
+          }
+        }
         // Clean up any partial blob that might exist (skip for folders)
         try {
-          if (!document.isFolder && document.path) {
-            await this.documentService.delete(document.path);
+          if (claimed && !claimed.isFolder && claimed.path) {
+            await this.documentService.delete(claimed.path);
           }
         } catch (error) {
           this.logger.warn('Failed to delete orphaned blob during bulk upload completion', {
@@ -362,9 +404,6 @@ export class WorkspaceDocumentUploadSessions {
             error: error instanceof Error ? error.message : 'Unknown error',
           });
         }
-
-        // Delete the failed document record from database
-        await this.documentStore.deleteById(document.id);
 
         failed.count++;
         failed.files.push({
@@ -466,6 +505,20 @@ export class WorkspaceDocumentUploadSessions {
     const startTime = Date.now();
 
     try {
+      const now = new Date();
+      const abandoned = await this.documentStore.findExpiredPendingUploads(now,
+        new Date(now.getTime() - (this.sasUrlExpiryMinutes + 10) * 60000));
+      for (const candidate of abandoned) {
+        const claimed = await this.documentStore.deletePendingUpload(candidate.id, candidate.workspaceId);
+        if (claimed?.path) {
+          await this.documentService.delete(claimed.path).catch((error: unknown) => {
+            this.logger.warn('Failed to delete expired pending upload blob', {
+              documentId: claimed.id, error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+      }
+
       // Find expired sessions that are still pending or in progress
       const expiredSessions = await this.uploadSessionStore.findExpired(new Date());
 
@@ -494,6 +547,12 @@ export class WorkspaceDocumentUploadSessions {
             // Only clean up documents still in PENDING status
             // (documents that were never confirmed)
             if (document.status === DocumentStatus.PENDING && !document.isFolder) {
+              const expiresAt = document.metadata?.uploadExpiresAt
+                ? Date.parse(document.metadata.uploadExpiresAt)
+                : document.createdAt.getTime() + (this.sasUrlExpiryMinutes + 10) * 60000;
+              if (!Number.isFinite(expiresAt) || expiresAt > now.getTime()) continue;
+              const claimed = await this.documentStore.deletePendingUpload(document.id, session.workspaceId);
+              if (!claimed) continue;
               // Try to delete the blob from Azure (it may or may not exist)
               try {
                 const exists = document.path ? await this.documentService.exists(document.path) : false;
@@ -510,8 +569,6 @@ export class WorkspaceDocumentUploadSessions {
                 });
               }
 
-              // Delete the document record
-              await this.documentStore.deleteById(document.id);
               totalDocumentsDeleted++;
             }
           }

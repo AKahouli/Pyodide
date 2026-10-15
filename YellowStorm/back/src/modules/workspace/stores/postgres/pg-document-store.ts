@@ -1,3 +1,5 @@
+import { ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -27,31 +29,53 @@ export class PgDocumentStore implements DocumentStore {
   }
 
   async create(input: DocumentCreateInput): Promise<WorkspaceDocumentRecord> {
-    const rows = await this.q
-      .insert(DOCUMENTS)
-      .values({
-        id: input.id ?? newObjectId(),
-        filename: input.filename,
-        originalName: input.originalName,
-        mimeType: input.mimeType,
-        size: input.size,
-        path: input.path,
-        url: input.url,
-        contentHash: input.contentHash,
-        workspaceId: input.workspaceId,
-        createdBy: input.createdBy,
-        status: input.status,
-        uploadedAt: input.uploadedAt,
-        indexingStatus: input.indexingStatus,
-        parentId: input.parentId ?? null,
-        isFolder: input.isFolder ?? false,
-        folderName: input.folderName,
-        type: input.type,
-        sourceUrl: input.sourceUrl,
-        metadata: input.metadata,
-      })
-      .returning();
-    return documentRowToRecord(rows[0]);
+    return withTransaction(this.db, async () => {
+      if (!input.isFolder && input.size > 0) await this.assertStorageCapacity(input.workspaceId, input.size);
+      const rows = await this.q
+        .insert(DOCUMENTS)
+        .values({
+          id: input.id ?? newObjectId(),
+          filename: input.filename,
+          originalName: input.originalName,
+          mimeType: input.mimeType,
+          size: input.size,
+          path: input.path,
+          url: input.url,
+          contentHash: input.contentHash,
+          workspaceId: input.workspaceId,
+          createdBy: input.createdBy,
+          status: input.status,
+          uploadedAt: input.uploadedAt,
+          indexingStatus: input.indexingStatus,
+          parentId: input.parentId ?? null,
+          isFolder: input.isFolder ?? false,
+          folderName: input.folderName,
+          type: input.type,
+          sourceUrl: input.sourceUrl,
+          metadata: input.metadata,
+        })
+        .returning();
+      return documentRowToRecord(rows[0]);
+    });
+  }
+
+  /** Pending document rows reserve capacity before any blob is written. */
+  private async assertStorageCapacity(workspaceId: string, additionalSize: number): Promise<void> {
+    // A workspace row lock serializes admission across every process and uploader.
+    const [workspace] = await this.q.select().from(schema.workspaces)
+      .where(eq(schema.workspaces.id, workspaceId)).for('update');
+    if (!workspace) throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    const [usage] = await this.q.select({
+      pending: sql<number>`coalesce(sum(case when ${DOCUMENTS.status} in ('pending', 'uploading') then ${DOCUMENTS.size} else 0 end), 0)`.mapWith(Number),
+      completed: sql<number>`coalesce(sum(case when ${DOCUMENTS.status} not in ('pending', 'uploading') then ${DOCUMENTS.size} else 0 end), 0)`.mapWith(Number),
+    }).from(DOCUMENTS).where(and(eq(DOCUMENTS.workspaceId, workspaceId), eq(DOCUMENTS.isFolder, false)));
+    // Completion updates the row before the legacy counter. The maximum covers
+    // that interval without counting completed bytes twice.
+    const available = workspace.allocatedStorage - Math.max(workspace.usedStorage, usage.completed) - usage.pending;
+    if (additionalSize > available) throw new ForbiddenException(
+      ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
+      `Insufficient storage. Available: ${Math.max(0, Math.round(available / 1048576))}MB`,
+    );
   }
 
   async findById(id: string): Promise<WorkspaceDocumentRecord | null> {
@@ -231,19 +255,33 @@ export class PgDocumentStore implements DocumentStore {
   }
 
   async updateById(id: string, patch: DocumentUpdatePatch): Promise<WorkspaceDocumentRecord | null> {
-    const values: Record<string, unknown> = {};
-    for (const key of ['filename', 'originalName', 'path', 'url', 'contentHash', 'size', 'status', 'errorMessage', 'folderName', 'metadata', 'indexingStatus', 'indexingError', 'uploadedAt'] as const) {
-      if (patch[key] !== undefined) values[key] = patch[key];
-    }
-    if (Object.keys(values).length === 0) return this.findById(id);
-    values.updatedAt = new Date();
-    const rows = await this.q
-      .update(DOCUMENTS)
-      .set(values as Partial<typeof DOCUMENTS.$inferInsert>)
-      .where(eq(DOCUMENTS.id, id))
-      .returning();
-    return rows[0] ? documentRowToRecord(rows[0]) : null;
+    return withTransaction(this.db, async () => {
+      if (patch.size !== undefined) {
+        const existing = await this.findById(id);
+        if (!existing) return null;
+        await this.q.select({ id: schema.workspaces.id }).from(schema.workspaces)
+          .where(eq(schema.workspaces.id, existing.workspaceId)).for('update');
+        const current = await this.findById(id);
+        if (!current) return null;
+        if (!current.isFolder && patch.size > current.size) {
+          await this.assertStorageCapacity(current.workspaceId, patch.size - current.size);
+        }
+      }
+      const values: Record<string, unknown> = {};
+      for (const key of ['filename', 'originalName', 'path', 'url', 'contentHash', 'size', 'status', 'errorMessage', 'folderName', 'metadata', 'indexingStatus', 'indexingError', 'uploadedAt'] as const) {
+        if (patch[key] !== undefined) values[key] = patch[key];
+      }
+      if (Object.keys(values).length === 0) return this.findById(id);
+      values.updatedAt = new Date();
+      const rows = await this.q
+        .update(DOCUMENTS)
+        .set(values as Partial<typeof DOCUMENTS.$inferInsert>)
+        .where(eq(DOCUMENTS.id, id))
+        .returning();
+      return rows[0] ? documentRowToRecord(rows[0]) : null;
+    });
   }
+
 
   async mergeMetadata(workspaceId: string, documentId: string, patch: Record<string, string>): Promise<void> {
     await this.q
@@ -256,7 +294,20 @@ export class PgDocumentStore implements DocumentStore {
   }
 
   async markUploaded(id: string, fields: { status: string; uploadedAt: Date; url?: string; metadata?: Record<string, string> }): Promise<WorkspaceDocumentRecord | null> {
-    return this.updateById(id, { status: fields.status, uploadedAt: fields.uploadedAt, url: fields.url, metadata: fields.metadata });
+    return withTransaction(this.db, async () => {
+      const existing = await this.findById(id);
+      if (!existing) return null;
+      await this.q.select({ id: schema.workspaces.id }).from(schema.workspaces)
+        .where(eq(schema.workspaces.id, existing.workspaceId)).for('update');
+      const [updated] = await this.q.update(DOCUMENTS).set({ ...fields, updatedAt: new Date() })
+        .where(and(eq(DOCUMENTS.id, id), eq(DOCUMENTS.status, 'pending'))).returning();
+      if (!updated) return null; // Another completion already owns accounting/events.
+      await this.q.update(schema.workspaces).set({
+        usedStorage: sql`${schema.workspaces.usedStorage} + ${updated.size}`,
+        documentCount: sql`${schema.workspaces.documentCount} + 1`, updatedAt: new Date(),
+      }).where(eq(schema.workspaces.id, updated.workspaceId));
+      return documentRowToRecord(updated);
+    });
   }
 
   async renameOriginalName(id: string, originalName: string): Promise<WorkspaceDocumentRecord | null> {
@@ -272,6 +323,23 @@ export class PgDocumentStore implements DocumentStore {
       .update(DOCUMENTS)
       .set({ parentId, updatedAt: new Date() })
       .where(eq(DOCUMENTS.id, id));
+  }
+
+  async findExpiredPendingUploads(now: Date, legacyCreatedBefore: Date): Promise<WorkspaceDocumentRecord[]> {
+    const rows = await this.q.select().from(DOCUMENTS).where(and(
+      eq(DOCUMENTS.status, 'pending'), eq(DOCUMENTS.isFolder, false),
+      or(
+        sql`${DOCUMENTS.metadata}->>'uploadExpiresAt' <= ${now.toISOString()}`,
+        and(sql`${DOCUMENTS.metadata}->>'uploadExpiresAt' IS NULL`, sql`${DOCUMENTS.createdAt} < ${legacyCreatedBefore}`),
+      ),
+    ));
+    return rows.map(documentRowToRecord);
+  }
+
+  async deletePendingUpload(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null> {
+    const [deleted] = await this.q.delete(DOCUMENTS).where(and(eq(DOCUMENTS.id, id),
+      eq(DOCUMENTS.workspaceId, workspaceId), eq(DOCUMENTS.status, 'pending'))).returning();
+    return deleted ? documentRowToRecord(deleted) : null;
   }
 
   async deleteById(id: string): Promise<void> {

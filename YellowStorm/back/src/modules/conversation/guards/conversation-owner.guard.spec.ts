@@ -8,6 +8,22 @@ function makeGuard(conversationStore: Record<string, jest.Mock>, hasAccess = jes
 }
 
 describe('ConversationOwnerGuard', () => {
+  it.each(['files/upload-url', 'files/upload', 'files/confirm', 'messages/m/generated-images/d/url'])(
+    'denies foreign conversation POST %s even with project read access', async (route) => {
+      const conversationId = new Types.ObjectId().toString();
+      const store = { findActiveAccessById: jest.fn().mockResolvedValue({
+        id: conversationId, createdBy: new Types.ObjectId().toString(), memberIds: [], invitedEmails: [],
+        projectId: new Types.ObjectId().toString(),
+      }) };
+      const projectRead = jest.fn().mockResolvedValue(true);
+      const guard = makeGuard(store, projectRead);
+      const request = { user: { _id: new Types.ObjectId().toString(), email: 'outsider@example.com' },
+        params: { conversationId }, method: 'POST', url: `/conversations/${conversationId}/${route}` };
+      const context = { switchToHttp: () => ({ getRequest: () => request }) } as ExecutionContext;
+      await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(projectRead).not.toHaveBeenCalled();
+    },
+  );
   it('checks current governed audience even for an existing member', async () => {
     const userId = new Types.ObjectId().toString();
     const conversationId = new Types.ObjectId().toString();
