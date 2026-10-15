@@ -10,6 +10,17 @@ import type {
 import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
 import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
+import { McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
+
+const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
+
+// The policy util's own behavior has a dedicated spec; the service spec stubs
+// resolution so inspection tests stay hermetic, and overrides it per-test to
+// prove the denial wiring (WP-05).
+jest.mock('./utils/mcp-destination-policy.util', () => ({
+  ...jest.requireActual('./utils/mcp-destination-policy.util'),
+  assertMcpDestinationAllowed: (serverUrl: string) => assertMcpDestinationAllowed(serverUrl),
+}));
 
 jest.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   SSEClientTransport: jest.fn().mockImplementation(() => ({})),
@@ -878,6 +889,13 @@ describe('ConnectorService findIdsByCategoryName', () => {
 });
 
 describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () => {
+  beforeEach(() => {
+    // Default: destinations pass the egress policy so inspection tests reach
+    // the (mocked) MCP SDK; individual WP-05 tests override this.
+    assertMcpDestinationAllowed.mockReset();
+    assertMcpDestinationAllowed.mockResolvedValue(['93.184.216.34']);
+  });
+
   const buildInspectionService = () => {
     const store = connectorStoreMock();
     const service = new ConnectorService(
@@ -960,6 +978,36 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
     expect(httpResult.error).toBeUndefined();
     const streamableMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
     expect(streamableMod.StreamableHTTPClientTransport).toHaveBeenCalled();
+  });
+
+  it('asks the egress policy for every inspected destination before any transport is built (WP-05)', async () => {
+    const { service } = buildInspectionService();
+
+    await service.inspectMcp('streamable_http', 'https://mcp.example.test/mcp');
+
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('https://mcp.example.test/mcp');
+  });
+
+  it.each([
+    ['forbidden_address', '169.254.169.254'],
+    ['dns_failure', ''],
+    ['insecure_http', ''],
+    ['port_not_allowed', ''],
+  ] as const)('denies destination "%s" with a deterministic 400 and neutral message', async (reason, host) => {
+    const { service, store } = buildInspectionService();
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError(reason, host));
+
+    await expect(service.inspectMcp('streamable_http', 'https://mcp.example.test/mcp'))
+      .rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED });
+    expect(store.findById).not.toHaveBeenCalled();
+  });
+
+  it('denies inspection before credential resolution or OAuth token fetch when the destination is blocked', async () => {
+    const { service } = buildInspectionService();
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError('forbidden_address', 'metadata.internal'));
+
+    await expect(service.inspectMcp('sse', 'https://metadata.internal/sse', {}, 'user-1', 'github'))
+      .rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED });
   });
 
   it('never hands stdio connectors to runtime gRPC bindings', async () => {

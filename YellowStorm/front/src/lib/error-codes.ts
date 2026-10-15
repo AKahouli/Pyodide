@@ -143,6 +143,7 @@ export enum ErrorCode {
 
   // Connector errors (3100-3199)
   CONNECTOR_MCP_TRANSPORT_UNSUPPORTED = 'ERR_3102',
+  CONNECTOR_MCP_DESTINATION_BLOCKED = 'ERR_3103',
 
   // Agent Type errors (2300-2399)
   AGENT_TYPE_NOT_FOUND = 'ERR_2300',

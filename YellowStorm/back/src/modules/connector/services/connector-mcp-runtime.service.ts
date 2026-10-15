@@ -7,6 +7,7 @@ import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
+import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -52,6 +53,23 @@ export class ConnectorMcpRuntimeService {
     }
     if (!['streamable_http', 'sse'].includes(connector.mcpTransportType)) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'Evidence retrieval only supports HTTP MCP transports.');
+    }
+
+    // SSRF egress policy (WP-05): the same destination rules as inspection
+    // apply to runtime tool calls, before any transport is constructed.
+    try {
+      await assertMcpDestinationAllowed(connector.mcpServerUrl);
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        this.logger.warn('Denied MCP runtime tool call destination', {
+          connectorId: connector.id,
+          userId: input.authorizationUserId,
+          host: error.host,
+          reason: error.reason,
+        });
+        throw new BadRequestException(ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED, 'This MCP server destination is not allowed.');
+      }
+      throw error;
     }
 
     const configuredAction = connector.actions.find((action) => action.key === input.toolName);
@@ -115,7 +133,8 @@ export class ConnectorMcpRuntimeService {
   }
 
   private async createTransport(transportType: string, serverUrl: string, headers: Record<string, string>): Promise<Transport> {
-    const requestInit: RequestInit = { headers, ...(this.mcpJwt?.isJwtServer(serverUrl) ? { redirect: 'error' as const } : {}) };
+    // No-follow redirects on every runtime hop (WP05.3).
+    const requestInit: RequestInit = { headers, redirect: 'error' };
     if (transportType === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
       return new SSEClientTransport(new URL(serverUrl), { requestInit });

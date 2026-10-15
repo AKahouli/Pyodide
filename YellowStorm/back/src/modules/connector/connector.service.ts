@@ -18,6 +18,7 @@ import {
   isRemoteInspectableMcpTransport,
   sanitizeEndpointUrl,
 } from './utils/remote-mcp-transport.util';
+import { assertMcpDestinationAllowed, McpDestinationPolicyError, McpDestinationPolicyOptions } from './utils/mcp-destination-policy.util';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
   type ConnectorRow,
@@ -494,6 +495,26 @@ export class ConnectorService {
       );
     }
     assertNoUrlCredentials(serverUrl);
+    // SSRF egress policy (WP-05): the destination must be a permitted public
+    // HTTP(S) endpoint BEFORE any DNS-consuming transport is built. Thrown
+    // outside the try/catch like the transport denial, with non-sensitive
+    // telemetry only (actor, host, reason — never the full URL or headers).
+    try {
+      await assertMcpDestinationAllowed(serverUrl, this.mcpDestinationPolicyOptions());
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        this.logger.warn('Denied MCP inspection destination', {
+          userId: userId ?? 'anonymous',
+          host: error.host,
+          reason: error.reason,
+        });
+        throw new BadRequestException(
+          ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+          'This MCP server destination is not allowed.',
+        );
+      }
+      throw error;
+    }
 
     try {
 
@@ -540,6 +561,9 @@ export class ConnectorService {
       }
 
       let requestInit = this.buildMcpRequestInit(finalServerConfig);
+      // No-follow redirects for every inspection hop (WP05.3): a redirect must
+      // never move the probe to a destination the policy never validated.
+      requestInit = { ...requestInit, redirect: 'error' };
       if (userId && this.mcpJwt?.isJwtServer(serverUrl)) {
         requestInit = { headers: await this.mcpJwt.headers(serverUrl, userId, this.buildMcpHeaders(finalServerConfig)), redirect: 'error' };
       }
@@ -638,6 +662,18 @@ export class ConnectorService {
   private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {
     const headers = this.buildMcpHeaders(serverConfig);
     return Object.keys(headers).length > 0 ? { headers } : undefined;
+  }
+
+  /** Egress policy knobs from typed config; production stays https-only (WP05.1). */
+  private mcpDestinationPolicyOptions(): McpDestinationPolicyOptions {
+    const config = this.configService;
+    const ports = (config?.get<string>('MCP_EGRESS_ALLOWED_PORTS') ?? '80,443,8443')
+      .split(',')
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
+    const nodeEnv = config?.get<string>('NODE_ENV', 'development');
+    const allowInsecureHttp = (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false) && nodeEnv !== 'production';
+    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp };
   }
 
   private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {

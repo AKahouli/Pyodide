@@ -224,5 +224,6 @@
   "ERR_3807": "This template is not compatible with the platform runtime and cannot be published.",
   "ERR_1130": "Authentication is temporarily unavailable. Your session was not affected; we are retrying.",
   "ERR_1131": "Signing in is being synchronized. Please retry.",
-  "ERR_3102": "This MCP transport is not supported over HTTP inspection."
+  "ERR_3102": "This MCP transport is not supported over HTTP inspection.",
+  "ERR_3103": "This MCP server destination is not allowed."
 }
