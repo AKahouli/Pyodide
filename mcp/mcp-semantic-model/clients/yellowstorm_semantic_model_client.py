@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from auth import require_actor_context
+from auth import require_actor_context, verified_mcp_jwt
 from contracts import SemanticModelMcpResultV1, failure_result
 
 
@@ -51,16 +51,23 @@ class YellowStormSemanticModelClient:
         return await self._request("DELETE", path, user_id)
 
     async def _request(self, method: str, path: str, user_id: str, payload: dict[str, Any] | None = None) -> Any:
+        # The backend-issued MCP JWT is forwarded as a signed actor assertion
+        # (WP06.4) so the backend derives the actor from its signature instead
+        # of the naked user-id header. Never logged.
+        assertion = verified_mcp_jwt.get()
+        headers = {
+            "X-Internal-Token": self._internal_token,
+            "X-YellowStorm-User-Id": user_id,
+            **self._actor_headers(),
+        }
+        if assertion:
+            headers["X-YellowStorm-Mcp-Assertion"] = assertion
         try:
             response = await self._client.request(
                 method,
                 path,
                 json=payload,
-                headers={
-                    "X-Internal-Token": self._internal_token,
-                    "X-YellowStorm-User-Id": user_id,
-                    **self._actor_headers(),
-                },
+                headers=headers,
             )
         except httpx.TimeoutException as exc:
             raise SemanticModelBackendError("SEMANTIC_MODEL_TOOL_TIMEOUT", "Semantic model backend request timed out", 504) from exc

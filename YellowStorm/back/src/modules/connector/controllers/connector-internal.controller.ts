@@ -2,6 +2,7 @@ import { Body, Controller, Post, UseGuards, Optional, Header } from '@nestjs/com
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
+import { SemanticMcpServiceGuard } from '../../auth/guards/internal-service-principal.guard';
 import { ConnectorTransferService } from '../connector-transfer.service';
 import { InternalImportConnectorItemDto } from '../dto/connector-transfer.dto';
 import { InternalMcpTokenDto } from '../dto/mcp-token.dto';
@@ -12,16 +13,19 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 @ApiTags('Connectors (Internal)')
 @Controller('connectors/internal')
-@Public()
-@UseGuards(InternalServiceGuard)
 export class ConnectorInternalController {
   constructor(private readonly transferService: ConnectorTransferService,
     @Optional() private readonly connectors?: ConnectorService,
     @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService) {}
 
   @Post('mcp-token')
+  @Public()
   @Header('Cache-Control', 'no-store')
-  @ApiHeader({ name: 'X-Internal-Token', required: true })
+  // Scoped to the semantic-model-mcp principal (WP07.2/WP07.3): the shared
+  // internal secret and the app-runtime bind token must never mint MCP JWTs.
+  @UseGuards(SemanticMcpServiceGuard)
+  @ApiHeader({ name: 'X-Yellowstorm-Service-Principal', required: true })
+  @ApiHeader({ name: 'X-Yellowstorm-Service-Token', required: true })
   @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for a trusted runtime' })
   async issueMcpToken(@Body() dto: InternalMcpTokenDto) {
     const connector = await this.connectors!.findById(dto.connectorId);
@@ -32,6 +36,8 @@ export class ConnectorInternalController {
   }
 
   @Post('transfer/import')
+  @Public()
+  @UseGuards(InternalServiceGuard)
   @ApiOperation({ summary: 'Import connector items on behalf of a user (internal)' })
   @ApiHeader({ name: 'X-Internal-Token', required: true })
   async importFromConnector(@Body() dto: InternalImportConnectorItemDto): Promise<unknown> {

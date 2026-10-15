@@ -422,9 +422,31 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
+  // Scoped internal service principal for the semantic MCP server (WP07.2):
+  // semantic assistant + MCP token renewal only; distinct from the legacy
+  // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).
+  SEMANTIC_MODEL_MCP_SERVICE_TOKEN: Joi.string()
+    .allow('')
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string().min(16).required(),
+      otherwise: Joi.optional().allow(''),
+    }),
   // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
   SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
+  // Egress policy for server-side MCP probes of user-configured destinations (SEC-06).
+  MCP_EGRESS_ALLOWED_PORTS: Joi.string().pattern(/^\d+(,\d+)*$/).default('80,443,8443'),
+  MCP_EGRESS_ALLOW_INSECURE_HTTP: Joi.boolean().default(false),
+  // Scoped internal service principal for the app runtime bind surface (WP07.3):
+  // valid ONLY for app-runtime bind/tool-invoke, never for other internal routes.
+  APP_RUNTIME_BIND_TOKEN: Joi.string()
+    .allow('')
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string().min(16).required(),
+      otherwise: Joi.optional().allow(''),
+    }),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),

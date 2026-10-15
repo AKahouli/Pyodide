@@ -3,34 +3,26 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 
-/** First value that is set and not blank; blank counts as unset so a stray
- * whitespace-only `APP_RUNTIME_BIND_TOKEN` still falls through to the legacy
- * name instead of locking out every internal caller. */
-function firstNonBlank(...values: (string | undefined)[]): string {
-  for (const value of values) {
-    const trimmed = value?.trim();
-    if (trimmed) return trimmed;
-  }
-  return '';
-}
-
 /**
- * Guard for internal service-to-service authentication.
- * Validates the `X-Internal-Token` header against the configured secret.
+ * Legacy guard for internal service-to-service authentication on the
+ * non-semantic internal routes (document ingest, workspace ingest, connector
+ * transfer, root delegate, telegram validation, agent/team CRUD). Validates
+ * the `X-Internal-Token` header against `INTERNAL_SERVICE_SECRET`.
  *
- * Secret resolution (first non-empty wins):
- * 1. `APP_RUNTIME_BIND_TOKEN` — shared name with APImanus OpenCode bind
- * 2. `INTERNAL_SERVICE_SECRET` — legacy / other internal callers
+ * Trust-domain note (WP07.4): `APP_RUNTIME_BIND_TOKEN` is NOT accepted here —
+ * it is valid only for the app-runtime bind surface via the scoped
+ * AppRuntimeServiceGuard, and the semantic privileged surfaces use
+ * SemanticMcpServiceGuard. This shared secret remains a narrowly bounded
+ * compatibility path for the remaining internal callers with a documented
+ * removal gate; it is never a universal fallback for semantic privileged
+ * endpoints.
  */
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
   private readonly secret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = firstNonBlank(
-      this.configService.get<string>('APP_RUNTIME_BIND_TOKEN'),
-      this.configService.get<string>('INTERNAL_SERVICE_SECRET'),
-    );
+    this.secret = (this.configService.get<string>('INTERNAL_SERVICE_SECRET') ?? '').trim();
   }
 
   canActivate(context: ExecutionContext): boolean {

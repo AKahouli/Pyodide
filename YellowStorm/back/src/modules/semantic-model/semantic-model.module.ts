@@ -54,6 +54,9 @@ import { SemanticGraphSearchService } from './services/semantic-graph-search.ser
 import { SemanticRecordCitationService } from './services/semantic-record-citation.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
+// Registered locally (the connector module does not import this module) so the
+// actor guard can verify the WP06.4 actor assertion with the shared key pair.
+import { SemanticModelMcpJwtService } from '../connector/services/semantic-model-mcp-jwt.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule),forwardRef(() => NotificationsModule)],
@@ -85,6 +88,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticModelAssistantService,
     SemanticGraphSearchService,
     SemanticRecordCitationService,
+    SemanticModelMcpJwtService,
     SemanticAssistantActorGuard,
     SemanticAssistantModelGuard,
   ],

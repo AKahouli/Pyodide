@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
-import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
+import { SemanticMcpServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
   AssistantCloneModelDto,
@@ -30,14 +30,14 @@ const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODEL
 
 /**
  * Trusted service-to-service surface for the semantic model MCP server (mcp-semantic-model). Authenticated
- * with X-Internal-Token plus the identity of the person the agent acts for; that person's permissions and
- * model roles apply to every call, through the same services as the editor. A model can be named by its id
- * or by its exact name.
+ * with the scoped semantic-model-mcp service principal (WP07.2/WP07.3) plus the signed, actor-bound MCP JWT
+ * assertion for the person the agent acts for (WP06.4); that person's permissions and model roles apply to
+ * every call, through the same services as the editor. A model can be named by its id or by its exact name.
  */
 @ApiTags('Semantic Model Assistant Internal')
 @Public()
 @Controller('internal/semantic-model-assistant')
-@UseGuards(InternalServiceGuard, SemanticAssistantActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
+@UseGuards(SemanticMcpServiceGuard, SemanticAssistantActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
 export class SemanticModelAssistantInternalController {
   constructor(private readonly assistant: SemanticModelAssistantService) {}
 

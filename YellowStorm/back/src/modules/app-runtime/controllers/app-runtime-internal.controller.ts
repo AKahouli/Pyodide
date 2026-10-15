@@ -2,7 +2,7 @@ import { Body, Controller, GoneException, HttpCode, HttpStatus, Post, UseGuards 
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { Public } from '@modules/auth/decorators/public.decorator';
-import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
+import { AppRuntimeServiceGuard } from '@modules/auth/guards/internal-service-principal.guard';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
 import { BindAppRuntimeDto } from '../dto/bind-app-runtime.dto';
 import { InvokeAppRuntimeToolDto } from '../dto/invoke-app-runtime-tool.dto';
@@ -14,7 +14,9 @@ import { RuntimeToolDispatcherService } from '../services/runtime-tool-dispatche
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 
 /**
- * Service-to-service surface for the APImanus OpenCode gateway.
+ * Service-to-service surface for the APImanus OpenCode gateway, scoped to the
+ * app-runtime principal (WP07.3): the bind token is valid ONLY here, never on
+ * unrelated internal routes.
  *
  * Responses skip the global `{ success, data, meta }` wrapper: the gateway
  * reads `bindingId` / `mcpUrl` / `mcpToken` off the raw body.
@@ -23,7 +25,7 @@ import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 @SkipResponseWrap()
 @ApiTags('App Runtime Internal')
 @Controller('internal/app-runtime')
-@UseGuards(InternalServiceGuard)
+@UseGuards(AppRuntimeServiceGuard)
 export class AppRuntimeInternalController {
   constructor(
     private readonly bindings: RuntimeBindingService,

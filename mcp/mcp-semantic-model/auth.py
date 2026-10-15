@@ -30,6 +30,13 @@ class PlatformActorContext:
 
 actor_context: ContextVar[PlatformActorContext | None] = ContextVar("semantic_model_mcp_actor_context", default=None)
 acting_user_id: ContextVar[str | None] = ContextVar("semantic_model_mcp_acting_user_id", default=None)
+# The verified, backend-issued MCP JWT of the current call. Forwarded to the
+# backend as a signed actor assertion (WP06.4); never logged.
+verified_mcp_jwt: ContextVar[str | None] = ContextVar("semantic_model_mcp_verified_jwt", default=None)
+
+# Backend-issued MCP tokens live at most five minutes (WP06.2); a longer
+# lifetime means the token was not minted by the backend issuer.
+MAX_TOKEN_LIFETIME_SECONDS = 300
 
 
 def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: str) -> bool:
@@ -83,8 +90,16 @@ class TrustedIdentityMiddleware:
             claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
                 issuer=self.jwt_issuer, audience=self.jwt_audience,
                 options={"require": ["sub", "iss", "aud", "iat", "exp"]})
+            issued_at, expires_at = claims["iat"], claims["exp"]
+            if not isinstance(issued_at, int) or not isinstance(expires_at, int):
+                return ""
+            if expires_at - issued_at > MAX_TOKEN_LIFETIME_SECONDS:
+                return ""
             user_id = claims["sub"]
-            return user_id if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ""
+            if not (isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id)):
+                return ""
+            verified_mcp_jwt.set(parts[1])
+            return user_id
         except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
             return ""
 
@@ -110,6 +125,18 @@ class TrustedIdentityMiddleware:
             return
 
         headers = {key.lower(): value for key, value in raw_headers}
+        if self.auth_mode == "JWT":
+            # The signed sub is the only identity (WP06.3): a user-id header is
+            # ignored, and rejected outright when it disagrees with the token.
+            header_user_id = headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
+            if header_user_id and header_user_id != jwt_user_id:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+                return
         user_id = jwt_user_id if self.auth_mode == "JWT" else headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
         if user_id and not _IDENTIFIER.fullmatch(user_id):
             # The acting user drives authorization; a malformed value is rejected.
@@ -129,6 +156,9 @@ class TrustedIdentityMiddleware:
         ) if user_id else None
         user_token = acting_user_id.set(user_id or None)
         actor_token = actor_context.set(context)
+        # Keep the verified assertion (set during JWT validation) and take a
+        # reset token so this request's context is always cleaned up.
+        assertion_token = verified_mcp_jwt.set(verified_mcp_jwt.get())
         # Unified-logging context (plan P05): the SDK merges these contextvars at
         # emit time, so every envelope from this tool call carries the actor.
         bound = bind_contextvars(
@@ -143,6 +173,7 @@ class TrustedIdentityMiddleware:
             unbind_contextvars(*bound)
             actor_context.reset(actor_token)
             acting_user_id.reset(user_token)
+            verified_mcp_jwt.reset(assertion_token)
 
 
 def require_actor_context() -> PlatformActorContext:

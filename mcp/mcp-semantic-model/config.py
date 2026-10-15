@@ -30,6 +30,7 @@ class Settings:
     jwt_public_key_file: str = ""
     jwt_issuer: str = ""
     jwt_audience: str = "mcp-semantic-model"
+    environment: str = "development"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,6 +45,7 @@ class Settings:
             jwt_public_key_file=os.getenv("SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("SEMANTIC_MODEL_MCP_JWT_ISSUER", ""),
             jwt_audience=os.getenv("SEMANTIC_MODEL_MCP_JWT_AUDIENCE", "mcp-semantic-model"),
+            environment=os.getenv("ENVIRONMENT", "development"),
         )
 
     def validate(self) -> None:
@@ -54,6 +56,11 @@ class Settings:
         if self.auth_mode == "JWT":
             if not self.jwt_public_key_file or not self.jwt_issuer or not self.jwt_audience:
                 raise ValueError("JWT mode requires a public key file, issuer and audience")
+        elif self.environment == "production":
+            # WP06.1: the shared bearer token is a development-only mode; a
+            # production deployment must fail startup instead of silently
+            # falling back to it.
+            raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT in production (shared Bearer mode is development-only)")
         elif not self.ingress_token:
             raise ValueError("SEMANTIC_MODEL_MCP_INGRESS_TOKEN is required")
         if not self.backend_url.startswith(("http://", "https://")):

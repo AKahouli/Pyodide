@@ -1,6 +1,7 @@
 import { JwtService } from '@nestjs/jwt';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { sign as signJwt } from 'jsonwebtoken';
 import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
 
 jest.mock('node:fs', () => ({ ...jest.requireActual('node:fs'), readFileSync: jest.fn() }));
@@ -96,5 +97,36 @@ describe('SemanticModelMcpJwtService', () => {
       MCP_JWT_PRIVATE_KEY_FILE: 'private.pem', MCP_JWT_ISSUER: 'yellowstorm',
     });
     await expect(service.issue(url, 'user-1')).resolves.toMatchObject({ serverUrl: url });
+  });
+
+  describe('verifyMcpAssertion (WP06.4)', () => {
+    it('verifies a freshly issued assertion and returns the signed subject', async () => {
+      const service = create();
+      const { token } = await service.issue(url, 'user-1');
+
+      expect(service.verifyMcpAssertion(token)).toEqual({ sub: 'user-1' });
+    });
+
+    it('rejects foreign-signed, expired and foreign-audience assertions', async () => {
+      const service = create();
+      const signingPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+      const foreign = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
+      const now = Math.floor(Date.now() / 1000);
+      const mint = (claims: Record<string, unknown>, key: string) => signJwt(claims as never, key, {
+        algorithm: 'RS256', issuer: 'yellowstorm', audience: 'mcp-semantic-model',
+      });
+
+      expect(service.verifyMcpAssertion(mint({ sub: 'user-1', iat: now, exp: now + 300 }, foreign.export({ type: 'pkcs8', format: 'pem' }).toString()))).toBeNull();
+      expect(service.verifyMcpAssertion(mint({ sub: 'user-1', iat: now - 400, exp: now - 100 }, signingPem))).toBeNull();
+      expect(service.verifyMcpAssertion(signJwt({ sub: 'user-1', iat: now, exp: now + 300 } as never, signingPem, {
+        algorithm: 'RS256', issuer: 'yellowstorm', audience: 'mcp-agent',
+      }))).toBeNull();
+      expect(service.verifyMcpAssertion('not.a.jwt')).toBeNull();
+      expect(service.verifyMcpAssertion(undefined)).toBeNull();
+    });
+
+    it('returns null outside JWT mode (no key material loaded)', () => {
+      expect(create({ SEMANTIC_MODEL_MCP_AUTH_MODE: 'Bearer' }).verifyMcpAssertion('anything')).toBeNull();
+    });
   });
 });

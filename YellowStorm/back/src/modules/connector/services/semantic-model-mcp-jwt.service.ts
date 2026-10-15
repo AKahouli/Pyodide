@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createPrivateKey, randomUUID } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { BadRequestException, UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -13,11 +13,14 @@ import { assertAccountApproved } from '../../user/utils/assert-account-accessibl
 export class SemanticModelMcpJwtService {
   private readonly jwt = new JwtService();
   private readonly privateKey?: string;
+  private readonly publicKey?: string;
+  private readonly issuer?: string;
 
   constructor(private readonly config: ConfigService, private readonly users: UserService) {
     if (['SEMANTIC_MODEL', 'PLAYBOOK', 'AGENT'].some((name) => config.get<string>(`${name}_MCP_AUTH_MODE`, 'Bearer') === 'JWT')) {
       const path = config.get<string>('MCP_JWT_PRIVATE_KEY_FILE') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE');
-      if (!path || !(config.get<string>('MCP_JWT_ISSUER') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'))) {
+      const issuer = config.get<string>('MCP_JWT_ISSUER') || config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER');
+      if (!path || !issuer) {
         throw new Error('MCP JWT mode requires a private key file and issuer');
       }
       const key = createPrivateKey(readFileSync(path));
@@ -25,6 +28,9 @@ export class SemanticModelMcpJwtService {
         throw new Error('MCP JWT signing requires an RSA key of at least 2048 bits');
       }
       this.privateKey = key.export({ type: 'pkcs8', format: 'pem' }).toString();
+      // Verification counterpart used for actor assertions (WP06.4).
+      this.publicKey = createPublicKey(key).export({ type: 'spki', format: 'pem' }).toString();
+      this.issuer = issuer;
     }
   }
 
@@ -72,10 +78,35 @@ export class SemanticModelMcpJwtService {
     const now = Math.floor(Date.now() / 1000);
     const token = this.jwt.sign({ sub: userId, iat: now, exp: now + 300, jti: randomUUID() }, {
       privateKey: this.privateKey, algorithm: 'RS256',
-      issuer: this.config.get<string>('MCP_JWT_ISSUER') || this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_ISSUER'),
+      issuer: this.issuer,
       audience: server.audience,
     });
     return { token, expiresAt: now + 300, serverUrl };
+  }
+
+  /**
+   * Verify a forwarded MCP actor assertion (WP06.4): the original short-lived,
+   * backend-issued JWT of the user the MCP server acts for. Returns the signed
+   * subject, or null when the assertion is missing, unsigned by this backend,
+   * foreign-audience or expired. The token itself is never logged.
+   */
+  verifyMcpAssertion(token: string | undefined): { sub: string } | null {
+    if (!token || !this.publicKey || !this.issuer) return null;
+    try {
+      const claims = this.jwt.verify(token, {
+        publicKey: this.publicKey,
+        algorithms: ['RS256'],
+        issuer: this.issuer,
+        audience: this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_AUDIENCE', 'mcp-semantic-model'),
+        // Backend minting allows at most five minutes; reject anything longer
+        // even if it carries a valid signature.
+        maxAge: '300s',
+      }) as { sub?: unknown };
+      if (typeof claims?.sub !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(claims.sub)) return null;
+      return { sub: claims.sub };
+    } catch {
+      return null;
+    }
   }
 
   async headers(serverUrl: string, userId: string, existing: Record<string, string> = {}): Promise<Record<string, string>> {

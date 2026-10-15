@@ -1,8 +1,42 @@
 import httpx
 import pytest
 
-from auth import PlatformActorContext, actor_context
+from auth import PlatformActorContext, actor_context, verified_mcp_jwt
 from clients.yellowstorm_semantic_model_client import SemanticModelBackendError, YellowStormSemanticModelClient
+
+
+@pytest.mark.asyncio
+async def test_forwards_the_verified_mcp_jwt_as_actor_assertion():
+    # WP06.4: the backend derives the actor from the signed assertion, not
+    # the naked user-id header.
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-YellowStorm-Mcp-Assertion"] == "signed-mcp-jwt"
+        return httpx.Response(200, json={"success": True, "data": {}})
+
+    actor = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    assertion = verified_mcp_jwt.set("signed-mcp-jwt")
+    try:
+        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        await client.get("/models", "user-1")
+        await client.close()
+    finally:
+        actor_context.reset(actor)
+        verified_mcp_jwt.reset(assertion)
+
+
+@pytest.mark.asyncio
+async def test_omits_the_assertion_header_outside_jwt_mode():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert "X-YellowStorm-Mcp-Assertion" not in request.headers
+        return httpx.Response(200, json={"success": True, "data": {}})
+
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        client = YellowStormSemanticModelClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        await client.get("/models", "user-1")
+        await client.close()
+    finally:
+        actor_context.reset(token)
 
 
 @pytest.mark.asyncio

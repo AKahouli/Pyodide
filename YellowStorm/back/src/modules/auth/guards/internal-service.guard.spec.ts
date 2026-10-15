@@ -27,22 +27,17 @@ describe('InternalServiceGuard', () => {
     expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
   });
 
-  it('prefers APP_RUNTIME_BIND_TOKEN over INTERNAL_SERVICE_SECRET', () => {
+  it('no longer accepts APP_RUNTIME_BIND_TOKEN (WP07.4: bind is app-runtime only)', () => {
     const bindToken = 'app-runtime-bind-token-value!!';
-    const guard = makeGuard({
-      APP_RUNTIME_BIND_TOKEN: bindToken,
-      INTERNAL_SERVICE_SECRET: expected,
-    });
-    expect(guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toBe(true);
-    expect(() =>
-      guard.canActivate(ctx({ 'x-internal-token': expected })),
-    ).toThrow(UnauthorizedException);
+    const guard = makeGuard({ APP_RUNTIME_BIND_TOKEN: bindToken });
+    expect(() => guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toThrow(UnauthorizedException);
   });
 
-  it('accepts APP_RUNTIME_BIND_TOKEN alone (APImanus shared name)', () => {
-    const bindToken = 'shared-with-apimanus-token!!';
-    const guard = makeGuard({ APP_RUNTIME_BIND_TOKEN: bindToken });
-    expect(guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toBe(true);
+  it('does not let APP_RUNTIME_BIND_TOKEN shadow a configured INTERNAL_SERVICE_SECRET', () => {
+    const bindToken = 'app-runtime-bind-token-value!!';
+    const guard = makeGuard({ APP_RUNTIME_BIND_TOKEN: bindToken, INTERNAL_SERVICE_SECRET: expected });
+    expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
+    expect(() => guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toThrow(UnauthorizedException);
   });
 
   it('rejects with UnauthorizedException when the token header is missing', () => {
@@ -65,18 +60,17 @@ describe('InternalServiceGuard', () => {
     ).toThrow(UnauthorizedException);
   });
 
-  it('fail-closes when neither secret is configured', () => {
+  it('fail-closes when no secret is configured, even if APP_RUNTIME_BIND_TOKEN exists', () => {
     const guard = makeGuard({});
     expect(() =>
       guard.canActivate(ctx({ 'x-internal-token': 'whatever' })),
     ).toThrow(UnauthorizedException);
   });
 
-  it('treats blank APP_RUNTIME_BIND_TOKEN as unset and falls back', () => {
-    const guard = makeGuard({
-      APP_RUNTIME_BIND_TOKEN: '   ',
-      INTERNAL_SERVICE_SECRET: expected,
-    });
-    expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
+  it('treats a blank INTERNAL_SERVICE_SECRET as unset (fail closed)', () => {
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: '   ' });
+    expect(() =>
+      guard.canActivate(ctx({ 'x-internal-token': expected })),
+    ).toThrow(UnauthorizedException);
   });
 });
