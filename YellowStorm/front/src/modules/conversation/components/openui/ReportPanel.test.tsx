@@ -5,9 +5,8 @@ import { useFileViewerStore } from '@/modules/file-viewer/store';
 import OpenUiRenderer from './OpenUiRenderer';
 import { ReportPanelSidebar } from './ReportPanelSidebar';
 import { initialState, reportPanelStore } from './report-panel-store';
-import { loadGeneratedImage } from './document-images';
-
-vi.mock('./document-images', async (original) => ({ ...await original<typeof import('./document-images')>(), loadGeneratedImage: vi.fn() }));
+import { getGeneratedImageUrl } from '../../api';
+vi.mock('./ConversationImageActions', () => ({ ConversationImageActions: ({ source }: { source: string }) => <span data-testid='image-actions' data-source={source} /> }));
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: vi.fn(),
@@ -15,7 +14,7 @@ vi.mock('@/modules/file-viewer', () => ({
   getMimeTypeFromFilename: () => undefined,
   useFileViewerDisplayMode: () => 'sidebar',
 }));
-vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn() }));
+vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn(), getGeneratedImageUrl: vi.fn(), fetchSlideExportImage: vi.fn() }));
 
 const CHAT = 'root = Card([t])\nt = TextContent("Short answer.")';
 const reportProgram = (title: string, cell = 'EMEA') => [
@@ -49,18 +48,34 @@ afterEach(() => {
 
 describe('report in an OpenUI answer', () => {
   it('resolves a generated slide background before showing its preview and releases it on unmount', async () => {
-    vi.mocked(loadGeneratedImage).mockResolvedValue(new Blob(['image'], { type: 'image/png' }));
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/image.png', mimeType: 'image/png', fileName: 'image.png' });
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-slide');
     const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const view = mount('root = Presentation({title: "Generated deck"}, [s1])\ns1 = Slide("s1", MinimalTitle("Generated cover", "", "", {imageUrl: "", name: "", role: ""}, "title-top", "generated-image:0123456789abcdef01234567"))', { citationScope: scope });
     await screen.findByRole('button', { name: /view/i });
-    expect(loadGeneratedImage).toHaveBeenCalledWith('generated-image:0123456789abcdef01234567', scope, expect.any(AbortSignal));
     fireEvent.click(viewButton());
     await screen.findByTestId('report-panel');
     await waitFor(() => expect(document.querySelector('[style*="blob:generated-slide"]')).not.toBeNull());
+    expect(getGeneratedImageUrl).toHaveBeenCalledWith('c', 'm', '0123456789abcdef01234567', expect.any(AbortSignal));
+    expect(screen.getAllByTestId('image-actions').some((element) => element.dataset.source === 'generated-image:0123456789abcdef01234567')).toBe(true);
+    expect(screen.getAllByTestId('image-actions').every((element) => element.closest('button') === null)).toBe(true);
     view.unmount();
     expect(revoke).toHaveBeenCalledWith('blob:generated-slide');
-    create.mockRestore(); revoke.mockRestore();
+    create.mockRestore(); revoke.mockRestore(); fetchImage.mockRestore();
+  });
+  it('preserves generated image selectors for report image actions in the preview', async () => {
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/image.png', mimeType: 'image/png', fileName: 'image.png' });
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:report-image');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const view = mount('root = Report({title: "Image report"}, [p])\np = Page("page", ContentPage([Image("generated-image:0123456789abcdef01234567", "Saved chart")]))', { citationScope: scope });
+    fireEvent.click(await screen.findByRole('button', { name: /view/i }));
+    await screen.findByRole('img', { name: 'Saved chart' });
+    expect(screen.getAllByTestId('image-actions').some((element) => element.dataset.source === 'generated-image:0123456789abcdef01234567')).toBe(true);
+    view.unmount();
+    expect(revoke).toHaveBeenCalledWith('blob:report-image');
+    create.mockRestore(); revoke.mockRestore(); fetchImage.mockRestore();
   });
   it('clears the artifact owner when an open presentation unmounts', async () => {
     const view = mount('root = Presentation({title: "Japan"}, [s1])\ns1 = Slide("s1", MinimalTitle("Japan"))');

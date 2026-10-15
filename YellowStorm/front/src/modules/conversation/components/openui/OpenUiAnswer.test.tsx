@@ -20,9 +20,9 @@ vi.mock('./preload', async (importOriginal) => {
   return { ...actual, preloadOpenUiForAgent: vi.fn(actual.preloadOpenUiForAgent) };
 });
 vi.mock('./OpenUiRenderer', () => ({
-  default: ({ content, isStreaming, onAction }: { content: string; isStreaming: boolean; onAction: (event: ActionEvent) => void }) => {
+  default: ({ content, isStreaming, onAction, citationScope }: { content: string; isStreaming: boolean; onAction: (event: ActionEvent) => void; citationScope?: { componentId?: string } }) => {
     if (rendererState.shouldThrow || rendererState.throwOn?.(content)) throw new Error('renderer crashed');
-    return <div data-testid='openui-stub' data-streaming={String(isStreaming)}>{content}{rendererState.action && <button onClick={() => onAction(rendererState.action!)}>Download test</button>}</div>;
+    return <div data-testid='openui-stub' data-streaming={String(isStreaming)} data-component-id={citationScope?.componentId}>{content}{rendererState.action && <button onClick={() => onAction(rendererState.action!)}>Download test</button>}</div>;
   },
 }));
 
@@ -31,6 +31,10 @@ const answer: MessageComponent = { id: 'answer', type: 'text', data: { content: 
 const bubble = (isStreaming = false) => <ConversationAssistantBubble conversationId='c' messageId='m' components={[answer]} isStreaming={isStreaming} />;
 
 describe('answer render mode', () => {
+  it('propagates the saved answer part identity to image and citation actions', async () => {
+    render(<OpenUiAnswer conversationId='conversation' messageId='answer' partId='part-b' content={program} isStreaming={false} />);
+    expect(await screen.findByTestId('openui-stub')).toHaveAttribute('data-component-id', 'part-b');
+  });
   beforeEach(() => {
     rendererState.shouldThrow = false;
     rendererState.throwOn = null;

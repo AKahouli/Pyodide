@@ -59,7 +59,7 @@ export function OpenUiAnswer({ content, isStreaming, conversationId, messageId, 
     }
   }, [conversationId, messageId, artifacts, isStreaming, t]);
 
-  const citationScope = useMemo(() => ({ conversationId, messageId }), [conversationId, messageId]);
+  const citationScope = useMemo(() => ({ conversationId, messageId, ...(partId ? { componentId: partId } : {}) }), [conversationId, messageId, partId]);
   const renderMarkdown = (text: string) => (
     <AIMessageContent
       parts={[{ type: 'text', content: text, showCursor: isStreaming, citations }]}

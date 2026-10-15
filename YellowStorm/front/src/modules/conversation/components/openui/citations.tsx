@@ -11,6 +11,8 @@ import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-li
 export interface OpenUiCitationScope {
   conversationId: string;
   messageId: string;
+  /** Saved answer part owning the image and its producer metadata. */
+  componentId?: string;
 }
 
 interface OpenUiCitationContextValue {

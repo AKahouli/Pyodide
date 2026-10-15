@@ -1,5 +1,5 @@
 import './devtools-off';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
 import { createLibrary, Renderer, type DefinedComponent, type ParseResult } from '@openuidev/react-lang';
@@ -8,9 +8,10 @@ import { reportLibrary, presentationLibrary } from '@openuidev/thesys';
 import { CitationsInline, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useModuleTranslation } from '@/modules/localization';
 import { reportPanelStore } from './report-panel-store';
-import type { OpenUiCitationScope } from './citations';
+import { OpenUiCitationContext, splitCitations, type OpenUiCitationScope } from './citations';
 import { SlideExportMenu } from './SlideExportMenu';
-import { loadGeneratedImage } from './document-images';
+import { withDocumentImages } from './document-images';
+import type { StockComponent as ImageStockComponent } from './inline-text';
 
 /**
  * Two reasons the thesys `Report` needs a provider: it is an artifact component (a chip in the chat
@@ -36,10 +37,20 @@ function scoped(Stock: StockComponent): StockComponent {
   } as StockComponent;
 }
 
+const IMAGE_COMPONENTS = new Set(['Image', 'StandardFrontPage', 'MinimalFrontPage', 'DramaticFrontPage',
+  'VisualCards', 'FeatureHighlight', 'ProfileTile', 'StandardTitle', 'MinimalTitle', 'DramaticTitle',
+  'ContentWithImage', 'MetricsWithImage', 'PersonnelShowcase', 'ListWithImage', 'Images']);
+
+function imageAware(definition: DefinedComponent): DefinedComponent {
+  return IMAGE_COMPONENTS.has(definition.name)
+    ? { ...definition, component: withDocumentImages(definition.component as ImageStockComponent, definition.name) } as DefinedComponent
+    : definition;
+}
+
 const openUiReportLibrary = createLibrary({
   root: reportLibrary.root,
   componentGroups: reportLibrary.componentGroups,
-  components: Object.values(reportLibrary.components).map((definition) => (definition.name === 'Report'
+  components: Object.values(reportLibrary.components).map((definition) => imageAware(definition.name === 'Report'
     ? ({ ...definition, component: scoped(definition.component as StockComponent) } as DefinedComponent)
     : definition)),
 });
@@ -47,7 +58,7 @@ const openUiReportLibrary = createLibrary({
 const openUiPresentationLibrary = createLibrary({
   root: presentationLibrary.root,
   componentGroups: presentationLibrary.componentGroups,
-  components: Object.values(presentationLibrary.components).map((definition) => (definition.name === 'Presentation'
+  components: Object.values(presentationLibrary.components).map((definition) => imageAware(definition.name === 'Presentation'
     ? ({ ...definition, component: scoped(definition.component as StockComponent) } as DefinedComponent)
     : definition)),
 });
@@ -74,29 +85,7 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
   const library = presentation ? openUiPresentationLibrary : openUiReportLibrary;
   const activeId = useStore(reportPanelStore, (state) => state.activeDetailedViewId);
   const exportMenuNode = useStore(reportPanelStore, (state) => state._exportMenuNode);
-  const generatedSources = [...new Set([...program.matchAll(/"generated-image:[a-f\d]{24}"/g)].map((match) => JSON.parse(match[0]) as string))];
-  const imageKey = JSON.stringify([program, citationScope]);
-  const [resolved, setResolved] = useState<{ key: string; program: string; failed?: boolean }>({ key: '', program: '' });
-  useEffect(() => {
-    if (!generatedSources.length || isStreaming) return;
-    const controller = new AbortController();
-    const urls: string[] = [];
-    void (async () => {
-      if (!citationScope) throw new Error('Missing image scope');
-      let response = program;
-      for (const source of generatedSources) {
-        const blob = await loadGeneratedImage(source, citationScope, controller.signal);
-        controller.signal.throwIfAborted();
-        const url = URL.createObjectURL(blob);
-        urls.push(url);
-        response = response.replaceAll(JSON.stringify(source), JSON.stringify(url));
-      }
-      setResolved({ key: imageKey, program: response });
-    })().catch(() => { if (!controller.signal.aborted) setResolved({ key: imageKey, program: '', failed: true }); });
-    return () => { controller.abort(); urls.forEach((url) => URL.revokeObjectURL(url)); };
-  }, [imageKey, isStreaming]);
-  const needsImages = generatedSources.length > 0;
-  const imageReady = !needsImages || (!isStreaming && resolved.key === imageKey && !resolved.failed);
+  const imageCitations = splitCitations(citations, program, citationScope);
   // The panel portals the report out of this block's tree: if the block goes away (message unmounted by a
   // reload or list virtualization) while its report is open, the panel would be left empty, so close it.
   useEffect(() => () => {
@@ -109,8 +98,9 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>
-            {imageReady ? <Renderer response={needsImages ? resolved.program : program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
-              : <div role={resolved.key === imageKey && resolved.failed ? 'alert' : 'status'} className='rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground'>{t(resolved.key === imageKey && resolved.failed ? 'openui.image.unavailable' : 'openui.image.loading')}</div>}
+            <OpenUiCitationContext.Provider value={{ byReference: imageCitations.byReference, scope: citationScope }}>
+              <Renderer response={program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
+            </OpenUiCitationContext.Provider>
           </ReportScopeContext.Provider>
         </DetailedViewContext.Provider>
       </ChatProvider>

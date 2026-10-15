@@ -107,6 +107,21 @@ Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `rend
 
 ### Generated images in OpenUI
 
+OpenUI images expose an action toolbar in chat, report and slide previews: edit,
+compare saved images, reuse in DOCX/editable PPTX/OpenUI slides, and download.
+Edit/reuse sends an explicit follow-up to the producing agent through the existing
+conversation owner; opening or cancelling a dialog does not run a tool. Edits read
+authorized source dimensions only on submission and pass the existing model's
+landscape/portrait/square aspect class explicitly. Capability checks use the assigned
+image tool and interpreter connector actions. Streaming,
+governed mode and ambiguous producing-agent identity disable generation actions.
+The saved text component identity is retained across report portals and reload.
+Comparison resolves authorized saved sources lazily and releases temporary blob
+URLs on close. Thumbnail/capture views omit interactive controls. PDF actions use
+the cited PDF page (disclosed in the UI), rather than claiming to edit only its crop.
+Coverage: `ImageActionToolbar.test.tsx`, `ConversationImageActions.test.tsx`,
+`document-images.test.tsx`, `OpenUiRenderer.test.tsx` and `ReportPanel.test.tsx`.
+
 In Admin → Tools, create the active native tool `generate_image` with a string `model`
 attribute set to `gpt-image-2.5-flare`, then select it in the agent editor's Tools tab.
 Generative UI controls presentation independently of this tool assignment. The model must

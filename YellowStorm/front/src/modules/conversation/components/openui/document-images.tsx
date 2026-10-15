@@ -1,16 +1,25 @@
-import { useContext, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useIsStreaming } from '@openuidev/react-lang';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SingleInlineCitation, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useModuleTranslation } from '@/modules/localization';
-import { fetchRootEvidence, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
+import { fetchRootEvidence, fetchSlideExportImage, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
+import { ConversationImageActions } from './ConversationImageActions';
 import { OpenUiCitationContext, type OpenUiCitationScope } from './citations';
 import type { StockComponent } from './inline-text';
 
 const IMAGE_FIELDS = new Set(['src', 'imageSrc', 'bgImageSrc', 'imagesSrc']);
 const DOCUMENT_REFERENCE = /^\[(\d+)\]$/;
+const PUBLIC_IMAGE = /^https:\/\//;
 export const GENERATED_IMAGE_REFERENCE = /^generated-image:([a-f\d]{24})$/;
+
+async function loadPublicImage(source: string, scope: OpenUiCitationScope, signal?: AbortSignal): Promise<Blob> {
+  const data = await fetchSlideExportImage(scope.conversationId, scope.messageId, source, signal ?? new AbortController().signal);
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(data);
+  if (!match) throw new Error('Invalid image response');
+  return new Blob([Uint8Array.from(atob(match[2]), (char) => char.charCodeAt(0))], { type: match[1] });
+}
 
 export async function loadGeneratedImage(source: string, scope: OpenUiCitationScope, signal?: AbortSignal): Promise<Blob> {
   return (await loadGeneratedImageDetails(source, scope, signal)).blob;
@@ -47,12 +56,12 @@ export function GeneratedImage({ source, alt, scope, streaming = false }: { sour
   </span>;
 }
 
-function GeneratedImageLinks({ url, generated = true }: { url: string; generated?: boolean }) {
+function GeneratedImageLinks({ url, generated = true, download = true }: { url: string; generated?: boolean; download?: boolean }) {
   const { t } = useModuleTranslation('conversation');
   return <span className='inline-flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
     {generated && <span>{t('openui.image.generated')}</span>}
     <a href={url} target='_blank' rel='noreferrer' className='underline'>{t('openui.image.preview')}</a>
-    <a href={url} download='generated-image.png' className='underline'>{t('openui.image.download')}</a>
+    {download && <a href={url} download='generated-image.png' className='underline'>{t('openui.image.download')}</a>}
   </span>;
 }
 
@@ -100,13 +109,15 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
     const { t } = useModuleTranslation('conversation');
     const references = new Set<string>();
     mapImageSources(args.props, (source) => {
-      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) ? source : undefined);
+      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) || (Boolean(scope) && PUBLIC_IMAGE.test(source)) ? source : undefined);
       if (reference) references.add(reference);
       return source;
     });
     const citations = [...references].map((reference) => byReference.get(reference));
     const requestKey = JSON.stringify([scope, [...references], citations]);
     const [retry, setRetry] = useState(0);
+    const container = useRef<HTMLDivElement>(null);
+    const [actionsAllowed, setActionsAllowed] = useState(false);
     const [state, setState] = useState<{ key: string; urls: Map<string, string>; generated: Set<string>; error?: boolean }>({ key: '', urls: new Map(), generated: new Set() });
 
     useEffect(() => {
@@ -120,6 +131,7 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
         if (!scope) throw new Error('Missing image scope');
         const citation = byReference.get(reference);
         const image = GENERATED_IMAGE_REFERENCE.test(reference) ? await loadGeneratedImageDetails(reference, scope, controller.signal)
+          : PUBLIC_IMAGE.test(reference) ? { blob: await loadPublicImage(reference, scope, controller.signal), generated: false }
           : citation ? { blob: await loadDocumentImage(citation, scope), generated: false } : await Promise.reject(new Error('Unknown document citation'));
         if (!disposed) {
           urls.set(reference, URL.createObjectURL(image.blob));
@@ -136,23 +148,36 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
       // requestKey includes scope, references and all source metadata; streamed prose does not refetch images.
     }, [requestKey, streaming, retry]);
 
+    const resolveImage = useCallback(async (source: string) => {
+      if (!scope) throw new Error('Missing image scope');
+      if (GENERATED_IMAGE_REFERENCE.test(source)) return loadGeneratedImage(source, scope);
+      if (PUBLIC_IMAGE.test(source)) return loadPublicImage(source, scope);
+      const citation = byReference.get(DOCUMENT_REFERENCE.exec(source)?.[1] ?? '');
+      if (!citation) throw new Error('Missing image citation');
+      return loadDocumentImage(citation, scope);
+    }, [scope?.conversationId, scope?.messageId, byReference]);
+    // Slide thumbnails are themselves buttons. Only the full preview may host
+    // interactive controls, preventing nested buttons and accidental navigation.
+    useEffect(() => { setActionsAllowed(Boolean(container.current && !container.current.closest('button'))); }, [requestKey]);
+
     if (references.size === 0) return <Stock {...args} />;
     const failed = state.key === requestKey && state.error;
     const ready = !streaming && state.key === requestKey && state.urls.size === references.size && !failed;
     const props = mapImageSources(args.props, (source) => {
-      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) ? source : undefined);
+      const reference = DOCUMENT_REFERENCE.exec(source)?.[1] ?? (GENERATED_IMAGE_REFERENCE.test(source) || (Boolean(scope) && PUBLIC_IMAGE.test(source)) ? source : undefined);
       return reference ? state.urls.get(reference) ?? '' : source;
     }) as typeof args.props;
     return (
-      <div data-openui-document-image='' className='min-w-0 space-y-2 [&_.openui-gallery>div]:!max-h-none [&_.openui-gallery_img]:!object-contain [&_.openui-gallery_img]:!transform-none'>
+      <div ref={container} data-openui-document-image='' className='min-w-0 space-y-2 [&_.openui-gallery>div]:!max-h-none [&_.openui-gallery_img]:!object-contain [&_.openui-gallery_img]:!transform-none'>
         {!ready ? (
           <div role={failed ? 'alert' : 'status'} className='flex min-h-32 items-center justify-center gap-2 rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground'>
-            {failed ? <><span>{t('openui.image.unavailable')}</span><Button variant='outline' size='sm' onClick={() => setRetry((value) => value + 1)}>{t('home.retry')}</Button></>
+            {failed ? <><span>{t('openui.image.unavailable')}</span>{actionsAllowed && <Button variant='outline' size='sm' onClick={() => setRetry((value) => value + 1)}>{t('home.retry')}</Button>}</>
               : <><Loader2 className='size-4 animate-spin motion-reduce:animate-none' aria-hidden='true' /><span>{t('openui.image.loading')}</span></>}
           </div>
         ) : (
           <div className={['Image', 'ImageBlock', 'ImageGallery'].includes(name) ? 'max-w-3xl' : undefined} onErrorCapture={(event) => {
-            if (event.target instanceof HTMLImageElement && [...state.urls.values()].includes(event.target.src)) {
+            const failedReference = event.target instanceof HTMLImageElement ? [...state.urls].find(([, url]) => url === (event.target as HTMLImageElement).src)?.[0] : undefined;
+            if (failedReference && !PUBLIC_IMAGE.test(failedReference)) {
               setState((value) => ({ ...value, error: true }));
             }
           }}>
@@ -161,14 +186,22 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
               : <Stock {...args} props={props} />}
           </div>
         )}
-        <div className='flex flex-wrap items-center gap-1 text-xs text-muted-foreground'>
+        {actionsAllowed && <div className='flex flex-wrap items-center gap-1 text-xs text-muted-foreground'>
           {[...references].filter((reference) => GENERATED_IMAGE_REFERENCE.test(reference)).map((reference) => state.key === requestKey && state.urls.get(reference)
-            ? <GeneratedImageLinks key={reference} url={state.urls.get(reference)!} generated={state.generated.has(reference)} /> : null)}
+            ? <GeneratedImageLinks key={reference} url={state.urls.get(reference)!} generated={state.generated.has(reference)} download={false} /> : null)}
           {citations.map((citation, index) => citation && <span key={index} className='inline-flex items-center gap-1'>
             <span>{citation.fileName || citation.source.split('/').at(-1)}{citation.page ? ` · ${t('openui.image.page', { page: citation.page })}` : ''}</span>
             <SingleInlineCitation citation={citation} citationScope={scope} />
           </span>)}
-        </div>
+        </div>}
+        {ready && actionsAllowed && scope && [...references].map((reference, index) => {
+          const source = /^\d+$/.test(reference) ? `[${reference}]` : reference;
+          const label = typeof args.props.alt === 'string' ? args.props.alt : Array.isArray(args.props.imagesAlt) && typeof args.props.imagesAlt[index] === 'string' ? args.props.imagesAlt[index] : t('openui.image.actions.savedImage', { index: index + 1 });
+          return <ConversationImageActions key={reference} source={source} alt={label} scope={scope}
+            url={state.urls.get(reference)} streaming={streaming} resolveImage={resolveImage}
+            peers={[...references].map((entry, peerIndex) => ({ source: /^\d+$/.test(entry) ? `[${entry}]` : entry,
+              label: Array.isArray(args.props.imagesAlt) && typeof args.props.imagesAlt[peerIndex] === 'string' ? args.props.imagesAlt[peerIndex] : t('openui.image.actions.savedImage', { index: peerIndex + 1 }) }))} />;
+        })}
       </div>
     );
   };

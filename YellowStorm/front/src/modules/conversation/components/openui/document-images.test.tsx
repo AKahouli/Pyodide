@@ -2,12 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CitationData } from '@/components/ai-elements/ai-message-content';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
-import { fetchRootEvidence, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
+import { fetchRootEvidence, fetchSlideExportImage, getCitationViewUrl, getGeneratedImageUrl } from '../../api';
 import { renderPdfImage } from './pdf-image';
 import OpenUiRenderer from './OpenUiRenderer';
 import { mapImageSources } from './document-images';
 
-vi.mock('../../api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn(), getGeneratedImageUrl: vi.fn() }));
+vi.mock('../../api', () => ({ fetchRootEvidence: vi.fn(), fetchSlideExportImage: vi.fn(), getCitationViewUrl: vi.fn(), getGeneratedImageUrl: vi.fn() }));
+vi.mock('./ConversationImageActions', () => ({ ConversationImageActions: ({ source }: { source: string }) => <span data-testid='image-actions' data-source={source} /> }));
 vi.mock('./pdf-image', () => ({ renderPdfImage: vi.fn() }));
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrlLoader: vi.fn(), getMimeTypeFromFilename: () => 'application/pdf', useFileViewerDisplayMode: () => 'sidebar',
@@ -29,10 +30,18 @@ beforeEach(() => {
   vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
   vi.mocked(getCitationViewUrl).mockResolvedValue({ url: 'https://storage.example/authorized.pdf', fileName: 'test_image.pdf', mimeType: 'application/pdf' });
   vi.mocked(renderPdfImage).mockResolvedValue(imageBlob);
+  vi.mocked(fetchSlideExportImage).mockResolvedValue('data:image/png;base64,aW1hZ2U=');
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('OpenUI document images', () => {
+  it('renders image actions for authorized web images and preserves their exact source', async () => {
+    vi.mocked(fetchSlideExportImage).mockResolvedValue('data:image/png;base64,aW1hZ2U=');
+    render(<OpenUiRenderer content={'root = Image("Web photo", "https://images.example/photo.png")'} isStreaming={false} onAction={vi.fn()} citationScope={scope} />);
+    expect(await screen.findByRole('img', { name: 'Web photo' })).toHaveAttribute('src', 'blob:document-image');
+    expect(screen.getByTestId('image-actions')).toHaveAttribute('data-source', 'https://images.example/photo.png');
+    expect(fetchSlideExportImage).toHaveBeenCalledWith('conversation', 'answer', 'https://images.example/photo.png', expect.any(AbortSignal));
+  });
   it.each([
     { mode: 'openui', generated: false }, { mode: 'markdown', generated: false },
     { mode: 'openui', generated: true }, { mode: 'markdown', generated: true },
@@ -49,7 +58,8 @@ describe('OpenUI document images', () => {
     await screen.findByRole('img', { name: 'Source image' });
     expect(Boolean(screen.queryByText('openui.image.generated'))).toBe(generated);
     expect(screen.getByRole('link', { name: 'openui.image.preview' })).toHaveAttribute('href', 'blob:document-image');
-    expect(screen.getByRole('link', { name: 'openui.image.download' })).toHaveAttribute('download');
+    if (mode === 'markdown') expect(screen.getByRole('link', { name: 'openui.image.download' })).toHaveAttribute('download');
+    else expect(screen.getByTestId('image-actions')).toHaveAttribute('data-source', source);
     view.unmount();
     render(image);
     await screen.findByRole('img', { name: 'Source image' });
@@ -161,10 +171,11 @@ describe('OpenUI document images', () => {
   });
 
   it('resolves gallery and nested image cards using the same citation reference', async () => {
+    vi.mocked(URL.createObjectURL).mockImplementation((blob) => blob === imageBlob ? 'blob:document-image' : 'blob:web-image');
     const gallery = 'root = Card([gallery])\ngallery = ImageGallery(["Original chart", "Web photo"], ["[1]", "https://example.test/photo.png"])';
     const { rerender } = render(<OpenUiRenderer content={gallery} isStreaming={false} onAction={vi.fn()} citations={[citation]} citationScope={scope} />);
     expect(await screen.findByRole('img', { name: 'Original chart' })).toHaveAttribute('src', 'blob:document-image');
-    expect(screen.getByRole('img', { name: 'Web photo' })).toHaveAttribute('src', 'https://example.test/photo.png');
+    expect(screen.getByRole('img', { name: 'Web photo' })).toHaveAttribute('src', 'blob:web-image');
     fireEvent.error(screen.getByRole('img', { name: 'Web photo' }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Original chart' })).toHaveAttribute('src', 'blob:document-image');
