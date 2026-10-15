@@ -117,6 +117,19 @@ describe('AdminConnectorController MCP inspection', () => {
     expect(connectorAuthService.resolveRuntimeAuth).not.toHaveBeenCalled();
   });
 
+  it('denies OAuth-active stdio inspections on :id/inspect before token retrieval', async () => {
+    const { controller, connectorAdminAuthService } = createController({
+      ...playbookConnector,
+      mcpTransportType: 'stdio',
+      mcpServerUrl: '/usr/local/bin/some-mcp',
+    });
+
+    await expect(controller.inspectConnector('connector-1', user, { useOAuth: true } as never))
+      .rejects.toBeInstanceOf(BadRequestException);
+    // The useOAuth branch must never reach admin token retrieval.
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+  });
+
   it('denies stdio connectors on the admin inspect endpoint before OAuth token retrieval', async () => {
     const { controller, connectorAdminAuthService, connectorAuthService } = createController({
       ...playbookConnector,

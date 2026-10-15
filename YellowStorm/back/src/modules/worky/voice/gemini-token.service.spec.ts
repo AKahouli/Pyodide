@@ -102,4 +102,26 @@ describe('GeminiTokenService', () => {
     createMock.mockResolvedValue({ name: 'ephemeral-none' });
     await expect(svc({}, null).mintSessionToken()).rejects.toThrow(/worky-concierge/);
   });
+
+  it('strips embedded URL credentials before browser toolEndpoints and logs hosts only', async () => {
+    createMock.mockResolvedValue({ name: 'ephemeral-canary' });
+    const canary = 'voice-canary-7c31';
+    const service = svc();
+    const connectors = (service as unknown as { connectors: { findRuntimeBySlug: jest.Mock } }).connectors;
+    connectors.findRuntimeBySlug.mockImplementation((slug: string) =>
+      slug === 'worky-concierge'
+        ? { slug, id: 'c1', mcpServerUrl: `https://user:${canary}@mcp.example.test/mcp`, actions: CONNECTOR_ACTIONS }
+        : null,
+    );
+    const logSpy = jest.spyOn((service as unknown as { logger: { log: jest.Mock } }).logger, 'log');
+
+    const env = await service.mintSessionToken();
+
+    for (const url of Object.values(env.toolEndpoints)) {
+      expect(url).toBe('https://mcp.example.test/mcp');
+      expect(url).not.toContain(canary);
+    }
+    const logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(logged).not.toContain(canary);
+  });
 });

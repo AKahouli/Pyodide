@@ -394,7 +394,8 @@ export class ConnectorService {
   }
 
   async importFromMcp(createdBy: string, transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
-    assertNoUrlCredentials(serverUrl);
+    // inspectMcp validates the transport BEFORE the endpoint URL, so a denied
+    // import always surfaces the deterministic ERR_3102 400 first (WP-01/WP02.6).
     const inspectResult = await this.inspectMcp(transportType, serverUrl, serverConfig, createdBy);
     if (inspectResult.error) {
       return inspectResult;
@@ -602,8 +603,10 @@ export class ConnectorService {
   /** Project provider/SDK errors to a client-safe message: strip credential-bearing URL userinfo and bearer tokens, cap length (WP02.8). */
   private toSafeInspectErrorMessage(err: unknown): string {
     const raw = err instanceof Error ? err.message : 'Failed to inspect MCP server';
+    // Consume ALL userinfo segments (user[:pass]@ repeated) so a second '@'
+    // cannot leave password material behind the scrub.
     const scrubbed = raw
-      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, '$1***@')
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)(?:[^@\s/]+@)+/gi, '$1***@')
       .replace(/(bearer\s+)[^\s"',;]+/gi, '$1***');
     return this.truncateValue(scrubbed, 300);
   }

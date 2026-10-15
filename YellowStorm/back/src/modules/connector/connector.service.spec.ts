@@ -1,6 +1,6 @@
 import { ConnectorService, mcpToolSafety } from './connector.service';
 import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
-import { BadRequestException } from '../exceptions';
+import { BadRequestException, ErrorCode } from '../exceptions';
 import * as childProcess from 'node:child_process';
 import type {
   ConnectorCategoryStore,
@@ -928,6 +928,27 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
       .rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('reports the transport denial before URL-credential validation on import', async () => {
+    const { service } = buildInspectionService();
+    const canary = 'import-url-canary-2b8f';
+
+    // Unsupported transport + credential-bearing URL: the deterministic
+    // ERR_3102 transport denial wins; no raw URL validation error escapes.
+    const denial = service.importFromMcp('user-1', 'stdio', `https://user:${canary}@mcp.example.test/mcp`);
+    await expect(denial).rejects.toBeInstanceOf(BadRequestException);
+    await expect(denial).rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED });
+    try {
+      await denial;
+    } catch (err) {
+      expect((err as Error).message).not.toContain(canary);
+    }
+
+    // A supported transport with a credential-bearing URL is still rejected,
+    // now deterministically (400), and never reaches the network.
+    await expect(service.importFromMcp('user-1', 'sse', `https://user:${canary}@mcp.example.test/sse`))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('still inspects approved remote transports through the MCP SDK', async () => {
     const { service } = buildInspectionService();
 
@@ -1173,6 +1194,16 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
     expect(scrubbed).not.toContain(CANARY);
     expect(scrubbed).toContain('https://***@mcp.example.test/mcp');
     expect(scrubbed).toContain('Bearer ***');
+
+    // Multiple userinfo segments: the password after a second '@' must not
+    // survive the scrub (re-review finding).
+    const multiAt = (service as unknown as {
+      toSafeInspectErrorMessage(err: unknown): string;
+    }).toSafeInspectErrorMessage(new Error(
+      `fetch failed for https://user:prefix@${CANARY}@mcp.example.test/mcp`,
+    ));
+    expect(multiAt).not.toContain(CANARY);
+    expect(multiAt).toContain('https://***@mcp.example.test/mcp');
 
     const context = (service as unknown as {
       inspectLogContext(serverUrl: string): { host: string };

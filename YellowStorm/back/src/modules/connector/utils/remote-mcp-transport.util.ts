@@ -1,3 +1,6 @@
+import { BadRequestException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+
 /**
  * The only MCP transports a backend HTTP caller may inspect or configure:
  * remote HTTP transports. Everything else (stdio and any unknown value) is
@@ -16,7 +19,8 @@ export function isRemoteInspectableMcpTransport(value: unknown): value is Remote
 /**
  * SERVER-ONLY input validation for connector endpoint URLs: rejects URLs that
  * embed credentials in the authority (user:pass@host) so secret material can
- * never enter connector storage through a URL (WP02.6).
+ * never enter connector storage through a URL (WP02.6). Deterministic 400 so
+ * callers can never distinguish validation internals from the HTTP boundary.
  */
 export function assertNoUrlCredentials(serverUrl: string): void {
   if (!serverUrl) return;
@@ -27,10 +31,16 @@ export function assertNoUrlCredentials(serverUrl: string): void {
     parsed = null;
   }
   if (parsed && (parsed.username || parsed.password)) {
-    throw new Error('MCP server URL must not contain embedded credentials');
+    throw new BadRequestException(
+      ErrorCode.BAD_REQUEST,
+      'MCP server URL must not contain embedded credentials',
+    );
   }
   if (!parsed && /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i.test(serverUrl)) {
-    throw new Error('MCP server URL must not contain embedded credentials');
+    throw new BadRequestException(
+      ErrorCode.BAD_REQUEST,
+      'MCP server URL must not contain embedded credentials',
+    );
   }
 }
 
