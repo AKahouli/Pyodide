@@ -165,6 +165,25 @@ async def test_a_retry_adopts_the_generation_its_crashed_attempt_held_before_bui
         return {"state": "ready"}
 
     monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://unused")
+    from app.jobs import task_lease_guard
+
+    class Guard:
+        def __init__(self, ownership, **kwargs):
+            assert ownership.lease_epoch == 2
+
+        async def start(self):
+            calls.append("guard:start")
+
+        async def assert_owned(self):
+            calls.append("guard:owned")
+
+        def assert_healthy(self):
+            pass
+
+        def stop(self):
+            calls.append("guard:stop")
+
+    monkeypatch.setattr(task_lease_guard, "TaskLeaseGuard", Guard)
     monkeypatch.setattr(asyncpg, "create_pool", create_pool)
     monkeypatch.setattr(postgres_jobs, "PostgresJobRepository", _Repository)
     monkeypatch.setattr(search_store, "adopt_generation", adopt)
@@ -174,4 +193,130 @@ async def test_a_retry_adopts_the_generation_its_crashed_attempt_held_before_bui
 
     assert result["ok"] is True
     # The generation is freed for this attempt before the build claims it, not reported "busy".
-    assert calls == ["claim_task", "adopt:ix-1:job-1", "build", "complete:completed", "close"]
+    assert calls == ["claim_task", "guard:start", "guard:owned", "adopt:ix-1:job-1", "build",
+                     "complete:completed", "guard:stop", "close"]
+
+
+# Reuse the guarded, primary-portable dedicated DB fixture without changing it.
+from test_graph_search_fencing import f2_db, f2_attempt  # noqa: E402,F401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["ready_crash", "ready_exhausted", "exhausted", "final_stall"])
+async def test_worker_reconciles_terminal_or_abandoned_generation(f2_attempt, monkeypatch, scenario):
+    import asyncpg
+    from app.jobs import task_lease_guard
+    from app.workers import graph_search_tasks as tasks
+    from app.workers.celery_app import SEARCH_QUEUES
+
+    pool, ix, task, job, model = f2_attempt
+    monkeypatch.setenv("SEMANTIC_TASK_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://unused")
+    if scenario.startswith("ready"):
+        # Generation committed, but old worker died before completing its task.
+        assert await search_store.finish_generation(pool, ix, "old", 0) == "ready"
+    else:
+        await pool.execute("UPDATE semantic_graph_search.index_generations SET lease_until=clock_timestamp()-interval '1 second' WHERE index_id=$1::uuid", ix)
+    before = await search_store.get_generation_by_id(pool, ix)
+    await pool.execute(
+        "UPDATE semantic_jobs.tasks SET state='queued', lease_owner=NULL,lease_expires_at=NULL,"
+        "attempt_count=$2,queue_name=$3,payload=jsonb_build_object('payload',jsonb_build_object('indexId',$4::text)) WHERE id=$1",
+        task, 1 if scenario in ("exhausted", "ready_exhausted") else 0, SEARCH_QUEUES[0], ix)
+
+    class PoolProxy:
+        def __getattr__(self, name):
+            return getattr(pool, name)
+
+        async def close(self):
+            pass
+
+    async def create_pool(*args, **kwargs):
+        return PoolProxy()
+
+    class Guard:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start(self):
+            pass
+
+        async def assert_owned(self):
+            pass
+
+        def assert_healthy(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(task_lease_guard, "TaskLeaseGuard", Guard)
+    if scenario == "final_stall":
+        async def stalled(pool, **kwargs):
+            assert await search_store.claim_generation(pool, ix, "new", 60)
+            await pool.execute("UPDATE semantic_graph_search.index_generations SET lease_until=clock_timestamp()-interval '1 second' WHERE index_id=$1::uuid", ix)
+            raise tasks.BuildStalled("no progress")
+        monkeypatch.setattr(indexer, "build_index", stalled)
+    result = await tasks._run_task(task, "new")
+    expected = "completed" if scenario.startswith("ready") else "failed"
+    assert result["jobState"] == expected
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.jobs WHERE id=$1::uuid", job) == expected
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id=$1", task) == expected
+    generation = await search_store.get_generation_by_id(pool, ix)
+    if scenario.startswith("ready"):
+        assert generation == before  # reconciliation never mutates an immutable generation
+    else:
+        assert generation["state"] == "failed"
+        assert generation["last_error_code"] == ("attempts_exhausted" if scenario == "exhausted" else "index_interrupted")
+    events = await pool.fetchval("SELECT count(*) FROM semantic_jobs.events WHERE job_id=$1::uuid", job)
+    again = await tasks._run_task(task, "new")
+    assert again["errorCode"] == "lease_unavailable"
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.events WHERE job_id=$1::uuid", job) == events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loss", ["epoch", "expired", "wrong_job", "no_task"])
+async def test_abandoned_cleanup_rejects_noncurrent_task(f2_attempt, loss):
+    from app.jobs.models import StaleLease
+    pool, ix, task, job, model = f2_attempt
+    before = await search_store.get_generation_by_id(pool, ix)
+    token = None
+    if loss == "epoch":
+        await pool.execute("UPDATE semantic_jobs.tasks SET lease_epoch=lease_epoch+1 WHERE id=$1", task)
+    elif loss == "expired":
+        await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", task)
+    elif loss == "wrong_job":
+        await pool.execute("UPDATE semantic_graph_search.index_generations SET job_id=gen_random_uuid() WHERE index_id=$1::uuid", ix)
+        before = await search_store.get_generation_by_id(pool, ix)
+    else:
+        token = search_store._task_ownership.set(None)
+    try:
+        with pytest.raises(StaleLease):
+            await search_store._fail_abandoned_generation(pool, ix, "attempts_exhausted")
+        assert await search_store.get_generation_by_id(pool, ix) == before
+    finally:
+        if token is not None:
+            search_store._task_ownership.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["ready", "failed"])
+async def test_terminal_adopt_claim_and_cleanup_are_taskfenced_noops(f2_attempt, terminal):
+    from app.jobs.models import StaleLease
+    pool, ix, task, job, model = f2_attempt
+    if terminal == "ready":
+        assert await search_store.finish_generation(pool, ix, "old", 0) == "ready"
+    else:
+        await search_store.fail_generation(pool, ix, "test", "old")
+    before = await search_store.get_generation_by_id(pool, ix)
+    assert await search_store.adopt_generation(pool, ix, job, "old") is False
+    assert await search_store.claim_generation(pool, ix, "old", 60) is False
+    assert await search_store._fail_abandoned_generation(pool, ix, "index_interrupted") == terminal
+    assert await search_store.get_generation_by_id(pool, ix) == before
+    await pool.execute("UPDATE semantic_jobs.tasks SET lease_epoch=lease_epoch+1 WHERE id=$1", task)
+    for call in (lambda: search_store.adopt_generation(pool, ix, job, "old"),
+                 lambda: search_store.claim_generation(pool, ix, "old", 60),
+                 lambda: search_store._fail_abandoned_generation(pool, ix, "index_interrupted")):
+        with pytest.raises(StaleLease):
+            await call()
+    assert await search_store.get_generation_by_id(pool, ix) == before

@@ -31,6 +31,7 @@ import asyncio
 import logging
 import time
 from functools import partial
+from functools import wraps
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -381,6 +382,18 @@ async def _write_cards(pool: Any, *, generation: dict[str, Any], owner: str, con
     return None, loaded, passages
 
 
+def _with_generation_owner(function):
+    @wraps(function)
+    async def build(pool: Any, *, owner: str, **kwargs: Any):
+        token = search_store._generation_owner.set(owner)
+        try:
+            return await function(pool, owner=owner, **kwargs)
+        finally:
+            search_store._generation_owner.reset(token)
+    return build
+
+
+@_with_generation_owner
 async def build_index(pool: Any, *, index_id: str, owner: str,
                       report: Callable[[dict[str, Any]], Awaitable[None]],
                       profile: EmbeddingProfile | None = None,
