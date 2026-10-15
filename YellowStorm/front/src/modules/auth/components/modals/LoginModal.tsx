@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '../../useAuth';
@@ -138,7 +139,7 @@ export const LoginModal = memo(function LoginModal({ open, onOpenChange, onSwitc
                 <FormItem>
                   <FormLabel>{t('login.password.label')}</FormLabel>
                   <FormControl>
-                    <Input type='password' placeholder={t('login.password.placeholder')} autoComplete='current-password' disabled={isSubmitting} {...field} />
+                    <PasswordInput placeholder={t('login.password.placeholder')} autoComplete='current-password' disabled={isSubmitting} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
