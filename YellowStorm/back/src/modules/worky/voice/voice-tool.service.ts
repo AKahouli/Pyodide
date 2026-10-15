@@ -5,7 +5,7 @@ import { WorkyOrchestratorGrpcClientService } from '../services/worky-orchestrat
 import { asAuthUser } from '@common/auth/auth-user';
 import { WorkyTurnContextService } from '../services/worky-turn-context.service';
 import { WorkyTaskService } from '../services/worky-task.service';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { requesterOpts } from '../worky-requester.util';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';

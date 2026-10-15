@@ -17,6 +17,7 @@ The Admin module provides administrative functionality for managing users, roles
 - [Components Reference](#components-reference)
 - [Appearance](#appearance)
 - [Connectors](#connectors)
+- [User Invitations](#user-invitations)
 - [Testing](#testing)
 - [Best Practices](#best-practices)
 
@@ -26,7 +27,7 @@ The Admin module provides administrative functionality for managing users, roles
 
 The admin module is a permission-gated section of the application that allows authorized users to:
 
-- **Users**: View, suspend/activate users, assign plans and roles
+- **Users**: View, invite by email, suspend/activate users, assign plans and roles
 - **Roles**: Create, update, delete roles and manage permissions
 - **Plans**: Create and manage subscription plans
 - **Analytics**: View user, usage, conversation, and quality metrics
@@ -189,7 +190,7 @@ front/src/modules/admin/
 │
 └── pages/
     ├── index.ts          # Page exports
-    ├── UsersPage.tsx     # User management
+    ├── UsersPage.tsx     # User management (incl. super-admin invite dialog)
     ├── RolesPage.tsx     # Role management
     ├── PlansPage.tsx     # Plan management
     ├── AnalyticsPage.tsx # Analytics dashboard
@@ -821,6 +822,45 @@ The callback page returns HTML that posts the result to the opener window:
   setTimeout(function() { window.close(); }, 500);
 </script>
 ```
+
+---
+
+## User Invitations
+
+A **Super Admin** can invite a user by email from `/#/admin/users`. The invitee receives a professional HTML email whose unique link (valid 24h) opens the public register modal with the invited address pre-filled and locked. The dialog also picks the **roles** and **forfait (plan)** the invitee receives: invited users are activated on registration (no manual approval, no pending page) with those grants applied.
+
+### UI
+
+- An **Invite user** button renders in the `UsersPage` header only when `isSuperAdmin(hasPermission)` is true.
+- It opens a `Dialog` with the email field, a **Forfait** `Select` (the default plan is pre-selected) and a **Rôles** `Select`. The submit button is disabled until the address matches a basic email pattern; while the request is in flight it shows a loading state and blocks re-submits (Enter also submits).
+- Success shows a `sonner` toast (`users.toasts.invite.title` / `.description`) and closes the dialog; failure shows `users.toasts.invite.error`.
+
+```tsx
+import { inviteUser } from '../api';
+
+await inviteUser({ email, roleIds: [...selectedRoleIds], planId });   // POST /admin/users/invite
+```
+
+### API & types (`api.ts` / `types.ts`)
+
+| Item | Value |
+|------|-------|
+| Endpoint | `API_ENDPOINTS.adminUsers.invite` → `POST /admin/users/invite` |
+| Request | `InviteUserRequest { email: string; roleIds?: string[]; planId?: string }` |
+| Response | `InviteUserResponse { message: string; email: string; expiresAt: string }` |
+| Permission | Super Admin (`*`) — enforced on the backend, mirrored by the button gate |
+
+The backend rejects an already-registered address with `409 USER_ALREADY_EXISTS`, an unknown/inactive role with `400`, an unknown plan with `404`, and a send failure with `503 ERR_1203`; all surface through the shared error-code i18n layer.
+
+### Copy
+
+Locale keys live in `src/modules/admin/locales/{en,fr}.json`:
+
+- `users.actions.invite`
+- `users.toasts.invite.{title,description,error}`
+- `users.modals.invite.{title,description,email.label,email.placeholder,plan.label,plan.placeholder,plan.defaultBadge,roles.label,roles.placeholder,action,loading}`
+
+The invite landing/registration copy lives in the auth module (`register.invite.*`, `landing.invite.errorTitle`); see [front auth README](../auth/README.md#invitation-flow).
 
 ---
 

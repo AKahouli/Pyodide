@@ -129,6 +129,7 @@ export const API_ENDPOINTS = {
     sessions: '/auth/sessions',
     forgotPassword: '/auth/forgot-password',
     resetPassword: '/auth/reset-password',
+    invite: '/auth/invite',
     oauthProviders: '/auth/providers',
     oauthExchange: '/auth/providers/exchange',
   },
@@ -402,6 +403,7 @@ export const API_ENDPOINTS = {
   },
   adminUsers: {
     base: '/admin/users',
+    invite: '/admin/users/invite',
     byId: (id: string) => `/admin/users/${id}`,
     suspend: (id: string) => `/admin/users/${id}/suspend`,
     activate: (id: string) => `/admin/users/${id}/activate`,

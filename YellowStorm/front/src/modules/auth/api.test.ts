@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mockApiClient } from '@/test/setup';
-import { getAuthProviders, getOAuthProviders, exchangeOAuthLogin } from './api';
+import { getAuthProviders, getOAuthProviders, exchangeOAuthLogin, getInviteDetails, register } from './api';
 
 describe('Auth OAuth API', () => {
   describe('getAuthProviders', () => {
@@ -70,6 +70,30 @@ describe('Auth OAuth API', () => {
 
       await expect(exchangeOAuthLogin()).rejects.toMatchObject({
         code: 'ERR_1125',
+      });
+    });
+  });
+
+  describe('invitations', () => {
+    it('resolves an invitation token for the landing page', async () => {
+      const details = { email: 'invited@example.com', expiresAt: '2030-01-01T00:00:00.000Z' };
+      mockApiClient.get.mockResolvedValue({ data: { data: details } });
+
+      const result = await getInviteDetails('tok-abc');
+
+      expect(result).toEqual(details);
+      expect(mockApiClient.get).toHaveBeenCalledWith('/auth/invite?token=tok-abc');
+    });
+
+    it('sends the invite token when registering an invited user', async () => {
+      mockApiClient.post.mockResolvedValue({ data: { data: { message: 'ok' } } });
+
+      await register({ email: 'invited@example.com', password: 'Passw0rd!', inviteToken: 'tok-abc' });
+
+      expect(mockApiClient.post).toHaveBeenCalledWith('/auth/register', {
+        email: 'invited@example.com',
+        password: 'Passw0rd!',
+        inviteToken: 'tok-abc',
       });
     });
   });

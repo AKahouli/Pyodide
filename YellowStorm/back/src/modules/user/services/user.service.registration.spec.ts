@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { UserService } from './user.service';
-import { USER_STORE, type UserRecord, type UserStore } from './persistence/user.store';
+import { RegistrationApproval, UserStatus } from '../user.types';
+import { USER_STORE, type UserRecord, type UserStore } from '../persistence/user.store';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed-password'),
@@ -125,6 +126,26 @@ describe('UserService classic registration status', () => {
     expect(user.status).toBe('inactive');
     expect(user.registrationApproval).toBe('pending');
     expect(store.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'inactive', registrationApproval: 'pending' }));
+  });
+
+  it('creates an invited user active and pre-approved with the granted roles', async () => {
+    const store = fakeStore();
+    const service = makeService(store);
+
+    const user = await service.create({
+      email: 'jane@acme.io',
+      password: 'Str0ng!pass',
+      status: UserStatus.ACTIVE,
+      registrationApproval: RegistrationApproval.APPROVED,
+      roleIds: ['role-1'],
+    });
+
+    expect(user.status).toBe('active');
+    expect(user.registrationApproval).toBe('approved');
+    expect(user.roles).toEqual(['role-1']);
+    expect(store.create).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'active', registrationApproval: 'approved', roleIds: ['role-1'] }),
+    );
   });
 
   it('does not set inactive or pending on OAuth user creation', async () => {

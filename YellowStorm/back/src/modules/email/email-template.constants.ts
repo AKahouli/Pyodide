@@ -10,6 +10,7 @@ export enum EmailTemplate {
   REGISTRATION_PENDING_ADMIN = 'registration-pending-admin',
   REGISTRATION_APPROVED = 'registration-approved',
   APP_SHARE_INVITE = 'app-share-invite',
+  USER_INVITE = 'user-invite',
 }
 
 export interface EmailTemplateConfig {
@@ -51,5 +52,9 @@ export const EMAIL_TEMPLATES: Record<EmailTemplate, EmailTemplateConfig> = {
   [EmailTemplate.APP_SHARE_INVITE]: {
     file: 'app-share-invite.html',
     subject: '{{appTitle}} — create your account',
+  },
+  [EmailTemplate.USER_INVITE]: {
+    file: 'user-invite.html',
+    subject: 'You are invited to join {{appName}}',
   },
 };

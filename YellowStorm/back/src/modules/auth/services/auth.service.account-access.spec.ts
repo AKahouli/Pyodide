@@ -1,8 +1,7 @@
 import { newObjectId } from '@common/postgres/object-id';
 import { AuthService } from './auth.service';
-import { makeSessionStoreFake, sessionRecord } from './persistence/session-store.fake';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { UserStatus } from '../user/user.types';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { UserStatus } from '../../user/user.types';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed'),
@@ -25,7 +24,6 @@ describe('AuthService account access', () => {
   });
 
   const build = (user: ReturnType<typeof buildUser>) => {
-    const sessionStore = makeSessionStoreFake();
     const humainAgentService = {
       ensureForUser: jest.fn().mockResolvedValue(undefined),
       syncFromProfile: jest.fn().mockResolvedValue(undefined),
@@ -38,48 +36,33 @@ describe('AuthService account access', () => {
       assignPlan: jest.fn().mockResolvedValue(undefined),
       updateLastLogin: jest.fn().mockResolvedValue(undefined),
     };
-    const jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     const configService = { get: jest.fn((_key: string, def: unknown) => def) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    const emailService = { isAvailable: jest.fn().mockReturnValue(false) };
-    const emailTemplateRenderer = {
-      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+    const authEmailService = {
+      sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+      sendNewLocationAlertEmail: jest.fn().mockResolvedValue(undefined),
     };
-    const usageService = {
-      getDefaultPlan: jest.fn().mockResolvedValue({
-        _id: newObjectId(),
-        slug: 'unlimited',
-        workspaceStorageBytes: 100,
-      }),
+    const sessionService = {
+      generateTokens: jest.fn().mockResolvedValue({ accessToken: 'signed.jwt.token', refreshToken: 'sess.secret', expiresIn: 900 }),
+      isNewLoginLocation: jest.fn().mockResolvedValue(false),
+      invalidateAllUserSessions: jest.fn().mockResolvedValue(undefined),
     };
     const authorizationService = {
       getUserPermissions: jest.fn().mockResolvedValue([]),
       getUserRoleNames: jest.fn().mockResolvedValue([]),
     };
-    const systemService = {
-      isRegistrationEnabled: jest.fn().mockReturnValue(true),
-      getLoginSettingsSync: () => ({ accessExpiry: '3600m', refreshExpiry: '7d' }),
-    };
-    const workspaceInitializer = {
-      getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined),
-    };
     const service = new AuthService(
-      sessionStore as never,
       userService as never,
-      jwtService as never,
+      sessionService as never,
       configService as never,
       logger as never,
-      emailService as never,
-      emailTemplateRenderer as never,
-      usageService as never,
+      authEmailService as never,
       authorizationService as never,
-      systemService as never,
-      { getSettings: jest.fn().mockResolvedValue({ throttle: { limit: 100, windowSeconds: 60 }, auth: { maxSessionsPerUser: 10 }, documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] } }) } as never, // platformSettings
-      workspaceInitializer as never,
       humainAgentService as never,
       { assertNotLocked: jest.fn(), reserveAttempt: jest.fn().mockReturnValue(null), recordSuccess: jest.fn(), release: jest.fn() } as never, // loginLockout
     );
-    return { service, sessionStore, userService };
+    return { service, userService };
   };
 
   it('allows login for inactive users pending Super Admin approval', async () => {
@@ -112,20 +95,4 @@ describe('AuthService account access', () => {
       ),
     ).rejects.toMatchObject({ code: ErrorCode.AUTH_ACCOUNT_SUSPENDED });
   });
-
-  it('refreshes tokens for inactive users without invalidating sessions', async () => {
-    const user = buildUser({ status: UserStatus.INACTIVE });
-    const { service, sessionStore } = build(user);
-    const sessionId = 'c0000000000000000000aaa';
-    sessionStore.records.push({
-      ...sessionRecord({ id: sessionId, userId: user._id, refreshTokenHash: 'hash', tokenFamily: 'family-1' }),
-    });
-
-    await expect(
-      service.refreshTokens(`${sessionId}.token`, '127.0.0.1', 'jest-agent'),
-    ).resolves.toMatchObject({
-      accessToken: 'signed.jwt.token',
-    });
-    expect(sessionStore.invalidateByFamily).not.toHaveBeenCalled();
-});
 });

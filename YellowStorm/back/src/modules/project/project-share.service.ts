@@ -27,7 +27,7 @@ import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
-import { UserService } from '../user/user.service';
+import { UserService } from '../user/services/user.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/notification.types';
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';

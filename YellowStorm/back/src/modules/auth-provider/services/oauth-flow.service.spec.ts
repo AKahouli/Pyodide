@@ -5,8 +5,8 @@ import { newObjectId } from '@common/postgres/object-id';
 import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
 import { ProviderLinkService } from './provider-link.service';
-import { AuthService } from '@modules/auth/auth.service';
-import { UserService } from '@modules/user/user.service';
+import { SessionService } from '@modules/auth/services/session.service';
+import { UserService } from '@modules/user/services/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer } from '@modules/email';
@@ -27,7 +27,7 @@ describe('OAuthFlowService', () => {
   let providerLinkTokenModel: Record<string, jest.Mock>;
   let authProviderService: Record<string, jest.Mock>;
   let providerLinkService: Record<string, jest.Mock>;
-  let authService: Record<string, jest.Mock>;
+  let sessionService: Record<string, jest.Mock>;
   let userService: Record<string, jest.Mock>;
   let usageService: Record<string, jest.Mock>;
   let authorizationService: Record<string, jest.Mock>;
@@ -108,7 +108,7 @@ describe('OAuthFlowService', () => {
       createLink: jest.fn(),
     };
 
-    authService = {
+    sessionService = {
       generateTokens: jest.fn().mockResolvedValue({
         accessToken: 'jwt-token',
         refreshToken: 'session.refresh',
@@ -162,7 +162,7 @@ describe('OAuthFlowService', () => {
         },
         { provide: AuthProviderService, useValue: authProviderService },
         { provide: ProviderLinkService, useValue: providerLinkService },
-        { provide: AuthService, useValue: authService },
+        { provide: SessionService, useValue: sessionService },
         { provide: UserService, useValue: userService },
         { provide: UsageService, useValue: usageService },
         { provide: AuthorizationService, useValue: authorizationService },
@@ -527,7 +527,7 @@ describe('OAuthFlowService', () => {
       expect(result.accessToken).toBe('jwt-token');
       expect(result.refreshToken).toBe('session.refresh');
       expect(result.user).toBeDefined();
-      expect(authService.generateTokens).toHaveBeenCalled();
+      expect(sessionService.generateTokens).toHaveBeenCalled();
       expect(userService.updateLastLogin).toHaveBeenCalled();
     });
 

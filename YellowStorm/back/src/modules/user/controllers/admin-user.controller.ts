@@ -1,5 +1,5 @@
 import type { AuthUser } from '@common/auth/auth-user';
-import { RegistrationApproval, UserStatus } from './user.types';
+import { RegistrationApproval, UserStatus } from '../user.types';
 import {
   Controller,
   Get,
@@ -20,25 +20,28 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { Request } from 'express';
-import { UserService } from './user.service';
-import { RegistrationApprovalService } from './registration-approval.service';
-import { UsageService } from '../usage/usage.service';
-import { AuthorizationService } from '../authorization/authorization.service';
-import { AuditLogService } from '../authorization/services/audit-log.service';
-import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
-import { PermissionsGuard } from '../authorization/guards/permissions.guard';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { USER_STORE, UserRecordWithRoles, UserStore } from './persistence/user.store';
-import { Permissions } from '../authorization/constants/permissions';
+import { UserService } from '../services/user.service';
+import { RegistrationApprovalService } from '../services/registration-approval.service';
+import { UserInvitationService } from '../services/user-invitation.service';
+import { UsageService } from '../../usage/usage.service';
+import { AuthorizationService } from '../../authorization/authorization.service';
+import { AuditLogService } from '../../authorization/services/audit-log.service';
+import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
+import { PermissionsGuard } from '../../authorization/guards/permissions.guard';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { USER_STORE, UserRecordWithRoles, UserStore } from '../persistence/user.store';
+import { Permissions } from '../../authorization/constants/permissions';
 import {
   AdminListUsersQueryDto,
   AssignPlanDto,
   AdminUserResponse,
   AdminUserListResponse,
-} from './dto/admin-user.dto';
+  InviteUserDto,
+  InviteUserResponse,
+} from '../dto/admin-user.dto';
 import { Inject } from '@nestjs/common';
-import { NotFoundException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import { ConflictException, NotFoundException, BadRequestException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 @ApiTags('Admin Users')
 @ApiBearerAuth()
@@ -51,6 +54,7 @@ export class AdminUserController {
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
     private readonly auditLogService: AuditLogService,
+    private readonly userInvitationService: UserInvitationService,
     @Inject(USER_STORE) private readonly userStore: UserStore,
   ) {}
 
@@ -93,6 +97,70 @@ export class AdminUserController {
       limit,
       totalPages,
     };
+  }
+
+  @Post('invite')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Invite a user by email (Super Admin only)' })
+  @ApiResponse({ status: 200, description: 'Invitation email sent' })
+  @ApiResponse({ status: 409, description: 'User already registered' })
+  @ApiResponse({ status: 503, description: 'Email service unavailable or send failed' })
+  async inviteUser(
+    @Body() dto: InviteUserDto,
+    @CurrentUser() actor: AuthUser,
+    @Req() req: Request,
+  ): Promise<InviteUserResponse> {
+    const email = dto.email.trim().toLowerCase();
+
+    const existing = await this.userStore.findByEmail(email);
+    if (existing) {
+      throw new ConflictException(ErrorCode.USER_ALREADY_EXISTS);
+    }
+
+    const roleIds = await this.resolveInviteRoleIds(dto.roleIds);
+    const planId = dto.planId ? (await this.usageService.getPlanById(dto.planId)).id : null;
+
+    const invitation = await this.userInvitationService.invite({
+      email,
+      invitedById: actor._id.toString(),
+      roleIds,
+      planId,
+    });
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'users.invite',
+      targetType: 'User',
+      metadata: {
+        targetEmail: invitation.email,
+        expiresAt: invitation.expiresAt.toISOString(),
+        roleIds,
+        planId,
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return {
+      message: 'Invitation sent successfully',
+      email: invitation.email,
+      expiresAt: invitation.expiresAt,
+    };
+  }
+
+  /** Keep only unique, existing and active role ids; reject anything unknown. */
+  private async resolveInviteRoleIds(roleIds?: string[]): Promise<string[]> {
+    if (!roleIds?.length) return [];
+    const unique = [...new Set(roleIds)];
+    const activeRoles = await this.authorizationService.findActiveRoles();
+    const valid = new Set(activeRoles.map((role) => role.id));
+    const unknown = unique.filter((id) => !valid.has(id));
+    if (unknown.length > 0) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Unknown or inactive role');
+    }
+    return unique;
   }
 
   @Get(':id')

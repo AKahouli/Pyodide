@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { newObjectId } from '@common/postgres/object-id';
-import { UserService } from '@modules/user/user.service';
+import { UserService } from '@modules/user/services/user.service';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';

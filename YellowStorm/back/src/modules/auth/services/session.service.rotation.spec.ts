@@ -1,10 +1,10 @@
 import { newObjectId } from '@common/postgres/object-id';
-import { AuthService } from './auth.service';
-import { ConflictException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
-import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
-import { makeSessionStoreFake, sessionRecord, type SessionStoreFake } from './persistence/session-store.fake';
-import { RotationConflictError } from './persistence/session.store';
+import { SessionService } from './session.service';
+import { ConflictException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { RotationReceiptCrypto } from '../utils/rotation-receipt.crypto';
+import { makeSessionStoreFake, sessionRecord, type SessionStoreFake } from '../persistence/session-store.fake';
+import { RotationConflictError } from '../persistence/session.store';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed-new'),
@@ -50,25 +50,19 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
     const configService = { get: jest.fn((key: string, def?: unknown) => configValues[key] ?? def) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const jwtService = { sign: jest.fn().mockReturnValue('signed.access') };
-    const service = new AuthService(
+    const service = new SessionService(
       store as never,
-      { findById: jest.fn().mockResolvedValue(user) } as never,
       jwtService as never,
       configService as never,
       logger as never,
-      {} as never, // emailService
-      {} as never, // emailTemplateRenderer
-      {} as never, // usageService
       { getUserPermissions: jest.fn().mockResolvedValue(['p']), getUserRoleNames: jest.fn().mockResolvedValue(['r']) } as never, // authorizationService
-      { getLoginSettingsSync: () => ({ accessExpiry: '15m', refreshExpiry: '7d' }) } as never, // systemService
+      { findById: jest.fn().mockResolvedValue(user) } as never, // userService
       { getSettings: jest.fn().mockResolvedValue({
         throttle: { limit: 100, windowSeconds: 60 },
         auth: { maxSessionsPerUser: 10 },
         documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] },
       }) } as never, // platformSettings
-      {} as never, // workspaceInitializer
-      { ensureForUser: jest.fn() } as never, // humainAgentService
-      { assertNotLocked: jest.fn(), reserveAttempt: jest.fn().mockReturnValue(null), recordSuccess: jest.fn(), release: jest.fn() } as never, // loginLockout
+      { getLoginSettingsSync: () => ({ accessExpiry: '15m', refreshExpiry: '7d' }) } as never, // systemService
     );
     return { service, store, jwtService, predecessor };
   };
@@ -222,6 +216,37 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
       service.refreshTokens(`${predecessorId()}.old-secret`, '127.0.0.1', 'jest'),
     ).rejects.toMatchObject({ code: ErrorCode.AUTH_REFRESH_TOKEN_INVALID });
     expect(store.invalidateByFamily).toHaveBeenCalledWith('family-1');
+  });
+
+  it('allows refresh for inactive users (pending approval) without invalidating sessions', async () => {
+    const inactiveSession = sessionRecord({
+      id: 'c0000000000000000000aaa',
+      userId,
+      isValid: true,
+      expiresAt: new Date(Date.now() + 60_000),
+      tokenFamily: 'family-1',
+      refreshTokenHash: 'hashed-old',
+    });
+    const store = makeSessionStoreFake([inactiveSession]);
+    const { service } = build();
+    (service as unknown as { sessionStore: SessionStoreFake }).sessionStore = store;
+    (service as unknown as { userService: { findById: jest.Mock } }).userService.findById.mockResolvedValue({
+      _id: userId,
+      id: userId,
+      email: 'jane@acme.io',
+      status: 'inactive',
+      roles: [],
+      permissionsVersion: 1,
+      profile: {},
+      appearance: {},
+      consents: {},
+    });
+    bcrypt.compare.mockResolvedValue(true);
+
+    await expect(
+      service.refreshTokens('c0000000000000000000aaa.old-secret', '127.0.0.1', 'jest'),
+    ).resolves.toMatchObject({ accessToken: 'signed.access' });
+    expect(store.invalidateByFamily).not.toHaveBeenCalled();
   });
 });
 

@@ -5,7 +5,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '../.
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { EmailService } from '../../email/email.service';
 import { LoggerService } from '../../logger';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { GovernanceAudienceAuthorizationService } from '../../governance/services/governance-audience-authorization.service';

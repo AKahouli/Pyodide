@@ -226,3 +226,33 @@ export const identityUserGroupMembers = identitySchema.table(
   },
   (t) => [primaryKey({ columns: [t.groupId, t.userId] }), index('idx_user_group_members_user').on(t.userId)],
 );
+
+/**
+ * Super-admin user invitations: the raw token is never stored, only its SHA-256
+ * hash (same at-rest rule as password-reset / app-share tokens). `consumedAt`
+ * plus `expiresAt` back the single-use and 24h-validity checks; rows are kept
+ * for audit instead of deleted on consume.
+ */
+export const identityUserInvitations = identitySchema.table(
+  'user_invitations',
+  {
+    id: objectId('id').primaryKey(),
+    email: varchar('email', { length: 320 }).notNull(),
+    tokenHash: text('token_hash').notNull(),
+    /** Inviting super-admin; nullable because out-of-band/system issues leave no actor. */
+    invitedBy: objectId('invited_by').references(() => identityUsers.id),
+    /** Roles granted at registration (snapshot; unknown ids are skipped). */
+    roleIds: text('role_ids').array().notNull().default([]),
+    /** Plan granted at registration (snapshot; falls back to the default plan). */
+    planId: objectId('plan_id'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    ...timestamps(),
+  },
+  (t) => [
+    check('uq_user_invitations_email_shape', sql`${t.email} = lower(btrim(${t.email}))`),
+    uniqueIndex('uq_user_invitations_token_hash').on(t.tokenHash),
+    index('idx_user_invitations_email').on(t.email),
+    index('idx_user_invitations_expires_at').on(t.expiresAt),
+  ],
+);

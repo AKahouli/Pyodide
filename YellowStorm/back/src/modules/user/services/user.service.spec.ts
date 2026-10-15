@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { UserService } from './user.service';
-import { USER_STORE, type UserRecord, type UserStore } from './persistence/user.store';
+import { USER_STORE, type UserRecord, type UserStore } from '../persistence/user.store';
 
 const oid = (): string => new Types.ObjectId().toString();
 

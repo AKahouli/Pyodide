@@ -3,7 +3,7 @@
  */
 
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic } from './types';
+import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic, InviteDetails } from './types';
 import type { AppearanceSettings } from '@/modules/admin/types';
 
 /**
@@ -34,6 +34,15 @@ export async function logout(): Promise<void> {
  */
 export async function refreshToken(): Promise<RefreshResponse> {
   const response = await apiClient.post<ApiResponse<RefreshResponse>>(API_ENDPOINTS.auth.refresh);
+  return response.data.data;
+}
+
+/**
+ * Resolve a super-admin invitation token (public). Refuses invalid, used, or
+ * expired tokens with an explicit error code.
+ */
+export async function getInviteDetails(token: string): Promise<InviteDetails> {
+  const response = await apiClient.get<ApiResponse<InviteDetails>>(`${API_ENDPOINTS.auth.invite}?token=${encodeURIComponent(token)}`);
   return response.data.data;
 }
 

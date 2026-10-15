@@ -18,6 +18,8 @@ describe('RegisterModal', () => {
       activeModal: null,
       registerSuccess: false,
       registeredEmail: '',
+      inviteToken: null,
+      inviteEmail: null,
     });
   });
 
@@ -49,5 +51,29 @@ describe('RegisterModal', () => {
 
     expect(await screen.findByText('register.success.title')).toBeInTheDocument();
     expect(screen.queryByText('register.error.emailExists')).not.toBeInTheDocument();
+  });
+
+  it('locks the invited email and submits the invitation token', async () => {
+    registerMock.mockResolvedValue(undefined);
+    useAuthModalStore.setState({ inviteToken: 'tok-123', inviteEmail: 'invited@example.com' });
+
+    render(<RegisterModal open onOpenChange={vi.fn()} onSwitchToLogin={vi.fn()} />);
+
+    const emailInput = screen.getByLabelText('register.email.label');
+    await waitFor(() => expect(emailInput).toHaveValue('invited@example.com'));
+    expect(emailInput).toBeDisabled();
+    expect(screen.getByText('register.invite.banner')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('register.password.label'), testPassword);
+    await userEvent.type(screen.getByLabelText('register.confirmPassword.label'), testPassword);
+    await userEvent.click(screen.getByRole('button', { name: 'register.submit' }));
+
+    await waitFor(() =>
+      expect(registerMock).toHaveBeenCalledWith({
+        email: 'invited@example.com',
+        password: testPassword,
+        inviteToken: 'tok-123',
+      }),
+    );
   });
 });
