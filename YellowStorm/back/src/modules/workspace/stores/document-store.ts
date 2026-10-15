@@ -100,6 +100,10 @@ export interface DocumentStore {
   renameFolder(id: string, folderName: string): Promise<WorkspaceDocumentRecord | null>;
   /** null parent = move to root. */
   setParent(id: string, parentId: string | null): Promise<void>;
+  /** Hold the direct-upload row lock across storage PUT/publication; missing/non-uploading rows cannot publish. */
+  withUploadingDocument<T>(id: string, action: () => Promise<T>): Promise<T>;
+  /** Claim old direct reservations without waiting for or deleting live row-locked writers. */
+  deleteAbandonedDirectUploads(createdBefore: Date): Promise<WorkspaceDocumentRecord[]>;
   findExpiredPendingUploads(now: Date, legacyCreatedBefore: Date): Promise<WorkspaceDocumentRecord[]>;
   /** Atomically claim a pending upload for cleanup; never delete an already completed upload. */
   deletePendingUpload(id: string, workspaceId: string): Promise<WorkspaceDocumentRecord | null>;

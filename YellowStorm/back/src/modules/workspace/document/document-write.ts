@@ -250,14 +250,11 @@ export class WorkspaceDocumentWrite {
       );
     }
 
-    // Verify object exists in Ceph S3 (skip for folders)
-    if (!document.isFolder && document.path) {
-      const exists = await this.documentService.exists(document.path);
-      if (!exists) {
-        throw new BadRequestException(
-          'Document was not uploaded to storage',
-        );
-      }
+    if (!document.isFolder) {
+      const stored = document.path ? await this.documentService.getMetadata(document.path) : null;
+      if (!stored) throw new BadRequestException('Unable to verify uploaded document in storage; retry confirmation');
+      if (stored.size !== document.size) throw new BadRequestException('Uploaded document size does not match the reserved size');
+      await this.support.validateFile(document.originalName, document.mimeType, stored.size);
     }
 
     // Update document status
@@ -821,24 +818,30 @@ export class WorkspaceDocumentWrite {
     mimeType: string,
     folder: string,
   ): Promise<Awaited<ReturnType<DocumentStore['create']>>> {
+    const objectPath = `${folder}/${this.support.uploadFilename(reserved.id, reserved.originalName)}`;
+    // Persist the immutable object key before PUT so a crashed worker's blob is recoverable.
+    await this.documentStore.updateById(reserved.id, { path: objectPath });
     let uploadedPath: string | undefined;
     try {
-      const uploaded = await this.documentService.upload(file, reserved.originalName, mimeType, {
-        folder,
-        generateUniqueName: false,
-        customFileName: this.support.uploadFilename(reserved.id, reserved.originalName),
+      return await this.documentStore.withUploadingDocument(reserved.id, async () => {
+        uploadedPath = objectPath;
+        const uploaded = await this.documentService.upload(file, reserved.originalName, mimeType, {
+          folder,
+          generateUniqueName: false,
+          customFileName: this.support.uploadFilename(reserved.id, reserved.originalName),
+        });
+        uploadedPath = uploaded.blobPath;
+        const completed = await this.documentStore.updateById(reserved.id, {
+          filename: uploaded.storedName,
+          path: uploaded.blobPath,
+          url: uploaded.url,
+          contentHash: uploaded.contentHash,
+          status: DocumentStatus.COMPLETED,
+          uploadedAt: new Date(),
+        });
+        if (!completed) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document removed during upload');
+        return completed;
       });
-      uploadedPath = uploaded.blobPath;
-      const completed = await this.documentStore.updateById(reserved.id, {
-        filename: uploaded.storedName,
-        path: uploaded.blobPath,
-        url: uploaded.url,
-        contentHash: uploaded.contentHash,
-        status: DocumentStatus.COMPLETED,
-        uploadedAt: new Date(),
-      });
-      if (!completed) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document removed during upload');
-      return completed;
     } catch (error) {
       if (uploadedPath) await this.documentService.delete(uploadedPath).catch((cleanupError: unknown) => {
         this.logger.warn('Failed to delete blob after direct upload registration failure', {

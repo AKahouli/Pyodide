@@ -325,6 +325,26 @@ export class PgDocumentStore implements DocumentStore {
       .where(eq(DOCUMENTS.id, id));
   }
 
+  async withUploadingDocument<T>(id: string, action: () => Promise<T>): Promise<T> {
+    return withTransaction(this.db, async () => {
+      const [row] = await this.q.select({ id: DOCUMENTS.id }).from(DOCUMENTS)
+        .where(and(eq(DOCUMENTS.id, id), eq(DOCUMENTS.status, 'uploading'))).for('update');
+      if (!row) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Upload reservation no longer exists');
+      return action();
+    });
+  }
+
+  async deleteAbandonedDirectUploads(createdBefore: Date): Promise<WorkspaceDocumentRecord[]> {
+    return withTransaction(this.db, async () => {
+      const abandoned = await this.q.select({ id: DOCUMENTS.id }).from(DOCUMENTS)
+        .where(and(eq(DOCUMENTS.status, 'uploading'), eq(DOCUMENTS.isFolder, false),
+          sql`${DOCUMENTS.createdAt} < ${createdBefore}`)).limit(100).for('update', { skipLocked: true });
+      if (!abandoned.length) return [];
+      const deleted = await this.q.delete(DOCUMENTS).where(inArray(DOCUMENTS.id, abandoned.map(row => row.id))).returning();
+      return deleted.map(documentRowToRecord);
+    });
+  }
+
   async findExpiredPendingUploads(now: Date, legacyCreatedBefore: Date): Promise<WorkspaceDocumentRecord[]> {
     const rows = await this.q.select().from(DOCUMENTS).where(and(
       eq(DOCUMENTS.status, 'pending'), eq(DOCUMENTS.isFolder, false),

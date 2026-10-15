@@ -19,9 +19,9 @@ describeIntegration('simultaneous upload lifecycle', () => {
   const logger = { setContext: jest.fn(), debug: jest.fn(), log: jest.fn(), warn: jest.fn() };
   const config = { get: (_key: string, fallback: unknown) => fallback };
 
-  async function setup(quota = 1024) {
+  async function setup(quota = 1024, workspaceOwner = owner) {
     const workspace = await workspaces.create({ name: 'Upload concurrency QA', alias: newObjectId(),
-      storagePrefix: newObjectId(), createdBy: owner, allocatedStorage: quota });
+      storagePrefix: newObjectId(), createdBy: workspaceOwner, allocatedStorage: quota });
     fixtures.push(workspace.id);
     const blobs = new Map<string, Buffer>();
     const storage = {
@@ -33,6 +33,10 @@ describeIntegration('simultaneous upload lifecycle', () => {
       }),
       generateSasUrl: jest.fn(async (path: string) => `https://example.invalid/${path}`),
       exists: jest.fn(async () => true),
+      getMetadata: jest.fn(async (path: string) => {
+        const record = (await documents.findAllByWorkspaceId(workspace.id)).find(d => d.path === path);
+        return record ? { size: record.size } : null;
+      }),
       delete: jest.fn(async (path: string) => { blobs.delete(path); }),
     };
     const support = new WorkspaceDocumentSupport(documents, {
@@ -45,7 +49,7 @@ describeIntegration('simultaneous upload lifecycle', () => {
         return { allowed: size <= current.allocatedStorage - current.usedStorage,
           available: current.allocatedStorage - current.usedStorage };
       },
-      getStorageContext: async () => ({ ownerUserId: owner, storagePrefix: workspace.storagePrefix }),
+      getStorageContext: async () => ({ ownerUserId: workspaceOwner, storagePrefix: workspace.storagePrefix }),
       updateStorageUsage: (id: string, usedStorage: number, documentCount: number) =>
         workspaces.incrementCounters(id, { usedStorage, documentCount }),
     };
@@ -138,6 +142,79 @@ describeIntegration('simultaneous upload lifecycle', () => {
     expect(await documents.findById(live.documentId)).toMatchObject({ status: 'completed' });
     await expect(t.write.requestUploadUrl(t.workspace.id, owner,
       { filename: 'retry.png', mimeType: 'image/png', size: 700 })).resolves.toBeDefined();
+  });
+
+  it('single and bulk reject wrong physical sizes and unavailable metadata without publication or deletion', async () => {
+    const t = await setup();
+    const single = await t.write.requestUploadUrl(t.workspace.id, owner,
+      { filename: 'single.png', mimeType: 'image/png', size: 300 });
+    const bulk = await t.bulk.initiateBulkUpload(t.workspace.id, owner, { files: [
+      { filename: 'bulk.png', mimeType: 'image/png', size: 300 },
+    ] });
+    t.storage.getMetadata.mockResolvedValue({ size: 700 });
+    await expect(t.write.confirmUpload(t.workspace.id, owner, single.documentId)).rejects.toThrow('size does not match');
+    expect((await t.bulk.completeBulkUpload(t.workspace.id, owner, bulk.sessionId)).failed.count).toBe(1);
+    t.storage.getMetadata.mockResolvedValue(null);
+    await expect(t.write.confirmUpload(t.workspace.id, owner, single.documentId)).rejects.toThrow('Unable to verify');
+    expect((await t.bulk.completeBulkUpload(t.workspace.id, owner, bulk.sessionId)).failed.count).toBe(1);
+    expect(t.storage.delete).not.toHaveBeenCalled();
+    expect(await workspaces.findById(t.workspace.id)).toMatchObject({ usedStorage: 0, documentCount: 0 });
+    expect((await documents.findAllByWorkspaceId(t.workspace.id)).every(d => d.status === 'pending')).toBe(true);
+    t.storage.getMetadata.mockResolvedValue({ size: 300 });
+    await t.write.confirmUpload(t.workspace.id, owner, single.documentId, false, { autoIndex: false });
+    await t.bulk.completeBulkUpload(t.workspace.id, owner, bulk.sessionId, false, false);
+    expect(await workspaces.findById(t.workspace.id)).toMatchObject({ usedStorage: 600, documentCount: 2 });
+  });
+
+  it('cleanup skips a live direct transfer despite old age and recovers a crashed reservation', async () => {
+    const t = await setup();
+    let release!: () => void;
+    let started!: () => void;
+    const uploading = new Promise<void>(resolve => { started = resolve; });
+    const finish = new Promise<void>(resolve => { release = resolve; });
+    const originalUpload = t.storage.upload.getMockImplementation()!;
+    t.storage.upload.mockImplementationOnce(async (...args) => {
+      started(); await finish; return originalUpload(...args);
+    });
+    const transfer = t.write.uploadSmallFile(t.workspace.id, owner, Buffer.from('live'), 'live.png', 'image/png', undefined, false, false);
+    await uploading;
+    try {
+      expect(await documents.deleteAbandonedDirectUploads(new Date(Date.now() + 60000))).toEqual([]);
+    } finally { release(); }
+    await transfer;
+    const crashed = await documents.create({ id: newObjectId(), workspaceId: t.workspace.id, createdBy: owner,
+      originalName: 'crashed.png', mimeType: 'image/png', size: 700, path: `${owner}/crashed.png`, status: 'uploading' });
+    const recovered = await documents.deleteAbandonedDirectUploads(new Date(Date.now() + 60000));
+    expect(recovered.map(d => d.id)).toEqual([crashed.id]);
+    expect(await new PgDocumentStore(db).findById(crashed.id)).toBeNull();
+    await expect(documents.withUploadingDocument(crashed.id, async () => undefined)).rejects.toThrow('reservation no longer exists');
+    expect((await documents.findAllByWorkspaceId(t.workspace.id))).toHaveLength(1);
+  });
+
+  it('two users upload simultaneously to isolated quotas and reload distinct records and object bytes', async () => {
+    const secondOwner = 'b2b2b2b2b2b2b2b2b2b2b2b2';
+    const a = await setup(700, owner);
+    const b = await setup(700, secondOwner);
+    const results = await Promise.allSettled([
+      a.write.uploadSmallFile(a.workspace.id, owner, Buffer.alloc(600, 1), 'same.png', 'image/png', undefined, false, false),
+      a.write.uploadSmallFile(a.workspace.id, owner, Buffer.alloc(600, 2), 'same.png', 'image/png', undefined, false, false),
+      b.write.uploadSmallFile(b.workspace.id, secondOwner, Buffer.alloc(600, 3), 'same.png', 'image/png', undefined, false, false),
+      b.write.uploadSmallFile(b.workspace.id, secondOwner, Buffer.alloc(600, 4), 'same.png', 'image/png', undefined, false, false),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(2);
+    const reloaded = new PgDocumentStore(db);
+    const aFiles = await reloaded.findAllByWorkspaceId(a.workspace.id);
+    const bFiles = await reloaded.findAllByWorkspaceId(b.workspace.id);
+    expect(aFiles).toHaveLength(1); expect(bFiles).toHaveLength(1);
+    expect(aFiles[0].path).toMatch(new RegExp(`^${owner}/`));
+    expect(bFiles[0].path).toMatch(new RegExp(`^${secondOwner}/`));
+    expect(await reloaded.findByIdAndWorkspace(aFiles[0].id, b.workspace.id)).toBeNull();
+    expect(await reloaded.findByIdAndWorkspace(bFiles[0].id, a.workspace.id)).toBeNull();
+    expect(a.blobs.get(aFiles[0].path!)?.length).toBe(600);
+    expect(b.blobs.get(bFiles[0].path!)?.length).toBe(600);
+    expect(a.blobs.get(aFiles[0].path!)).not.toEqual(b.blobs.get(bFiles[0].path!));
+    expect(await workspaces.findById(a.workspace.id)).toMatchObject({ usedStorage: 600, documentCount: 1 });
+    expect(await workspaces.findById(b.workspace.id)).toMatchObject({ usedStorage: 600, documentCount: 1 });
   });
 
   it('URL issuance failures and partial bulk initialization release pending reservations', async () => {

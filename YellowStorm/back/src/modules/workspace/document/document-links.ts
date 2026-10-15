@@ -206,6 +206,7 @@ export class WorkspaceDocumentLinks {
     nameFromUrl: boolean,
     options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<void> {
+    let unregisteredPath: string | undefined;
     try {
       await this.urlDownloader.assertUrlIsSafe(url);
 
@@ -236,13 +237,14 @@ export class WorkspaceDocumentLinks {
       const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
         workspaceId,
       );
-      const sanitizedName = this.support.sanitizeFilename(effectiveName);
+      const sanitizedName = this.support.uploadFilename(documentId, effectiveName);
       const uploaded = await this.documentService.upload(pdf, effectiveName, 'application/pdf', {
         folder: `${ownerUserId}/${storagePrefix}`,
         generateUniqueName: false,
         customFileName: sanitizedName,
       });
 
+      unregisteredPath = uploaded.blobPath;
       const completion = {
         filename: uploaded.storedName,
         path: uploaded.blobPath,
@@ -265,6 +267,8 @@ export class WorkspaceDocumentLinks {
         completed = await this.documentStore.updateById(documentId, completion);
       }
 
+      if (!completed) throw new Error('Document removed during conversion');
+      unregisteredPath = undefined;
       if (completed) {
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, completed);
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, completed);
@@ -277,6 +281,10 @@ export class WorkspaceDocumentLinks {
 
       this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
     } catch (error) {
+      if (unregisteredPath) await this.documentService.delete(unregisteredPath).catch((cleanupError: unknown) => {
+        this.logger.warn('Failed to delete unregistered converted PDF', { documentId,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
+      });
       const message = error instanceof Error ? error.message : 'Link conversion failed';
       const failed = await this.documentStore.updateById(
         documentId,

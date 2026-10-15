@@ -70,6 +70,8 @@ function makeFakeDocumentStore(overrides: Record<string, unknown> = {}) {
     renameFolder: jest.fn(async (id: string, folderName: string) => ({ id, folderName, originalName: folderName })),
     mergeMetadata: jest.fn(async () => undefined),
     setParent: jest.fn(async () => undefined),
+    withUploadingDocument: jest.fn(async (_id: string, action: () => Promise<unknown>) => action()),
+    deleteAbandonedDirectUploads: jest.fn(async () => []),
     findExpiredPendingUploads: jest.fn(async () => []),
     deletePendingUpload: jest.fn(async (id: string) => store.findById(id)),
     deleteById: jest.fn(async () => undefined),
@@ -1342,7 +1344,7 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
   let service: WorkspaceDocumentService;
   let documentStore: ReturnType<typeof makeFakeDocumentStore>;
   let sessionStore: ReturnType<typeof makeFakeSessionStore>;
-  let documentService: { exists: jest.Mock; delete: jest.Mock };
+  let documentService: { exists: jest.Mock; getMetadata: jest.Mock; delete: jest.Mock };
   let indexingService: { queueDocument: jest.Mock };
   let workspaceService: { updateStorageUsage: jest.Mock };
   let notificationsService: { sendToUser: jest.Mock };
@@ -1394,6 +1396,7 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     sessionStore = makeFakeSessionStore();
     documentService = {
       exists: jest.fn().mockResolvedValue(true),
+      getMetadata: jest.fn().mockResolvedValue({ size: 100 }),
       delete: jest.fn().mockResolvedValue(undefined),
     };
     indexingService = {
@@ -1433,7 +1436,7 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
             getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
             getAllowedMimeTypesForExtension: jest.fn(() => ['application/pdf']),
             ensureDefaultSettings: jest.fn(),
-            getSettings: jest.fn(),
+            getSettings: jest.fn().mockResolvedValue({ maxFileSizeMb: 500 }),
           },
         },
         { provide: LoggerService, useValue: logger },
@@ -1468,43 +1471,22 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     expect(doc.metadata.autoIndexRequested).toBe('false');
   });
 
-  it('treats HeadObject 403 as present and still queues indexing', async () => {
+  it.each([403, 500])('fails closed on metadata HTTP %i and preserves the pending row for retry', async (status) => {
     const doc = makeDoc();
     documentStore.findById.mockResolvedValue(doc);
     sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
-    documentService.exists.mockRejectedValue(
-      Object.assign(new Error('UnknownError'), {
-        name: 'Unknown',
-        $metadata: { httpStatusCode: 403 },
-      }),
-    );
-
-    const result = await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, true, true);
-
-    expect(result.status).toBe('success');
-    expect(result.successful.count).toBe(1);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('HeadObject returned 403'),
-      expect.objectContaining({ path: doc.path }),
-    );
-    expect(indexingService.queueDocument).toHaveBeenCalledWith(DOC_ID, true);
-  });
-
-  it('rethrows non-403 exists failures', async () => {
-    const doc = makeDoc();
-    documentStore.findById.mockResolvedValue(doc);
-    sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
-    documentService.exists.mockRejectedValue(
-      Object.assign(new Error('Boom'), {
-        name: 'InternalError',
-        $metadata: { httpStatusCode: 500 },
-      }),
-    );
-
-    await expect(
-      service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true),
-    ).rejects.toThrow('Boom');
+    documentService.getMetadata.mockRejectedValue(Object.assign(new Error('Storage unavailable'), {
+      $metadata: { httpStatusCode: status },
+    }));
+    const result = await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true);
+    expect(result.status).toBe('failed');
+    expect(result.failed.count).toBe(1);
+    expect(documentStore.markUploaded).not.toHaveBeenCalled();
+    expect(documentStore.deletePendingUpload).not.toHaveBeenCalled();
+    expect(documentService.delete).not.toHaveBeenCalled();
     expect(indexingService.queueDocument).not.toHaveBeenCalled();
+    documentService.getMetadata.mockResolvedValue({ size: 100 });
+    expect((await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true)).status).toBe('success');
   });
 });
 

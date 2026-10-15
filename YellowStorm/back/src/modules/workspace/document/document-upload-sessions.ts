@@ -313,105 +313,61 @@ export class WorkspaceDocumentUploadSessions {
         continue;
       }
 
-      // Check if blob exists (skip for folders). Ceph/S3 often returns a transient
-      // 403 Unknown on HeadObject right after a browser presigned PUT; do not fail
-      // the whole bulk complete (and skip auto-index) when that happens — the client
-      // already reported a successful upload for this session file.
-      let exists = false;
-      if (document.isFolder) {
-        exists = false;
-      } else if (document.path) {
-        try {
-          exists = await this.documentService.exists(document.path);
-        } catch (error) {
-          const httpStatus = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
-            ?.httpStatusCode;
-          if (httpStatus === 403) {
-            this.logger.warn(
-              'HeadObject returned 403 during bulk complete; assuming object present after client PUT',
-              {
-                sessionId,
-                documentId: document.id,
-                path: document.path,
-              },
-            );
-            exists = true;
-          } else {
-            throw error;
-          }
+      // Never trust the browser's successful PUT as proof of stored bytes.
+      try {
+        if (!document.isFolder) {
+          const stored = document.path ? await this.documentService.getMetadata(document.path) : null;
+          if (!stored) throw new Error('Unable to verify uploaded document in storage; retry completion');
+          if (stored.size !== document.size) throw new Error('Uploaded document size does not match the reserved size');
+          await this.support.validateFile(document.originalName, document.mimeType, stored.size);
         }
-      }
-
-      if (exists || document.isFolder) {
-        // Mark as completed
-        const updated = await this.documentStore.markUploaded(document.id, {
-          status: DocumentStatus.COMPLETED,
-          uploadedAt: new Date(),
-          url: document.path,
-          metadata: {
-            ...document.metadata,
-            deepSearchRequested: String(Boolean(deepSearch)),
-            autoIndexRequested: String(autoIndex),
-          },
-        });
-        if (!updated) {
-          const completed = await this.documentStore.findByIdAndWorkspace(document.id, workspaceId);
-          if (completed?.status === DocumentStatus.COMPLETED) {
-            successful.count++;
-            successful.documents.push(this.support.mapToResponse(completed));
-          } else {
-            failed.count++;
-            failed.files.push({ index: file.index, filename: file.filename, error: 'Document is not pending' });
-          }
-          continue;
-        }
-        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
-        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
-
-        // Trigger indexing (non-blocking). Skip folders — nothing to index —
-        // and skip entirely when auto-indexation is disabled by the uploader.
-        if (!updated!.isFolder && autoIndex) {
-          this.indexingService.queueDocument(updated!.id, deepSearch).catch((err) => {
-            this.logger.warn('Failed to queue document for indexing', {
-              documentId: updated!.id,
-              error: err instanceof Error ? err.message : 'Unknown error',
-            });
-          });
-        }
-
-        successful.count++;
-        successful.documents.push(this.support.mapToResponse(updated!));
-      } else {
-        const claimed = await this.documentStore.deletePendingUpload(document.id, workspaceId);
-        if (!claimed) {
-          const completed = await this.documentStore.findByIdAndWorkspace(document.id, workspaceId);
-          if (completed?.status === DocumentStatus.COMPLETED) {
-            successful.count++;
-            successful.documents.push(this.support.mapToResponse(completed));
-            continue;
-          }
-        }
-        // Clean up any partial blob that might exist (skip for folders)
-        try {
-          if (claimed && !claimed.isFolder && claimed.path) {
-            await this.documentService.delete(claimed.path);
-          }
-        } catch (error) {
-          this.logger.warn('Failed to delete orphaned blob during bulk upload completion', {
-            sessionId,
-            documentId: document.id,
-            path: document.path,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-
+      } catch (error) {
+        // Retain the pending reservation for retry/expiry, including metadata outages.
         failed.count++;
-        failed.files.push({
-          index: file.index,
-          filename: file.filename,
-          error: file.error || 'File not found in storage',
+        failed.files.push({ index: file.index, filename: file.filename,
+          error: error instanceof Error ? error.message : 'Unable to verify uploaded document' });
+        continue;
+      }
+
+      // Mark as completed
+      const updated = await this.documentStore.markUploaded(document.id, {
+        status: DocumentStatus.COMPLETED,
+        uploadedAt: new Date(),
+        url: document.path,
+        metadata: {
+          ...document.metadata,
+          deepSearchRequested: String(Boolean(deepSearch)),
+          autoIndexRequested: String(autoIndex),
+        },
+      });
+      if (!updated) {
+        const completed = await this.documentStore.findByIdAndWorkspace(document.id, workspaceId);
+        if (completed?.status === DocumentStatus.COMPLETED) {
+          successful.count++;
+          successful.documents.push(this.support.mapToResponse(completed));
+        } else {
+          failed.count++;
+          failed.files.push({ index: file.index, filename: file.filename, error: 'Document is not pending' });
+        }
+        continue;
+      }
+      await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
+      await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
+
+      // Trigger indexing (non-blocking). Skip folders — nothing to index —
+      // and skip entirely when auto-indexation is disabled by the uploader.
+      if (!updated!.isFolder && autoIndex) {
+        this.indexingService.queueDocument(updated!.id, deepSearch).catch((err) => {
+          this.logger.warn('Failed to queue document for indexing', {
+            documentId: updated!.id,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
         });
       }
+
+      successful.count++;
+      successful.documents.push(this.support.mapToResponse(updated!));
+
     }
 
     // Update session status
@@ -506,6 +462,15 @@ export class WorkspaceDocumentUploadSessions {
 
     try {
       const now = new Date();
+      // Old direct writes are reclaimed only when no live writer holds their row lock.
+      const abandonedDirect = await this.documentStore.deleteAbandonedDirectUploads(
+        new Date(now.getTime() - (this.sasUrlExpiryMinutes + 10) * 60000));
+      for (const document of abandonedDirect) {
+        if (document.path) await this.documentService.delete(document.path).catch((error: unknown) => {
+          this.logger.warn('Failed to delete abandoned direct upload blob', { documentId: document.id,
+            error: error instanceof Error ? error.message : String(error) });
+        });
+      }
       const abandoned = await this.documentStore.findExpiredPendingUploads(now,
         new Date(now.getTime() - (this.sasUrlExpiryMinutes + 10) * 60000));
       for (const candidate of abandoned) {

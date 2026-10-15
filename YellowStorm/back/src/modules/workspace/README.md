@@ -40,18 +40,20 @@ Coverage: `document/document-isolation.spec.ts`,
 `stores/postgres/workspace-pg-stores.integration.spec.ts`, and
 `document/document-upload-concurrency.integration.spec.ts`. Principal tests and PostgreSQL fixtures do not
 establish isolation inside the external code-interpreter coordinator. Presigned
-completion's declared-size trust and its existing HeadObject 403 fallback remain
-separate hardening work; the concurrency checks do not establish resistance to
-malicious size declarations.
+completion requires authoritative object metadata whose size exactly matches the
+reservation, and rechecks current file limits. Missing metadata, 403 and transient
+errors fail closed and preserve the pending reservation for retry or expiry.
+Direct uploads hold a document-row lock through PUT and publication; stale
+`UPLOADING` cleanup uses `SKIP LOCKED`, preserving live transfers and reclaiming
+crash-abandoned rows. Converted PDFs use document-ID keys and delete unregistered
+blobs if quota admission fails. Focused integrity and concurrency tests cover these
+boundaries, including independent owners and simultaneous uploads.
 
 Remaining upload hardening (bounded follow-up):
 
-- Reconcile actual object length at presigned confirmation, including transient
-  metadata failures; declared length alone cannot enforce physical storage usage.
-- Recover `UPLOADING` reservations after a process crash. Normal direct-upload
-  exceptions release their reservation; abrupt process termination cannot run that
-  cleanup. An explicit reconciliation policy must avoid deleting a live transfer.
-- Clean up link-conversion blobs if post-download quota admission rejects them.
+- Presigned PUT URLs remain replayable until expiry: metadata verification proves
+  size at confirmation time, not immutable bytes afterward. Create-only storage
+  permissions or finalization to a separate key needs provider/CORS verification.
 - Denied workspace routes currently retain the empty workspace controls while
   showing an access-error toast; the backend denies mutations, but a dedicated
   access-denied view would make that outcome clearer.
