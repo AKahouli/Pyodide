@@ -271,8 +271,11 @@ async def activate_cloned_revision(pool: Any, *, model_id: str, model_version_id
                                    revision_id: str, projection_ref: str,
                                    correction_sequence: int) -> None:
     """Serve the copied revision as the clone's draft data (the clone has no binding yet)."""
-    await pool.execute(
-        "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, "
-        "data_revision_id, projection_ref, correction_sequence) VALUES ($1, 'draft', $2, $3, $4, $5) "
-        "ON CONFLICT (model_id, environment) DO NOTHING",
-        model_id, model_version_id, revision_id, projection_ref, correction_sequence)
+    from app.persistence.population_store import model_cutover_transaction
+
+    async with model_cutover_transaction(pool, model_id) as connection:
+        await connection.execute(
+            "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, "
+            "data_revision_id, projection_ref, correction_sequence) VALUES ($1, 'draft', $2, $3, $4, $5) "
+            "ON CONFLICT (model_id, environment) DO NOTHING",
+            model_id, model_version_id, revision_id, projection_ref, correction_sequence)

@@ -31,6 +31,10 @@ class ScriptedPool:
     async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
         return self.script.pop(0)
 
+    async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        assert "pg_advisory_xact_lock" in sql
+        return "SELECT 1"
+
     async def executemany(self, sql: str, rows) -> None:  # type: ignore[no-untyped-def]
         self.script.pop(0)
 
@@ -93,6 +97,12 @@ class FakeAgePool:
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
+    async def no_index_hook(*args, **kwargs):
+        # This suite scripts command-store responses. Index admission is tested
+        # separately and must not consume this pool's scripted command rows.
+        return None
+
+    monkeypatch.setattr("app.api.population_routes.request_index_quietly", no_index_hook)
     monkeypatch.setenv("SEMANTIC_RUNTIME_SERVICE_KEY", "test-key")
     monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
     monkeypatch.delenv("SEMANTIC_RUNTIME_DATABASE_URL", raising=False)

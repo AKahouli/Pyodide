@@ -139,7 +139,6 @@ async def test_f02_lease_past_its_window_is_gone_to_its_owner_while_work_continu
 # --- F03: a stale attempt must not reach serving side effects (I4, I5) ---
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_f03_stale_attempt_cannot_activate_the_draft_binding(pool: asyncpg.Pool):
     """A claims, loses its lease, B reclaims with a higher epoch. A then reaches
     the finalization path. The atomic finalization must refuse A (its lease is
@@ -294,16 +293,18 @@ class _GatePool:
 
 
 @pytest.mark.asyncio
-async def test_p05_cancel_racing_a_claim_does_not_deadlock(pool: asyncpg.Pool):
+@pytest.mark.parametrize("only_queued", [False, True])
+@pytest.mark.parametrize("initially_running", [False, True])
+async def test_p05_cancel_racing_a_claim_does_not_deadlock(pool: asyncpg.Pool, only_queued, initially_running):
     job_id = await admit_job(pool)
     task_id = await task_id_of(pool, job_id)
     repository = PostgresJobRepository(pool)
-    claim = await repository.claim_task(task_id=task_id, queue_name=QUEUE,
-                                        lease_owner="population-worker:i-dead:r1", lease_seconds=300)
-    assert claim is not None
-    # The claimant is gone past its lease: cancel may end the job at once, and a
-    # new claimant may take the task. Both orders of the two row locks must be safe.
-    await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1", task_id)
+    if initially_running:
+        claim = await repository.claim_task(task_id=task_id, queue_name=QUEUE,
+                                            lease_owner="population-worker:i-dead:r1", lease_seconds=300)
+        assert claim is not None
+        # Race both a fresh queued claim and reclaiming an expired attempt.
+        await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1", task_id)
 
     entered, proceed = asyncio.Event(), asyncio.Event()
     gated = PostgresJobRepository(_GatePool(pool, entered, proceed))
@@ -319,7 +320,7 @@ async def test_p05_cancel_racing_a_claim_does_not_deadlock(pool: asyncpg.Pool):
 
     async def cancel():
         try:
-            job = await asyncio.wait_for(repository.request_cancel(job_id, "user-1"), 20)
+            job = await asyncio.wait_for(repository.request_cancel(job_id, "user-1", only_queued=only_queued), 20)
             return ("cancel", None, job)
         except Exception as exc:
             return ("cancel", exc, None)
@@ -327,37 +328,47 @@ async def test_p05_cancel_racing_a_claim_does_not_deadlock(pool: asyncpg.Pool):
     claim_task = asyncio.ensure_future(claim_again())
     await asyncio.wait_for(entered.wait(), 10)
     cancel_task = asyncio.ensure_future(cancel())
-    await asyncio.sleep(0.5)  # let cancel take the job lock and reach the task update
-    proceed.set()
+    try:
+        # Cancellation must commit without waiting for the locked task, before
+        # the claimant may continue to its job update: deterministic ordering.
+        await asyncio.wait_for(asyncio.shield(cancel_task), 5)
+    finally:
+        proceed.set()
     (who_c, error_c, lease), (who_x, error_x, job) = await asyncio.gather(claim_task, cancel_task)
 
     deadlock = [error for error in (error_c, error_x)
                 if error is not None and error.__class__.__name__ == "DeadlockDetectedError"]
     assert deadlock == [], f"claim/cancel interleaving deadlocked: {error_c!r} / {error_x!r}"
+    assert error_c is None and error_x is None, (error_c, error_x)
     state = await pool.fetchval("SELECT state FROM semantic_jobs.jobs WHERE id = $1::uuid", job_id)
     task_state = await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id)
     # Consistent outcome: the job is terminal or still running behind a live claim,
     # never resurrected and never half-ended.
     assert state in ("running", "cancel_requested", "cancelled")
     assert task_state in ("running", "cancelled")
+    if state == "cancelled":
+        assert task_state == "cancelled"
 
 @pytest.mark.asyncio
-async def test_p05_randomized_claim_cancel_interleavings_never_deadlock(pool: asyncpg.Pool):
+@pytest.mark.parametrize("only_queued", [False, True])
+async def test_p05_randomized_claim_cancel_interleavings_never_deadlock(pool: asyncpg.Pool, only_queued):
     """Randomized repetitions on top of the deterministic barrier test: claim
     and cancel race with arbitrary relative timing, on fresh and expired
     leases; nothing deadlocks and the job never resurrects."""
     import random
 
-    random.seed(20260314)
+    seed = 20260314
+    rng = random.Random(seed)
     repository = PostgresJobRepository(pool)
-    for round_index in range(25):
+    for round_index in range(100):
         job_id = await admit_job(pool, key=f"p0rand{round_index}")
         task_id = await task_id_of(pool, job_id)
         owner = f"population-worker:i{round_index}:r1"
-        expired = round_index % 2 == 0
-        claim = await repository.claim_task(task_id=task_id, queue_name=QUEUE,
-                                            lease_owner=owner, lease_seconds=300)
-        assert claim is not None
+        expired = round_index % 3 == 1
+        if round_index % 3:
+            claim = await repository.claim_task(task_id=task_id, queue_name=QUEUE,
+                                                lease_owner=owner, lease_seconds=300)
+            assert claim is not None
         if expired:
             await pool.execute(
                 "UPDATE semantic_jobs.tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
@@ -374,17 +385,17 @@ async def test_p05_randomized_claim_cancel_interleavings_never_deadlock(pool: as
 
         async def cancel():
             try:
-                return await asyncio.wait_for(repository.request_cancel(job_id, "user-1"), 15)
+                return await asyncio.wait_for(repository.request_cancel(job_id, "user-1", only_queued=only_queued), 15)
             except Exception as exc:
                 return exc
 
         first = asyncio.ensure_future(claim_again())
-        await asyncio.sleep(random.uniform(0.0, 0.02))
+        await asyncio.sleep(rng.uniform(0.0, 0.02))
         second = asyncio.ensure_future(cancel())
         lease, job = await asyncio.gather(first, second)
         for outcome in (lease, job):
             assert not isinstance(outcome, BaseException), \
-                f"round {round_index}: {outcome!r}"
+                f"seed={seed}, round={round_index}, only_queued={only_queued}: {outcome!r}"
         job_state = await pool.fetchval("SELECT state FROM semantic_jobs.jobs WHERE id = $1::uuid", job_id)
         task_state = await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id)
         assert job_state in ("running", "cancel_requested", "cancelled"), (round_index, job_state)
@@ -392,3 +403,71 @@ async def test_p05_randomized_claim_cancel_interleavings_never_deadlock(pool: as
         if job_state == "cancelled":
             # A cancelled job never comes back for another attempt.
             assert task_state == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("only_queued", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_p05_three_actors_checkpoint_complete_cancel_and_recover(pool, only_queued, expired):
+    """A owns/checkpoints/completes, B cancels, C recovers/reclaims through
+    an independently pooled connection. Stale outcomes are legal; deadlocks,
+    duplicate terminals and resurrection are not."""
+    async with asyncpg.create_pool(DSN, min_size=2, max_size=4) as independent:
+        a = PostgresJobRepository(pool)
+        b = PostgresJobRepository(independent)
+        c = PostgresJobRepository(independent)
+        job_id = await admit_job(pool, key=f"three-{only_queued}-{expired}")
+        task_id = await task_id_of(pool, job_id)
+        lease = await a.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="actor-A", lease_seconds=300)
+        assert lease is not None
+        if expired:
+            await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at=now()-interval '1 second' WHERE id=$1", task_id)
+        start = asyncio.Event()
+
+        async def owner():
+            await start.wait()
+            await a.checkpoint(task_id=task_id, lease_owner="actor-A", lease_epoch=lease.lease_epoch,
+                               progress={"phase": "race"}, lease_seconds=300, renew=False)
+            try:
+                return await a.complete_task(task_id=task_id, lease_owner="actor-A", lease_epoch=lease.lease_epoch,
+                                             job_state="completed", result={})
+            except StaleLease:
+                return None
+
+        async def cancel():
+            await start.wait()
+            return await b.request_cancel(job_id, "user-1", only_queued=only_queued)
+
+        async def recover():
+            await start.wait()
+            await c.recover_stalled_tasks(max_attempts=3, retry_seconds=0, grace_seconds=0)
+            return await c.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="actor-C", lease_seconds=300)
+
+        actors = [asyncio.create_task(fn()) for fn in (owner, cancel, recover)]
+        start.set()
+        outcomes = await asyncio.wait_for(asyncio.gather(*actors), 15)
+        # Reconcile a legal remaining live attempt, then prove no old attempt
+        # can change that terminal result or emit a second completion.
+        current = await pool.fetchrow("SELECT state,lease_owner,lease_epoch FROM semantic_jobs.tasks WHERE id=$1", task_id)
+        if current["state"] == "running":
+            await a.complete_task(task_id=task_id, lease_owner=current["lease_owner"],
+                                  lease_epoch=current["lease_epoch"], job_state="completed", result={})
+        elif current["state"] == "queued":
+            final = await c.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="actor-C-final", lease_seconds=300)
+            assert final is not None
+            await c.complete_task(task_id=task_id, lease_owner=final.lease_owner,
+                                  lease_epoch=final.lease_epoch, job_state="completed", result={})
+        states = await pool.fetchrow(
+            "SELECT j.state AS job,t.state AS task FROM semantic_jobs.jobs j JOIN semantic_jobs.tasks t ON t.job_id=j.id WHERE t.id=$1", task_id)
+        assert (states["job"], states["task"]) in (("completed", "completed"), ("cancelled", "cancelled"))
+        assert await pool.fetchval(
+            "SELECT count(*) FROM semantic_jobs.events WHERE job_id=$1::uuid AND event_type=ANY($2::text[])",
+            job_id, ["job.completed", "job.failed", "job.cancelled"]) == 1
+        for stale in [lease, outcomes[2]]:
+            if stale is not None:
+                with pytest.raises(StaleLease):
+                    await a.complete_task(task_id=task_id, lease_owner=stale.lease_owner,
+                                          lease_epoch=stale.lease_epoch, job_state="completed", result={})
+        assert await c.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="resurrection", lease_seconds=300) is None
+        assert dict(states) == dict(await pool.fetchrow(
+            "SELECT j.state AS job,t.state AS task FROM semantic_jobs.jobs j JOIN semantic_jobs.tasks t ON t.job_id=j.id WHERE t.id=$1", task_id))

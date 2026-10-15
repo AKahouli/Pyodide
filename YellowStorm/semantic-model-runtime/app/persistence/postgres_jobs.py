@@ -629,10 +629,13 @@ class PostgresJobRepository:
                     live = await connection.fetchval(
                         """
                         SELECT count(*) FROM semantic_jobs.tasks
-                        WHERE job_id = $1::uuid AND state = 'running'
+                        WHERE job_id = $1::uuid AND state IN ('queued', 'running')
                         """,
                         job_id,
                     )
+                    # A locked queued row may be a claim not yet committed.
+                    # SKIP LOCKED cannot prove it dead: request a stop instead
+                    # of terminally cancelling its job underneath that claim.
                     if live and not only_queued:
                         if job["state"] != "cancel_requested":
                             await connection.execute(
@@ -1051,8 +1054,7 @@ class PostgresJobRepository:
                     task_id,
                 )
                 if (task is None or task["lease_owner"] != lease_owner
-                        or task["lease_epoch"] != lease_epoch or task["state"] != "running"
-                        or task["lease_expires_at"] <= datetime.now(timezone.utc)):
+                        or task["lease_epoch"] != lease_epoch or task["state"] != "running"):
                     raise StaleLease("task lease is stale or expired")
                 job_id = task["job_id"]
                 job = await connection.fetchrow(
@@ -1069,6 +1071,20 @@ class PostgresJobRepository:
                 if activate is not None:
                     if job["model_id"] and job["model_id"] != activate["modelId"]:
                         raise CandidateRejected("model_mismatch")
+                    from app.persistence.population_store import lock_model_cutover
+
+                    # Task -> job -> cutover, held through freshness/CAS/commit,
+                    # never during the long staging and projection phase.
+                    await lock_model_cutover(connection, activate["modelId"])
+                # Lock waits can outlast the lease while its renewal is blocked
+                # on our task row. Transaction-start now() and the worker's
+                # clock cannot establish current ownership after those waits.
+                if not await connection.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM semantic_jobs.tasks WHERE id=$1 "
+                    "AND lease_owner=$2 AND lease_epoch=$3 AND state='running' "
+                    "AND lease_expires_at > clock_timestamp())", task_id, lease_owner, lease_epoch):
+                    raise StaleLease("task lease expired during finalization lock acquisition")
+                if activate is not None:
                     revision = await connection.fetchrow(
                         """
                         SELECT model_id::text, model_version_id, spec_hash,
@@ -1112,7 +1128,7 @@ class PostgresJobRepository:
                         completed_at = now(), lease_owner = NULL,
                         lease_expires_at = NULL, updated_at = now()
                     WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
-                      AND state = 'running' AND lease_expires_at > now()
+                      AND state = 'running' AND lease_expires_at > clock_timestamp()
                     RETURNING job_id::text
                     """,
                     task_id,
