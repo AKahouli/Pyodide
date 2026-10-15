@@ -5,6 +5,11 @@ handoff, QA and documentation without loading every recipe into every turn.
 
 ## Background handoff
 
+For bug fixes, the primary's delivery explains cause, symptom, correction and
+verification in plain language. Workers supply the cause and decisive evidence in
+their handoff. Report hypotheses as unconfirmed and workarounds as workarounds;
+never claim a root cause solely because the symptom disappeared.
+
 Use native Task with `background: true` for independent long work. Completion
 notifications deliver results; foreground is for an immediately needed dependency.
 The maintainer is always background, including follow-ups with the same `task_id`.

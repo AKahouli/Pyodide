@@ -42,6 +42,7 @@
 
 ## Human replies
 
+- Every bug-fix delivery explains the verified root cause, how it produced the symptom, how the change addresses it, and the relevant verification result. Briefly identify decisive evidence. If the cause is uncertain or the change is a workaround, say so explicitly. Keep the explanation concise and understandable to the user.
 - Lead with status/route, checks and pending work; routine delivery stays under 12 lines. Internal specialists return compact evidence, not human completion reports.
 - End every human reply with **Follow-up:** actor, next action/location and expected result. For background work, state what runs and that the user can keep messaging; no routine approval request. Notify on material findings/failures or promised completion without restarting the workflow.
 - Missing QA authentication: request sign-in once in its private context, continue independent work, then resume the same child. Credentials/MFA stay in browser/password manager. Save only a verified non-secret login recipe; never claim persistence without confirmation. [Workflow details](tools/opencode-harness/docs/WORKFLOW.md).
