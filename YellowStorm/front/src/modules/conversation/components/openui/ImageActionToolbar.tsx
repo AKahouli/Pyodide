@@ -29,7 +29,7 @@ export interface ImageActionToolbarProps {
 
 type ActionLabel = 'toolbar' | 'edit' | 'compare' | 'reuse' | 'docx' | 'pptx' | 'slides' |
   'download' | 'error' | 'close' | 'editDescription' | 'instruction' | 'required' |
-  'cancel' | 'submit' | 'compareDescription' | 'comparisonImage' | 'loading';
+  'cancel' | 'submit' | 'compareDescription' | 'comparisonImage' | 'loading' | 'selectedImage' | 'reuseDescription' | 'working';
 
 export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNotice, connectorName, alt, scope, url, streaming = false, canEdit = false,
   canReuse = false, canReuseSlides = canReuse, peers = [], resolveImage, resolveAspectRatio, onSend }: ImageActionToolbarProps) {
@@ -37,6 +37,7 @@ export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNo
   const inputId = useId();
   const label = (key: ActionLabel) => t(`openui.image.actions.${key}`);
   const [editing, setEditing] = useState(false);
+  const [reuseFormat, setReuseFormat] = useState<'docx' | 'pptx' | 'slides' | null>(null);
   const [comparing, setComparing] = useState(false);
   const [peer, setPeer] = useState('');
   const [comparison, setComparison] = useState<string[]>([]);
@@ -68,12 +69,17 @@ export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNo
     if (disabled) return;
     setBusy(true);
     setError(false);
-    try { await onSend(typeof content === 'function' ? await content() : content); setEditing(false); form.reset(); }
+    try { await onSend(typeof content === 'function' ? await content() : content); setEditing(false); setReuseFormat(null); form.reset(); }
     catch { setError(true); }
     finally { setBusy(false); }
   }
 
   const context = { source: JSON.stringify(requestSource ?? source), sourcePage: JSON.stringify(sourcePage ?? null), messageId: JSON.stringify(scope.messageId), connector: JSON.stringify(connectorName ?? null) };
+  const selectedImage = <figure className='space-y-2'>
+    {url?.startsWith('blob:') && <img src={url} alt={alt} className='max-h-52 w-full rounded-md object-contain' />}
+    <figcaption className='break-words text-sm text-muted-foreground'>{label('selectedImage')}: {alt}</figcaption>
+    {sourceNotice && <p className='text-sm text-muted-foreground'>{sourceNotice}</p>}
+  </figure>;
   return <div className='mt-2 flex flex-wrap items-center gap-2' aria-label={label('toolbar')}>
     <Button type='button' variant='outline' size='sm' disabled={disabled || !canEdit}
       onClick={() => { setError(false); setEditing(true); }}>{label('edit')}</Button>
@@ -83,17 +89,17 @@ export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNo
       disabled={disabled || (!canReuse && !canReuseSlides)}>{label('reuse')}</Button></DropdownMenuTrigger>
       <DropdownMenuContent>{(['docx', 'pptx', 'slides'] as const).map((format) =>
         <DropdownMenuItem key={format} disabled={disabled || !(format === 'slides' ? canReuseSlides : canReuse)} onSelect={() => {
-          void send(t(`openui.image.actions.reuseRequest.${format}`, context));
+          setError(false); setReuseFormat(format);
         }}>{label(format)}</DropdownMenuItem>)}</DropdownMenuContent>
     </DropdownMenu>
     {url?.startsWith('blob:') && (disabled ? <Button disabled variant='outline' size='sm'>{label('download')}</Button> : <Button asChild variant='outline' size='sm'>
       <a href={url} download='image' aria-label={label('download')}>{label('download')}</a>
     </Button>)}
-    {error && !editing && !comparing && <p role='alert' className='text-sm text-destructive'>{label('error')}</p>}
+    {error && !editing && !comparing && !reuseFormat && <p role='alert' className='text-sm text-destructive'>{label('error')}</p>}
     <Dialog open={editing} onOpenChange={(open) => { if (!busy) { setEditing(open); if (!open) form.reset(); } }}>
       <DialogContent closeLabel={label('close')} className='max-h-[90dvh] w-[calc(100%-2rem)] overflow-auto'>
         <DialogTitle>{label('edit')}</DialogTitle><DialogDescription>{label('editDescription')}</DialogDescription>
-        {sourceNotice && <p className='text-sm text-muted-foreground'>{sourceNotice}</p>}
+        {selectedImage}
         <form className='space-y-3' onSubmit={form.handleSubmit(({ prompt }) => {
           if (canEdit) void send(async () => {
             if (!resolveAspectRatio) throw new Error('Image dimensions unavailable');
@@ -109,7 +115,24 @@ export function ImageActionToolbar({ source, requestSource, sourcePage, sourceNo
             <Button type='button' variant='outline' disabled={busy} onClick={() => { setEditing(false); form.reset(); }}>{label('cancel')}</Button>
             <Button type='submit' disabled={disabled || !canEdit}>{label('submit')}</Button>
           </div>
+          {busy && <p role='status' className='text-sm text-muted-foreground'>{label('working')}</p>}
         </form>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={reuseFormat !== null} onOpenChange={(open) => { if (!open && !busy) setReuseFormat(null); }}>
+      <DialogContent closeLabel={label('close')} className='max-h-[90dvh] w-[calc(100%-2rem)] overflow-auto'>
+        <DialogTitle>{reuseFormat ? label(reuseFormat) : label('reuse')}</DialogTitle>
+        <DialogDescription>{label('reuseDescription')}</DialogDescription>
+        {selectedImage}
+        {error && <p role='alert' className='text-sm text-destructive'>{label('error')}</p>}
+        {busy && <p role='status' className='text-sm text-muted-foreground'>{label('working')}</p>}
+        <div className='flex justify-end gap-2'>
+          <Button type='button' variant='outline' disabled={busy} onClick={() => setReuseFormat(null)}>{label('cancel')}</Button>
+          <Button type='button' disabled={disabled || !reuseFormat || !(reuseFormat === 'slides' ? canReuseSlides : canReuse)}
+            onClick={() => { if (reuseFormat) void send(t(`openui.image.actions.reuseRequest.${reuseFormat}`, context)); }}>
+            {reuseFormat ? label(reuseFormat) : label('reuse')}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
     <Dialog open={comparing} onOpenChange={setComparing}>

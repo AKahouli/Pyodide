@@ -119,8 +119,11 @@ authoritative. No quota is enlarged and no automatic generation retry occurs.
 OpenUI images expose an action toolbar in chat, report and slide previews: edit,
 compare saved images, reuse in DOCX/editable PPTX/OpenUI slides, and download.
 Edit/reuse sends an explicit follow-up to the producing agent through the existing
-conversation owner; opening or cancelling a dialog does not run a tool. Edits read
-authorized source dimensions only on submission and pass the existing model's
+conversation owner; opening or cancelling a dialog does not run a tool.
+The edit dialog previews the selected authorized blob and its caption. Reuse opens
+the same preview with an explicit format action before submission; cancellation
+sends nothing. Pending submission points to execution progress in the conversation.
+Edits read authorized source dimensions only on submission and pass the existing model's
 landscape/portrait/square aspect class explicitly. Capability checks use the assigned
 image tool and interpreter connector actions. Streaming,
 governed mode and ambiguous producing-agent identity disable generation actions.

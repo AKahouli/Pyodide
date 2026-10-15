@@ -102,10 +102,44 @@ describe('ImageActionToolbar', () => {
     await user.click(screen.getByRole('button', { name: name('reuse') }));
     expect(input.onSend).not.toHaveBeenCalled();
     await user.click(await screen.findByRole('menuitem', { name: name('pptx') }));
+    expect(input.onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole('img', { name: input.alt })).toHaveAttribute('src', input.url);
+    await user.click(screen.getByRole('button', { name: name('pptx') }));
     await waitFor(() => expect(input.onSend).toHaveBeenCalledTimes(1));
     const request = vi.mocked(input.onSend).mock.calls[0][0];
     expect(request).toContain(name('reuseRequest.pptx'));
     expect(JSON.parse(request.slice(request.indexOf('{'))).source).toBe(JSON.stringify(input.source));
+  });
+
+  it('shows the selected image before editing and never previews a model-authored URL', () => {
+    const input = props(); const { rerender } = render(<ImageActionToolbar {...input} />);
+    fireEvent.click(screen.getByRole('button', { name: name('edit') }));
+    expect(screen.getByRole('img', { name: input.alt })).toHaveAttribute('src', input.url);
+    rerender(<ImageActionToolbar {...input} url='https://untrusted.example/image.png' />);
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(input.onSend).not.toHaveBeenCalled();
+  });
+
+  it('cancels reuse before sending any request', async () => {
+    const input = props(); const user = userEvent.setup(); render(<ImageActionToolbar {...input} />);
+    await user.click(screen.getByRole('button', { name: name('reuse') }));
+    await user.click(screen.getByRole('menuitem', { name: name('docx') }));
+    await user.click(screen.getByRole('button', { name: name('cancel') }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(input.onSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected image and submission state visible while reuse is pending', async () => {
+    const input = props(); let finish!: () => void;
+    input.onSend = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const user = userEvent.setup(); render(<ImageActionToolbar {...input} />);
+    await user.click(screen.getByRole('button', { name: name('reuse') }));
+    await user.click(screen.getByRole('menuitem', { name: name('docx') }));
+    await user.click(screen.getByRole('button', { name: name('docx') }));
+    expect(screen.getByRole('status')).toHaveTextContent(name('working'));
+    expect(screen.getByRole('button', { name: name('docx') })).toBeDisabled();
+    await act(async () => finish());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('keeps a failed edit visible and reports its failure', async () => {

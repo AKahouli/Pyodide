@@ -104,6 +104,8 @@ describe('Conversation image action integration', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reuse image' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Reuse image' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Create Word document' }));
+    expect(fixture.sendMessage).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Create Word document' }));
     await waitFor(() => expect(fixture.sendMessage).toHaveBeenCalledTimes(1));
     expect(fixture.sendMessage.mock.calls[0][1].content).toContain('"configured-office-runtime"');
   });

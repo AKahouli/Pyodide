@@ -147,7 +147,11 @@ text component and agent identity; unknown or ambiguous ownership fails closed.
 Capabilities come from the agent's assigned image tool and configured interpreter
 actions. Streaming/governed answers disable generation actions. PDF inputs disclose
 page-based processing. Comparison uses scoped resolvers and revokes temporary URLs;
-thumbnail/capture views do not host interactive controls. The module README and
+edit dialogs show the selected authorized image and caption. Office/slide reuse
+shows the same image before submission and supports cancellation before sending.
+Submission state points to the conversation's existing execution progress. These
+dialogs never fetch model-authored URLs directly or start tools merely by opening.
+Thumbnail/capture views do not host interactive controls. The module README and
 toolbar, integration, document-image and report tests cover these boundaries.
 
 Run only the checks affected by the change. These commands identify existing coverage; they were not executed during initialization.
