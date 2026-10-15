@@ -31,10 +31,10 @@ const connector: ConnectorResponse = {
   authConfigSchema: {},
   authSourceType: 'none',
   connectedAppKey: '',
-  runtimeAuthConfig: {},
+  credentialConfigured: false,
   mcpTransportType: 'streamable_http',
   mcpServerUrl: 'https://mcp.example.test',
-  mcpServerConfig: {},
+  inspectionStatus: 'supported',
   dynamicHeaders: [],
   actions: [
     { key: 'list_files', label: 'List Files', description: 'Lists files.', parameterSchema: { type: 'object' }, outputSchema: { type: 'array' }, safety: 'read', supportsBatch: false, supportsIteration: false, isEnabled: true },
@@ -97,7 +97,7 @@ describe('CreateEditConnectorDialog tool table', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ isSystem: true }));
   });
 
-  it('preserves server-managed Playbook MCP authentication when inspecting and saving', async () => {
+  it('keeps server-managed credentials intact when inspecting and saving without opting in', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     vi.mocked(inspectMcp).mockResolvedValueOnce({ serverName: 'playbook', tools: [] });
@@ -108,7 +108,7 @@ describe('CreateEditConnectorDialog tool table', () => {
       name: 'Playbook MCP',
       authType: 'token',
       authSourceType: 'server_config',
-      runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
+      credentialConfigured: true,
       mcpServerUrl: 'http://localhost:8025/mcp',
       isSystem: true,
       isHidden: true,
@@ -126,16 +126,82 @@ describe('CreateEditConnectorDialog tool table', () => {
       'http://localhost:8025/mcp',
       undefined,
       undefined,
-      { secretKey: 'playbook_mcp_ingress' },
+      undefined,
       'playbook-connector',
     ));
 
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    // Omitted credential fields preserve the stored server-side secret.
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       authType: 'token',
       authSourceType: 'server_config',
-      runtimeAuthConfig: JSON.stringify({ secretKey: 'playbook_mcp_ingress' }),
+      runtimeAuthConfig: '',
+      mcpServerConfig: '',
     }));
+  });
+
+  it('shows the credential state and replaces stored credentials only on explicit opt-in', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const credentialedConnector: ConnectorResponse = {
+      ...connector,
+      authSourceType: 'credential',
+      credentialConfigured: true,
+    };
+
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={credentialedConnector} onSave={onSave} />);
+
+    expect(await screen.findByText('connectors.form.auth.credentialConfigured')).toBeInTheDocument();
+
+    // Saving without the replace opt-in keeps the stored credentials.
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtimeAuthConfig: '',
+      clearRuntimeAuthConfig: false,
+    }));
+
+    // Opting in reveals the credential inputs and sends the replacement.
+    await user.click(screen.getByRole('switch', { name: 'connectors.form.auth.replaceCredentials' }));
+    const headerPrefix = screen.getByPlaceholderText('connectors.form.auth.headerPrefixPlaceholder');
+    await user.clear(headerPrefix);
+    await user.type(headerPrefix, 'Bearer canary-token');
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtimeAuthConfig: JSON.stringify({ strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer canary-token' }),
+      clearRuntimeAuthConfig: false,
+    }));
+    expect(JSON.stringify(onSave.mock.calls.at(-1)![0])).toContain('canary-token');
+  });
+
+  it('clears stored credentials via the explicit clear switch', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const credentialedConnector: ConnectorResponse = {
+      ...connector,
+      authSourceType: 'credential',
+      credentialConfigured: true,
+    };
+
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={credentialedConnector} onSave={onSave} />);
+
+    await user.click(await screen.findByRole('switch', { name: 'connectors.form.auth.clearCredentials' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
+      clearRuntimeAuthConfig: true,
+      runtimeAuthConfig: '',
+    }));
+  });
+
+  it('flags stored stdio connectors as unsupported for HTTP inspection', () => {
+    const stdioConnector: ConnectorResponse = {
+      ...connector,
+      mcpTransportType: 'stdio',
+      inspectionStatus: 'unsupported_for_http_inspection',
+    };
+
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={stdioConnector} onSave={vi.fn()} />);
+
+    expect(screen.getByText('connectors.form.fields.transportType.unsupportedInspection')).toBeInTheDocument();
   });
 
   it('shows tool metadata and preserves actions when saving', async () => {

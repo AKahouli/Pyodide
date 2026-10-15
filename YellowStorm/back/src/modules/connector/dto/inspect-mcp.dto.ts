@@ -1,12 +1,13 @@
-import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsObject, IsOptional, IsString, MaxLength, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { REMOTE_INSPECTABLE_MCP_TRANSPORTS, RemoteInspectableMcpTransport } from '../utils/remote-mcp-transport.util';
 
 export class InspectMcpDto {
-  @ApiProperty({ description: 'MCP transport type' })
-  @IsString()
-  transportType!: string;
+  @ApiProperty({ description: 'MCP transport type', enum: REMOTE_INSPECTABLE_MCP_TRANSPORTS })
+  @IsIn(REMOTE_INSPECTABLE_MCP_TRANSPORTS)
+  transportType!: RemoteInspectableMcpTransport;
 
-  @ApiProperty({ description: 'MCP server URL or stdio command' })
+  @ApiProperty({ description: 'MCP server URL' })
   @IsString()
   @MaxLength(1024)
   serverUrl!: string;

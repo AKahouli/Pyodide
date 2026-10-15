@@ -11,12 +11,18 @@ import {
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
+import { PublicConnectorDto } from './dto/public-connector.dto';
+import { RuntimeConnectorDefinition } from './interfaces/connector-runtime.interface';
+import {
+  assertNoUrlCredentials,
+  isRemoteInspectableMcpTransport,
+  sanitizeEndpointUrl,
+} from './utils/remote-mcp-transport.util';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
-import {  
-  type ConnectorRow,    
+import {
+  type ConnectorRow,
 } from './persistence/connector.store';
 import {
-  IConnectorResponse,
   IMcpInspectResult,
   IGrpcConnector,
 } from './interfaces/connector.interface';
@@ -59,7 +65,11 @@ export class ConnectorService {
     this.logger.setContext(ConnectorService.name);
   }
 
-  async create(createdBy: string, dto: CreateConnectorDto): Promise<IConnectorResponse> {
+  async create(createdBy: string, dto: CreateConnectorDto): Promise<PublicConnectorDto> {
+    this.assertRemoteMcpTransport(dto.mcpTransportType);
+    if (dto.mcpServerUrl) {
+      assertNoUrlCredentials(dto.mcpServerUrl);
+    }
     const existing = await this.connectorStore.findBySlugAndOwner(dto.slug, createdBy);
     if (existing) {
       throw new ConflictException(ErrorCode.CONNECTOR_ALREADY_EXISTS);
@@ -95,10 +105,10 @@ export class ConnectorService {
       createdBy,
     });
 
-    return this.toResponse(connector);
+    return this.toPublicResponse(connector);
   }
 
-  async findAll(query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {
+  async findAll(query: QueryConnectorDto): Promise<PaginatedResponseDto<PublicConnectorDto>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
 
@@ -110,29 +120,58 @@ export class ConnectorService {
     });
 
     return new PaginatedResponseDto(
-      rows.map((c) => this.toResponse(c)),
+      rows.map((c) => this.toPublicResponse(c)),
       total,
       page,
       limit,
     );
   }
 
-  async findById(id: string): Promise<IConnectorResponse> {
+  async findById(id: string): Promise<PublicConnectorDto> {
     const connector = await this.connectorStore.findById(id);
     if (!connector) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
-    return this.toResponse(connector);
+    return this.toPublicResponse(connector);
   }
 
-  async findBySlug(slug: string): Promise<IConnectorResponse | null> {
+  async findBySlug(slug: string): Promise<PublicConnectorDto | null> {
     const connector = await this.connectorStore.findActiveBySlug(slug);
-    return connector ? this.toResponse(connector) : null;
+    return connector ? this.toPublicResponse(connector) : null;
   }
 
-  async findByIds(ids: string[]): Promise<IConnectorResponse[]> {
+  async findByIds(ids: string[]): Promise<PublicConnectorDto[]> {
     const connectors = await this.connectorStore.findByIds(ids);
-    return connectors.map((c) => this.toResponse(c));
+    return connectors.map((c) => this.toPublicResponse(c));
+  }
+
+  /**
+   * SERVER-ONLY: load the raw connector definition, including secret-capable
+   * material, for server-side auth resolution, inspection and bindings. Never
+   * return a value of this method from an HTTP response — use the public
+   * projections instead.
+   */
+  async getRuntimeById(id: string): Promise<RuntimeConnectorDefinition> {
+    const connector = await this.connectorStore.findById(id);
+    if (!connector) {
+      throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
+    }
+    return connector;
+  }
+
+  /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
+  async findRuntimeById(id: string): Promise<RuntimeConnectorDefinition | null> {
+    return this.connectorStore.findById(id);
+  }
+
+  /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
+  async findRuntimeBySlug(slug: string): Promise<RuntimeConnectorDefinition | null> {
+    return this.connectorStore.findActiveBySlug(slug);
+  }
+
+  /** SERVER-ONLY raw lookup; see {@link getRuntimeById}. */
+  async findRuntimeByIds(ids: string[]): Promise<RuntimeConnectorDefinition[]> {
+    return this.connectorStore.findByIds(ids);
   }
 
   async findIdsByCategoryName(ids: string[], categoryName: string): Promise<string[]> {
@@ -155,10 +194,21 @@ export class ConnectorService {
     userId: string,
     ctx?: SandboxRuntimeContext,
   ): Promise<IGrpcConnector[]> {
-    const connectors = await this.findByIds(ids);
+    // Raw store rows: gRPC bindings consume secret-capable config server-side
+    // and must never round-trip through the public response shape (WP-02).
+    const connectors = await this.connectorStore.findByIds(ids);
 
     const bindings: IGrpcConnector[] = [];
     for (const connector of connectors) {
+      // Stored stdio (or unknown) transports are never handed to the agent
+      // runtime: binding one would let the runtime spawn a local process from
+      // stored config (WP-01).
+      if (!isRemoteInspectableMcpTransport(connector.mcpTransportType)) {
+        this.logger.warn('Skipping connector with non-remote MCP transport for runtime binding', {
+          connector_id: connector.id,
+        });
+        continue;
+      }
       const actions = (connector.actions || [])
         .filter((action) => action.isEnabled)
         .map((action) => ({
@@ -235,13 +285,13 @@ export class ConnectorService {
     return bindings;
   }
 
-  async findAllActive(): Promise<IConnectorResponse[]> {
+  async findAllActive(): Promise<PublicConnectorDto[]> {
     const connectors = await this.connectorStore.findAllActiveVisible();
 
     const categoryNameById = await this.buildCategoryNameMap(connectors);
 
     return connectors.map((c) =>
-      this.toResponse({
+      this.toPublicResponse({
         ...c,
         categoryName: c.categoryId ? (categoryNameById.get(c.categoryId) ?? null) : null,
       }),
@@ -259,7 +309,11 @@ export class ConnectorService {
     return this.connectorCategoryStore.findNamesByIds(categoryIds);
   }
 
-  async update(id: string, dto: UpdateConnectorDto): Promise<IConnectorResponse> {
+  async update(id: string, dto: UpdateConnectorDto): Promise<PublicConnectorDto> {
+    this.assertRemoteMcpTransport(dto.mcpTransportType);
+    if (dto.mcpServerUrl) {
+      assertNoUrlCredentials(dto.mcpServerUrl);
+    }
     const existing = await this.connectorStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
@@ -273,6 +327,12 @@ export class ConnectorService {
     }
 
     const updateData: Record<string, unknown> = { ...dto };
+    // Explicit authenticated clear: an admin clears stored runtime credentials
+    // without ever reading them (WP02.5). Omitted fields preserve secrets.
+    if ((dto as { clearRuntimeAuthConfig?: boolean }).clearRuntimeAuthConfig === true) {
+      (updateData).runtimeAuthConfig = {};
+    }
+    delete (updateData as { clearRuntimeAuthConfig?: boolean }).clearRuntimeAuthConfig;
     let normalizedActions: ConnectorAction[] | null = null;
     if (dto.actions) {
       normalizedActions = this.normalizeConnectorActions(dto.actions);
@@ -310,7 +370,7 @@ export class ConnectorService {
         });
       }
     }
-    return this.toResponse(updated);
+    return this.toPublicResponse(updated);
   }
 
   async delete(id: string): Promise<void> {
@@ -334,6 +394,7 @@ export class ConnectorService {
   }
 
   async importFromMcp(createdBy: string, transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
+    assertNoUrlCredentials(serverUrl);
     const inspectResult = await this.inspectMcp(transportType, serverUrl, serverConfig, createdBy);
     if (inspectResult.error) {
       return inspectResult;
@@ -420,6 +481,19 @@ export class ConnectorService {
     resolvedToken?: string,
     resolvedAuthHeaders?: Record<string, string>,
   ): Promise<IMcpInspectResult> {
+    // Hard deny BEFORE any credential resolution, network I/O or transport
+    // construction (WP01.1/WP01.2): only remote HTTP transports are inspectable,
+    // so no API request can start a caller-selected OS process. Thrown outside
+    // the try/catch so a denial surfaces as 400, never as a 200 { error } body.
+    if (!isRemoteInspectableMcpTransport(transportType)) {
+      this.logger.warn('Denied MCP inspection for unsupported transport', { transportType });
+      throw new BadRequestException(
+        ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED,
+        'Only remote MCP transports (sse, streamable_http) can be inspected.',
+      );
+    }
+    assertNoUrlCredentials(serverUrl);
+
     try {
 
       let client: any;
@@ -477,25 +551,14 @@ export class ConnectorService {
         }
         const SSEClientTransport = sseMod.SSEClientTransport;
         transport = new SSEClientTransport(new URL(serverUrl), { requestInit });
-      } else if (transportType === 'streamable_http') {
-         
+      } else {
+        // streamable_http — the guard above already rejected every other value.
         const httpMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(() => null);
         if (!httpMod) {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const StreamableHTTPClientTransport = httpMod.StreamableHTTPClientTransport;
         transport = new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });
-      } else {
-        // stdio
-         
-        const stdioMod = await import('@modelcontextprotocol/sdk/client/stdio.js').catch(() => null);
-        if (!stdioMod) {
-          return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
-        }
-        const StdioClientTransport = stdioMod.StdioClientTransport;
-        const args = (serverConfig?.commandArgs as string[]) ?? ['--stdio'];
-        const env = (serverConfig?.env as Record<string, string>) ?? {};
-        transport = new StdioClientTransport({ command: serverUrl, args, env });
       }
 
        
@@ -708,7 +771,16 @@ export class ConnectorService {
     return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 
-  toResponse(doc: ConnectorRow & { categoryName?: string | null }): IConnectorResponse {
+  /**
+   * Allowlisted public projection (SEC-02 / WP-02): secret-capable fields
+   * (runtimeAuthConfig, mcpServerConfig) are never copied out of the row;
+   * `credentialConfigured` and `inspectionStatus` summarise them instead.
+   */
+  private toPublicResponse(doc: ConnectorRow & { categoryName?: string | null }): PublicConnectorDto {
+    const runtimeAuthConfig = doc.runtimeAuthConfig ?? {};
+    const credentialConfigured = (doc.authSourceType ?? 'credential') === 'connected_app'
+      ? Boolean(doc.connectedAppKey)
+      : Object.keys(runtimeAuthConfig).length > 0;
     return {
       id: doc.id,
       slug: doc.slug,
@@ -723,10 +795,12 @@ export class ConnectorService {
       authConfigSchema: doc.authConfigSchema ?? {},
       authSourceType: doc.authSourceType ?? 'credential',
       connectedAppKey: doc.connectedAppKey ?? '',
-      runtimeAuthConfig: doc.runtimeAuthConfig ?? {},
+      credentialConfigured,
       mcpTransportType: doc.mcpTransportType,
-      mcpServerUrl: doc.mcpServerUrl,
-      mcpServerConfig: doc.mcpServerConfig ?? {},
+      mcpServerUrl: sanitizeEndpointUrl(doc.mcpServerUrl),
+      inspectionStatus: isRemoteInspectableMcpTransport(doc.mcpTransportType)
+        ? 'supported'
+        : 'unsupported_for_http_inspection',
       workerPolicy: doc.workerPolicy ?? DEFAULT_WORKER_POLICY,
       dynamicHeaders: (doc.dynamicHeaders ?? []).map((h: any) => ({
         headerName: h.headerName,
@@ -757,5 +831,15 @@ export class ConnectorService {
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };
+  }
+
+  /** WP01.3: service-level transport validation for connector writes. */
+  private assertRemoteMcpTransport(transportType?: string): void {
+    if (transportType !== undefined && !isRemoteInspectableMcpTransport(transportType)) {
+      throw new BadRequestException(
+        ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED,
+        'Connectors support only remote MCP transports (sse, streamable_http).',
+      );
+    }
   }
 }

@@ -1710,10 +1710,12 @@ export interface ConnectorResponse {
   authConfigSchema: Record<string, unknown>;
   authSourceType: string;
   connectedAppKey: string;
-  runtimeAuthConfig: Record<string, unknown>;
+  /** True when server-side credentials exist; the credentials themselves are never returned. */
+  credentialConfigured: boolean;
   mcpTransportType: string;
   mcpServerUrl: string;
-  mcpServerConfig: Record<string, unknown>;
+  /** Whether the backend can inspect this connector over HTTP. */
+  inspectionStatus: 'supported' | 'unsupported_for_http_inspection';
   workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorActionResponse[];
@@ -1752,6 +1754,8 @@ export interface CreateConnectorRequest {
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;
+  /** Set true to clear stored runtime credentials without reading them; omitted fields preserve secrets. */
+  clearRuntimeAuthConfig?: boolean;
   workerPolicy?: ConnectorWorkerPolicy;
   dynamicHeaders?: ConnectorDynamicHeader[];
   actions?: Array<{

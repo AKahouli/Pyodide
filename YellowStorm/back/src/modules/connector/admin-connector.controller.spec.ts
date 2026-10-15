@@ -1,4 +1,7 @@
 import { AdminConnectorController } from './admin-connector.controller';
+import { ConnectorService } from './connector.service';
+import { BadRequestException } from '../exceptions';
+import type { ConnectorRow } from './persistence/connector.store';
 
 describe('AdminConnectorController MCP inspection', () => {
   const user = { _id: { toString: () => 'user-1' } } as never;
@@ -13,22 +16,33 @@ describe('AdminConnectorController MCP inspection', () => {
     mcpTransportType: 'streamable_http',
     mcpServerUrl: 'http://localhost:8025/mcp',
     mcpServerConfig: {},
-  };
+  } as unknown as ConnectorRow;
   const config = { get: jest.fn((key: string, fallback?: string) => (
     key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp/' : fallback
   )) };
 
-  function createController(connector = playbookConnector) {
-    const connectorService = {
-      findById: jest.fn().mockResolvedValue(connector),
-      inspectMcp: jest.fn().mockResolvedValue({ serverName: 'playbook', tools: [] }),
-    };
+  function createController(connector: unknown = playbookConnector) {
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn().mockResolvedValue({
         headers: { Authorization: 'Bearer server-secret' },
         env: {},
       }),
     };
+    const store = {
+      findById: jest.fn().mockResolvedValue(connector),
+      findByIds: jest.fn().mockResolvedValue(connector ? [connector] : []),
+      insert: jest.fn(),
+    };
+    // The REAL service runs so stdio/unknown transports are denied exactly as
+    // in production; individual tests may spy inspectMcp for call-shape checks.
+    const connectorService = new ConnectorService(
+      store as never,
+      {} as never,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
+      {} as never,
+      connectorAuthService as never,
+      { syncConnectorActions: jest.fn() } as never,
+    );
     const controller = new AdminConnectorController(
       connectorService as never,
       {} as never,
@@ -36,11 +50,13 @@ describe('AdminConnectorController MCP inspection', () => {
       connectorAuthService as never,
       config as never,
     );
-    return { controller, connectorService, connectorAuthService };
+    return { controller, connectorService, connectorAuthService, store };
   }
 
   it('sends a complete actor envelope when the connector points at a trusted internal MCP server, whatever its slug', async () => {
     const { controller, connectorService } = createController();
+    const inspectMcp = jest.spyOn(connectorService, 'inspectMcp')
+      .mockResolvedValue({ serverName: 'playbook', tools: [] });
 
     await controller.inspectMcp({
       connectorId: 'connector-1',
@@ -48,7 +64,7 @@ describe('AdminConnectorController MCP inspection', () => {
       serverUrl: 'http://localhost:8025/mcp',
     }, user);
 
-    expect(connectorService.inspectMcp).toHaveBeenCalledWith(
+    expect(inspectMcp).toHaveBeenCalledWith(
       'streamable_http',
       'http://localhost:8025/mcp',
       {},
@@ -72,15 +88,39 @@ describe('AdminConnectorController MCP inspection', () => {
   ])('does not send identity headers to %s', async (_name, override) => {
     const connector = { ...playbookConnector, ...override };
     const { controller, connectorService } = createController(connector);
+    const inspectMcp = jest.spyOn(connectorService, 'inspectMcp')
+      .mockResolvedValue({ serverName: 'playbook', tools: [] });
 
     await controller.inspectMcp({
       connectorId: 'connector-1',
       transportType: 'streamable_http',
-      serverUrl: connector.mcpServerUrl,
+      serverUrl: (connector as { mcpServerUrl: string }).mcpServerUrl,
     }, user);
 
-    const headers = connectorService.inspectMcp.mock.calls[0][7];
+    const headers = inspectMcp.mock.calls[0][7];
     expect(headers).toEqual({ Authorization: 'Bearer server-secret' });
     expect(headers).not.toHaveProperty('X-YellowStorm-User-Id');
+  });
+
+  it('denies stored stdio connectors on :id/inspect before any inspection side effect', async () => {
+    const { controller, store } = createController({
+      ...playbookConnector,
+      mcpTransportType: 'stdio',
+      mcpServerUrl: '/usr/local/bin/some-mcp',
+    });
+
+    await expect(controller.inspectConnector('connector-1', user, {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(store.insert).not.toHaveBeenCalled();
+  });
+
+  it('denies stdio transports on the admin draft import endpoint without creating a connector', async () => {
+    const { controller, store } = createController(null);
+
+    await expect(controller.importFromMcp(
+      { transportType: 'stdio', serverUrl: '/usr/local/bin/some-mcp' },
+      user,
+      { ip: '127.0.0.1', headers: {} } as never,
+    )).rejects.toBeInstanceOf(BadRequestException);
+    expect(store.insert).not.toHaveBeenCalled();
   });
 });

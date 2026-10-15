@@ -1,5 +1,7 @@
 import { ConnectorService, mcpToolSafety } from './connector.service';
 import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
+import { BadRequestException } from '../exceptions';
+import * as childProcess from 'node:child_process';
 import type {
   ConnectorCategoryStore,
   ConnectorRow,
@@ -8,6 +10,29 @@ import type {
 import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
 import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
+
+jest.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
+  SSEClientTransport: jest.fn().mockImplementation(() => ({})),
+}));
+jest.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: jest.fn().mockImplementation(() => ({})),
+}));
+jest.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: jest.fn().mockImplementation(() => ({
+    connect: jest.fn().mockResolvedValue(undefined),
+    listTools: jest.fn().mockResolvedValue({
+      tools: [
+        {
+          name: 'list_files',
+          description: 'Lists files',
+          inputSchema: { type: 'object' },
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    }),
+    close: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
 
 const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
@@ -849,5 +874,251 @@ describe('ConnectorService findIdsByCategoryName', () => {
       .resolves.toEqual([connectorId]);
     expect(categoryStore.findIdsByNameInsensitive).toHaveBeenCalledWith('Web Search');
     expect(store.findIdsInCategories).toHaveBeenCalledWith([connectorId], [categoryId]);
+  });
+});
+
+describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () => {
+  const buildInspectionService = () => {
+    const store = connectorStoreMock();
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+    return { service, store };
+  };
+
+  it.each([
+    ['stdio'],
+    [''],
+    ['UNKNOWN'],
+    ['streamable-http'],
+    ['sse;rm -rf'],
+    [undefined as unknown as string],
+  ])('denies transport "%s" with a 400 before any process spawn or network I/O', async (transportType) => {
+    const spawnSpy = jest.spyOn(childProcess, 'spawn');
+    const execSpy = jest.spyOn(childProcess, 'exec');
+    const execFileSpy = jest.spyOn(childProcess, 'execFile');
+    const { service, store } = buildInspectionService();
+
+    await expect(service.inspectMcp(transportType, 'node server.js', { commandArgs: ['--evil'] }))
+      .rejects.toBeInstanceOf(BadRequestException);
+
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(execFileSpy).not.toHaveBeenCalled();
+    expect(store.findById).not.toHaveBeenCalled();
+    spawnSpy.mockRestore();
+    execSpy.mockRestore();
+    execFileSpy.mockRestore();
+  });
+
+  it('denies a stored stdio connector on every inspection entry point shape', async () => {
+    const { service } = buildInspectionService();
+
+    await expect(service.inspectMcp('stdio', '/usr/local/bin/some-mcp', { commandArgs: ['--stdio'] }, 'user-1'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.importFromMcp('user-1', 'stdio', '/usr/local/bin/some-mcp'))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('still inspects approved remote transports through the MCP SDK', async () => {
+    const { service } = buildInspectionService();
+
+    const sseResult = await service.inspectMcp('sse', 'https://mcp.example.test/sse');
+    const httpResult = await service.inspectMcp('streamable_http', 'https://mcp.example.test/mcp');
+
+    expect(sseResult.error).toBeUndefined();
+    expect(sseResult.tools).toEqual([expect.objectContaining({ name: 'list_files', safety: 'read' })]);
+    expect(httpResult.error).toBeUndefined();
+    const streamableMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    expect(streamableMod.StreamableHTTPClientTransport).toHaveBeenCalled();
+  });
+
+  it('never hands stdio connectors to runtime gRPC bindings', async () => {
+    const row = baseRow({
+      id: '507f1f77bcf86cd799439041',
+      slug: 'legacy-stdio',
+      mcpTransportType: 'stdio',
+      mcpServerUrl: '/usr/local/bin/some-mcp',
+      actions: [{ key: 'run', label: 'Run', isEnabled: true }] as ConnectorRow['actions'],
+    });
+    const store = connectorStoreMock({
+      findByIds: jest.fn().mockResolvedValue([row]),
+    });
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    const bindings = await service.findByIdsForGrpc([row.id], 'user-1');
+
+    expect(bindings).toEqual([]);
+  });
+});
+
+describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () => {
+  const CANARY = 'CANARY-secret-9f2a1b';
+  const secretRow = (): ConnectorRow => baseRow({
+    id: '507f1f77bcf86cd799439042',
+    slug: 'secretive',
+    authSourceType: 'credential',
+    runtimeAuthConfig: {
+      strategy: 'http_header_bearer',
+      headerName: 'Authorization',
+      headerPrefix: `Bearer ${CANARY}`,
+      envMap: { API_KEY: CANARY },
+      unknownNested: { inner: CANARY },
+    },
+    mcpServerUrl: `https://user:${CANARY}@mcp.example.test/mcp`,
+    mcpServerConfig: {
+      headers: { Authorization: `Bearer ${CANARY}`, 'X-API-Key': CANARY },
+      env: { SHARED_SECRET: CANARY },
+      nestedUnknown: CANARY,
+    },
+    actions: [{ key: 'search', label: 'Search', isEnabled: true }] as ConnectorRow['actions'],
+  });
+
+  const buildServiceWithRow = (row: ConnectorRow) => {
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(row),
+      findByIds: jest.fn().mockResolvedValue([row]),
+      list: jest.fn().mockResolvedValue({ rows: [row], total: 1 }),
+      findAllActiveVisible: jest.fn().mockResolvedValue([row]),
+    });
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+    return service;
+  };
+
+  it('omits runtimeAuthConfig/mcpServerConfig and every canary from list and detail responses', async () => {
+    const service = buildServiceWithRow(secretRow());
+
+    const responses = [
+      await service.findById('507f1f77bcf86cd799439042'),
+      (await service.findByIds(['507f1f77bcf86cd799439042']))[0],
+      (await service.findAll({} as never)).data[0],
+      (await service.findAllActive())[0],
+    ];
+
+    expect(responses).toHaveLength(4);
+    for (const response of responses) {
+      expect(response).not.toHaveProperty('runtimeAuthConfig');
+      expect(response).not.toHaveProperty('mcpServerConfig');
+      const serialized = JSON.stringify(response);
+      expect(serialized).not.toContain(CANARY);
+      expect(serialized).not.toContain('Bearer ');
+    }
+  });
+
+  it('summarises credentials as credentialConfigured and marks stdio rows unsupported for inspection', async () => {
+    const service = buildServiceWithRow(secretRow());
+    const response = await service.findById('507f1f77bcf86cd799439042');
+    expect(response.credentialConfigured).toBe(true);
+
+    const stdioService = buildServiceWithRow(baseRow({ mcpTransportType: 'stdio' }));
+    const stdioResponse = await stdioService.findById('507f1f77bcf86cd799439031');
+    expect(stdioResponse.inspectionStatus).toBe('unsupported_for_http_inspection');
+    expect(stdioResponse.credentialConfigured).toBe(false);
+  });
+
+  it('strips embedded URL credentials from the exposed endpoint', async () => {
+    const service = buildServiceWithRow(secretRow());
+    const response = await service.findById('507f1f77bcf86cd799439042');
+    expect(response.mcpServerUrl).toBe('https://mcp.example.test/mcp');
+  });
+
+  it('rejects stdio transport and credential-bearing URLs on create and update', async () => {
+    const service = buildServiceWithRow(baseRow());
+
+    await expect(service.create('creator-1', {
+      slug: 'local',
+      name: 'Local',
+      description: '',
+      mcpTransportType: 'stdio',
+    } as never)).rejects.toBeInstanceOf(BadRequestException);
+
+    await expect(service.create('creator-1', {
+      slug: 'leaky',
+      name: 'Leaky',
+      description: '',
+      mcpServerUrl: 'https://user:pass@mcp.example.test/mcp',
+    } as never)).rejects.toThrow('embedded credentials');
+
+    await expect(service.update('507f1f77bcf86cd799439031', {
+      mcpServerUrl: 'https://user:pass@mcp.example.test/mcp',
+    } as never)).rejects.toThrow('embedded credentials');
+  });
+
+  it('clears stored runtime credentials only via the explicit clear flag', async () => {
+    const row = secretRow();
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(row),
+      update: jest.fn().mockResolvedValue({ ...row, runtimeAuthConfig: {} }),
+    });
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    // Omitted credential fields preserve the stored secret.
+    await service.update('507f1f77bcf86cd799439042', { name: 'Renamed' } as never);
+    expect(store.update).toHaveBeenCalledWith('507f1f77bcf86cd799439042', expect.not.objectContaining({ runtimeAuthConfig: expect.anything() }));
+
+    // The explicit flag clears without reading.
+    await service.update('507f1f77bcf86cd799439042', { clearRuntimeAuthConfig: true } as never);
+    expect(store.update).toHaveBeenLastCalledWith('507f1f77bcf86cd799439042', expect.objectContaining({ runtimeAuthConfig: {} }));
+  });
+
+  it('keeps runtime bindings server-side: findByIdsForGrpc still receives raw secret-bearing rows', async () => {
+    const row = secretRow();
+    const store = connectorStoreMock({
+      findByIds: jest.fn().mockResolvedValue([row]),
+    });
+    const auth = {
+      resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: `Bearer ${CANARY}` }, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      auth as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    const [binding] = await service.findByIdsForGrpc([row.id], 'user-1');
+
+    expect(auth.resolveRuntimeAuth).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      runtimeAuthConfig: expect.objectContaining({ headerPrefix: `Bearer ${CANARY}` }),
+    }));
+    expect(binding.auth_headers).toEqual({ Authorization: `Bearer ${CANARY}` });
   });
 });

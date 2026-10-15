@@ -143,6 +143,14 @@ describe('AgentService connector skill inheritance', () => {
       findIdsByCategoryName: jest.fn().mockResolvedValue([]),
       findBySlug: jest.fn().mockResolvedValue(null),
     };
+    // Server-only runtime lookups hit the same store; unit tests stub them
+    // with the same mocks the public lookups use.
+    (connectorService as Record<string, jest.Mock>).findRuntimeByIds = connectorService.findByIds;
+    (connectorService as Record<string, jest.Mock>).findRuntimeBySlug = connectorService.findBySlug;
+    (connectorService as Record<string, jest.Mock>).getRuntimeById = jest.fn(async (id: string) => {
+      const rows = await connectorService.findByIds([id]);
+      return rows[0] ?? null;
+    });
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
       resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
@@ -317,7 +325,7 @@ describe('AgentService connector skill inheritance', () => {
           { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
           { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
         ],
-        referencedSkillIds: ['connector-skill', 'disabled-skill'],
+        skillIds: ['connector-skill', 'disabled-skill'],
       },
     ]);
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
@@ -415,7 +423,7 @@ describe('AgentService connector skill inheritance', () => {
         ...enabledActions.map((key) => ({ key, label: key, isEnabled: true })),
         { key: 'disabled_action', label: 'disabled_action', isEnabled: false },
       ],
-      referencedSkillIds: [],
+      skillIds: [],
     }]);
     modelsService.getGuardrailsClassifierModel.mockResolvedValue(null);
 
@@ -541,7 +549,7 @@ describe('AgentService connector skill inheritance', () => {
           required: ['model_id', 'query'],
         },
       })),
-      referencedSkillIds: [],
+      skillIds: [],
     };
     const workerAgent = (connectorIds: string[] = []): IAgentForStream => ({
       id: 'worker-agent', name: 'Worker', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker', role: 'Assistant',
@@ -983,7 +991,7 @@ describe('AgentService connector skill inheritance', () => {
           { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
           { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
         ],
-        referencedSkillIds: ['connector-skill'],
+        skillIds: ['connector-skill'],
       },
     ]);
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
@@ -1111,7 +1119,7 @@ describe('AgentService connector skill inheritance', () => {
           name: 'Code Interpreter',
           slug: 'code-interpreter',
           actions: [{ key: 'run', label: 'Run', description: '', isEnabled: true }],
-          referencedSkillIds: [],
+          skillIds: [],
         },
         {
           id: PB_ID,
@@ -1119,7 +1127,7 @@ describe('AgentService connector skill inheritance', () => {
           slug: 'playbook-mcp',
           mcpServerUrl: 'http://localhost:8025/mcp',
           actions: [{ key: 'start', label: 'Start', description: '', isEnabled: true }],
-          referencedSkillIds: [],
+          skillIds: [],
         },
       ]);
       return { ...ctx, agentId: objectId.toString() };
@@ -1226,7 +1234,7 @@ describe('AgentService connector skill inheritance', () => {
       mcpTransportType: 'streamable_http',
       mcpServerUrl: 'https://example.com/mcp',
       mcpServerConfig: {},
-      referencedSkillIds: [],
+      skillIds: [],
       actions: [{
         key: 'search',
         label: 'Search',

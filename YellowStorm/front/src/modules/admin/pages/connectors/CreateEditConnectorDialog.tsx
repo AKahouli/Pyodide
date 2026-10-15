@@ -35,7 +35,7 @@ import type {
 } from '../../types';
 import type { ConnectorFormValues, DynamicHeaderRow } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
-import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
+import { buildMcpServerConfig } from './mcp-server-config';
 import { ExternalLink, Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { IconPickerPreview } from './IconDisplay';
 import { ColorPicker } from './ColorPicker';
@@ -61,10 +61,11 @@ const AUTH_SOURCE_TYPES = [
   { value: 'none', label: 'None' },
 ];
 
+// Remote transports only: local stdio connectors are not supported over HTTP
+// inspection or configuration (SEC-01 / WP-01).
 const TRANSPORT_TYPES = [
   { value: 'streamable_http', label: 'Streamable HTTP' },
   { value: 'sse', label: 'SSE (Server-Sent Events)' },
-  { value: 'stdio', label: 'Stdio (local command)' },
 ];
 
 const RESULT_KIND_OPTIONS = [
@@ -148,10 +149,6 @@ function createMappingRow(key = '', value = '') {
   };
 }
 
-function objectToMappingRows(source?: Record<string, unknown>) {
-  return Object.entries(source || {}).map(([key, value]) => createMappingRow(key, String(value)));
-}
-
 function mappingRowsToObject(rows: Array<{ key: string; value: string }>) {
   return rows.reduce<Record<string, string>>((acc, row) => {
     const key = row.key.trim();
@@ -160,18 +157,6 @@ function mappingRowsToObject(rows: Array<{ key: string; value: string }>) {
     }
     return acc;
   }, {});
-}
-
-function parseRuntimeAuthConfig(config?: Record<string, unknown>) {
-  const strategy = typeof config?.strategy === 'string' ? config.strategy : 'http_header_bearer';
-  return {
-    runtimeAuthConfig: config && Object.keys(config).length > 0 ? JSON.stringify(config, null, 2) : '',
-    runtimeAuthStrategy: strategy,
-    runtimeHeaderName: typeof config?.headerName === 'string' ? config.headerName : 'Authorization',
-    runtimeHeaderPrefix: typeof config?.headerPrefix === 'string' ? config.headerPrefix : 'Bearer ',
-    runtimeHeaderMappings: objectToMappingRows((config?.headerMappings as Record<string, unknown>) || undefined),
-    runtimeEnvMappings: objectToMappingRows((config?.envMap as Record<string, unknown>) || undefined),
-  };
 }
 
 function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unknown> | undefined {
@@ -325,9 +310,11 @@ export function CreateEditConnectorDialog({
         });
 
       if (connector) {
-        const parsedRuntime = parseRuntimeAuthConfig(connector.runtimeAuthConfig);
-        const parsedServerConfig = parseMcpServerConfig(connector.mcpServerConfig);
+        // Stored credentials/config never round-trip to the browser (SEC-02 /
+        // WP-02): the form starts empty and only replaces them when the admin
+        // explicitly opts in.
         setForm({
+          ...defaultConnectorFormValues,
           slug: connector.slug,
           name: connector.name,
           description: connector.description,
@@ -338,16 +325,8 @@ export function CreateEditConnectorDialog({
           authType: connector.authType || 'none',
           authSourceType: connector.authSourceType || 'credential',
           connectedAppKey: connector.connectedAppKey || '',
-          runtimeAuthConfig: parsedRuntime.runtimeAuthConfig,
-          runtimeAuthStrategy: parsedRuntime.runtimeAuthStrategy,
-          runtimeHeaderName: parsedRuntime.runtimeHeaderName,
-          runtimeHeaderPrefix: parsedRuntime.runtimeHeaderPrefix,
-          runtimeHeaderMappings: parsedRuntime.runtimeHeaderMappings,
-          runtimeEnvMappings: parsedRuntime.runtimeEnvMappings,
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
-          githubPatToken: parsedServerConfig.githubPatToken,
-          mcpServerConfig: parsedServerConfig.serverConfigText,
           dynamicHeaders: dynamicHeadersToRows(connector.dynamicHeaders),
           workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
           actions: connector.actions || [],
@@ -414,7 +393,7 @@ export function CreateEditConnectorDialog({
       return;
     }
 
-    const runtimeAuthConfig = buildRuntimeAuthConfig(form);
+    const runtimeAuthConfig = !connector || form.replaceCredentials ? buildRuntimeAuthConfig(form) : undefined;
 
     onSave({
       ...form,
@@ -423,6 +402,7 @@ export function CreateEditConnectorDialog({
       authType: form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'none' ? 'none' : 'token',
       connectedAppKey: form.authSourceType === 'connected_app' ? form.connectedAppKey : '',
       runtimeAuthConfig: runtimeAuthConfig ? JSON.stringify(runtimeAuthConfig) : '',
+      clearCredentials: connector ? form.clearCredentials : false,
     });
   };
 
@@ -448,7 +428,10 @@ export function CreateEditConnectorDialog({
 
     setInspecting(true);
     try {
-      const runtimeAuthConfig = buildRuntimeAuthConfig(form);
+      // Editing an existing connector inspects with its stored server-side
+      // credentials (resolved by the backend via connectorId) unless the admin
+      // is replacing them.
+      const runtimeAuthConfig = !connector || form.replaceCredentials ? buildRuntimeAuthConfig(form) : undefined;
       const result = await inspectMcp(
         form.mcpTransportType,
         form.mcpServerUrl,
@@ -856,7 +839,38 @@ export function CreateEditConnectorDialog({
               );
             })()}
 
-            {form.authSourceType !== 'none' && form.authSourceType !== 'server_config' && (
+            {connector && form.authSourceType !== 'none' && form.authSourceType !== 'server_config' ? (
+              <div className='grid gap-3 rounded-md bg-muted/40 p-3'>
+                <span className={`text-sm font-medium ${connector.credentialConfigured ? 'text-green-600' : 'text-amber-600'}`}>
+                  {connector.credentialConfigured
+                    ? t('connectors.form.auth.credentialConfigured')
+                    : t('connectors.form.auth.credentialNotConfigured')}
+                </span>
+                <div className='grid gap-1'>
+                  <div className='flex items-center gap-2'>
+                    <Switch
+                      checked={form.replaceCredentials}
+                      onCheckedChange={(value) => setForm({ ...form, replaceCredentials: value, clearCredentials: value ? false : form.clearCredentials })}
+                      id='connector-replace-credentials'
+                    />
+                    <Label htmlFor='connector-replace-credentials'>{t('connectors.form.auth.replaceCredentials')}</Label>
+                  </div>
+                  <p className='text-xs text-muted-foreground'>{t('connectors.form.auth.replaceCredentialsHelper')}</p>
+                </div>
+                {connector.credentialConfigured ? (
+                  <div className='flex items-center gap-2'>
+                    <Switch
+                      checked={form.clearCredentials}
+                      onCheckedChange={(value) => setForm({ ...form, clearCredentials: value, replaceCredentials: value ? false : form.replaceCredentials })}
+                      id='connector-clear-credentials'
+                    />
+                    <Label htmlFor='connector-clear-credentials'>{t('connectors.form.auth.clearCredentials')}</Label>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {form.authSourceType !== 'none' && form.authSourceType !== 'server_config' && (!connector || form.replaceCredentials) && (
               <div className='grid gap-4'>
                 <div>
                   <Label>{t('connectors.form.auth.strategyLabel')}</Label>
@@ -952,16 +966,17 @@ export function CreateEditConnectorDialog({
               </Select>
             </div>
             <div>
-              <Label>{form.mcpTransportType === 'stdio' ? t('connectors.form.fields.command.label') : t('connectors.form.fields.serverUrl.label')}</Label>
+              <Label>{t('connectors.form.fields.serverUrl.label')}</Label>
               <Input
-                placeholder={
-                  form.mcpTransportType === 'stdio'
-                    ? t('connectors.form.fields.command.placeholder')
-                    : t('connectors.form.fields.serverUrl.placeholder')
-                }
+                placeholder={t('connectors.form.fields.serverUrl.placeholder')}
                 value={form.mcpServerUrl}
                 onChange={(e) => setForm({ ...form, mcpServerUrl: e.target.value })}
               />
+              {connector?.inspectionStatus === 'unsupported_for_http_inspection' ? (
+                <p className='mt-1 text-xs text-amber-600'>
+                  {t('connectors.form.fields.transportType.unsupportedInspection')}
+                </p>
+              ) : null}
               <Button
                 type='button'
                 variant='outline'
@@ -978,6 +993,11 @@ export function CreateEditConnectorDialog({
 
           <div>
             <Label>{t('connectors.form.fields.serverConfig.label')}</Label>
+            {connector ? (
+              <p className='mb-1 text-xs text-muted-foreground'>
+                {t('connectors.form.fields.serverConfig.preservedHelper')}
+              </p>
+            ) : null}
             <Textarea placeholder={t('connectors.form.fields.serverConfig.placeholder')} value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
           </div>
 

@@ -24,6 +24,10 @@ export interface ConnectorFormValues {
   runtimeHeaderPrefix: string;
   runtimeHeaderMappings: Array<{ id: string; key: string; value: string }>;
   runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
+  /** Edit mode: re-enter credentials to replace the stored ones (they are never displayed). */
+  replaceCredentials: boolean;
+  /** Edit mode: clear the stored credentials on save. */
+  clearCredentials: boolean;
   mcpTransportType: string;
   mcpServerUrl: string;
   githubPatToken: string;
@@ -55,6 +59,8 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   runtimeHeaderPrefix: 'Bearer ',
   runtimeHeaderMappings: [],
   runtimeEnvMappings: [],
+  replaceCredentials: false,
+  clearCredentials: false,
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
   githubPatToken: '',

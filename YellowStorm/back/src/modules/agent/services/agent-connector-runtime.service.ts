@@ -6,7 +6,7 @@ import { LoggerService } from '../../logger';
 import { SkillService } from '../../skill/skill.service';
 import { ISkillResponse } from '../../skill/interfaces/skill.interface';
 import { ConnectorService } from '../../connector/connector.service';
-import { IConnectorResponse } from '../../connector/interfaces/connector.interface';
+import { RuntimeConnectorDefinition } from '../../connector/interfaces/connector-runtime.interface';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
 import { SemanticModelMcpJwtService } from '../../connector/services/semantic-model-mcp-jwt.service';
@@ -138,12 +138,12 @@ export class AgentConnectorRuntimeService {
   }
 
   getConnectorSkillIds(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[],
   ): string[] {
     return [...new Set(
       connectorIds
-        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
+        .map((connectorId) => connectorsMap.get(connectorId)?.skillIds || [])
         .flat()
         .filter(Boolean),
     )];
@@ -168,13 +168,13 @@ export class AgentConnectorRuntimeService {
     };
   }
 
-  async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
-    const connectorsMap = new Map<string, IConnectorResponse>();
+  async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, RuntimeConnectorDefinition>> {
+    const connectorsMap = new Map<string, RuntimeConnectorDefinition>();
     if (connectorIds.length === 0) {
       return connectorsMap;
     }
 
-    const fetchedConnectors = await this.connectorService.findByIds(connectorIds);
+    const fetchedConnectors = await this.connectorService.findRuntimeByIds(connectorIds);
     for (const connector of fetchedConnectors) {
       connectorsMap.set(connector.id, connector);
     }
@@ -188,7 +188,7 @@ export class AgentConnectorRuntimeService {
   }
 
   async buildConnectorBindings(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[] = [],
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,

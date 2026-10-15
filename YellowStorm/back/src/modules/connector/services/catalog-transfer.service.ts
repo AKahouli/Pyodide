@@ -26,6 +26,7 @@ import {
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
+import { assertNoUrlCredentials } from '../utils/remote-mcp-transport.util';
 import { PgSkillCategoryStore } from '../../skill/persistence/pg-skill.store';
 import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
 import { PgConnectorCredentialStore } from '../persistence/pg-connector.store';
@@ -409,6 +410,18 @@ export class CatalogTransferService {
   ): Promise<void> {
     const createdBy = String(ownerId);
     for (const connector of connectors) {
+      // WP02.6: catalog archives cannot reintroduce endpoint URLs that embed
+      // credentials into connector storage.
+      if (connector.mcpServerUrl) {
+        try {
+          assertNoUrlCredentials(connector.mcpServerUrl);
+        } catch {
+          throw new BadRequestException(
+            ErrorCode.BAD_REQUEST,
+            `Connector '${connector.slug}' has an endpoint URL with embedded credentials.`,
+          );
+        }
+      }
       const existing = await this.connectorStore.findBySlugAndOwner(connector.slug, createdBy);
       const missingSkills = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
       if (missingSkills.length) {

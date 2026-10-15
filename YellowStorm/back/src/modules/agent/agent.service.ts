@@ -29,7 +29,7 @@ import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
-import { IConnectorResponse } from '../connector/interfaces/connector.interface';
+import { RuntimeConnectorDefinition } from '../connector/interfaces/connector-runtime.interface';
 import { ConnectorCitationMode } from '../connector/connector.types';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
@@ -76,7 +76,7 @@ export function buildSemanticModelChatContext(model: { id: string; name: string 
  * The semantic connector's tools a chat on a model gets: the read tools the agent selected for that connector, or all
  * its enabled read tools when the agent has no selection. A chat on a model reads published data and changes nothing.
  */
-export function semanticModelChatActionKeys(connector: IConnectorResponse, selected: Set<string> | undefined): Set<string> {
+export function semanticModelChatActionKeys(connector: RuntimeConnectorDefinition, selected: Set<string> | undefined): Set<string> {
   return new Set((connector.actions ?? [])
     .filter((action) => action.isEnabled !== false && (action.safety ?? 'read') === 'read')
     .map((action) => action.key)
@@ -2027,7 +2027,7 @@ export class AgentService {
   }
 
   private getConnectorSkillIds(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[],
   ): string[] {
     return this.getConnectorRuntime().getConnectorSkillIds(connectorsMap, connectorIds);
@@ -2120,7 +2120,7 @@ export class AgentService {
   private buildRuntimeConnectorActionKeysByConnectorId(
     agent: Pick<IAgentForStream, 'agentTypeSlug' | 'connectorActionSelections'>,
     connectorIds: string[],
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
   ): Map<string, Set<string>> | undefined {
     const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
     if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
@@ -2188,7 +2188,7 @@ export class AgentService {
     );
   }
 
-  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, RuntimeConnectorDefinition>> {
     return this.getConnectorRuntime().buildConnectorsMap(connectorIds);
   }
 
@@ -2204,14 +2204,14 @@ export class AgentService {
    * The connector-library connector named by SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG, or null (with a warning)
    * when none is configured, active or readable. It receives the acting user only through the trusted-URL rule.
    */
-  private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<IConnectorResponse | null> {
+  private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<RuntimeConnectorDefinition | null> {
     const connectorSlug = this.configService.get<string>('semanticModel.searchConnectorSlug', '') ?? '';
     if (!connectorSlug) {
       this.logger.warn('SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG is not set; chat on the model has no search tools', { semanticModelId });
       return null;
     }
     try {
-      const connector = await this.connectorService.findBySlug(connectorSlug);
+      const connector = await this.connectorService.findRuntimeBySlug(connectorSlug);
       if (!connector) {
         this.logger.warn('Semantic model search connector is not available; chat on the model has no search tools', {
           connectorSlug,
@@ -2250,7 +2250,7 @@ export class AgentService {
   }
 
   private async buildConnectorBindings(
-    connectorsMap: Map<string, IConnectorResponse>,
+    connectorsMap: Map<string, RuntimeConnectorDefinition>,
     connectorIds: string[] = [],
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,

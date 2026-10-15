@@ -149,6 +149,7 @@ export function ConnectorsPage() {
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
         runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
+        clearRuntimeAuthConfig: data.clearCredentials || undefined,
         mcpTransportType: data.mcpTransportType || undefined,
         mcpServerUrl: data.mcpServerUrl || undefined,
         mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),

@@ -97,7 +97,7 @@ export class GeminiTokenService implements OnModuleInit {
     // the source of truth, no hardcoded tool list. Each connector's tools route
     // to that connector's MCP (toolEndpoints), which the browser relay honors.
     const connectors = (
-      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findBySlug(s)))
+      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findRuntimeBySlug(s)))
     ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
 
     if (!connectors.length) {
@@ -128,7 +128,8 @@ export class GeminiTokenService implements OnModuleInit {
     // tool: the smart-memory MCP needs a shared secret key the browser can't hold,
     // so the browser only signals per-turn transcripts to our backend endpoint,
     // which does the memory.write. On only when both the connector and key exist.
-    const smart = await this.connectors.findBySlug('smart-memory');
+    // SERVER-ONLY runtime lookup: reads the connector's own endpoint/headers (WP-02).
+    const smart = await this.connectors.findRuntimeBySlug('smart-memory');
     const thematicMemory = !!(smart?.actions?.some((a) => a.key === 'memory.write') && this.thematicMemoryApiKey);
     // Give the model a retrieval tool too (backend-proxied — see THEMATIC_RETRIEVE_TOOL).
     if (thematicMemory && smart?.actions?.some((a) => a.key === 'memory.retrieve')) {

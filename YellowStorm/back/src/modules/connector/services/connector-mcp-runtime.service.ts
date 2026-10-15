@@ -45,7 +45,8 @@ export class ConnectorMcpRuntimeService {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The requested MCP tool is not allowlisted for evidence retrieval.');
     }
 
-    const connector = await this.connectors.findById(input.connectorId);
+    // SERVER-ONLY runtime lookup: credentials stay off the public projection (WP-02).
+    const connector = await this.connectors.getRuntimeById(input.connectorId);
     if (!connector.isActive) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected evidence-search connector is inactive.');
     }

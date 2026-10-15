@@ -2,7 +2,7 @@ import { ConnectorMcpRuntimeService } from './connector-mcp-runtime.service';
 
 describe('ConnectorMcpRuntimeService', () => {
   it('issues JWTs for the requesting user after workspace access, overriding owner and caller credentials', async () => {
-    const connectors = { findById: jest.fn().mockResolvedValue({
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
       id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
       mcpServerUrl: 'http://localhost:8027/mcp', mcpServerConfig: {},
       authSourceType: 'credential', createdBy: { toString: () => 'owner' },
@@ -23,7 +23,7 @@ describe('ConnectorMcpRuntimeService', () => {
     expect(shares.assertUserHasAccess.mock.invocationCallOrder[0]).toBeLessThan(mcpJwt.headers.mock.invocationCallOrder[0]);
   });
   it('authorizes the requesting user before resolving connector-owner credentials', async () => {
-    const connectors = { findById: jest.fn().mockResolvedValue({
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
       id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
       actions: [{ key: 'search', safety: 'read', isEnabled: true }], createdBy: { toString: () => 'connector-owner' },
     }) };

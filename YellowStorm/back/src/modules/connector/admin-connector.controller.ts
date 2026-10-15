@@ -37,7 +37,8 @@ import {
   UpdateConnectorDto,
 } from './dto';
 import { InspectConnectorDto } from './dto/inspect-connector.dto';
-import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
+import { PublicConnectorDto } from './dto/public-connector.dto';
+import { IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
@@ -62,7 +63,7 @@ export class AdminConnectorController {
   @Get()
   @RequirePermissions(Permissions.CONNECTORS_READ)
   @ApiOperation({ summary: 'List connectors (paginated)' })
-  async findAll(@Query() query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {
+  async findAll(@Query() query: QueryConnectorDto): Promise<PaginatedResponseDto<PublicConnectorDto>> {
     return this.connectorService.findAll(query);
   }
 
@@ -70,7 +71,7 @@ export class AdminConnectorController {
   @RequirePermissions(Permissions.CONNECTORS_READ)
   @ApiOperation({ summary: 'Get a connector by ID' })
   @ApiParam({ name: 'id', description: 'Connector ID' })
-  async findById(@Param('id') id: string): Promise<IConnectorResponse> {
+  async findById(@Param('id') id: string): Promise<PublicConnectorDto> {
     return this.connectorService.findById(id);
   }
 
@@ -82,7 +83,7 @@ export class AdminConnectorController {
     @Body() dto: CreateConnectorDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
-  ): Promise<IConnectorResponse> {
+  ): Promise<PublicConnectorDto> {
     const connector = await this.connectorService.create(user._id.toString(), dto);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
@@ -107,8 +108,10 @@ export class AdminConnectorController {
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
+    // SERVER-ONLY runtime lookup: stored credentials never travel through the
+    // public projection (WP-02).
     const connector = body.connectorId
-      ? await this.connectorService.findById(body.connectorId)
+      ? await this.connectorService.getRuntimeById(body.connectorId)
       : undefined;
     // An internal MCP server (trusted by URL) authorizes tool listing as a user, like a tool call.
     const trustedServer = isTrustedMcpServerUrl(this.configService, connector?.mcpServerUrl ?? body.serverUrl);
@@ -201,7 +204,7 @@ export class AdminConnectorController {
     @Body() dto: UpdateConnectorDto,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
-  ): Promise<IConnectorResponse> {
+  ): Promise<PublicConnectorDto> {
     const connector = await this.connectorService.update(id, dto);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
@@ -288,7 +291,7 @@ export class AdminConnectorController {
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
   ) {
-    const connector = await this.connectorService.findById(id);
+    const connector = await this.connectorService.getRuntimeById(id);
 
     if (!connector.connectedAppKey) {
       throw new BadRequestException(
@@ -315,7 +318,9 @@ export class AdminConnectorController {
     @CurrentUser() user: AuthUser,
     @Body() dto: InspectConnectorDto,
   ) {
-    const connector = await this.connectorService.findById(id);
+    // SERVER-ONLY runtime lookup (WP-02); stdio/unknown transports are denied
+    // inside inspectMcp before any side effect (WP-01).
+    const connector = await this.connectorService.getRuntimeById(id);
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(
