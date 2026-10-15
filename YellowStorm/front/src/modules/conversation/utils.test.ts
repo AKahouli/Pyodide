@@ -1,7 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, formatChoiceSubmissionContent, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
+  it('renders a recovered interruption beside the saved partial answer', () => {
+    const translate = vi.spyOn(i18nInstance, 't').mockImplementation(((key: string) => key) as typeof i18nInstance.t);
+    try {
+    const parts = mapConversationComponentsToContentParts([
+      { id: 'text', type: 'text', data: { content: 'Partial answer' } },
+      { id: 'error', type: 'error', data: { reason: 'interrupted', code: 'ERR_1404' } },
+    ]);
+    expect(parts).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'error', title: expect.any(String), content: expect.any(String) })]));
+    expect(JSON.stringify(parts)).toContain('Partial answer');
+    } finally { translate.mockRestore(); }
+  });
   it('formats timing values', () => {
     expect(formatTimingMs(undefined)).toBe('--');
     expect(formatTimingMs(550)).toBe('550ms');

@@ -86,6 +86,24 @@ describe('StreamService guardrail metadata buffering', () => {
     };
   };
 
+  it('checkpoints partial content during lease renewal without completing the answer', async () => {
+    jest.useFakeTimers();
+    try {
+      const complete = jest.fn().mockResolvedValue(undefined);
+      const { service, call } = createLifecycleHarness(complete);
+      const started = service.startStream('user-1', 'conversation-1', 'message-1', { content: 'question' });
+      await jest.advanceTimersByTimeAsync(0);
+      call.emit('data', { action: 'add', component: { id: 'text-1', text: { content: 'Saved partial answer' } } });
+      await jest.advanceTimersByTimeAsync(30_000);
+      const renew = (service as unknown as { messageService: { renewStreamExecution: jest.Mock } }).messageService.renewStreamExecution;
+      expect(renew).toHaveBeenLastCalledWith('message-1', expect.any(String), 90_000,
+        expect.arrayContaining([expect.objectContaining({ type: 'text', data: expect.objectContaining({ content: 'Saved partial answer' }) })]));
+      expect(complete).not.toHaveBeenCalled();
+      call.emit('end');
+      await started;
+    } finally { jest.useRealTimers(); }
+  });
+
   it('returns an active stream snapshot without exposing artifact storage paths', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {

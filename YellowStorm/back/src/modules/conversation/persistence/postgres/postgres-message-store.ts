@@ -405,7 +405,7 @@ export class PostgresMessageStore implements MessageStore {
     return rows.length === 1;
   }
 
-  async renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean> {
+  async renewStream(id: string, leaseId: string, expiresAt: Date, components?: MessageComponent[]): Promise<boolean> {
     const now = new Date();
     const rows = await this.db
       .update(schema.messages)
@@ -413,6 +413,7 @@ export class PostgresMessageStore implements MessageStore {
         streamExecutionLeaseExpiresAt: expiresAt,
         lastProgressAt: now,
         updatedAt: now,
+        ...(components ? { components } : {}),
       })
       .where(and(eq(schema.messages.id, id), eq(schema.messages.streamExecutionLeaseId, leaseId), eq(schema.messages.isComplete, false)))
       .returning({ id: schema.messages.id });
@@ -605,6 +606,7 @@ export class PostgresMessageStore implements MessageStore {
         isStreaming: false,
         isComplete: false,
         executionStatus: 'interrupted',
+        components: sql`COALESCE(${schema.messages.components}, '[]'::jsonb) || ${JSON.stringify([{ id: `interrupted-${id}`, type: 'error', data: { code: ErrorCode.CHAT_STREAM_FAILED, reason: 'interrupted' } }])}::jsonb`,
         interruptionReason: reason,
         executionTerminalAt: now,
         streamExecutionLeaseId: null,

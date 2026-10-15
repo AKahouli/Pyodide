@@ -1,4 +1,5 @@
 {
+  "stream.interrupted": "Generation was interrupted. The saved partial answer is shown below; retry to generate a new answer.",
   "openui.image.generated": "AI generated",
   "openui.image.preview": "Preview image",
   "openui.image.download": "Download image",

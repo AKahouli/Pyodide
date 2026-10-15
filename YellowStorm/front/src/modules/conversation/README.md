@@ -1,5 +1,10 @@
 # Conversation Module
 
+Stream recovery checkpoints partial content with the existing lease heartbeat every
+30 seconds. Interrupted answers retain the last checkpoint and show an incomplete
+status after reload; retry creates a new answer. The last uncheckpointed tail may be
+lost on a hard crash. See the backend stream and PostgreSQL cancellation regressions.
+
 The conversation module provides the complete AI chat experience, handling real-time streaming responses, message management, branch navigation, agent mentioning, workspace linking, conversation sharing, and user interactions.
 
 OpenUI generated-file buttons use `{type: "download_artifact", params: {filename: "exact-returned-filename.docx"}}`.

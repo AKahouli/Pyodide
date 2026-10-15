@@ -311,8 +311,8 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'error':
       return {
         type: 'error',
-        title: (data.title as string) || (data.code as string) || '',
-        content: (data.content as string) || (data.message as string) || '',
+        title: data.reason === 'interrupted' ? translateConversation('home.activity.status.interrupted') : (data.title as string) || (data.code as string) || '',
+        content: data.reason === 'interrupted' ? translateConversation('stream.interrupted') : (data.content as string) || (data.message as string) || '',
       };
     case 'sources':
       return {

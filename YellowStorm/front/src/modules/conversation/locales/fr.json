@@ -1,4 +1,5 @@
 {
+  "stream.interrupted": "La génération a été interrompue. La réponse partielle enregistrée est conservée ; réessayez pour générer une nouvelle réponse.",
   "openui.image.generated": "Générée par IA",
   "openui.image.preview": "Aperçu de l’image",
   "openui.image.download": "Télécharger l’image",

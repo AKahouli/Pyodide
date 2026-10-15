@@ -59,6 +59,14 @@ These are implemented entry points, not a guarantee that every deployment enable
 
 ## Behavior and constraints to preserve
 
+Standard streamed answers checkpoint their current components during the existing
+30-second lease renewal, under the same owner/incomplete predicate. Recovery retains
+that snapshot and appends an interruption marker atomically; it never marks the partial
+answer complete. A hard crash can lose the uncheckpointed tail (up to one renewal
+interval). PostgreSQL regression coverage is in
+`postgres-message-store-cancellation.integration.spec.ts`; lifecycle coverage is in
+`stream.service.spec.ts`. Client error rendering localizes the interrupted status.
+
 - Conversation data is PostgreSQL/Drizzle backed. Mongo conversation/message collections are legacy; do not use them as current data.
 - Message components are stored in a JSONB payload; change mappers and readers together when changing component shapes.
 - Workspace documents remain in their owning Mongo/blob domain. Citation/artifact resolution crosses that boundary; it is not a second conversation database.

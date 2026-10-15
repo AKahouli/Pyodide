@@ -13,6 +13,20 @@ describeIntegration('cancelled foreground persistence', () => {
   let conversationId: string;
   afterEach(async () => { await database.db.delete(conversations).where(eq(conversations.id, conversationId)); });
   afterAll(() => database.close());
+  it('retains a checkpoint on expired ownership and rejects late owner writes', async () => {
+    conversationId = id(); const actor = id(), answer = id(), lease = randomUUID();
+    await database.db.insert(conversations).values({ id: conversationId, createdBy: actor });
+    await database.db.insert(messages).values({ id: answer, conversationId, conversationType: 'ai',
+      isStreaming: true, isComplete: false, executionStatus: 'running', streamExecutionLeaseId: lease });
+    const components = [{ id: 'partial', type: 'text' as const, data: { content: 'Durable partial answer' } }];
+    expect(await store.renewStream(answer, lease, new Date(Date.now() - 1000), components)).toBe(true);
+    expect(await store.markExecutionInterrupted(answer, 'lease_expired', new Date())).not.toBeNull();
+    expect(await store.renewStream(answer, lease, new Date(Date.now() + 60_000), [])).toBe(false);
+    expect(await store.markExecutionInterrupted(answer, 'lease_expired', new Date())).toBeNull();
+    const [row] = await database.db.select().from(messages).where(eq(messages.id, answer));
+    expect(row).toMatchObject({ isComplete: false, isStreaming: false, executionStatus: 'interrupted' });
+    expect(row.components).toEqual([components[0], expect.objectContaining({ type: 'error', data: expect.objectContaining({ reason: 'interrupted' }) })]);
+  });
   it('retains partial content with cancelled status and leaves a sibling running', async () => {
     conversationId = id(); const actor = id(), first = id(), second = id(), lease = randomUUID();
     await database.db.insert(conversations).values({ id: conversationId, createdBy: actor });

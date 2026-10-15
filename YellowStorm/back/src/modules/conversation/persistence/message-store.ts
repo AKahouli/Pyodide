@@ -110,7 +110,7 @@ export interface MessageStore {
   updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date): Promise<MessageRecord | null>;
   updateReliability(id: string, evaluation: ReliabilityEvaluation): Promise<MessageRecord | null>;
   claimStream(id: string, leaseId: string, now: Date, expiresAt: Date): Promise<boolean>;
-  renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean>;
+  renewStream(id: string, leaseId: string, expiresAt: Date, components?: MessageComponent[]): Promise<boolean>;
   releaseStream(id: string, leaseId: string): Promise<void>;
   claimReliability(conversationId: string, id: string, manual: boolean, requestedAt: string): Promise<MessageRecord | null>;
   updateCorrectionWorkflow(id: string, workflow: ResponseCorrectionWorkflow, correctionRunId?: string): Promise<MessageRecord | null>;

@@ -747,6 +747,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.streamExecutionLeases.set(streamKey, leaseId);
     let leaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     let leaseLost = false;
+    let renewingLease = false;
     // Ownership marker set once the conversation slot is granted: a rejected
     // duplicate must never release the legitimate owner's registration.
     let registeredLocally = false;
@@ -890,8 +891,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         }
       };
       leaseHeartbeat = setInterval(() => {
+        if (renewingLease || leaseLost) return;
+        renewingLease = true;
+        // Atomically checkpoint under the same lease guard as renewal. A dead
+        // owner leaves readable partial content for the recovery worker.
+        const buffer = this.componentBuffers.get(streamKey);
+        const snapshot = buffer?.size ? structuredClone(Array.from(buffer.values())) : undefined;
         void this.messageService
-          .renewStreamExecution(messageId, leaseId, leaseDurationMs)
+          .renewStreamExecution(messageId, leaseId, leaseDurationMs, snapshot)
           .then((renewed) => {
             if (!renewed) {
               leaseLost = true;
@@ -910,7 +917,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               },
               logOpts,
             );
-          });
+          }).finally(() => { renewingLease = false; });
         if (fleetAdmitted) {
           // Keep the shared capacity slot alive and observe cross-replica stop
           // requests (bounded polling fallback; the serving replica settles).

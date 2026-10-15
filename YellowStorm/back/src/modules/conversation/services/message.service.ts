@@ -621,8 +621,8 @@ export class MessageService {
     return this.messageStore.claimStream(messageId, leaseId, now, new Date(now.getTime() + leaseDurationMs));
   }
 
-  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
-    return this.messageStore.renewStream(messageId, leaseId, new Date(Date.now() + leaseDurationMs));
+  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number, components?: MessageComponent[]): Promise<boolean> {
+    return this.messageStore.renewStream(messageId, leaseId, new Date(Date.now() + leaseDurationMs), components);
   }
 
   async releaseStreamExecution(messageId: string, leaseId: string): Promise<void> {
