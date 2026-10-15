@@ -249,7 +249,13 @@ export function SemanticModelEditorPage() {
     retry: false,
   });
   useEffect(() => {
-    if (!populationJob.data || !POPULATION_TERMINAL_STATES.has(populationJob.data.state)) return;
+    if (!populationJob.data || populationJob.data.jobId !== populationJobId) return;
+    if (!POPULATION_TERMINAL_STATES.has(populationJob.data.state)) {
+      const live = populationJob.data;
+      setPopulation((current) => current?.jobId === live.jobId && current.status !== live.state
+        ? { ...current, status: live.state } : current);
+      return;
+    }
     if (['completed', 'completed_with_gaps'].includes(populationJob.data.state)) {
       setBoundDataRevisionId(undefined);
       // Drop, not just invalidate: cached data would re-pin the replaced revision.

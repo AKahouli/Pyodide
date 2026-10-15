@@ -166,7 +166,7 @@ describe("SemanticModelEditorPage", () => {
     vi.clearAllMocks();
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
-    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
+    apiMocks.getPopulationJob.mockReset().mockResolvedValue({ jobId: 'job-1', state: 'completed' });
     apiMocks.stopPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'cancel_requested' });
     apiMocks.stopSearchIndex.mockResolvedValue({ stopped: true, index: { state: 'indexing' } });
     indexMock.state = undefined;
@@ -333,17 +333,19 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     fireEvent.click(await screen.findByText('pin-revision'));
     expect(screen.getByText('revision:old-revision')).toBeInTheDocument();
-    act(() => useSemanticModelEditorStore.getState().setMode('mappings'));
+    fireEvent.click(screen.getByRole('tab', { name: 'trustCenter.sourcesLineage' }));
     fireEvent.click(await screen.findByText('accept-population'));
     await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'job-1'));
     act(() => useSemanticModelEditorStore.getState().setMode('structure'));
 
     completeJob({ jobId: 'job-1', state: 'completed' });
     await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'job-1'])).toMatchObject({ state: 'completed' }));
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     expect(await screen.findByText('revision:none')).toBeInTheDocument();
   });
 
@@ -352,19 +354,35 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     fireEvent.click(await screen.findByText('pin-revision'));
     act(() => useSemanticModelEditorStore.getState().setMode('structure'));
     fireEvent.click(await screen.findByText('start-dialog-population'));
 
     await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
     await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'dialog-job'])).toMatchObject({ state: 'completed' }));
-    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    act(() => useSemanticModelEditorStore.getState().setMode('health'));
+    fireEvent.click(await screen.findByRole('tab', { name: 'trustCenter.records' }));
     expect(await screen.findByText('revision:none')).toBeInTheDocument();
   });
 
   const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><SemanticModelEditorPage /></QueryClientProvider>);
   const stopButtons = () => screen.getAllByRole('button', { name: /runStop\.stop/ });
+
+  it('replaces the queued admission status with the matching live job state', async () => {
+    let started!: (value: unknown) => void;
+    apiMocks.getPopulationJob.mockImplementationOnce(() => new Promise((resolve) => { started = resolve; }));
+    renderPage();
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+    expect(await screen.findByText('myJobs.queuedTitle')).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+
+    started({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });
+    expect(await screen.findByText('population.started')).toBeInTheDocument();
+    expect(screen.queryByText('myJobs.queuedTitle')).not.toBeInTheDocument();
+    expect(screen.queryByText('myJobs.waitingWorker')).not.toBeInTheDocument();
+  });
 
   it('turns Run into Stop while a data update runs, and asks before stopping it', async () => {
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'running', progress: { phase: 'reading', total: 3, done: 1 } });

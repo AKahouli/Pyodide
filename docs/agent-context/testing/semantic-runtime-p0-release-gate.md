@@ -105,6 +105,34 @@ CI workflow: [semantic-runtime-p0.yml](../../../.github/workflows/semantic-runti
 Required artifact: `semantic-runtime-p0-<tested commit>` with evidence JSON and
 JUnit. **Workflow URL: pending; no remote CI run is claimed.**
 
+## Local mail_model smoke (not M1–M10 certification)
+
+The user-authorized browser run of existing `mail_model`
+(`61ce5cd7-68e6-4ade-a5e8-cf42e3d108a8`) reached `completed_with_gaps`:
+job `8a70cf1e-6d17-4275-a700-e7e8f74a77b0`, terminal observed at
+2026-10-15T09:02:15Z, duration 3 min 45 s. All 3 sources and 353 elements
+finished; 10 AI calls answered, none failed. The activated draft
+`dr_e2200e46df16f7d45eece617` contains 227 entities, 126 relationships,
+1,093 assertions and 24 nonblocking gaps, with no job error code. The canvas
+changed from 228 to 227 records and reported data up to date. No second population
+run, source/spec/correction edit, publication, reset or deletion was performed.
+
+Browser QA exposed a stale admission-status display: the editor copied terminal
+job states into its outcome but left a queued outcome unchanged while the API
+reported running. The editor now synchronizes the matching nonterminal query
+state, including stop-mode selection. The queued-to-running regression failed
+before the change; 48 focused editor/progress-panel tests and TypeScript passed
+afterwards. Reloaded browser QA confirmed the actual terminal display and draft;
+the corrected live transition was covered by unit tests, without another run or
+mocked browser response. Local artifacts are under
+`qa-artifacts/mail-model/20261015-ec13868f/`. Separately, background search index
+`1bcdd7ad-d1b1-4164-971a-a4df87416f0c` / job
+`d307cf7f-b969-4fbd-8bdf-d9764de35961` failed `attempts_exhausted` after four
+claims; a read-only DB inspection found preceding outbox code `DataError`.
+Its underlying argument/SQL failure remains undiagnosed; zero reported embedding
+calls does not establish that no provider request occurred. Population success
+does not establish search-index success or any multi-replica chaos criterion.
+
 ## Multi-replica staging report
 
 **Overall release status: BLOCKED pending staging evidence and commit-associated CI.**
