@@ -86,6 +86,11 @@ image without model generation. PDF inputs use a bounded, private rendering of `
 Authorization, guarded remote download and durable imports remain in the existing
 [artifact service](../../../YellowStorm/back/src/modules/conversation/services/conversation-artifact.service.ts).
 OpenUI resolves saved references after reload and labels generated/edited outputs, not imported originals.
+Generated-image persistence enforces the conversation workspace's storage allocation.
+ADK recognizes only the existing platform failure envelope with HTTP 403 / `ERR_1930`
+as a storage-quota failure and returns a fixed actionable message; arbitrary server
+messages remain hidden. It does not retry generation or override the allocation.
+Coverage: ADK `test_generate_image.py`, including malformed/untrusted error bodies.
 For MCP DOCX/PPTX creation, prepare every image with the tool before `sandbox_create` and use
 only returned `sandboxPath` values. Titles, captions and shapes can remain editable; images are embedded pictures.
 The deployed MCP service requires deliverables under `/mnt/yellowmind/run/outputs/` for

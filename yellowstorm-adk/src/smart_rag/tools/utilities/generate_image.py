@@ -136,6 +136,21 @@ def create_generate_image_tool(runtime_context: dict[str, Any] | None = None):
                         "invocation": invocation, "paths": paths,
                     }
             return receipt
+        except httpx.HTTPStatusError as error:
+            # Only recognize the platform's explicit domain code. Provider text,
+            # response URLs and exception strings must never reach the model.
+            try:
+                body = error.response.json()
+            except ValueError:
+                body = None
+            platform_error = body.get("error") if isinstance(body, dict) else None
+            if (error.response.status_code == 403 and isinstance(body, dict)
+                    and body.get("success") is False and isinstance(platform_error, dict)
+                    and platform_error.get("code") == "ERR_1930"):
+                return {"status": "error", "code": "ERR_1930", "statusCode": 403,
+                        "detail": "The image could not be saved because the workspace storage quota is exceeded. "
+                                  "Free workspace storage or ask an administrator to increase the quota before retrying."}
+            return {"status": "error", "detail": "Image generation failed. Please try again."}
         except (httpx.HTTPError, ValueError, RuntimeError):
             return {"status": "error", "detail": "Image generation failed. Please try again."}
 

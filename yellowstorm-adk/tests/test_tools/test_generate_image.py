@@ -79,6 +79,48 @@ async def test_image_failure_hides_provider_details():
 
 
 @pytest.mark.asyncio
+async def test_image_storage_quota_has_safe_actionable_error():
+    response = httpx.Response(403, request=httpx.Request("POST", "https://platform.test/private?token=secret"),
+        json={"success": False, "error": {"code": "ERR_1930", "statusCode": 403,
+              "message": "private workspace name, 0MB, secret", "path": "/private", "details": ["secret"]}})
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        client = factory.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=response)
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0]("Japan")
+    assert result == {"status": "error", "code": "ERR_1930", "statusCode": 403,
+                      "detail": "The image could not be saved because the workspace storage quota is exceeded. "
+                                "Free workspace storage or ask an administrator to increase the quota before retrying."}
+    client.post.assert_awaited_once()
+    assert "secret" not in str(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,payload", [
+    (403, {"success": False, "error": {"code": "ERR_1000", "message": "secret provider token https://private.test"}}),
+    (500, {"success": False, "error": {"code": "ERR_1930", "message": "secret provider token"}}),
+    (403, {"success": True, "error": {"code": "ERR_1930", "message": "secret"}}),
+    (403, {"code": "ERR_1930", "detail": "secret"}),
+    (403, {"success": False, "error": "ERR_1930 secret"}),
+    (403, ["ERR_1930", "secret"]),
+])
+async def test_other_http_errors_never_echo_server_details(status, payload):
+    response = httpx.Response(status, request=httpx.Request("POST", "https://private.test?token=secret"), json=payload)
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        factory.return_value.__aenter__.return_value.post = AsyncMock(return_value=response)
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0]("Japan")
+    assert result == {"status": "error", "detail": "Image generation failed. Please try again."}
+
+
+@pytest.mark.asyncio
+async def test_non_json_http_failure_hides_server_details():
+    response = httpx.Response(403, request=httpx.Request("POST", "https://private.test?token=secret"), text="secret provider failure")
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        factory.return_value.__aenter__.return_value.post = AsyncMock(return_value=response)
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0]("Japan")
+    assert result == {"status": "error", "detail": "Image generation failed. Please try again."}
+
+
+@pytest.mark.asyncio
 async def test_invalid_image_inputs_make_no_provider_request():
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
     with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:

@@ -107,6 +107,13 @@ Sources: `ReportBlock.tsx`, `report-program.ts`, `ReportPanelSidebar.tsx`, `rend
 
 ### Generated images in OpenUI
 
+The existing workspace storage quota also applies to generated/edited images.
+If persistence returns `WORKSPACE_STORAGE_QUOTA_EXCEEDED` (`ERR_1930`, HTTP 403),
+the ADK image tool reports a fixed storage-capacity message instead of suggesting
+a provider retry. Other upstream failures remain sanitized; raw errors and signed
+URLs are not exposed to the agent. The final exact-size upload check remains
+authoritative. No quota is enlarged and no automatic generation retry occurs.
+
 OpenUI images expose an action toolbar in chat, report and slide previews: edit,
 compare saved images, reuse in DOCX/editable PPTX/OpenUI slides, and download.
 Edit/reuse sends an explicit follow-up to the producing agent through the existing
