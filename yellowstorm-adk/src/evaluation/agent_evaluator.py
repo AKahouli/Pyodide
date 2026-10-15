@@ -18,7 +18,7 @@ import os
 import re
 from datetime import datetime
 from src.logger.logging import get_logger
-from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model
+from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model, register_model_input_alias
 import traceback
 
 logger = get_logger("api.evaluation.agent_evaluator")
@@ -246,6 +246,7 @@ def apply_litellm_debug_patch():
                 pass 
             
             model_str = _qualify_dest_proxy_model(model_str)
+            register_model_input_alias(capability_model_str, model_str)
             
             if "messages" in kwargs:
                 kwargs["messages"] = normalize_messages_for_model(
@@ -297,6 +298,7 @@ def apply_litellm_debug_patch():
             logger.info(f"[ADK LLM SYNC CALL START] model: {model_str}")
             
             model_str = _qualify_dest_proxy_model(model_str)
+            register_model_input_alias(capability_model_str, model_str)
             
             if "messages" in kwargs:
                 kwargs["messages"] = normalize_messages_for_model(

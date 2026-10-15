@@ -12,12 +12,14 @@ Functions:
 """
 
 import base64
+import hashlib
 import uuid
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from src.logger.logging import get_logger
+from .tool_image_state import IMAGE_PREFIX, LABEL_PREFIX, prepare_tool_image_turn, retained_tool_image_batches
 
 logger = get_logger("api.smart_rag.infrastructure.processing.callback_helper")
 
@@ -355,11 +357,11 @@ def catch_images_after_tool(
             response_id= str(tool_response.get("response_id", uuid.uuid4()))
 
             if images:
-                pending_tool_images_key = f"_pending_tool_images_{response_id}"
-                list_of_filenames_key = f"_list_of_filenames_{response_id}"
+                prepare_tool_image_turn(tool_context)
+                pending_tool_images_key = f"{IMAGE_PREFIX}{response_id}"
+                list_of_filenames_key = f"{LABEL_PREFIX}{response_id}"
                 tool_context.state[pending_tool_images_key] = images  # buffer for this turn
                 tool_context.state[list_of_filenames_key] = tool_response.get("list_of_filenames")
-                print(f"images buffered: {list_of_filenames_key} {pending_tool_images_key} for response_id {response_id}")
 
             for source in cleaned:
                 text_order += 1
@@ -386,11 +388,12 @@ def inject_images_before_model(
         Optional[LlmResponse]: None to proceed with normal model execution.
 
     Note:
-        Images are cleared from the buffer after injection to prevent
-        duplicate processing in subsequent requests.
+        Pending images move into bounded temporary state for this invocation,
+        so later tool rounds retain visual evidence without leaking into a new turn.
     """
-    IMAGE_KEY_PREFIX = "_pending_tool_images_"
-    FILENAME_KEY_PREFIX = "_list_of_filenames_"
+    IMAGE_KEY_PREFIX = IMAGE_PREFIX
+    FILENAME_KEY_PREFIX = LABEL_PREFIX
+    request_image_hashes = set()
 
     def is_image_part(part: Any) -> bool:
         if isinstance(part, dict):
@@ -426,6 +429,11 @@ def inject_images_before_model(
             if not isinstance(parts, list):
                 continue
             image_count += sum(1 for part in parts if is_image_part(part))
+            for part in parts:
+                inline = getattr(part, 'inline_data', None)
+                data = getattr(inline, 'data', None)
+                if isinstance(data, bytes):
+                    request_image_hashes.add(hashlib.sha256(data).hexdigest())
         return image_count
 
     def detect_mime_type(image_bytes, provided_mime=None):
@@ -464,7 +472,7 @@ def inject_images_before_model(
         return parts
 
     # Get all state keys
-    state_dict = callback_context.state.to_dict()
+    state_dict, retention_dropped = retained_tool_image_batches(callback_context, MAX_IMAGES_PER_LLM_REQUEST)
 
     # Find all keys that start with the prefixes
     image_keys = [key for key in state_dict.keys() if key.startswith(IMAGE_KEY_PREFIX)]
@@ -478,8 +486,8 @@ def inject_images_before_model(
         filename_key = FILENAME_KEY_PREFIX + response_id
 
         # Get images and filenames for this response_id
-        images = callback_context.state.get(image_key, [])
-        file_names = callback_context.state.get(filename_key, [])
+        images = state_dict.get(image_key, [])
+        file_names = state_dict.get(filename_key, [])
 
         # Ensure file_names is a list (defensive check)
         if file_names is None:
@@ -491,7 +499,10 @@ def inject_images_before_model(
                 - existing_image_count
                 - injected_count
             )
-            images_to_forward = images[:max(remaining_capacity, 0)]
+            candidates = [(index, image) for index, image in enumerate(images)
+                          if hashlib.sha256(base64.b64decode(image['data'])).hexdigest() not in request_image_hashes]
+            selected = candidates[:max(remaining_capacity, 0)]
+            images_to_forward = [image for _, image in selected]
 
             # Unwrap the images
             unwrapped_images = unwrap_images(images_to_forward)
@@ -500,7 +511,8 @@ def inject_images_before_model(
             # Inject each image with its filename
             for i, image in enumerate(unwrapped_images):
                 # Use filename if available, otherwise use a default
-                filename = file_names[i] if i < len(file_names) else "retrieved-image"
+                source_index = selected[i][0]
+                filename = file_names[source_index] if source_index < len(file_names) else "retrieved-image"
                 image_prompt = (
                     f"Retrieved connector image source_reference: {filename}\n"
                     "Inspect this image visually. If the user's answer is present in "
@@ -513,6 +525,7 @@ def inject_images_before_model(
                     )
                 )
                 injected_count += 1
+                request_image_hashes.add(hashlib.sha256(image.inline_data.data).hexdigest())
                 source_image = (
                     images_to_forward[i]
                     if i < len(images_to_forward)
@@ -540,7 +553,8 @@ def inject_images_before_model(
                 len(images_to_forward),
                 forwarded_images,
             )
-            dropped_count = len(images) - len(images_to_forward)
+            dropped_count = len(candidates) - len(images_to_forward) + retention_dropped
+            retention_dropped = 0
             if dropped_count:
                 logger.warning(
                     "CONVERSATION_MCP_IMAGE_BRIDGE_LIMITED response_id=%s "
@@ -550,11 +564,6 @@ def inject_images_before_model(
                     dropped_count,
                     MAX_IMAGES_PER_LLM_REQUEST,
                 )
-
-            # Clear the buffer for this response_id
-            callback_context.state[image_key] = []
-            if filename_key in state_dict:
-                callback_context.state[filename_key] = []
 
     if injected_count:
         logger.info(
