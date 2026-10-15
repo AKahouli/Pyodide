@@ -44,9 +44,9 @@ src/modules/auth/
 │   ├── ProfileCompletionPage.tsx   # Profile completion form
 │   ├── ProfileCompletionPage.test.tsx # Profile completion and logout tests
 │   ├── modals/
-│   │   ├── LoginModal.tsx          # Login form modal
+│   │   ├── LoginModal.tsx          # Login form modal (show/hide password)
 │   │   ├── LoginModal.test.tsx     # Login modal tests
-│   │   ├── RegisterModal.tsx       # Registration form modal (invite prefill/lock)
+│   │   ├── RegisterModal.tsx       # Registration form modal (invite prefill/lock, live password feedback)
 │   │   ├── RegisterModal.test.tsx  # Register modal tests
 │   │   ├── ForgotPasswordModal.tsx # Forgot password modal
 │   │   ├── ForgotPasswordModal.test.tsx # Forgot password modal tests
@@ -60,6 +60,8 @@ src/modules/auth/
 ├── utils/
 │   ├── isPendingAdminApproval.ts
 │   ├── isPendingAdminApproval.test.ts
+│   ├── password-policy.ts   # single source of truth for password rules + zod schema
+│   ├── password-policy.test.ts
 │   ├── errorHelpers.ts      # error-code → message helpers
 │   └── errorHelpers.test.ts # auth error helper tests
 ├── locales/
@@ -67,6 +69,29 @@ src/modules/auth/
 │   └── fr.json          # French translations
 └── index.ts             # Public exports
 ```
+
+## Password Field UX
+
+The login and register password fields share a live-validation UX built on three pieces:
+
+| Piece | Location | Role |
+|-------|----------|------|
+| `password-policy.ts` | `utils/` (this module) | Single source of truth for the backend password rules (`RegisterDto`: at least 8 characters, one uppercase, one lowercase, one digit). `createPasswordSchema(t)` builds the zod schema and reports the *first* unmet rule; `isPasswordValid` powers the success feedback. |
+| `PasswordInput` | `src/components/ui/password-input.tsx` (shared UI primitive) | Password field with a show/hide eye toggle (`common.actionShowPassword` / `actionHidePassword`). The browser's native reveal/clear controls are suppressed in `src/index.css` so only one eye renders. |
+| `FormSuccessMessage` | `src/components/ui/form.tsx` (shared UI primitive) | Green positive-feedback line placed where the error line would be; automatically hidden while the field carries an error. |
+
+On the **register** form nothing is shown until the user types; from the first keystroke the message updates on every change (`form.trigger('password')`), and the confirmation mismatch is reported live as well — both while typing the confirmation and when the password changes after a filled confirmation:
+
+| State | Message key |
+|-------|-------------|
+| A rule is unmet | `register.error.passwordMin` / `passwordUppercase` / `passwordLowercase` / `passwordNumber` (first unmet rule only) |
+| All rules met | `register.password.valid` |
+| Confirmation differs | `register.error.passwordMismatch` |
+| Confirmation matches | `register.confirmPassword.match` |
+
+The **login** form only has the show/hide toggle (no strength rules, no confirmation field).
+
+`ResetPasswordPage` still carries its own inline rules and has not been migrated to the shared policy yet.
 
 ## Testing
 
@@ -80,6 +105,8 @@ src/modules/auth/
 - `components/EmailVerificationPage.tsx`: token validation, success/error branches, resend flow
 - `components/ResetPasswordPage.tsx`: token validation, form validation, success/error submit states
 - `components/ProfileCompletionPage.tsx`: redirect logic, profile submit, logout behavior
+- `utils/password-policy.ts`: rule order, first-unmet-rule reporting, schema messages
+- `components/modals/RegisterModal.tsx` / `LoginModal.tsx`: live password feedback and show/hide toggle
 
 ### Test Location
 
