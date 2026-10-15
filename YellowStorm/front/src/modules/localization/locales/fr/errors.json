@@ -216,5 +216,6 @@
   "ERR_3806": "L'image de couverture du modèle est invalide.",
   "ERR_3807": "Ce modèle n'est pas compatible avec l'exécution de la plateforme et ne peut pas être publié.",
   "ERR_1130": "L'authentification est temporairement indisponible. Votre session n'a pas été affectée ; nouvelle tentative en cours.",
-  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer."
+  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer.",
+  "ERR_3102": "Ce transport MCP n'est pas pris en charge pour l'inspection HTTP."
 }
