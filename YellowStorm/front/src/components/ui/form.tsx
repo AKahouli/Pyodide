@@ -99,4 +99,22 @@ const FormMessage = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<
 });
 FormMessage.displayName = 'FormMessage';
 
-export { useFormField, Form, FormItem, FormLabel, FormControl, FormDescription, FormMessage, FormField };
+const FormSuccessMessage = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(({ className, children, ...props }, ref) => {
+  const { error, formMessageId } = useFormField();
+  // A met condition is only positive feedback while the field carries no error,
+  // so the message slots in where the error line would be and never competes with it.
+  const body = !error ? children : undefined;
+
+  if (!body) {
+    return null;
+  }
+
+  return (
+    <p ref={ref} id={formMessageId} className={cn('text-[0.8rem] font-medium text-green-500', className)} {...props}>
+      {body}
+    </p>
+  );
+});
+FormSuccessMessage.displayName = 'FormSuccessMessage';
+
+export { useFormField, Form, FormItem, FormLabel, FormControl, FormDescription, FormMessage, FormSuccessMessage, FormField };

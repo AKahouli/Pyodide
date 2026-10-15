@@ -36,6 +36,19 @@ describe('LoginModal', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
+  it('toggles password visibility with the eye button', async () => {
+    render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
+
+    const passwordInput = screen.getByLabelText('login.password.label');
+    expect(passwordInput).toHaveAttribute('type', 'password');
+
+    await userEvent.click(screen.getByRole('button', { name: 'actionShowPassword' }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+
+    await userEvent.click(screen.getByRole('button', { name: 'actionHidePassword' }));
+    expect(passwordInput).toHaveAttribute('type', 'password');
+  });
+
   it('opens forgot password flow from link', async () => {
     const onForgotPassword = vi.fn();
 
