@@ -1010,17 +1010,48 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
     return service;
   };
 
-  it('omits runtimeAuthConfig/mcpServerConfig and every canary from list and detail responses', async () => {
-    const service = buildServiceWithRow(secretRow());
+  it('omits runtimeAuthConfig/mcpServerConfig and every canary from every read/write response path', async () => {
+    const row = secretRow();
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(row),
+      findActiveBySlug: jest.fn().mockResolvedValue(row),
+      findByIds: jest.fn().mockResolvedValue([row]),
+      list: jest.fn().mockResolvedValue({ rows: [row], total: 1 }),
+      findAllActiveVisible: jest.fn().mockResolvedValue([row]),
+      insert: jest.fn().mockResolvedValue(row),
+      update: jest.fn().mockResolvedValue(row),
+    });
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
 
     const responses = [
-      await service.findById('507f1f77bcf86cd799439042'),
-      (await service.findByIds(['507f1f77bcf86cd799439042']))[0],
+      await service.findById(row.id),
+      (await service.findByIds([row.id]))[0],
+      (await service.findBySlug('secretive'))!,
       (await service.findAll({} as never)).data[0],
       (await service.findAllActive())[0],
+      await service.create('creator-1', {
+        slug: 'created-secretive',
+        name: 'Created',
+        description: '',
+        runtimeAuthConfig: { headerPrefix: `Bearer ${CANARY}` },
+        mcpServerConfig: { headers: { 'X-API-Key': CANARY } },
+      } as never),
+      await service.update(row.id, {
+        runtimeAuthConfig: { headerPrefix: `Bearer ${CANARY}` },
+      } as never),
     ];
 
-    expect(responses).toHaveLength(4);
+    expect(responses).toHaveLength(7);
     for (const response of responses) {
       expect(response).not.toHaveProperty('runtimeAuthConfig');
       expect(response).not.toHaveProperty('mcpServerConfig');
@@ -1120,5 +1151,49 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
       runtimeAuthConfig: expect.objectContaining({ headerPrefix: `Bearer ${CANARY}` }),
     }));
     expect(binding.auth_headers).toEqual({ Authorization: `Bearer ${CANARY}` });
+  });
+
+  it('scrubs credential material from inspection error messages and logs hosts only (WP02.8)', async () => {
+    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const service = new ConnectorService(
+      connectorStoreMock(),
+      categoryStoreMock(),
+      logger as any,
+      null as any,
+      { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    const scrubbed = (service as unknown as {
+      toSafeInspectErrorMessage(err: unknown): string;
+    }).toSafeInspectErrorMessage(new Error(
+      `getaddrinfo ENOTFOUND for https://user:${CANARY}@mcp.example.test/mcp with Bearer ${CANARY}`,
+    ));
+
+    expect(scrubbed).not.toContain(CANARY);
+    expect(scrubbed).toContain('https://***@mcp.example.test/mcp');
+    expect(scrubbed).toContain('Bearer ***');
+
+    const context = (service as unknown as {
+      inspectLogContext(serverUrl: string): { host: string };
+    }).inspectLogContext('https://user:pass@mcp.example.test/mcp');
+    expect(context).toEqual({ host: 'mcp.example.test' });
+
+    // End to end: a remote inspection whose SDK connect fails returns the
+    // scrubbed message and never logs the URL or raw error payload.
+    const indexMod = await import('@modelcontextprotocol/sdk/client/index.js');
+    jest.mocked(indexMod.Client).mockImplementationOnce(() => ({
+      connect: jest.fn().mockRejectedValue(new Error(
+        `SDK exploded for https://user:${CANARY}@mcp.example.test/mcp with Bearer ${CANARY}`,
+      )),
+      listTools: jest.fn(),
+      close: jest.fn().mockResolvedValue(undefined),
+    }) as never);
+    const result = await service.inspectMcp('sse', 'https://mcp.example.test/sse');
+    expect(result.error).toBeDefined();
+    expect(result.error).not.toContain(CANARY);
+    const loggedArgs = JSON.stringify(logger.error.mock.calls);
+    expect(loggedArgs).not.toContain(CANARY);
+    expect(loggedArgs).not.toContain('mcp.example.test/sse');
   });
 });

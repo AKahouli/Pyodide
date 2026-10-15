@@ -33,6 +33,7 @@ describe('AdminConnectorController MCP inspection', () => {
       findByIds: jest.fn().mockResolvedValue(connector ? [connector] : []),
       insert: jest.fn(),
     };
+    const connectorAdminAuthService = { getValidToken: jest.fn() };
     // The REAL service runs so stdio/unknown transports are denied exactly as
     // in production; individual tests may spy inspectMcp for call-shape checks.
     const connectorService = new ConnectorService(
@@ -45,12 +46,12 @@ describe('AdminConnectorController MCP inspection', () => {
     );
     const controller = new AdminConnectorController(
       connectorService as never,
-      {} as never,
-      {} as never,
+      { logSuccess: jest.fn() } as never,
+      connectorAdminAuthService as never,
       connectorAuthService as never,
       config as never,
     );
-    return { controller, connectorService, connectorAuthService, store };
+    return { controller, connectorService, connectorAuthService, connectorAdminAuthService, store };
   }
 
   it('sends a complete actor envelope when the connector points at a trusted internal MCP server, whatever its slug', async () => {
@@ -103,7 +104,7 @@ describe('AdminConnectorController MCP inspection', () => {
   });
 
   it('denies stored stdio connectors on :id/inspect before any inspection side effect', async () => {
-    const { controller, store } = createController({
+    const { controller, store, connectorAdminAuthService, connectorAuthService } = createController({
       ...playbookConnector,
       mcpTransportType: 'stdio',
       mcpServerUrl: '/usr/local/bin/some-mcp',
@@ -111,6 +112,28 @@ describe('AdminConnectorController MCP inspection', () => {
 
     await expect(controller.inspectConnector('connector-1', user, {})).rejects.toBeInstanceOf(BadRequestException);
     expect(store.insert).not.toHaveBeenCalled();
+    // Denial happens before any credential resolution or token refresh.
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+    expect(connectorAuthService.resolveRuntimeAuth).not.toHaveBeenCalled();
+  });
+
+  it('denies stdio connectors on the admin inspect endpoint before OAuth token retrieval', async () => {
+    const { controller, connectorAdminAuthService, connectorAuthService } = createController({
+      ...playbookConnector,
+      mcpTransportType: 'stdio',
+      mcpServerUrl: '/usr/local/bin/some-mcp',
+    });
+
+    await expect(controller.inspectMcp({
+      connectorId: 'connector-1',
+      // The DTO whitelist would already reject this at the HTTP boundary; the
+      // controller guard must also reject it before token retrieval.
+      transportType: 'stdio' as never,
+      serverUrl: '/usr/local/bin/some-mcp',
+      connectedAppKey: 'github',
+    }, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+    expect(connectorAuthService.resolveRuntimeAuth).not.toHaveBeenCalled();
   });
 
   it('denies stdio transports on the admin draft import endpoint without creating a connector', async () => {

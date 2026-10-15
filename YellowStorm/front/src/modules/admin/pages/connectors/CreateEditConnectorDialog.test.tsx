@@ -157,7 +157,7 @@ describe('CreateEditConnectorDialog tool table', () => {
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
       runtimeAuthConfig: '',
-      clearRuntimeAuthConfig: false,
+      clearCredentials: false,
     }));
 
     // Opting in reveals the credential inputs and sends the replacement.
@@ -168,7 +168,7 @@ describe('CreateEditConnectorDialog tool table', () => {
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
       runtimeAuthConfig: JSON.stringify({ strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer canary-token' }),
-      clearRuntimeAuthConfig: false,
+      clearCredentials: false,
     }));
     expect(JSON.stringify(onSave.mock.calls.at(-1)![0])).toContain('canary-token');
   });
@@ -186,8 +186,10 @@ describe('CreateEditConnectorDialog tool table', () => {
 
     await user.click(await screen.findByRole('switch', { name: 'connectors.form.auth.clearCredentials' }));
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    // The dialog emits the form-level flag; ConnectorsPage maps it to the
+    // API's clearRuntimeAuthConfig field.
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({
-      clearRuntimeAuthConfig: true,
+      clearCredentials: true,
       runtimeAuthConfig: '',
     }));
   });

@@ -105,13 +105,16 @@ export class AdminConnectorController {
     @Body() body: InspectMcpDto,
     @CurrentUser() user: AuthUser,
   ): Promise<IMcpInspectResult> {
-    const resolvedToken = body.connectedAppKey && !body.connectorId
-      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
-      : undefined;
     // SERVER-ONLY runtime lookup: stored credentials never travel through the
     // public projection (WP-02).
     const connector = body.connectorId
       ? await this.connectorService.getRuntimeById(body.connectorId)
+      : undefined;
+    // Reject non-remote transports BEFORE any token retrieval or credential
+    // resolution, so denied inspections have zero auth side effects (WP-01).
+    this.connectorService.assertInspectableTransport(connector?.mcpTransportType ?? body.transportType);
+    const resolvedToken = body.connectedAppKey && !body.connectorId
+      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
     // An internal MCP server (trusted by URL) authorizes tool listing as a user, like a tool call.
     const trustedServer = isTrustedMcpServerUrl(this.configService, connector?.mcpServerUrl ?? body.serverUrl);
@@ -319,8 +322,9 @@ export class AdminConnectorController {
     @Body() dto: InspectConnectorDto,
   ) {
     // SERVER-ONLY runtime lookup (WP-02); stdio/unknown transports are denied
-    // inside inspectMcp before any side effect (WP-01).
+    // before token retrieval or any inspection side effect (WP-01).
     const connector = await this.connectorService.getRuntimeById(id);
+    this.connectorService.assertInspectableTransport(connector.mcpTransportType);
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(

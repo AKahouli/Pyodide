@@ -26,7 +26,7 @@ import {
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
-import { assertNoUrlCredentials } from '../utils/remote-mcp-transport.util';
+import { assertNoUrlCredentials, sanitizeEndpointUrl } from '../utils/remote-mcp-transport.util';
 import { PgSkillCategoryStore } from '../../skill/persistence/pg-skill.store';
 import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
 import { PgConnectorCredentialStore } from '../persistence/pg-connector.store';
@@ -458,16 +458,24 @@ export class CatalogTransferService {
         isActive: connector.isActive ?? true,
       };
       if (existing) {
+        // Structure-only archives carry no credential config: preserve the
+        // target's stored secrets instead of clobbering them (SEC-02).
+        const archivedRuntimeAuthConfig = connector.runtimeAuthConfig ?? {};
+        const archivedMcpServerConfig = connector.mcpServerConfig ?? {};
         await this.connectorStore.update(existing.id, {
           ...common,
-          runtimeAuthConfig: this.restoreRedactedValues(
-            connector.runtimeAuthConfig,
-            existing.runtimeAuthConfig ?? {},
-          ) as Record<string, unknown>,
-          mcpServerConfig: this.restoreRedactedValues(
-            connector.mcpServerConfig,
-            existing.mcpServerConfig ?? {},
-          ) as Record<string, unknown>,
+          ...(Object.keys(archivedRuntimeAuthConfig).length > 0
+            ? { runtimeAuthConfig: this.restoreRedactedValues(
+                archivedRuntimeAuthConfig,
+                existing.runtimeAuthConfig ?? {},
+              ) as Record<string, unknown> }
+            : {}),
+          ...(Object.keys(archivedMcpServerConfig).length > 0
+            ? { mcpServerConfig: this.restoreRedactedValues(
+                archivedMcpServerConfig,
+                existing.mcpServerConfig ?? {},
+              ) as Record<string, unknown> }
+            : {}),
           dynamicHeaders: (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
           actions: (connector.actions ?? []) as ConnectorAction[],
           isHidden: connector.isHidden ?? false,
@@ -672,7 +680,10 @@ export class CatalogTransferService {
     skillSlugById: Map<string, string>,
     includeSecurity: boolean,
   ): CatalogConnectorRecord {
-    const protect = (value: Record<string, unknown>) => includeSecurity ? value : this.redactSecrets(value);
+    // SEC-02: unencrypted exports carry NO credential-capable config at all —
+    // the previous key-name denylist missed headerPrefix and arbitrary nested
+    // fields. Full credential transfer requires the encrypted, permission-
+    // gated includeSecurity archive.
     return {
       slug: connector.slug,
       name: connector.name,
@@ -685,10 +696,12 @@ export class CatalogTransferService {
       authConfigSchema: connector.authConfigSchema ?? {},
       authSourceType: connector.authSourceType ?? 'credential',
       connectedAppKey: connector.connectedAppKey ?? '',
-      runtimeAuthConfig: protect(connector.runtimeAuthConfig ?? {}),
+      runtimeAuthConfig: includeSecurity ? connector.runtimeAuthConfig ?? {} : {},
       mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
-      mcpServerUrl: connector.mcpServerUrl ?? '',
-      mcpServerConfig: protect(connector.mcpServerConfig ?? {}),
+      mcpServerUrl: includeSecurity
+        ? connector.mcpServerUrl ?? ''
+        : sanitizeEndpointUrl(connector.mcpServerUrl ?? ''),
+      mcpServerConfig: includeSecurity ? connector.mcpServerConfig ?? {} : {},
       workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
       dynamicHeaders: (connector.dynamicHeaders ?? []).map((header: Record<string, any>) => ({
         headerName: header.headerName,
@@ -718,19 +731,6 @@ export class CatalogTransferService {
       isSystem: connector.isSystem ?? false,
       isHidden: connector.isHidden ?? false,
     };
-  }
-
-  private redactSecrets(value: Record<string, unknown>): Record<string, unknown> {
-    const visit = (current: unknown, parentKey = ''): unknown => {
-      if (Array.isArray(current)) return current.map((item) => visit(item, parentKey));
-      if (!current || typeof current !== 'object') return current;
-      return Object.fromEntries(Object.entries(current as Record<string, unknown>).map(([key, item]) => {
-        const sensitive = /token|secret|password|authorization|api[_-]?key/i.test(key)
-          || /headers?|env/i.test(parentKey);
-        return [key, sensitive ? '__REDACTED__' : visit(item, key)];
-      }));
-    };
-    return visit(value) as Record<string, unknown>;
   }
 
   private restoreRedactedValues(imported: unknown, existing: unknown): unknown {

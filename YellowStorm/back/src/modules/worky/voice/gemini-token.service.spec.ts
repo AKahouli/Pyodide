@@ -43,7 +43,7 @@ function svc(overrides: Record<string, unknown> = {}, actions: unknown[] | null 
   // The concierge tools come from the connectors' actions; here only
   // 'worky-concierge' resolves (human-agents returns null and is skipped).
   const connectors = {
-    findBySlug: jest.fn().mockImplementation((slug: string) =>
+    findRuntimeBySlug: jest.fn().mockImplementation((slug: string) =>
       slug === 'worky-concierge' && actions
         ? { slug, id: 'c1', mcpServerUrl: 'http://localhost:8080/mcp', actions }
         : null,

@@ -203,9 +203,10 @@ export class ConnectorController {
     @Body() dto: InspectConnectorDto,
   ) {
     // SERVER-ONLY runtime lookup: stored credentials never travel through the
-    // public projection (WP-02); non-remote transports are denied in the
-    // service before any side effect (WP-01).
+    // public projection (WP-02); non-remote transports are denied before the
+    // OAuth token fetch inside inspectMcp (WP-01).
     const connector = await this.connectorService.getRuntimeById(id);
+    this.connectorService.assertInspectableTransport(connector.mcpTransportType);
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(

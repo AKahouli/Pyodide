@@ -29,7 +29,7 @@ describe('AgentConnectorRuntimeService', () => {
       { get: jest.fn((_key: string, fallback: string) => fallback) } as never,
     );
     const bindings = await service.buildConnectorBindings(new Map([['connector-1', {
-      id: 'connector-1', name: 'Search', slug: 'search', actions: [{ key: 'find', parameterSchema: {} }],
+      id: 'connector-1', name: 'Search', slug: 'search', mcpTransportType: 'streamable_http', actions: [{ key: 'find', parameterSchema: {} }],
       dynamicHeaders: [
         { headerName: 'Workspace-Id', source: 'workspace', enabled: true },
         { headerName: 'X-Disabled', source: 'workspace', enabled: false },
@@ -53,7 +53,7 @@ describe('AgentConnectorRuntimeService', () => {
     );
     const bindings = await service.buildConnectorBindings(new Map([
       ['connector-1', {
-        id: 'connector-1', name: 'CRM', slug: 'crm', actions: [
+        id: 'connector-1', name: 'CRM', slug: 'crm', mcpTransportType: 'streamable_http', actions: [
           { key: 'update', safety: 'WRITE', executionKind: 'leaf', parameterSchema: {} },
           { key: 'read', parameterSchema: {} },
         ],
@@ -75,7 +75,7 @@ describe('AgentConnectorRuntimeService', () => {
       { get: jest.fn((_key: string, fallback: string) => fallback) } as never,
     );
     const bindings = await service.buildConnectorBindings(new Map([['connector-1', {
-      id: 'connector-1', name: 'Search', slug: 'search', actions: [{
+      id: 'connector-1', name: 'Search', slug: 'search', mcpTransportType: 'streamable_http', actions: [{
         key: 'find', parameterSchema: {}, resultKind: 'web_search', citationMode: 'text_fragment',
         resultMapping: { itemsPath: 'results', fields: { url: ['href'] } },
       }],
@@ -85,5 +85,27 @@ describe('AgentConnectorRuntimeService', () => {
       result_kind: 'web_search', citation_mode: 'text_fragment',
       result_mapping_json: JSON.stringify({ itemsPath: 'results', fields: { url: ['href'] } }),
     })]);
+  });
+
+  it('never binds stored stdio or unknown transports, whatever actions they declare', async () => {
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as never,
+      { get: jest.fn((_key: string, fallback: string) => fallback) } as never,
+    );
+    const bindings = await service.buildConnectorBindings(new Map([
+      ['connector-stdio', {
+        id: 'connector-stdio', name: 'Local', slug: 'local', mcpTransportType: 'stdio',
+        mcpServerUrl: '/usr/local/bin/some-mcp', actions: [{ key: 'run', isEnabled: true }],
+      } as never],
+      ['connector-unknown', {
+        id: 'connector-unknown', name: 'Weird', slug: 'weird', mcpTransportType: 'wat',
+        mcpServerUrl: 'https://x/mcp', actions: [{ key: 'run', isEnabled: true }],
+      } as never],
+    ]), ['connector-stdio', 'connector-unknown']);
+
+    expect(bindings).toEqual([]);
   });
 });

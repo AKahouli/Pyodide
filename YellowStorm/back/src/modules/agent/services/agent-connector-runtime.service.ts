@@ -7,6 +7,7 @@ import { SkillService } from '../../skill/skill.service';
 import { ISkillResponse } from '../../skill/interfaces/skill.interface';
 import { ConnectorService } from '../../connector/connector.service';
 import { RuntimeConnectorDefinition } from '../../connector/interfaces/connector-runtime.interface';
+import { isRemoteInspectableMcpTransport } from '../../connector/utils/remote-mcp-transport.util';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
 import { SemanticModelMcpJwtService } from '../../connector/services/semantic-model-mcp-jwt.service';
@@ -198,6 +199,15 @@ export class AgentConnectorRuntimeService {
     const bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
       .filter(Boolean)
+      // Stored stdio (or unknown) transports are never bound: the agent runtime
+      // can spawn local processes from binding config (WP-01).
+      .filter((connector): connector is RuntimeConnectorDefinition => {
+        if (connector && isRemoteInspectableMcpTransport(connector.mcpTransportType)) return true;
+        this.logger.warn('Skipping connector with non-remote MCP transport for agent runtime binding', {
+          connector_id: connector?.id,
+        });
+        return false;
+      })
       .map((connector: any) => ({
         connector_id: connector.id,
         connector_name: connector.name,

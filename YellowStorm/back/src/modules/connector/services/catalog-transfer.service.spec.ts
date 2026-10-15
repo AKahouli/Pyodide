@@ -78,9 +78,10 @@ const cryptoService = {
 };
 
 describe('CatalogTransferService export fidelity', () => {
-  function createService(includeSecurity = false) {
+  function createService(includeSecurity = false, connectorStoreOverride?: Record<string, jest.Mock>) {
     const connectorStore = {
       findAllExport: jest.fn().mockResolvedValue([connector]),
+      ...connectorStoreOverride,
     };
     const connectorCategoryStore = {
       findAll: jest.fn().mockResolvedValue([{
@@ -160,6 +161,35 @@ describe('CatalogTransferService export fidelity', () => {
     expect(archive.connectors[0].actions[0]).toMatchObject({ workerAccess: 'block', executionKind: 'orchestration' });
   });
 
+  it('carries no credential config in the unencrypted archive, even in unusual field shapes', async () => {
+    const canary = 'export-canary-4f9d';
+    const secretConnector = {
+      ...connector,
+      runtimeAuthConfig: {
+        strategy: 'http_header_bearer',
+        headerPrefix: `Bearer ${canary}`,
+        envMap: { KEY: canary },
+        nestedUnknown: { inner: canary },
+      },
+      mcpServerUrl: `https://user:${canary}@mcp.example.test/mcp`,
+      mcpServerConfig: { headers: { Authorization: `Bearer ${canary}` }, env: { SECRET: canary }, unknown: canary },
+    };
+    const store = {
+      findAllExport: jest.fn().mockResolvedValue([secretConnector]),
+      findNamesByIds: jest.fn().mockResolvedValue(new Map()),
+    };
+    const service = createService(false, store);
+    const result = await service.exportConnectors(ownerId, { selection: 'all', includeSecurity: false } as never);
+    const serialized = result.buffer.toString('utf8');
+
+    expect(serialized).not.toContain(canary);
+    const archive = JSON.parse(serialized);
+    expect(archive.connectors[0].runtimeAuthConfig).toEqual({});
+    expect(archive.connectors[0].mcpServerConfig).toEqual({});
+    expect(archive.connectors[0].mcpServerUrl).toBe('https://mcp.example.test/mcp');
+    expect(archive.securityIncluded).toBe(false);
+  });
+
   it('exports all catalog properties and resolves relationships by skill slug', async () => {
     const result = await createService().exportConnectors(ownerId, {
       selection: 'selected',
@@ -231,6 +261,59 @@ describe('CatalogTransferService export fidelity', () => {
       { headers: { Authorization: '__REDACTED__' } },
       {},
     )).toEqual({ headers: {} });
+  });
+
+  it('keeps target credential config when a structure-only archive overwrites a connector', async () => {
+    const canary = 'import-canary-9ab2';
+    const existing = {
+      ...connector,
+      runtimeAuthConfig: { headerPrefix: `Bearer ${canary}` },
+      mcpServerConfig: { headers: { 'X-API-Key': canary } },
+    };
+    const connectorStore = {
+      findBySlugAndOwner: jest.fn().mockResolvedValue(existing),
+      update: jest.fn().mockResolvedValue(existing),
+      insert: jest.fn(),
+    };
+    const service = createService(false, connectorStore);
+    const importConnectors = (service as unknown as {
+      importConnectors(
+        connectors: unknown[],
+        ownerId: string,
+        categoryIds: Map<string, string>,
+        skillIds: Map<string, string>,
+        policy: 'overwrite',
+        result: unknown,
+      ): Promise<void>;
+    }).importConnectors.bind(service);
+    const result = { connectors: { created: 0, updated: 0, skipped: 0 } };
+    const categoryIds = new Map([['Knowledge', connectorCategoryId]]);
+
+    // Structure-only archive (empty config): the stored secrets are preserved.
+    await importConnectors(
+      [{ ...connector, runtimeAuthConfig: {}, mcpServerConfig: {}, referencedSkillSlugs: [] }],
+      ownerId,
+      categoryIds,
+      new Map(),
+      'overwrite',
+      result,
+    );
+    const preservedPatch = connectorStore.update.mock.calls[0][1] as Record<string, unknown>;
+    expect(preservedPatch).not.toHaveProperty('runtimeAuthConfig');
+    expect(preservedPatch).not.toHaveProperty('mcpServerConfig');
+
+    // Archives that DO carry config still overwrite through the restore path.
+    await importConnectors(
+      [{ ...connector, runtimeAuthConfig: { strategy: 'custom_headers' }, mcpServerConfig: { timeout: 5 }, referencedSkillSlugs: [] }],
+      ownerId,
+      categoryIds,
+      new Map(),
+      'overwrite',
+      result,
+    );
+    const overwrittenPatch = connectorStore.update.mock.calls[1][1] as Record<string, unknown>;
+    expect(overwrittenPatch.runtimeAuthConfig).toEqual({ strategy: 'custom_headers' });
+    expect(overwrittenPatch.mcpServerConfig).toEqual({ timeout: 5 });
   });
 
   it('rejects attempts to elevate an existing category to system status', async () => {

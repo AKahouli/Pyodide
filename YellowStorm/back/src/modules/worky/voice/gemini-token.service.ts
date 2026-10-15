@@ -9,6 +9,7 @@ import {
   THEMATIC_RETRIEVE_TOOL,
 } from './voice-concierge.config';
 import { ConnectorService } from '../../connector/connector.service';
+import { sanitizeEndpointUrl } from '../../connector/utils/remote-mcp-transport.util';
 
 export interface VoiceSessionEnvelope {
   wsUrl: string;
@@ -111,7 +112,9 @@ export class GeminiTokenService implements OnModuleInit {
     const toolEndpoints: Record<string, string> = {};
     const streamIdTools: string[] = [];
     for (const c of connectors) {
-      const url = browserReachableMcpUrl(c.mcpServerUrl);
+      // Browser-boundary projection (SEC-02): strip any userinfo the stored
+      // endpoint URL may still carry before it reaches the browser.
+      const url = sanitizeEndpointUrl(browserReachableMcpUrl(c.mcpServerUrl));
       for (const action of c.actions) {
         const props = (action.parameterSchema)?.properties as
           | Record<string, unknown>
@@ -138,9 +141,7 @@ export class GeminiTokenService implements OnModuleInit {
 
     this.logger.log(
       `[voice] concierge session created — tools from [${connectors.map((c) => c.slug).join(', ')}]: ` +
-        Object.entries(toolEndpoints)
-          .map(([t, u]) => `${t}→${u}`)
-          .join(', '),
+        `${Object.keys(toolEndpoints).join(', ')}`,
     );
 
     return {

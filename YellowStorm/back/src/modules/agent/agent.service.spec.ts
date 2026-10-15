@@ -144,8 +144,13 @@ describe('AgentService connector skill inheritance', () => {
       findBySlug: jest.fn().mockResolvedValue(null),
     };
     // Server-only runtime lookups hit the same store; unit tests stub them
-    // with the same mocks the public lookups use.
-    (connectorService as Record<string, jest.Mock>).findRuntimeByIds = connectorService.findByIds;
+    // with the same mocks the public lookups use. Stored rows always carry a
+    // transport, so the runtime lookup injects the remote default when a mock
+    // omits it (explicit values win).
+    (connectorService as Record<string, jest.Mock>).findRuntimeByIds = jest.fn(async (ids: string[]) => {
+      const rows = await connectorService.findByIds(ids);
+      return (rows as Array<Record<string, unknown>>).map((row) => ({ mcpTransportType: 'streamable_http', ...row }));
+    });
     (connectorService as Record<string, jest.Mock>).findRuntimeBySlug = connectorService.findBySlug;
     (connectorService as Record<string, jest.Mock>).getRuntimeById = jest.fn(async (id: string) => {
       const rows = await connectorService.findByIds([id]);

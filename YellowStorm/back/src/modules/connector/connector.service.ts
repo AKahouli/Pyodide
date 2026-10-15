@@ -518,12 +518,12 @@ export class ConnectorService {
         } catch (error) {
           this.logger.error('Failed to get OAuth token for MCP inspection', {
             connectedAppKey,
-            error: (error as Error).message,
+            errorName: (error as Error).name,
           });
           return {
             serverName: '',
             tools: [],
-            error: `Failed to get authentication token: ${(error as Error).message}`,
+            error: `Failed to get authentication token: ${this.toSafeInspectErrorMessage(error)}`,
           };
         }
       }
@@ -585,12 +585,35 @@ export class ConnectorService {
         tools: mappedTools,
       };
     } catch (err) {
-      this.logger.error('MCP inspection failed', { serverUrl, error: err });
+      // Never log or echo raw provider/SDK errors: they can contain
+      // credential-bearing URLs or auth material (WP02.8).
+      this.logger.error('MCP inspection failed', {
+        ...this.inspectLogContext(serverUrl),
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
       return {
         serverName: '',
         tools: [],
-        error: err instanceof Error ? err.message : 'Failed to inspect MCP server',
+        error: this.toSafeInspectErrorMessage(err),
       };
+    }
+  }
+
+  /** Project provider/SDK errors to a client-safe message: strip credential-bearing URL userinfo and bearer tokens, cap length (WP02.8). */
+  private toSafeInspectErrorMessage(err: unknown): string {
+    const raw = err instanceof Error ? err.message : 'Failed to inspect MCP server';
+    const scrubbed = raw
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, '$1***@')
+      .replace(/(bearer\s+)[^\s"',;]+/gi, '$1***');
+    return this.truncateValue(scrubbed, 300);
+  }
+
+  /** Host-only inspection log context: never the full URL or error payload. */
+  private inspectLogContext(serverUrl: string): { host: string } {
+    try {
+      return { host: new URL(serverUrl).host };
+    } catch {
+      return { host: '' };
     }
   }
 
@@ -839,6 +862,20 @@ export class ConnectorService {
       throw new BadRequestException(
         ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED,
         'Connectors support only remote MCP transports (sse, streamable_http).',
+      );
+    }
+  }
+
+  /**
+   * Public guard so controllers can reject non-remote transports BEFORE any
+   * credential resolution, token refresh or network side effect (WP-01).
+   */
+  assertInspectableTransport(transportType: string): void {
+    if (!isRemoteInspectableMcpTransport(transportType)) {
+      this.logger.warn('Denied MCP operation for unsupported transport', { transportType });
+      throw new BadRequestException(
+        ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED,
+        'Only remote MCP transports (sse, streamable_http) are supported over HTTP.',
       );
     }
   }
