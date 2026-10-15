@@ -196,6 +196,14 @@ gallery = ImageGallery(["Generated travel illustration", "Original activity phot
       expect(toFollowUpMessage(onAction.mock.calls[0][0])).toEqual({ kind: 'message', content: 'Show the 5-year trend' });
     });
 
+    it('forwards file button actions from the actual component library', async () => {
+      const onAction = vi.fn();
+      render(<OpenUiRenderer content={'root = Card([buttons])\nbuttons = ButtonGroup([Button("Download DOCX", {type: "open_url", url: "artifacts/main/report.docx"}, "primary")])'} isStreaming={false} onAction={onAction} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Download DOCX' }));
+      expect(onAction).toHaveBeenCalledTimes(1);
+      expect(toFollowUpMessage(onAction.mock.calls[0][0], [{ artifactId: 'a', filename: 'report.docx', availability: 'ready' }])).toMatchObject({ kind: 'download-artifact' });
+    });
+
     it('renders chips in SectionBlock content and shows no Sources strip', async () => {
       renderProgram('root = Card([sec])\nsec = SectionBlock([s1])\ns1 = SectionBlockItem("a", "Overview", [t])\nt = TextContent("Revenue grew [1].")');
       await screen.findByRole('button', { name: '1' });

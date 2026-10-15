@@ -6,6 +6,11 @@ import { useConversationStore } from '../../store';
 import { toFollowUpMessage } from './actions';
 import { OpenUiBoundary } from './OpenUiBoundary';
 import { loadOpenUiRenderer } from './preload';
+import { downloadArtifactFile, getArtifactDownloadUrl } from '../../api';
+import type { ArtifactActivityData } from '../../types';
+import { useModuleTranslation } from '@/modules/localization';
+import { showError } from '@/lib/notifications';
+import { sanitizeActivityFilename } from '../../utils/tool-activity';
 
 /**
  * `lazy()` caches a rejected import for good, so a failed chunk load gets one immediate retry
@@ -27,6 +32,7 @@ interface OpenUiAnswerProps {
   conversationId: string;
   messageId: string;
   citations?: CitationData[];
+  artifacts?: readonly ArtifactActivityData[];
   /** Id of the stored text component this answer renders; ties the rendered DOM back to it for copy/export. */
   partId?: string;
 }
@@ -36,15 +42,22 @@ interface OpenUiAnswerProps {
  * loading or rendering falls back to the regular markdown renderer, so the
  * user still reads the answer.
  */
-export function OpenUiAnswer({ content, isStreaming, conversationId, messageId, citations, partId }: Readonly<OpenUiAnswerProps>) {
+export function OpenUiAnswer({ content, isStreaming, conversationId, messageId, citations, artifacts, partId }: Readonly<OpenUiAnswerProps>) {
+  const { t } = useModuleTranslation('conversation');
   const handleAction = useCallback((event: ActionEvent) => {
-    const followUp = toFollowUpMessage(event);
-    if (followUp.kind === 'open-url') {
+    if (isStreaming) return;
+    const followUp = toFollowUpMessage(event, artifacts);
+    if (followUp.kind === 'download-artifact') {
+      const { artifact } = followUp;
+      void getArtifactDownloadUrl(conversationId, messageId, artifact.artifactId)
+        .then(({ downloadUrl }) => downloadArtifactFile(downloadUrl, sanitizeActivityFilename(artifact.filename) || t('stream.activity.generated')))
+        .catch(() => showError(t('stream.activity.artifactError')));
+    } else if (followUp.kind === 'open-url') {
       window.open(followUp.url, '_blank', 'noopener,noreferrer');
     } else if (followUp.kind === 'message') {
       void useConversationStore.getState().sendMessage(conversationId, { content: followUp.content });
     }
-  }, [conversationId]);
+  }, [conversationId, messageId, artifacts, isStreaming, t]);
 
   const citationScope = useMemo(() => ({ conversationId, messageId }), [conversationId, messageId]);
   const renderMarkdown = (text: string) => (

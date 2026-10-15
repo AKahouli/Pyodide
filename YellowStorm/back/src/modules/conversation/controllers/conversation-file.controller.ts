@@ -50,8 +50,8 @@ export class ConversationFileController {
     this.logger.setContext('ConversationFileController');
   }
 
-  private assertAttachmentsEnabled(): void {
-    if (!this.conversationSettings.isAttachmentIntelligenceEnabledCached()) {
+  private async assertAttachmentsEnabled(): Promise<void> {
+    if (!await this.conversationSettings.isAttachmentIntelligenceEnabled()) {
       throw new BadRequestException(
         ErrorCode.CHAT_ATTACHMENTS_DISABLED,
         'Conversation file attachments are disabled',
@@ -65,7 +65,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @Body() dto: RequestConversationFileUploadUrlDto,
   ) {
-    this.assertAttachmentsEnabled();
+    await this.assertAttachmentsEnabled();
     const userId = user._id.toString();
 
     this.logger.log('Requesting file upload URL', {
@@ -99,7 +99,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @UploadedFile() file: MulterFile,
   ) {
-    this.assertAttachmentsEnabled();
+    await this.assertAttachmentsEnabled();
     // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
     file.originalname = decodeMultipartFilename(file.originalname);
     const userId = user._id.toString();
@@ -132,7 +132,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @Body() dto: ConfirmConversationFileUploadDto,
   ) {
-    this.assertAttachmentsEnabled();
+    await this.assertAttachmentsEnabled();
     const userId = user._id.toString();
 
     this.logger.log('Confirming file upload', {

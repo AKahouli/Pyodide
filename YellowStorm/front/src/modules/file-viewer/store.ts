@@ -325,6 +325,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
             mode: 'open',
             pendingNavigation: pending,
             closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
+            ...(state.mode === 'closed' ? { position: getDefaultPosition(), size: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT } } : {}),
             ...(resolved ? { displayMode: resolved } : state.mode === 'closed' ? { displayMode: 'floating' as const } : {}),
           }));
           return;
@@ -338,6 +339,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           mode: 'open',
           pendingNavigation: pending,
           closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
+          ...(state.mode === 'closed' ? { position: getDefaultPosition(), size: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT } } : {}),
           ...(resolved
             ? { displayMode: resolved }
             : state.mode === 'closed'

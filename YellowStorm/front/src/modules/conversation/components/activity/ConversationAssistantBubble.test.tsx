@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   redactSensitiveText: true,
 }));
 
-vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
+vi.mock('../../api', async (importOriginal) => ({ ...await importOriginal<typeof import('../../api')>(), getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
 vi.mock('@/modules/file-viewer', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/modules/file-viewer')>(),
   openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader,

@@ -5,6 +5,19 @@ import { formatFormValues, toFollowUpMessage } from './actions';
 const event = (overrides: Partial<ActionEvent>): ActionEvent => ({ type: 'continue_conversation', params: {}, humanFriendlyMessage: '', ...overrides });
 
 describe('toFollowUpMessage', () => {
+  const artifact = { artifactId: 'owned', filename: 'report.docx', availability: 'ready' as const };
+  it('resolves file actions and old sandbox links only against ready artifacts on this answer', () => {
+    for (const action of [
+      { type: 'download_artifact', params: { filename: 'report.docx' } },
+      { type: 'download_file', params: { artifactId: 'owned' } },
+      { type: 'open_url', params: { url: 'sandbox:/mnt/yellowmind/run/outputs/report.docx' } },
+      { type: 'open_url', params: { url: 'artifacts/main/report.docx' } },
+    ]) expect(toFollowUpMessage(event(action), [artifact])).toEqual({ kind: 'download-artifact', artifact });
+    expect(toFollowUpMessage(event({ type: 'download_artifact', params: { artifactId: 'other-answer' } }), [artifact])).toEqual({ kind: 'ignore' });
+    expect(toFollowUpMessage(event({ type: 'download_artifact', params: { filename: 'report.docx' } }), [{ ...artifact, availability: 'pending' }])).toEqual({ kind: 'ignore' });
+    expect(toFollowUpMessage(event({ type: 'download_artifact', params: { filename: 'report.docx' } }), [artifact, { ...artifact, artifactId: 'duplicate' }])).toEqual({ kind: 'ignore' });
+    expect(toFollowUpMessage(event({ type: 'open_url', params: { url: 'https://example.com/report.docx' } }), [artifact])).toEqual({ kind: 'open-url', url: 'https://example.com/report.docx' });
+  });
   it('sends the button label as the follow-up message', () => {
     expect(toFollowUpMessage(event({ humanFriendlyMessage: ' Tell me more ' }))).toEqual({ kind: 'message', content: 'Tell me more' });
   });

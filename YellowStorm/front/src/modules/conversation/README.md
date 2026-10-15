@@ -2,6 +2,11 @@
 
 The conversation module provides the complete AI chat experience, handling real-time streaming responses, message management, branch navigation, agent mentioning, workspace linking, conversation sharing, and user interactions.
 
+OpenUI generated-file buttons use `{type: "download_artifact", params: {filename: "exact-returned-filename.docx"}}`.
+Only a unique ready artifact persisted on that answer can be downloaded; each click requests a fresh scoped URL
+and uses the same blob transfer as attachment cards. Legacy artifact-relative links remain supported as selectors.
+Keep original/edit captions paired with exact image reuse receipts and their `generated` flag, including PDF pages.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -829,6 +834,8 @@ interface PublicShareViewResponse {
 Upload files directly in the conversation input:
 
 - **Drag & drop, paste, or file dialog** — attach up to 5 files per message
+- **Clipboard images** — keyboard paste and the composer right-click Paste action upload image-only clipboard content. Plain text takes precedence over Office selection bitmaps; both paths retain attachment limits.
+- **Attachment policy** — upload and message endpoints await refreshed settings before accepting files, avoiding false disabled errors after cache expiry while retaining disabled-policy enforcement.
 - **Immediate upload** — files upload to Azure Blob Storage as soon as they are attached (not on send)
 - **Progress tracking** — each file shows upload progress with spinner overlay
 - **Submit disabled while uploading** — the submit button is disabled until all files finish uploading, but the textarea remains editable so users can type while waiting

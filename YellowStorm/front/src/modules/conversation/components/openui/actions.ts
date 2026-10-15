@@ -1,8 +1,10 @@
 import type { ActionEvent } from '@openuidev/react-lang';
+import type { ArtifactActivityData } from '../../types';
 
 export type FollowUp =
   | { kind: 'message'; content: string }
   | { kind: 'open-url'; url: string }
+  | { kind: 'download-artifact'; artifact: ArtifactActivityData }
   | { kind: 'ignore' };
 
 const CONTINUE_CONVERSATION = 'continue_conversation';
@@ -38,7 +40,19 @@ export function formatFormValues(state: Record<string, unknown>): string[] {
  * user message (button label plus submitted form values) or an external link.
  * Unknown action types are ignored rather than guessed at.
  */
-export function toFollowUpMessage(event: ActionEvent): FollowUp {
+export function toFollowUpMessage(event: ActionEvent, artifacts: readonly ArtifactActivityData[] = []): FollowUp {
+  // Resolve only artifacts persisted on this answer. A model-provided path/URL is never fetched.
+  if (['download_artifact', 'download_file', 'download', OPEN_URL].includes(event.type)) {
+    const reference = event.params?.artifactId ?? event.params?.filename ?? event.params?.fileName ?? event.params?.path ?? event.params?.url;
+    if (typeof reference === 'string') {
+      const filename = reference.startsWith('artifacts/main/') || reference.startsWith('/mnt/yellowmind/run/outputs/') || reference.startsWith('sandbox:/mnt/')
+        ? reference.split('/').at(-1) : reference;
+      const matches = artifacts.filter((artifact) => artifact.availability === 'ready'
+        && (artifact.artifactId === reference || artifact.filename === filename));
+      if (matches.length === 1) return { kind: 'download-artifact', artifact: matches[0] };
+    }
+    if (event.type !== OPEN_URL) return { kind: 'ignore' };
+  }
   if (event.type === CONTINUE_CONVERSATION) {
     const label = event.humanFriendlyMessage?.trim();
     const hasForm = event.formState && Object.keys(event.formState).length > 0;

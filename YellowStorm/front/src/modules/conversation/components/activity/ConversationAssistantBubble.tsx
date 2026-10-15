@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
 import { getMimeTypeFromFilename, isViewableFile, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
-import { getArtifactDownloadUrl } from '../../api';
+import { downloadArtifactFile, getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
 import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
@@ -277,22 +277,7 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
     setLoadingAction('download');
     try {
       const { downloadUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
-      // Cross-origin links ignore `download`; transfer the authorized object into a local blob first.
-      const response = await fetch(downloadUrl, { credentials: 'omit', referrerPolicy: 'no-referrer' });
-      if (!response.ok) throw new Error('Artifact download failed');
-      const url = URL.createObjectURL(await response.blob());
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.rel = 'noopener';
-      try {
-        document.body.appendChild(anchor);
-        anchor.click();
-      } finally {
-        anchor.remove();
-        // Let browsers start consuming the blob before releasing it.
-        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      }
+      await downloadArtifactFile(downloadUrl, filename);
     } catch {
       showError(t('stream.activity.artifactError'));
     } finally {
@@ -535,7 +520,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     const segments: AnswerSegment[] = isOpenUiRenderEnabled() ? segmentAnswerParts(parts, renderMode) : [{ kind: 'parts', parts }];
     segments.forEach((segment) => {
       if (segment.kind === 'openui') {
-        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} partId={segment.componentId} />);
+        answerNodes.push(<OpenUiAnswer key={`openui-${answerNodes.length}`} content={segment.content} isStreaming={props.isStreaming && segment.isLast} conversationId={props.conversationId} messageId={props.messageId} citations={segment.citations} artifacts={source.filter((component) => component.type === 'artifact').map((component) => component.data as ArtifactActivityData)} partId={segment.componentId} />);
         return;
       }
       if (!segment.parts.length) return;

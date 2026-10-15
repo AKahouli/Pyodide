@@ -3,7 +3,7 @@
  * Top-level component: routes mode -> open/minimized/closed
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useFileViewerStore, useFileViewerMode, useFileViewerDisplayMode, useFileViewerPosition, useFileViewerSize } from '../store';
 import { useResizable } from '../hooks';
 import type { ResizeEdge } from '../hooks';
@@ -23,6 +23,7 @@ export function FileFloatingWindow() {
   const setMinimizedPosition = useFileViewerStore((s) => s.setMinimizedPosition);
   const closeViewer = useFileViewerStore((s) => s.closeViewer);
   const closeOnOutsideClick = useFileViewerStore((s) => s.closeOnOutsideClick);
+  const viewport = useRef({ width: window.innerWidth, height: window.innerHeight });
 
   // Clamp position and size when the browser window is resized
   useEffect(() => {
@@ -38,11 +39,12 @@ export function FileFloatingWindow() {
         setSize({ width: clampedW, height: clampedH });
       }
 
-      // Clamp floating window position (keep at least 100px visible horizontally, 40px vertically)
-      const maxX = Math.max(0, vw - 100);
-      const maxY = Math.max(0, vh - 40);
-      const clampedX = Math.min(state.position.x, maxX);
-      const clampedY = Math.min(state.position.y, maxY);
+      // Keep centered previews centered; preserve dragged placement within the new viewport.
+      const wasCentered = Math.abs(state.position.x - Math.max(0, Math.round((viewport.current.width - state.size.width) / 2))) <= 1
+        && Math.abs(state.position.y - Math.max(0, Math.round((viewport.current.height - state.size.height) / 2))) <= 1;
+      const clampedX = wasCentered ? Math.round((vw - clampedW) / 2) : Math.max(0, Math.min(state.position.x, vw - clampedW));
+      const clampedY = wasCentered ? Math.round((vh - clampedH) / 2) : Math.max(0, Math.min(state.position.y, vh - clampedH));
+      viewport.current = { width: vw, height: vh };
       if (clampedX !== state.position.x || clampedY !== state.position.y) {
         setPosition({ x: clampedX, y: clampedY });
       }

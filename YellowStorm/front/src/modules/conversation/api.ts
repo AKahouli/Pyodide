@@ -270,6 +270,24 @@ export async function getArtifactDownloadUrl(conversationId: string, messageId: 
   return response.data.data;
 }
 
+/** Transfer the authorized signed object into a blob: cross-origin links ignore `download`. */
+export async function downloadArtifactFile(downloadUrl: string, filename: string): Promise<void> {
+  const response = await fetch(downloadUrl, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+  if (!response.ok) throw new Error('Artifact download failed');
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  try {
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+}
+
 export async function fetchSlideExportImage(conversationId: string, messageId: string, url: string, signal: AbortSignal): Promise<string> {
   const response = await apiClient.post<ApiResponse<{ dataUrl: string }>>(`/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/slides/image`, { url }, { signal });
   return response.data.data.dataUrl;

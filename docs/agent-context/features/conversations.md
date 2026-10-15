@@ -10,6 +10,18 @@
 
 ## Purpose and workflows
 
+Composer clipboard images use the same provider attachment/upload path for keyboard
+paste and the custom right-click Paste action. An image-only clipboard becomes an
+uploaded file; nonempty plain text takes precedence over Office clipboard bitmaps.
+The provider still enforces attachment limits and the disabled-attachments setting.
+Upload URL, direct upload, upload confirmation and message-send gates await
+`ConversationSettingsService.isAttachmentIntelligenceEnabled()` before accepting
+attachments. A stale cache must refresh instead of falsely reporting attachments
+disabled; disabled policies and refresh failures still prevent acceptance.
+Source: `front/src/components/ai-elements/input-context-menu.tsx` and
+`prompt-input.tsx`; regressions: `input-context-menu.test.tsx` and
+`prompt-input.paste.test.tsx` (2026-10-15).
+
 Conversation provides persisted AI chat with streamed answers, agent routing, workspace context and collaboration.
 
 | Workflow | Existing behavior and source |
@@ -76,6 +88,17 @@ describes the selectors and rendering contract. Focused coverage is in the artif
 Live QA covered web photographs, `test_image.pdf`, direct PNG uploads, reload and six-image Office files.
 Sandbox mount recovery verification is recorded separately with the runtime change; do not infer
 concurrent-conversation sandbox isolation from image persistence.
+
+Generated-file OpenUI buttons use `download_artifact` with the exact returned filename
+or artifact ID. The browser resolves a unique ready artifact on that answer, requests
+a fresh authorized download URL, and transfers it as a blob using the same path as
+the attachment card. Legacy `open_url` references under `artifacts/main/` or sandbox
+output paths are selectors only, never URLs fetched from model text. Unknown, pending,
+or ambiguous artifacts do not download. Image captions must stay paired with their
+exact reuse receipts and provenance; reference order does not identify an original.
+Asynchronous file previews reset their centered geometry when opened from closed;
+viewport resizing preserves centering or keeps a dragged window inside the viewport.
+Coverage: OpenUI action/answer/renderer tests, file-viewer store and floating-window tests.
 
 ## Focused verification map
 

@@ -167,7 +167,7 @@ export class MessageController {
 
     // Hard gate: never trust a stale frontend — reject attachments when the
     // admin feature switch is off instead of silently dropping the files.
-    if (dto.attachedFileIds?.length && !this.conversationSettings.isAttachmentIntelligenceEnabledCached()) {
+    if (dto.attachedFileIds?.length && !await this.conversationSettings.isAttachmentIntelligenceEnabled()) {
       throw new BadRequestException(
         ErrorCode.CHAT_ATTACHMENTS_DISABLED,
         'Conversation file attachments are disabled',

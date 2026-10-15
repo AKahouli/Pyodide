@@ -23,6 +23,24 @@ vi.mock('@/lib/api', () => ({
 }));
 
 describe('file-viewer store', () => {
+  it('centers asynchronous artifact previews on the current viewport when opened or reopened', async () => {
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1440);
+    const height = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(900);
+    const load = vi.fn(async () => ({ url: 'https://example.test/center.docx' }));
+    try {
+      await useFileViewerStore.getState().openFileFromUrlLoader('center', 'center.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', load);
+      expect(useFileViewerStore.getState().position).toEqual({ x: 270, y: 125 });
+      useFileViewerStore.setState({ mode: 'closed', position: { x: 5, y: 10 } });
+      width.mockReturnValue(1200);
+      height.mockReturnValue(800);
+      await useFileViewerStore.getState().openFileFromUrlLoader('center', 'center.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', load);
+      expect(useFileViewerStore.getState().position).toEqual({ x: 150, y: 75 });
+      expect(load).toHaveBeenCalledTimes(1);
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+    }
+  });
   beforeEach(() => {
     apiGetMock.mockReset().mockResolvedValue({
       data: {

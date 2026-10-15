@@ -51,6 +51,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     error: jest.Mock;
   };
   let controller: MessageController;
+  let conversationSettings: { isLatencyInstrumentationEnabledCached: jest.Mock; isAttachmentIntelligenceEnabled: jest.Mock };
 
   const user = {
     _id: userId,
@@ -122,6 +123,10 @@ describe('MessageController.sendMessage sticky routing', () => {
       error: jest.fn(),
     };
 
+    conversationSettings = {
+      isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true),
+      isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(true),
+    };
     controller = new MessageController(
       messageService as any,
       streamService as any,
@@ -136,8 +141,36 @@ describe('MessageController.sendMessage sticky routing', () => {
       semanticModelService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
-      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true), isAttachmentIntelligenceEnabledCached: jest.fn().mockReturnValue(true) } as any,
+      conversationSettings as any,
     );
+  });
+
+  it('waits for refreshed attachment settings before accepting an attachment turn', async () => {
+    let resolveEnabled!: (enabled: boolean) => void;
+    conversationSettings.isAttachmentIntelligenceEnabled.mockReturnValue(new Promise<boolean>((resolve) => { resolveEnabled = resolve; }));
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    const pending = controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] });
+    expect(conversationSettings.isAttachmentIntelligenceEnabled).toHaveBeenCalledTimes(1);
+    expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    resolveEnabled(true);
+    await pending;
+    expect(streamService.startStream).toHaveBeenCalled();
+  });
+
+  it('rejects attachments when refreshed settings disable them', async () => {
+    conversationSettings.isAttachmentIntelligenceEnabled.mockResolvedValue(false);
+    await expect(controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] })).rejects.toThrow('Conversation file attachments are disabled');
+    expect(conversationService.getConversationDocument).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
+  it('does not accept attachments when settings cannot be loaded', async () => {
+    conversationSettings.isAttachmentIntelligenceEnabled.mockRejectedValue(new Error('Settings unavailable'));
+    await expect(controller.sendMessage(user, conversationId, { content: 'Describe', attachedFileIds: ['file-1'] })).rejects.toThrow('Settings unavailable');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
   });
 
   it('forwards scoped citation URL resolution', async () => {
@@ -156,7 +189,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves governed root authority for an exact bound-root mention', async () => {
     conversationService.getConversationDocument.mockResolvedValue({ createdBy: userId.toString(),
       runtimeMode: 'governed', runtimePurpose: 'chat', rootAgentId: stickyAgentId,
-      isFirstMessage: false, isGroup: false, taggedAgentIds: [] });
+      isFirstMessage: false, isGroup: false, taggedAgentIds: [], members: [] });
     const runtime = { rootWork: {}, primaryAgentId: stickyAgentId, allowedAgentIds: [stickyAgentId],
       workspaceIds: [], revisionId: 'revision', scopeId: 'scope' };
     (controller as any).governedRuntimeService.resolveRuntime.mockResolvedValue(runtime);

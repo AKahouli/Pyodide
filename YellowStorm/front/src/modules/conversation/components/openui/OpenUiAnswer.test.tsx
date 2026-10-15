@@ -1,11 +1,16 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from '../activity/ConversationAssistantBubble';
 import { useAgentStore } from '@/modules/agent/store';
 import { preloadOpenUiForAgent } from './preload';
 import type { MessageComponent } from '../../types';
+import type { ActionEvent } from '@openuidev/react-lang';
+import { OpenUiAnswer } from './OpenUiAnswer';
 
-const rendererState = vi.hoisted(() => ({ shouldThrow: false, throwOn: null as null | ((content: string) => boolean) }));
+const rendererState = vi.hoisted(() => ({ shouldThrow: false, throwOn: null as null | ((content: string) => boolean), action: null as ActionEvent | null }));
+const downloads = vi.hoisted(() => ({ sign: vi.fn(), save: vi.fn(), error: vi.fn() }));
+vi.mock('../../api', async (importOriginal) => ({ ...await importOriginal<typeof import('../../api')>(), getArtifactDownloadUrl: downloads.sign, downloadArtifactFile: downloads.save }));
+vi.mock('@/lib/notifications', () => ({ showError: downloads.error }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
@@ -15,9 +20,9 @@ vi.mock('./preload', async (importOriginal) => {
   return { ...actual, preloadOpenUiForAgent: vi.fn(actual.preloadOpenUiForAgent) };
 });
 vi.mock('./OpenUiRenderer', () => ({
-  default: ({ content, isStreaming }: { content: string; isStreaming: boolean }) => {
+  default: ({ content, isStreaming, onAction }: { content: string; isStreaming: boolean; onAction: (event: ActionEvent) => void }) => {
     if (rendererState.shouldThrow || rendererState.throwOn?.(content)) throw new Error('renderer crashed');
-    return <div data-testid='openui-stub' data-streaming={String(isStreaming)}>{content}</div>;
+    return <div data-testid='openui-stub' data-streaming={String(isStreaming)}>{content}{rendererState.action && <button onClick={() => onAction(rendererState.action!)}>Download test</button>}</div>;
   },
 }));
 
@@ -29,10 +34,30 @@ describe('answer render mode', () => {
   beforeEach(() => {
     rendererState.shouldThrow = false;
     rendererState.throwOn = null;
+    rendererState.action = null;
+    vi.clearAllMocks();
     vi.stubEnv('VITE_OPENUI_RENDER_ENABLED', 'true');
     useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Generative UI agent', slug: 'research-assistant', genUiEnabled: true }] as never, isInitialized: true });
   });
   afterEach(() => vi.unstubAllEnvs());
+
+  it('signs the matching answer artifact on every click after remount and reports delivery errors', async () => {
+    rendererState.action = { type: 'download_artifact', params: { filename: 'report.docx' }, humanFriendlyMessage: '' };
+    downloads.sign.mockResolvedValue({ downloadUrl: 'https://signed.test/object' });
+    downloads.save.mockResolvedValue(undefined);
+    const props = { content: program, isStreaming: false, conversationId: 'c', messageId: 'm', artifacts: [{ artifactId: 'a', filename: 'report.docx', availability: 'ready' as const }] };
+    const first = render(<OpenUiAnswer {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download test' }));
+    await waitFor(() => expect(downloads.save).toHaveBeenCalledWith('https://signed.test/object', 'report.docx'));
+    expect(downloads.sign).toHaveBeenCalledWith('c', 'm', 'a');
+    first.unmount();
+    downloads.sign.mockRejectedValueOnce(new Error('Denied'));
+    render(<OpenUiAnswer {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download test' }));
+    await waitFor(() => expect(downloads.error).toHaveBeenCalledWith('stream.activity.artifactError'));
+    expect(downloads.sign).toHaveBeenCalledTimes(2);
+    expect(downloads.save).toHaveBeenCalledTimes(1);
+  });
 
   it('renders the answer with OpenUI for an agent with generative UI on, whatever its slug', async () => {
     render(bubble());
