@@ -1,6 +1,6 @@
 import type { Message, MessageComponent } from '../types';
-import { componentsToMarkdown, isVisualConversationComponent } from '../utils';
-import { createOpenUiTextProjector } from '../components/openui/plain-text';
+import { componentToMarkdown, componentsToMarkdown, isVisualConversationComponent } from '../utils';
+import { createOpenUiTextProjector, exportPartsToMarkdown, isOpenUiProgram, projectOpenUiProgram, type OpenUiExportPart } from '../components/openui/plain-text';
 
 /** One conversational turn in an exported document. */
 export interface ExportBlock {
@@ -10,6 +10,89 @@ export interface ExportBlock {
   markdown: string;
   /** Answer components; exports that render visuals (charts, HTML previews) walk these in order. */
   components?: MessageComponent[];
+  parts?: OpenUiExportPart[];
+}
+
+export type ExportImageResolver = (source: string, component: MessageComponent, message: Message) => Promise<string>;
+
+/** Ephemeral instructions for the existing MCP export flow. Persistent selectors
+ * are preserved exactly; the authorized agent resolves them before execution. */
+export async function buildMcpExportManifest(message: Message): Promise<{ parts: Array<OpenUiExportPart & { componentId?: string }> }> {
+  const parts: Array<OpenUiExportPart & { componentId?: string }> = [];
+  if (message.conversationType === 'user') {
+    if (message.content?.trim()) parts.push({ kind: 'markdown', markdown: message.content });
+    return { parts };
+  }
+  for (const component of message.components ?? []) {
+    if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
+      parts.push(...(await projectOpenUiProgram(String(component.data?.content))).map((part) => ({ ...part, componentId: component.id })));
+    } else {
+      if (isVisualConversationComponent(component)) throw new Error('Legacy visual MCP export is unsupported');
+      const markdown = componentToMarkdown(component);
+      if (markdown.trim()) parts.push({ kind: 'markdown', markdown, componentId: component.id });
+    }
+  }
+  return { parts };
+}
+
+/** Export only saved content. Resolving assets here makes every format use the
+ * same validated image and prevents temporary UI URLs leaking into saved files. */
+export async function buildStructuredExportBlocks(
+  messages: Message[],
+  labels: { user: string; assistant: string },
+  formatTimestamp?: (iso: string) => string,
+  resolveImage?: ExportImageResolver,
+): Promise<ExportBlock[]> {
+  // Choose the saved branch before parsing/resolving it. An obsolete answer's
+  // deleted image must not prevent exporting the replacement answer.
+  const questionIds = new Set(messages.filter((message) => message.conversationType === 'user' && message.content?.trim()).map((message) => message.id));
+  const selected = new Map<string, { index: number; time: number }>();
+  messages.forEach((message, index) => {
+    if (message.conversationType !== 'ai' || !message.questionMessageId || !questionIds.has(message.questionMessageId)) return;
+    const components = message.components ?? [];
+    if (!components.some((component) => isVisualConversationComponent(component)
+      || (component.type === 'text' && isOpenUiProgram(component.data?.content))
+      || componentToMarkdown(component).trim())) return;
+    const parsedTime = Date.parse(message.createdAt);
+    const time = Number.isNaN(parsedTime) ? Number.NEGATIVE_INFINITY : parsedTime;
+    const existing = selected.get(message.questionMessageId);
+    if (!existing || time >= existing.time) selected.set(message.questionMessageId, { index, time });
+  });
+  const selectedMessages = messages.filter((message, index) => message.conversationType !== 'ai'
+    || !message.questionMessageId || !questionIds.has(message.questionMessageId)
+    || selected.get(message.questionMessageId)?.index === index);
+  const projected = await Promise.all(selectedMessages.map(async (message) => {
+    if (message.conversationType !== 'ai' || !message.components?.some((component) => component.type === 'text' && isOpenUiProgram(component.data?.content))) return { message, parts: undefined };
+    const parts: OpenUiExportPart[] = [];
+    const components: MessageComponent[] = [];
+    for (const component of message.components ?? []) {
+      if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
+        const projectedParts = await projectOpenUiProgram(String(component.data?.content));
+        for (const part of projectedParts) {
+          if (part.kind !== 'image') { parts.push(part); continue; }
+          if (!resolveImage) throw new Error('OpenUI export image resolver required');
+          const source = await resolveImage(part.source, component, message);
+          if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(source)) throw new Error('Invalid resolved OpenUI export image');
+          parts.push({ ...part, source });
+        }
+        components.push({ ...component, data: { ...component.data, content: exportPartsToMarkdown(projectedParts) } });
+      } else {
+        if (isVisualConversationComponent(component)) throw new Error('Mixed OpenUI and legacy visual export is unsupported');
+        const markdown = componentToMarkdown(component);
+        if (markdown.trim()) parts.push({ kind: 'markdown', markdown });
+        components.push(component);
+      }
+    }
+    return { message: { ...message, components }, parts };
+  }));
+  const blocks = buildExportBlocks(projected.map((entry) => entry.message), labels, formatTimestamp);
+  // Blocks retain the exact component array of their selected answer, including
+  // newest-answer branch selection performed by buildExportBlocks.
+  for (const block of blocks) {
+    const owner = projected.find((entry) => entry.message.components === block.components);
+    if (owner?.parts) { block.parts = owner.parts; block.markdown = exportPartsToMarkdown(owner.parts); }
+  }
+  return blocks;
 }
 
 const EXPORT_PAGE_LIMIT = 100;

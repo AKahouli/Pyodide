@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface HtmlExportBlock {
@@ -8,6 +8,8 @@ interface HtmlExportBlock {
   markdown: string;
 }
 
+export const exportUrlTransform = (url: string): string => /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(url) ? url : defaultUrlTransform(url);
+
 export function exportBlocksToHtml(blocks: HtmlExportBlock[], title: string): Blob {
   const content = renderToStaticMarkup(
     <main>
@@ -15,7 +17,7 @@ export function exportBlocksToHtml(blocks: HtmlExportBlock[], title: string): Bl
       {blocks.map((block, index) => (
         <section key={index}>
           <header>{block.label}{block.timestamp ? ` · ${block.timestamp}` : ''}</header>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.markdown}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={exportUrlTransform}>{block.markdown}</ReactMarkdown>
         </section>
       ))}
     </main>,

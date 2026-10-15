@@ -56,6 +56,23 @@ The conversation module is a self-contained feature module that handles:
 
 ### OpenUI slides
 
+Answer and conversation DOCX, HTML and print/PDF exports project the saved OpenUI
+program with the installed parser, independently of mounted or collapsed views.
+The shared projection preserves image/caption order, text, native tables and chart
+data as editable tables. Images are embedded through existing answer-scoped
+generated-image, citation and guarded web-image resolvers. Missing assets and
+unsupported dynamic programs fail explicitly instead of producing partial files.
+Regenerated answers are selected before resolving their assets.
+
+The answer Export menu also offers agent-generated DOCX and editable PPTX. These
+send a structured content manifest and citation/page mapping through the existing
+conversation agent; image selectors are prepared with `reuseImage` before the
+configured MCP interpreter is used. This is an asynchronous agent request. A file
+is available only after successful publication, not merely after sandbox creation.
+The slide preview's existing image-based PPTX export remains a distinct format.
+Coverage: `document-export.test.ts`, `openui-export-assets.test.ts`,
+`docx-export.test.ts`, `MessageActions.test.tsx` and `ConversationHeader.test.tsx`.
+
 Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
 by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
 `Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,

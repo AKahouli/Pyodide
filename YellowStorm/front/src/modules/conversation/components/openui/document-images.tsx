@@ -66,7 +66,7 @@ export function mapImageSources(value: unknown, replace: (source: string) => str
   return value;
 }
 
-async function loadDocumentImage(citation: CitationData, scope: OpenUiCitationScope): Promise<Blob> {
+export async function loadDocumentImage(citation: CitationData, scope: OpenUiCitationScope): Promise<Blob> {
   if (citation.sourceType === 'web' || citation.sourceType === 'record') throw new Error('Not a document citation');
   const owned = citation.evidenceId !== undefined || citation.executionId !== undefined;
   if (owned && (typeof citation.evidenceId !== 'string' || !citation.evidenceId.trim()

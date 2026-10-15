@@ -10,9 +10,10 @@ import { useConversationUiStore } from '../uiStore';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { fetchMessages } from '../api';
-import { buildExportBlocks, buildExportFilename, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
+import { buildExportFilename, buildStructuredExportBlocks, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
-import { exportBlocksToHtml } from '../utils/html-export';
+import { exportBlocksToHtml, exportUrlTransform } from '../utils/html-export';
+import { resolveOpenUiExportImage } from '../utils/openui-export-assets';
 import { showError, showInfo, showSuccess } from '@/lib/notifications';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
@@ -64,7 +65,7 @@ export function ConversationHeader() {
       const date = new Date(iso);
       return Number.isNaN(date.getTime()) ? iso : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
     };
-    return buildExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp);
+    return buildStructuredExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp, resolveOpenUiExportImage);
   };
 
   const handleExportDocx = async () => {
@@ -275,7 +276,7 @@ export function ConversationHeader() {
               <h3 style={{ color: '#6b7280', fontSize: '12px', margin: '24px 0 8px', textTransform: 'uppercase' }}>
                 {block.label}{block.timestamp ? ` · ${block.timestamp}` : ''}
               </h3>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.markdown}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={exportUrlTransform}>{block.markdown}</ReactMarkdown>
             </div>
           ))}
         </PdfExportPortal>

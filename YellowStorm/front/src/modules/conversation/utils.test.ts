@@ -179,6 +179,16 @@ describe('conversation utils', () => {
     }
   });
 
+  it('keeps reused markers bound to their owning text when different sources collide', () => {
+    const parts = mapComponentsToContentParts([
+      { id: 'first', type: 'text', data: { content: 'First [1]' } },
+      { id: 'second', type: 'text', data: { content: 'Second [1]' } },
+      { type: 'citation', data: { parentId: 'first', reference: '1', source: 'first.pdf' } },
+      { type: 'citation', data: { parentId: 'second', reference: '1', source: 'second.pdf' } },
+    ] as never);
+    expect(parts.map((part) => part.type === 'text' ? part.citations?.map((citation) => citation.source) : [])).toEqual([['first.pdf'], ['second.pdf']]);
+  });
+
   it('converts components to markdown', () => {
     const markdown = componentsToMarkdown([
       { type: 'text', data: { content: 'Hi' } },

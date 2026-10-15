@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions } from './MessageActions';
+import * as documentExports from '../utils/document-export';
 
 const updateFeedbackMock = vi.hoisted(() => vi.fn());
 const regenerateMessageMock = vi.hoisted(() => vi.fn());
@@ -18,6 +19,8 @@ const exportBlocksToDocxMock = vi.hoisted(() => vi.fn().mockResolvedValue(new Bl
 const downloadBlobMock = vi.hoisted(() => vi.fn());
 const notificationSuccessMock = vi.hoisted(() => vi.fn());
 const notificationErrorMock = vi.hoisted(() => vi.fn());
+const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const conversationState = vi.hoisted(() => ({ currentConversationId: 'conv-1', runtimeMode: 'standard', isStreaming: false, isAwaitingFirstChunk: false }));
 const modelMock = vi.hoisted(() => ({
   value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined,
 }));
@@ -62,6 +65,10 @@ vi.mock('@/lib/notifications', () => ({
 }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
+vi.mock('@/modules/localization', async () => ({
+  ...await vi.importActual<typeof import('@/modules/localization')>('@/modules/localization'),
+  useModuleTranslation: () => ({ t: (key: string, options?: unknown) => key === 'messageActions.exportAgentRequest' ? JSON.stringify(options) : key, language: 'en', ready: true }),
+}));
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({
     user: { id: 'user-owner', permissions: ['playbook.create'] },
@@ -82,12 +89,16 @@ vi.mock('@/modules/platform-copilot/platformCopilotPanelStore', () => ({
 }));
 
 vi.mock('../store', () => ({
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
+  useConversationStore: Object.assign((selector: (state: Record<string, unknown>) => unknown) =>
     selector({
+      currentConversationId: conversationState.currentConversationId,
+      isStreaming: conversationState.isStreaming,
+      isAwaitingFirstChunk: conversationState.isAwaitingFirstChunk,
+      sendMessage: sendMessageMock,
       updateFeedback: updateFeedbackMock,
       regenerateMessage: regenerateMessageMock,
       setReplyingToMessage: vi.fn(),
-      currentConversation: { runtimeMode: 'standard', createdBy: 'user-owner' },
+      currentConversation: { runtimeMode: conversationState.runtimeMode, createdBy: 'user-owner' },
       messages: [
         {
           id: 'user-1',
@@ -110,7 +121,7 @@ vi.mock('../store', () => ({
         cost: { usd: 0.287, complete: true },
         carbon: { gramsCo2e: 6.2, estimated: true, complete: true },
       },
-    }),
+    }), { getState: () => ({ ...conversationState, currentConversation: { runtimeMode: conversationState.runtimeMode } }) }),
 }));
 
 vi.mock('../utils', async () => {
@@ -150,6 +161,7 @@ describe('MessageActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     modelMock.value = { id: 'model-1', name: 'Model One' };
+    Object.assign(conversationState, { currentConversationId: 'conv-1', runtimeMode: 'standard', isStreaming: false, isAwaitingFirstChunk: false });
   });
 
   it('handles like, copy, and regenerate actions', async () => {
@@ -506,6 +518,7 @@ describe('MessageActions', () => {
       expect(exportBlocksToDocxMock).toHaveBeenCalledWith(
         [
           {
+            role: 'ai',
             label: 'export.assistantLabel',
             timestamp: new Intl.DateTimeFormat('en', {
               dateStyle: 'medium',
@@ -568,5 +581,111 @@ describe('MessageActions', () => {
 
     await act(async () => pdfExportMock.onFinish?.(false));
     expect(toastErrorMock).toHaveBeenCalledWith('toasts.message.exportError');
+  });
+
+  it('clears PDF loading for an empty answer so the action can be retried', async () => {
+    render(<MessageActions message={{ id: 'empty', conversationType: 'ai', isComplete: true, createdAt: '2026-07-29T13:00:00Z', components: [{ type: 'text', data: { content: '' } }] } as never} isLastAiMessage={false} conversationId="conv-1" />);
+    const action = screen.getByRole('button', { name: 'messageActions.exportPdf' });
+    await userEvent.click(action);
+    await waitFor(() => expect(notificationErrorMock).toHaveBeenCalledWith('toasts.export.failed'));
+    expect(action).toBeEnabled();
+    expect(screen.queryByTestId('message-pdf-export')).not.toBeInTheDocument();
+    await userEvent.click(action);
+    await waitFor(() => expect(notificationErrorMock).toHaveBeenCalledTimes(2));
+  });
+
+  const agentExportMessage = {
+    id: 'ai-export', conversationType: 'ai', questionMessageId: 'user-1', agentIds: ['original-agent'], modelId: 'model-1', isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00Z',
+    components: [
+      { id: 'text-1', type: 'text', data: { content: 'root = Card([t,g])\nt = TextContent("Saved report [1] [2]")\ng = ImageGallery(["Web", "PDF", "Edited"], ["https://example.test/photo.png", "[1]", "generated-image:123456789012345678901234"])' } },
+      { type: 'citation', data: { image_source: { reference: '1', fileName: 'chart.pdf', page: '2', externalId: 'pdf-id' } } },
+      { type: 'citation', data: { image_source: { reference: '2', fileName: 'chart.pdf', page: '3', externalId: 'pdf-id' } } },
+    ],
+  };
+
+  it.each([['messageActions.exportAgentDocx', 'DOCX'], ['messageActions.exportEditablePptx', 'PPTX']])('submits %s only on explicit click with exact saved sources and all citation mappings', async (action, format) => {
+    document.body.innerHTML = '<div id="message-ai-export"><img src="blob:temporary-preview" /></div>';
+    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: action }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    const [owner, payload] = sendMessageMock.mock.calls[0];
+    expect(owner).toBe('conv-1');
+    expect(payload).toMatchObject({ parentMessageId: 'ai-export', agentIds: ['original-agent'], modelId: 'model-1' });
+    const request = JSON.parse(payload.content);
+    expect(request.format).toBe(format);
+    const manifest = JSON.parse(request.manifest);
+    expect(manifest.parts.filter((part: { kind: string }) => part.kind === 'image')).toEqual([
+      { kind: 'image', source: 'https://example.test/photo.png', caption: 'Web', componentId: 'text-1' },
+      { kind: 'image', source: '[1]', caption: 'PDF', componentId: 'text-1' },
+      { kind: 'image', source: 'generated-image:123456789012345678901234', caption: 'Edited', componentId: 'text-1' },
+    ]);
+    expect(manifest.citations).toEqual([
+      expect.objectContaining({ reference: '1', fileName: 'chart.pdf', page: '2' }),
+      expect.objectContaining({ reference: '2', fileName: 'chart.pdf', page: '3' }),
+    ]);
+    expect(payload.content).not.toMatch(/blob:|base64|root =/);
+  });
+
+  it.each([{ isComplete: false }, { isStreaming: true }])('does not offer agent exports for an unfinished answer %o', (state) => {
+    render(<MessageActions message={{ ...agentExportMessage, ...state } as never} isLastAiMessage={false} conversationId="conv-1" />);
+    expect(screen.queryByRole('button', { name: 'messageActions.exportEditablePptx' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer agent exports in governed mode', () => {
+    conversationState.runtimeMode = 'governed';
+    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    expect(screen.queryByRole('button', { name: 'messageActions.exportEditablePptx' })).not.toBeInTheDocument();
+  });
+
+  it('blocks agent export while another answer is running', async () => {
+    conversationState.isStreaming = true;
+    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    const action = screen.getByRole('button', { name: 'messageActions.exportEditablePptx' });
+    expect(action).toBeDisabled();
+    await userEvent.click(action);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending export if the active conversation changes before projection completes', async () => {
+    let finish!: (value: { parts: Array<{ kind: 'markdown'; markdown: string }> }) => void;
+    const spy = vi.spyOn(documentExports, 'buildMcpExportManifest').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportEditablePptx' }));
+    conversationState.currentConversationId = 'other-conversation';
+    await act(async () => finish({ parts: [{ kind: 'markdown', markdown: 'Report' }] }));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('reports projection failures without starting an agent turn', async () => {
+    const spy = vi.spyOn(documentExports, 'buildMcpExportManifest').mockRejectedValueOnce(new Error('Incomplete program'));
+    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportEditablePptx' }));
+    await waitFor(() => expect(notificationErrorMock).toHaveBeenCalledWith('toasts.export.failed'));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'messageActions.exportEditablePptx' })).toBeEnabled();
+    spy.mockRestore();
+  });
+
+  it('keeps colliding citation markers scoped to their originating text component', async () => {
+    const message = { ...agentExportMessage, components: [
+      { id: 'first', type: 'text', data: { content: 'root = Card([i])\ni = Image("First PDF", "[1]")' } },
+      { id: 'second', type: 'text', data: { content: 'root = Card([i])\ni = Image("Second PDF", "[1]")' } },
+      { type: 'citation', data: { parentId: 'first', image_source: { reference: '1', fileName: 'first.pdf', page: '2' } } },
+      { type: 'citation', data: { parentId: 'second', image_source: { reference: '1', fileName: 'second.pdf', page: '3' } } },
+    ] };
+    render(<MessageActions message={message as never} isLastAiMessage={false} conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportEditablePptx' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    const manifest = JSON.parse(JSON.parse(sendMessageMock.mock.calls[0][1].content).manifest);
+    expect(manifest.parts.filter((part: { kind: string }) => part.kind === 'image')).toEqual([
+      { kind: 'image', source: '[1]', caption: 'First PDF', componentId: 'first' },
+      { kind: 'image', source: '[1]', caption: 'Second PDF', componentId: 'second' },
+    ]);
+    expect(manifest.citations).toEqual([
+      { componentId: 'first', reference: '1', fileName: 'first.pdf', page: '2' },
+      { componentId: 'second', reference: '1', fileName: 'second.pdf', page: '3' },
+    ]);
   });
 });

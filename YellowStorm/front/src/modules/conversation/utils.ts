@@ -428,6 +428,24 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     parts.push({ type: 'citation', ...citation });
   }
 
+  // Markers can restart in separate agent text components. Keep propagation of
+  // a unique legacy citation, but never let another component's [1] win locally.
+  for (const part of parts) {
+    if (part.type !== 'text' || !part.citations) continue;
+    const byReference = new Map<string, typeof part.citations>();
+    for (const citation of part.citations) {
+      const reference = citation.reference?.replace(/[\[\]\s]/g, '');
+      if (reference) byReference.set(reference, [...(byReference.get(reference) ?? []), citation]);
+    }
+    part.citations = part.citations.filter((citation) => {
+      const reference = citation.reference?.replace(/[\[\]\s]/g, '');
+      const matches = reference ? byReference.get(reference) ?? [] : [];
+      if (matches.length < 2) return true;
+      const owners = new Set(matches.map((item) => item.parentId).filter(Boolean));
+      return owners.size < 2 || citation.parentId === part.componentId;
+    });
+  }
+
   return parts;
 }
 

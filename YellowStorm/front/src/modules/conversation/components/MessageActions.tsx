@@ -8,12 +8,13 @@ import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { showSuccess, showError } from '@/lib/notifications';
 import { useConversationStore } from '../store';
-import { componentsToMarkdown } from '../utils';
-import { createOpenUiTextProjector } from './openui/plain-text';
+import { componentsToMarkdown, mapConversationComponentsToContentParts } from '../utils';
+import { createOpenUiTextProjector, isOpenUiProgram } from './openui/plain-text';
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
-import { buildExportFilename } from '../utils/document-export';
+import { buildExportFilename, buildMcpExportManifest, buildStructuredExportBlocks } from '../utils/document-export';
+import { resolveOpenUiExportImage } from '../utils/openui-export-assets';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
-import { exportBlocksToHtml } from '../utils/html-export';
+import { exportBlocksToHtml, exportUrlTransform } from '../utils/html-export';
 import { openCitationSource, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useFileViewerDisplayMode } from '@/components/ai-elements/message-context';
 import type { DisplayedAnswerVersion, Message } from '../types';
@@ -51,6 +52,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const conversationUsage = useConversationStore((s) => s.conversationUsage);
   const activeBranches = useConversationStore((s) => s.activeBranches);
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
+  const currentConversationId = useConversationStore((s) => s.currentConversationId);
+  const sendMessage = useConversationStore((s) => s.sendMessage);
+  const conversationBusy = useConversationStore((s) => s.isStreaming || s.isAwaitingFirstChunk || Object.values(s.liveAnswers ?? {}).some((answer) => answer.conversationId === conversationId));
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -64,6 +68,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const { canUseFeature } = usePermissions();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [isExportingViaAgent, setIsExportingViaAgent] = useState(false);
+  const agentExportLock = useRef(false);
+  const [exportMarkdown, setExportMarkdown] = useState('');
   const { t, language } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
@@ -72,6 +79,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const model = useModelById(generationModelId || '');
   const navigate = useNavigate();
   const canBranch = !!currentConversation && message.isComplete && !message.isStreaming && !isGroup && currentConversation?.runtimeMode !== 'governed';
+  const canExportViaAgent = currentConversationId === conversationId && message.isComplete && !message.isStreaming
+    && currentConversation?.runtimeMode !== 'governed'
+    && message.components?.some((component) => component.type === 'text' && isOpenUiProgram(component.data?.content));
   const { execute: createBranch, isLoading: isBranching } = useApiAction(branchConversation, {
     showSuccessToast: true,
     successMessage: t('toasts.branch.success'),
@@ -133,19 +143,34 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     setReplyingToMessage(message);
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (isExportingPdf) return;
     setIsExportingPdf(true);
+    try {
+      const blocks = await buildAnswerExportBlocks();
+      const markdown = blocks.map((block) => block.markdown).join('\n\n');
+      if (!markdown.trim()) {
+        setIsExportingPdf(false);
+        showError(t('toasts.export.failed'));
+        return;
+      }
+      setExportMarkdown(markdown);
+    } catch {
+      setIsExportingPdf(false);
+      showError(t('toasts.export.failed'));
+    }
   };
 
   const handlePdfExportFinish = (ok: boolean) => {
     setIsExportingPdf(false);
+    setExportMarkdown('');
     if (!ok) toast.error(t('toasts.message.exportError'));
   };
 
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
-  // Read while the PDF export runs: the rendered OpenUI text is only known from the DOM.
-  const exportMarkdown = useMemo(() => (isExportingPdf ? toMarkdown() : ''), [isExportingPdf, toMarkdown]);
+  const buildAnswerExportBlocks = () => buildStructuredExportBlocks([message],
+    { user: t('export.userLabel'), assistant: t('export.assistantLabel') },
+    () => formattedCreatedAt, resolveOpenUiExportImage);
 
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
@@ -165,24 +190,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     if (isExportingDocx) return;
     setIsExportingDocx(true);
     try {
-      const formattedCreatedAt = Number.isNaN(new Date(message.createdAt).getTime())
-        ? undefined
-        : new Intl.DateTimeFormat(language, {
-            dateStyle: 'medium',
-            timeStyle: 'medium',
-          }).format(new Date(message.createdAt));
-      const markdown = toMarkdown();
-      const blob = await exportBlocksToDocx(
-        [
-          {
-            label: t('export.assistantLabel'),
-            timestamp: formattedCreatedAt,
-            markdown,
-            components: message.components || [],
-          },
-        ],
-        exportTitle,
-      );
+      const blob = await exportBlocksToDocx(await buildAnswerExportBlocks(), exportTitle);
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {
@@ -192,15 +200,54 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     }
   };
 
-  const handleExportHtml = () => {
+  const handleExportHtml = async () => {
     try {
-      const markdown = toMarkdown();
-      const timestamp = Number.isNaN(new Date(message.createdAt).getTime()) ? undefined : formattedCreatedAt;
-      const blob = exportBlocksToHtml([{ label: t('export.assistantLabel'), timestamp, markdown }], exportTitle);
+      const blob = exportBlocksToHtml(await buildAnswerExportBlocks(), exportTitle);
       downloadBlob(blob, buildExportFilename(exportTitle, 'html'));
       showSuccess(t('toasts.export.htmlSuccess'));
     } catch {
       showError(t('toasts.export.failed'));
+    }
+  };
+
+  const handleExportViaAgent = async (format: 'DOCX' | 'PPTX') => {
+    if (!canExportViaAgent || conversationBusy || agentExportLock.current) return;
+    const stillAvailable = () => {
+      const state = useConversationStore.getState();
+      return state.currentConversationId === conversationId && state.currentConversation?.runtimeMode !== 'governed'
+        && !state.isStreaming && !state.isAwaitingFirstChunk
+        && !Object.values(state.liveAnswers ?? {}).some((answer) => answer.conversationId === conversationId);
+    };
+    if (!stillAvailable()) return;
+    agentExportLock.current = true;
+    setIsExportingViaAgent(true);
+    try {
+      const manifest = await buildMcpExportManifest(message);
+      if (!manifest.parts.length) throw new Error('Empty export');
+      const citationMappings = mapConversationComponentsToContentParts(message.components ?? []).flatMap((part) => {
+        if (part.type !== 'text') return [];
+        const owned = (part.citations ?? []).filter((citation) => Boolean(part.componentId) && citation.parentId === part.componentId);
+        const legacy = (part.citations ?? []).filter((citation) => !citation.parentId && !owned.some((own) => own.reference === citation.reference));
+        const scoped = [...owned, ...legacy];
+        for (const citation of scoped) {
+          if (scoped.some((other) => other.reference === citation.reference && (other.fileName || other.source) + ':' + other.page !== (citation.fileName || citation.source) + ':' + citation.page)) throw new Error('Ambiguous export citation');
+        }
+        return scoped.map((citation) => ({ componentId: part.componentId, reference: citation.reference, fileName: citation.fileName || citation.source, page: citation.page }));
+      });
+      const data = JSON.stringify({ messageId: message.id, ...manifest, citations: citationMappings });
+      const question = messages.find((candidate) => candidate.id === message.questionMessageId);
+      if (!stillAvailable()) return;
+      await sendMessage(conversationId, {
+        content: t('messageActions.exportAgentRequest', { format, manifest: data }),
+        parentMessageId: message.id,
+        agentIds: message.agentIds ?? question?.agentIds,
+        modelId: generationModelId,
+      });
+    } catch {
+      showError(t('toasts.export.failed'));
+    } finally {
+      agentExportLock.current = false;
+      setIsExportingViaAgent(false);
     }
   };
 
@@ -319,7 +366,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                     <FileText className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportDocx')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleExportPdf}>
+                  <DropdownMenuItem onClick={handleExportPdf} disabled={isExportingPdf}>
                     <FileDown className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportPdf')}
                   </DropdownMenuItem>
@@ -327,6 +374,16 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                     <Globe className="h-3.5 w-3.5 me-2" />
                     {t('messageActions.exportHtml')}
                   </DropdownMenuItem>
+                  {canExportViaAgent && <>
+                    <DropdownMenuItem onClick={() => void handleExportViaAgent('DOCX')} disabled={conversationBusy || isExportingViaAgent}>
+                      <FileText className="h-3.5 w-3.5 me-2" />
+                      {t('messageActions.exportAgentDocx')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void handleExportViaAgent('PPTX')} disabled={conversationBusy || isExportingViaAgent}>
+                      <FileDown className="h-3.5 w-3.5 me-2" />
+                      {t('messageActions.exportEditablePptx')}
+                    </DropdownMenuItem>
+                  </>}
                 </DropdownMenuContent>
               </DropdownMenu>
             </TooltipTrigger>
@@ -402,9 +459,9 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      {isExportingPdf && (
+      {isExportingPdf && exportMarkdown && (
         <PdfExportPortal title={exportTitle} subtitle={`${formattedCreatedAt} · ${modelName}`} contentKey={exportMarkdown} onFinish={handlePdfExportFinish}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{exportMarkdown}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={exportUrlTransform}>{exportMarkdown}</ReactMarkdown>
         </PdfExportPortal>
       )}
     </>

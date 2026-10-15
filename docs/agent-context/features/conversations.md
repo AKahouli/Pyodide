@@ -110,6 +110,18 @@ Coverage: OpenUI action/answer/renderer tests, file-viewer store and floating-wi
 
 ## Focused verification map
 
+### Consistent saved-answer exports (2026-10-15)
+
+Answer/conversation DOCX, HTML and print/PDF use a shared saved-program AST projection,
+including collapsed/offscreen content, ordered image captions, native tables and chart
+data tables. Existing scoped asset resolvers embed images; missing/unsupported content
+fails explicitly. Obsolete regenerated answers are filtered before asset resolution.
+The answer Export menu can send the same structured manifest plus document page
+mapping to its conversation agent for MCP DOCX/editable PPTX creation. It does not
+execute model-authored actions in the browser or imply successful file delivery.
+See the module README and `document-export.test.ts`, `openui-export-assets.test.ts`,
+`docx-export.test.ts` and `MessageActions.test.tsx` for the implementation contract.
+
 Run only the checks affected by the change. These commands identify existing coverage; they were not executed during initialization.
 
 | Area | Command from owning package | Existing coverage |
