@@ -180,6 +180,94 @@ async def test_progress_reports_verify_without_renewing(pool: asyncpg.Pool):
                                            lease_seconds=300, renew=False)
 
 
+@pytest.mark.asyncio
+async def test_periodic_and_explicit_checks_share_one_connection_operation(pool: asyncpg.Pool):
+    lease = await claimed(pool, owner="guard-overlap", lease_seconds=3)
+    guard = TaskLeaseGuard(ownership_of(lease), lease_seconds=3, renew_seconds=0.001, dsn=GUARD_DSN)
+    original = guard._renew_once
+    active = peak = calls = 0
+
+    async def observed(connection):
+        nonlocal active, peak, calls
+        active += 1
+        peak = max(peak, active)
+        calls += 1
+        try:
+            # An actual asynchronous PostgreSQL operation creates an overlap
+            # opportunity on every periodic/explicit pair, not just a sleep.
+            await connection.execute("SELECT pg_sleep(0.002)")
+            return await original(connection)
+        finally:
+            active -= 1
+
+    guard._renew_once = observed
+    try:
+        await guard.start()
+        for _ in range(100):
+            await asyncio.wait_for(asyncio.gather(guard.assert_owned(), guard.assert_owned()), 5)
+        assert calls >= 201
+        assert peak == 1
+        guard.assert_healthy()
+    finally:
+        guard.stop()
+
+
+@pytest.mark.asyncio
+async def test_unverified_assertion_times_out_and_reconnects_before_expiry(pool, monkeypatch):
+    import app.jobs.task_lease_guard as module
+
+    lease = await claimed(pool, owner="guard-unverified", lease_seconds=3)
+    guard = TaskLeaseGuard(ownership_of(lease), lease_seconds=3, renew_seconds=0.1, dsn=GUARD_DSN)
+    try:
+        await guard.start()
+        await guard.assert_owned()
+        monkeypatch.setattr(module, "_RENEW_TIMEOUT_SECONDS", 0.1)
+        async with pool.acquire() as blocker, blocker.transaction():
+            await blocker.fetchrow("SELECT id FROM semantic_jobs.tasks WHERE id=$1 FOR UPDATE", lease.task_id)
+            with pytest.raises(TaskLeaseLost):
+                await guard.assert_owned()
+        # A failed assertion never authorizes its caller's side effect. A later
+        # assertion may succeed only with a fresh, real DB check before expiry.
+        monkeypatch.setattr(module, "_RENEW_TIMEOUT_SECONDS", 2)
+        await guard.assert_owned()
+        assert not guard.lost_event.is_set()
+    finally:
+        guard.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_inflight_query_is_idempotent_and_never_renews_again(pool):
+    lease = await claimed(pool, owner="guard-stop", lease_seconds=3)
+    guard = TaskLeaseGuard(ownership_of(lease), lease_seconds=3, renew_seconds=0.1, dsn=GUARD_DSN)
+    try:
+        await guard.start()
+        await guard.assert_owned()
+        thread = guard._thread
+        async with pool.acquire() as blocker, blocker.transaction():
+            await blocker.fetchrow("SELECT id FROM semantic_jobs.tasks WHERE id=$1 FOR UPDATE", lease.task_id)
+            check = asyncio.create_task(guard.assert_owned())
+            async with asyncio.timeout(5):
+                while not await pool.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name="
+                    "'semantic-task-lease-guard' AND datname=current_database() AND wait_event_type='Lock')"):
+                    await asyncio.sleep(0.01)
+            await asyncio.to_thread(guard.stop)
+            with pytest.raises(TaskLeaseLost):
+                await check
+        guard.stop()
+        assert not thread.is_alive()
+        assert guard._connection is None
+        before = await pool.fetchval("SELECT lease_expires_at FROM semantic_jobs.tasks WHERE id=$1", lease.task_id)
+        await asyncio.sleep(0.2)
+        assert before == await pool.fetchval("SELECT lease_expires_at FROM semantic_jobs.tasks WHERE id=$1", lease.task_id)
+        with pytest.raises(TaskLeaseLost):
+            await guard.assert_owned()
+        with pytest.raises(TaskLeaseLost):
+            await guard.start()
+    finally:
+        guard.stop()
+
+
 def test_lease_windows_from_env_are_bounded():
     lease, renew = lease_windows_from_env({"SEMANTIC_TASK_LEASE_SECONDS": "180",
                                            "SEMANTIC_TASK_LEASE_RENEW_SECONDS": "20"})

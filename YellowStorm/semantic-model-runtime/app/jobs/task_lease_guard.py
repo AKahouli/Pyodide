@@ -94,6 +94,7 @@ class TaskLeaseGuard:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connection = None  # owned by, and only used on, the renewal loop
+        self._operation_lock: asyncio.Lock | None = None
         self._wake: asyncio.Event | None = None
         self._ready = threading.Event()
         # Monotonic early-warning bound of the lease time already granted. The
@@ -104,6 +105,8 @@ class TaskLeaseGuard:
     # -- lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
+        if self._stop.is_set():
+            raise TaskLeaseLost("the task attempt has ended")
         if self._thread is not None:
             return
         self._assured_until = time.monotonic() + self.lease_seconds
@@ -113,6 +116,7 @@ class TaskLeaseGuard:
         if not await asyncio.to_thread(self._ready.wait, _CONNECTION_TIMEOUT_SECONDS + _RENEW_TIMEOUT_SECONDS):
             self.stop()
             raise TaskLeaseLost("the lease renewal thread did not start")
+        self.assert_healthy()
 
     def stop(self) -> None:
         """End renewals for good and release the renewal connection."""
@@ -122,24 +126,34 @@ class TaskLeaseGuard:
             def wake() -> None:
                 if self._wake is not None:
                     self._wake.set()
+                # This loop is private to the guard: stop queries and queued
+                # assertions before closing its single connection.
+                for task in asyncio.all_tasks(loop):
+                    task.cancel()
             try:
                 loop.call_soon_threadsafe(wake)
             except RuntimeError:
                 pass
-        thread, self._thread = self._thread, None
+        thread = self._thread
         if thread is not None:
             thread.join(timeout=_CONNECTION_TIMEOUT_SECONDS + _RENEW_TIMEOUT_SECONDS)
+            if not thread.is_alive():
+                self._thread = None
         if not self._lost_reason:
             self._lost_reason = "the task attempt has ended"
 
     def _thread_main(self) -> None:
-        asyncio.run(self._renew_loop())
+        try:
+            asyncio.run(self._renew_loop())
+        except asyncio.CancelledError:
+            pass
 
     async def _renew_loop(self) -> None:
         import asyncpg
 
         loop = asyncio.get_running_loop()
         self._loop = loop
+        self._operation_lock = asyncio.Lock()
         wake = asyncio.Event()
         self._wake = wake
         try:
@@ -156,20 +170,14 @@ class TaskLeaseGuard:
             self._ready.set()
             while not self._stop.is_set() and not self._lost_reason:
                 try:
-                    await asyncio.wait_for(self._renew_once(self._connection), _RENEW_TIMEOUT_SECONDS)
+                    await asyncio.wait_for(self._serialized_renew(), _RENEW_TIMEOUT_SECONDS)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     # Unverified, not ownership. Trust only the granted window.
-                    try:
-                        await self._connection.close()
-                    except Exception:
-                        pass
-                    self._connection = None
                     if time.monotonic() > self._assured_until:
                         self._mark_lost("no confirmed renewal inside the granted lease window")
                         return
-                    await self._reopen()
                 if self._lost_reason:
                     break
                 try:
@@ -178,13 +186,33 @@ class TaskLeaseGuard:
                 except asyncio.TimeoutError:
                     pass
         finally:
-            connection, self._connection = self._connection, None
-            if connection is not None:
-                try:
-                    await connection.close()
-                except Exception:
-                    pass
+            async with self._operation_lock:
+                await self._close_connection()
             self._ready.set()
+
+    async def _close_connection(self) -> None:
+        """Renewal-loop only, with the operation lock held."""
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            try:
+                await asyncio.wait_for(connection.close(), _CONNECTION_TIMEOUT_SECONDS)
+            except BaseException:
+                connection.terminate()
+
+    async def _serialized_renew(self) -> bool:
+        # Lock acquisition is included in the caller's bounded verification
+        # wait. Reconnect and close use this same critical section.
+        assert self._operation_lock is not None
+        async with self._operation_lock:
+            self.assert_healthy()
+            try:
+                if self._connection is None:
+                    await self._reopen()
+                self.assert_healthy()
+                return await self._renew_once(self._connection)
+            except BaseException:
+                await self._close_connection()
+                raise
 
     async def _reopen(self) -> None:
         import asyncpg
@@ -216,6 +244,8 @@ class TaskLeaseGuard:
         row = await connection.fetchrow(
             RENEW_LEASE_SQL, self.ownership.task_id, self.ownership.lease_owner,
             self.ownership.lease_epoch, self.lease_seconds)
+        if self._stop.is_set() or self._lost_reason:
+            return False
         if row is None:
             self._mark_lost("the lease expired or was taken by another attempt")
             return False
@@ -226,6 +256,8 @@ class TaskLeaseGuard:
 
     def assert_healthy(self) -> None:
         """Raise unless a renewal is currently confirmed inside the lease window."""
+        if self._stop.is_set():
+            raise TaskLeaseLost("the task attempt has ended")
         if self._lost_reason:
             raise TaskLeaseLost(self._lost_reason)
         if time.monotonic() > self._assured_until:
@@ -241,16 +273,27 @@ class TaskLeaseGuard:
         """
         self.assert_healthy()
         loop = self._loop
-        if loop is None or loop.is_closed() or self._connection is None:
+        if loop is None or loop.is_closed():
             raise TaskLeaseLost(self._lost_reason or "the lease renewal thread is not running")
+        request = self._serialized_renew()
         try:
-            renewed = await asyncio.wait_for(
-                asyncio.wrap_future(asyncio.run_coroutine_threadsafe(
-                    self._renew_once(self._connection), loop)), _RENEW_TIMEOUT_SECONDS)
-        except (asyncio.TimeoutError, RuntimeError) as exc:
+            future = asyncio.run_coroutine_threadsafe(request, loop)
+        except RuntimeError as exc:
+            request.close()
+            raise TaskLeaseLost("the lease renewal thread is not running") from exc
+        try:
+            renewed = await asyncio.wait_for(asyncio.wrap_future(future), _RENEW_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            future.cancel()
+            if self._stop.is_set() or self._lost_reason:
+                raise TaskLeaseLost(self._lost_reason or "the task attempt has ended") from None
+            raise
+        except Exception as exc:
+            future.cancel()
             raise TaskLeaseLost(f"lease ownership could not be verified in time: {type(exc).__name__}") from exc
         if not renewed:
             raise TaskLeaseLost(self._lost_reason or "lease ownership was refused")
+        self.assert_healthy()
 
     def reason(self) -> str:
         return self._lost_reason
