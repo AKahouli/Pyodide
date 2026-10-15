@@ -52,16 +52,17 @@ describe('ConnectorController MCP inspection (user)', () => {
     expect(connectedAppTokenService.getValidToken).not.toHaveBeenCalled();
   });
 
-  it('denies unknown transports on POST /connectors/:id/inspect', async () => {
-    const { controller, connectorService } = createController({
+  it('denies unknown transports on POST /connectors/:id/inspect with zero auth side effects', async () => {
+    const { controller, connectorService, connectedAppTokenService } = createController({
       ...stdioConnector,
       mcpTransportType: 'mystery-transport',
       mcpServerUrl: 'https://mcp.example.test/mcp',
     });
     const inspectMcp = jest.spyOn(connectorService, 'inspectMcp');
 
-    await expect(controller.inspectConnector('connector-1', user, {} as never))
+    await expect(controller.inspectConnector('connector-1', user, { useOAuth: true } as never))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(inspectMcp).not.toHaveBeenCalled();
+    expect(connectedAppTokenService.getValidToken).not.toHaveBeenCalled();
   });
 });

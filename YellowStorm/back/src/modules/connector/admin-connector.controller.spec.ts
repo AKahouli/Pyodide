@@ -1,6 +1,6 @@
 import { AdminConnectorController } from './admin-connector.controller';
 import { ConnectorService } from './connector.service';
-import { BadRequestException } from '../exceptions';
+import { BadRequestException, ErrorCode } from '../exceptions';
 import type { ConnectorRow } from './persistence/connector.store';
 
 describe('AdminConnectorController MCP inspection', () => {
@@ -118,14 +118,19 @@ describe('AdminConnectorController MCP inspection', () => {
   });
 
   it('denies OAuth-active stdio inspections on :id/inspect before token retrieval', async () => {
+    // Non-empty connectedAppKey: without the transport guard the useOAuth
+    // branch would proceed to token retrieval, so only the ERR_3102 guard can
+    // produce this denial.
     const { controller, connectorAdminAuthService } = createController({
       ...playbookConnector,
       mcpTransportType: 'stdio',
       mcpServerUrl: '/usr/local/bin/some-mcp',
+      connectedAppKey: 'github',
     });
 
-    await expect(controller.inspectConnector('connector-1', user, { useOAuth: true } as never))
-      .rejects.toBeInstanceOf(BadRequestException);
+    const denial = controller.inspectConnector('connector-1', user, { useOAuth: true } as never);
+    await expect(denial).rejects.toBeInstanceOf(BadRequestException);
+    await expect(denial).rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_TRANSPORT_UNSUPPORTED });
     // The useOAuth branch must never reach admin token retrieval.
     expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
   });
