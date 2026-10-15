@@ -21,10 +21,10 @@ The Connector module enables integration with external Model Context Protocol (M
 
 Connectors provide a standardized way to integrate with external MCP servers that expose tools for AI agents. Key features include:
 
-- **Multiple Transport Types**: Streamable HTTP, SSE (Server-Sent Events), and stdio (local command)
+- **Multiple Transport Types**: Streamable HTTP and SSE (Server-Sent Events) over HTTP. Legacy `stdio` rows remain readable but are rejected for inspection and runtime binding (see Security)
 - **Flexible Authentication**: Credential-based token, OAuth 2.0 via Connected Apps, or no authentication
-- **Runtime Auth Config**: Support for custom headers and environment variable mappings
-- **MCP Inspection**: Discover and import tools from MCP servers
+- **Runtime Auth Config**: Support for custom headers and environment variable mappings (stored server-side, never returned by any API)
+- **MCP Inspection**: Discover and import tools from remote MCP servers
 - **Admin OAuth Flow**: Separate OAuth connections for admin-level access
 - **Token Management**: Automatic token refresh and encrypted storage
 
@@ -216,10 +216,10 @@ Main connector configuration storage.
   authType: string;              // 'oauth2', 'token', 'none'
   authSourceType: string;        // 'connected_app', 'credential', 'none'
   connectedAppKey: string;       // Connected app reference
-  runtimeAuthConfig: object;     // Runtime auth configuration
-  mcpTransportType: string;      // 'streamable_http', 'sse', 'stdio'
-  mcpServerUrl: string;          // MCP server URL
-  mcpServerConfig: object;       // Server configuration
+  runtimeAuthConfig: object;     // Runtime auth configuration (server-side only; never returned by APIs)
+  mcpTransportType: string;      // 'streamable_http', 'sse' (stdio is legacy/unsupported)
+  mcpServerUrl: string;          // MCP server URL (remote http/https; credential-bearing URLs are rejected)
+  mcpServerConfig: object;       // Server configuration (server-side only; never returned by APIs)
   actions: [];                   // Connector actions/tools
   referencedSkillIds: [];        // Linked skill IDs
   isActive: boolean;             // Active status
@@ -422,6 +422,14 @@ async inspectMcp(
 ---
 
 ## Security
+
+### Remote-only MCP inspection (SEC-01)
+
+Only `sse` and `streamable_http` transports can be inspected, imported or executed over HTTP. `stdio` and any unknown transport are denied at the service boundary (`ConnectorService.inspectMcp`, error `ERR_3102`) before any credential resolution, network I/O or process construction — no API request can start a caller-selected OS process. Stored legacy `stdio` connectors are marked `unsupported_for_http_inspection` in responses, are skipped for gRPC agent bindings, and cannot be re-created through the create/update/import DTOs. Admin UI shows a neutral notice for them.
+
+### Secret-free public responses (SEC-02)
+
+Every user-facing and admin-facing connector response uses the allowlisted `PublicConnectorDto`: `runtimeAuthConfig` and `mcpServerConfig` never leave the server. Responses expose `credentialConfigured` (boolean) and `inspectionStatus` instead, and endpoint URLs are stripped of embedded userinfo. Server-side consumers (gRPC bindings, MCP tool runtime, transfer adapters, MCP-token issuance) resolve credentials through the server-only `RuntimeConnectorDefinition` accessors (`getRuntimeById`, `findRuntimeById(s)`, `findRuntimeBySlug`). The admin editor shows "Configured"/"Not configured" and can replace or clear credentials without reading them (`clearRuntimeAuthConfig: true` clears; omitted fields preserve). Endpoint URLs that embed credentials are rejected on create/update/catalog import.
 
 ### Token Encryption
 
