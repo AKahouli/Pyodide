@@ -1,4 +1,6 @@
 import inspect
+import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -19,9 +21,9 @@ def test_image_tool_requires_assignment_and_trusted_context():
     for key in CONTEXT:
         assert resolve_native_tools(["generate_image"], {k: v for k, v in CONTEXT.items() if k != key}) == []
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
-    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage", "reuseImage"}
+    assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage", "reuseImage", "sourcePage", "tool_context"}
     schema = FunctionTool(tool)._get_declaration().parameters_json_schema
-    assert set(schema["properties"]) == {"prompt", "aspectRatio", "sourceImage", "reuseImage"}
+    assert set(schema["properties"]) == {"prompt", "aspectRatio", "sourceImage", "reuseImage", "sourcePage"}
     assert "sourceImage" not in schema.get("required", [])
     from src.root_runtime.leaf_tools import is_leaf_tool
     assert is_leaf_tool(tool)
@@ -117,6 +119,22 @@ async def test_reuse_returns_authoritative_path_without_prompt():
 
 
 @pytest.mark.asyncio
+async def test_image_paths_are_recorded_privately_only_for_current_turn():
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    path = f"/mnt/workspace/generated-images/{'a' * 24}.png"
+    context = SimpleNamespace(invocation_id="current-turn", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
+        {"invocation": "old-turn", "paths": [f"/mnt/workspace/generated-images/{'b' * 24}.png"]}})
+    response = MagicMock()
+    response.json.return_value = {**RECEIPT, "sandboxPath": path}
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        factory.return_value.__aenter__.return_value.post = AsyncMock(return_value=response)
+        tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
+        await tool(reuseImage=RECEIPT["imageSource"], tool_context=context)
+        await tool(reuseImage=RECEIPT["imageSource"], tool_context=context)
+    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY] == {"invocation": "current-turn", "paths": [path]}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/mnt/workspace/system_other/generated-images/" + "a" * 24 + ".png",
                                   "/home/manus/private.png", "/mnt/workspace/system_c1/../private.png",
                                   "/mnt/workspace/generated-images/" + "b" * 24 + ".png",
@@ -134,19 +152,63 @@ async def test_untrusted_sandbox_paths_never_reach_agent(path):
 async def test_reuse_rejects_ambiguous_or_invalid_sources_before_request():
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
     with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
-        assert (await tool(reuseImage="https://untrusted.test/a.png"))["status"] == "error"
+        assert (await tool(reuseImage="http://untrusted.test/a.png"))["status"] == "error"
         assert (await tool(sourceImage=RECEIPT["imageSource"], reuseImage=RECEIPT["imageSource"]))["status"] == "error"
         factory.assert_not_called()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["", "https://example.test/image.png", "generated-image:" + "a" * 23,
+@pytest.mark.parametrize("source", ["", "http://example.test/image.png", "https://[bad/image.png", "generated-image:" + "a" * 23,
                                     "generated-image:" + "A" * 24, "generated-image:" + "a" * 24 + "\n", 123])
 async def test_invalid_edit_source_makes_no_request(source):
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
     with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
         assert (await tool("Add a boat", sourceImage=source))["status"] == "error"
         factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["https://example.test/photo.png", "My uploaded image.jpg", "test_image.pdf"])
+async def test_external_sources_reach_authorized_backend_without_local_fetch(source):
+    response = MagicMock()
+    response.json.return_value = {**RECEIPT, "generated": False}
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        client = factory.return_value.__aenter__.return_value
+        client.post = AsyncMock(return_value=response)
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0](reuseImage=source)
+    assert result["generated"] is False
+    assert client.post.call_args.kwargs["json"]["reuseImage"] == source
+
+
+@pytest.mark.asyncio
+async def test_pdf_preflight_renders_selected_bounded_page_privately():
+    import pymupdf
+    with pymupdf.open() as pdf:
+        pdf.new_page(width=600, height=400)
+        pdf.new_page(width=2000, height=1800).insert_text((50, 50), "Bar chart")
+        encoded = base64.b64encode(pdf.tobytes()).decode("ascii")
+    prepared, final = MagicMock(), MagicMock()
+    prepared.json.return_value = {"data": {"sourcePdf": encoded, "mimeType": "application/pdf"}}
+    final.json.return_value = {**RECEIPT, "generated": False, "sourcePdf": "never expose"}
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        client = factory.return_value.__aenter__.return_value
+        client.post = AsyncMock(side_effect=[prepared, final])
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0](reuseImage="test_image.pdf", sourcePage=2)
+    assert client.post.await_count == 2
+    data = base64.b64decode(client.post.call_args.kwargs["json"]["preparedImage"])
+    image = pymupdf.Pixmap(data)
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert max(image.width, image.height) <= 1400
+    assert "sourcePdf" not in result and "preparedImage" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page", [0, 5001, True, 1.5])
+async def test_invalid_pdf_page_never_calls_backend(page):
+    with patch("src.smart_rag.tools.utilities.generate_image.httpx.AsyncClient") as factory:
+        result = await resolve_native_tools(["generate_image"], CONTEXT)[0](reuseImage="test_image.pdf", sourcePage=page)
+    assert result["status"] == "error"
+    factory.assert_not_called()
 
 
 @pytest.mark.asyncio

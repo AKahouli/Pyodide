@@ -94,17 +94,33 @@ The configured `generate_image` tool returns a persistent `generated-image:<24he
 source. Its optional `sourceImage` argument edits an existing generated image in the same
 conversation via LiteLLM `/v1/images/edits`. The backend loads bounded original bytes from
 the conversation workspace and sends a multipart image; each edit creates a new file and
-reference, preserving the original. Arbitrary URLs, paths and images from other conversations
-are rejected before the provider call. Without `sourceImage`, generation is unchanged. OpenUI image
+reference, preserving the original. Sources may also be public HTTPS raster image URLs or exact
+image/PDF filenames in the conversation's system workspace or its currently accessible selected
+workspaces. Ambiguous names, storage paths and inaccessible files fail closed. Web imports use the
+existing DNS-pinned guarded downloader with MIME/magic checks and a 20 MiB/15-second bound.
+PDF sources use `sourcePage` (1-based, default 1): the authenticated backend supplies bounded
+authorized PDF bytes privately to the native ADK tool, which renders only that page with existing
+PyMuPDF at at most 1400 pixels on its longest edge. A second internal request reauthorizes the
+source and accepts only a bounded PNG; PDF bytes and prepared pixels never enter the model receipt.
+Imported originals are saved without indexing as `generated-import-*` files. Their persistent
+references retain the existing `generated-image:` format for compatibility but resolve with
+`generated:false`; OpenUI shows preview/download without an AI-generated label. Edits are new
+`generated:true` files and receipts also identify the preserved imported original.
+Without `sourceImage`, generation is unchanged. OpenUI image
 fields accept the returned source in images, galleries, cards and slide backgrounds.
 For MCP document creation, the receipt also includes an authoritative `sandboxPath` under
 `/mnt/workspace/generated-images/`. The backend stages a deterministic copy into the existing
 conversation run folder, which MCP exposes at the sandbox workspace root; canonical image storage and OpenUI references remain
-unchanged. Use `reuseImage` with an existing image reference to recover its sandbox path after
+unchanged. The conversation runtime verifies current-turn image paths when creating a sandbox;
+if a reused sandbox has stale mounts, the existing mount guard refreshes it once before execution.
+Use `reuseImage` with an existing image reference to recover its sandbox path after
 reload without calling the image model. It is mutually exclusive with `sourceImage`.
 The code-interpreter skill consumes the returned path directly with `python-docx` or
 `python-pptx`; PPTX text and shapes remain editable while the image is an embedded picture.
-Deliver generated documents through the existing `send_file_to_user` artifact flow.
+Write downloadable documents under the deployed MCP output contract,
+`/mnt/yellowmind/run/outputs/`, then deliver those exact paths through the existing
+`send_file_to_user` artifact flow. This output directory is separate from the authoritative
+`/mnt/workspace/generated-images/` input paths; neither should be inferred from storage keys.
 Artifact downloads resolve the authenticated message-scoped storage URL, then fetch it without
 credentials or referrer and save a local blob using the artifact filename. This storage-transfer
 exception avoids cross-origin link navigation; HTTP failures use the existing artifact error toast.

@@ -57,6 +57,26 @@ These are implemented entry points, not a guarantee that every deployment enable
 - Latency UI is controlled by [features.ts](../../../YellowStorm/front/src/modules/conversation/features.ts); metrics depend on backend/runtime instrumentation and may be absent on historical messages.
 - Frontend text uses the module EN/FR translations; shared auth, notification and error conventions remain authoritative.
 
+## Conversation images (2026-10-15 implementation update)
+
+The assigned `generate_image` tool accepts saved `generated-image:<id>` references,
+public HTTPS raster-image URLs, and exact accessible uploaded/workspace image or PDF filenames.
+`sourceImage` edits while preserving an imported original; `reuseImage` stages an existing
+image without model generation. PDF inputs use a bounded, private rendering of `sourcePage`.
+Authorization, guarded remote download and durable imports remain in the existing
+[artifact service](../../../YellowStorm/back/src/modules/conversation/services/conversation-artifact.service.ts).
+OpenUI resolves saved references after reload and labels generated/edited outputs, not imported originals.
+For MCP DOCX/PPTX creation, prepare every image with the tool before `sandbox_create` and use
+only returned `sandboxPath` values. Titles, captions and shapes can remain editable; images are embedded pictures.
+The deployed MCP service requires deliverables under `/mnt/yellowmind/run/outputs/` for
+`send_file_to_user`; input paths under `/mnt/workspace/` are a separate contract.
+The existing conversation module [README](../../../YellowStorm/front/src/modules/conversation/README.md)
+describes the selectors and rendering contract. Focused coverage is in the artifact service spec,
+`document-images.test.tsx`, ADK `test_generate_image.py` and `test_connector_tools.py`.
+Live QA covered web photographs, `test_image.pdf`, direct PNG uploads, reload and six-image Office files.
+Sandbox mount recovery verification is recorded separately with the runtime change; do not infer
+concurrent-conversation sandbox isolation from image persistence.
+
 ## Focused verification map
 
 Run only the checks affected by the change. These commands identify existing coverage; they were not executed during initialization.

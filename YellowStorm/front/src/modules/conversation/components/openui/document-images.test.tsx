@@ -33,6 +33,30 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('OpenUI document images', () => {
+  it.each([
+    { mode: 'openui', generated: false }, { mode: 'markdown', generated: false },
+    { mode: 'openui', generated: true }, { mode: 'markdown', generated: true },
+  ])('labels $mode images according to resolver provenance: generated=$generated', async ({ mode, generated }) => {
+    const source = 'generated-image:0123456789abcdef01234567';
+    vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/image.png', fileName: generated ? 'edited.png' : 'generated-import-original.png', mimeType: 'image/png', generated });
+    vi.mocked(fetch).mockImplementation(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    const props = { citationScope: scope, isStreaming: false };
+    const image = mode === 'openui'
+      ? <OpenUiRenderer {...props} content={`root = Image("Source image", "${source}")`} onAction={vi.fn()} />
+      : <AIMessageContent {...props} parts={[{ type: 'text', content: `![Source image](${source})` }]} />;
+    const view = render(image);
+    expect(screen.queryByText('openui.image.generated')).not.toBeInTheDocument();
+    await screen.findByRole('img', { name: 'Source image' });
+    expect(Boolean(screen.queryByText('openui.image.generated'))).toBe(generated);
+    expect(screen.getByRole('link', { name: 'openui.image.preview' })).toHaveAttribute('href', 'blob:document-image');
+    expect(screen.getByRole('link', { name: 'openui.image.download' })).toHaveAttribute('download');
+    view.unmount();
+    render(image);
+    await screen.findByRole('img', { name: 'Source image' });
+    expect(Boolean(screen.queryByText('openui.image.generated'))).toBe(generated);
+    expect(getGeneratedImageUrl).toHaveBeenCalledTimes(2);
+  });
+
   it('renders stable generated images in ordinary Markdown with preview and download links', async () => {
     const source = 'generated-image:0123456789abcdef01234567';
     vi.mocked(getGeneratedImageUrl).mockResolvedValue({ url: 'https://storage.example/generated.png', fileName: 'generated.png', mimeType: 'image/png' });

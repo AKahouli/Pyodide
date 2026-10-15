@@ -22,6 +22,21 @@ sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
   `vectorstores.py`, `response_correction.py`, `response_evaluation.py`,
   `sse_stream.py`, `authentification.py`, `health.py`.
 
+## Conversation image inputs for Code Interpreter (2026-10-15)
+
+The existing `generate_image` utility calls the authenticated backend image boundary and
+records validated `sandboxPath` receipts in private, invocation-scoped ADK state.
+Conversation connector tools merge those exact inputs into the existing `x-file-paths`
+mount contract using trusted user/conversation identity; this includes files staged after
+the original attachment manifest was built. Original file inputs and authentication are preserved.
+At `sandbox_create`, the existing `SandboxMountGuard` probes only these exact paths,
+permits one destroy/recreate if inputs are missing, and blocks dependent execution until
+validation succeeds. Prepare every image before creation; changed inputs afterward fail closed.
+This reuses the existing user-scoped sandbox lease and does not guarantee isolation between
+concurrent conversations. Source: `src/smart_rag/tools/utilities/generate_image.py`,
+`connector_tools.py`, `src/flow_engine/tools/sandbox_mount_guard.py`; focused coverage:
+`tests/test_tools/test_generate_image.py` and `tests/test_tools/test_utilities/test_connector_tools.py`.
+
 ## REST/SSE surface (FastAPI `:8001`)
 
 Authoritative list: `yellowstorm-adk/README.md:103-136` + `src/routers/*.py`:

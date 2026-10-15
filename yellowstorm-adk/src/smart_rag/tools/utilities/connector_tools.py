@@ -15,6 +15,7 @@ from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
+from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY, MAX_IMAGE_SANDBOX_INPUTS
 from src.smart_rag.tools.utilities.connector_citations import normalize_connector_citations, normalize_vectorstore_source
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
     DISPLAY_PURPOSE_DESCRIPTION,
@@ -1042,6 +1043,9 @@ def create_connector_tools(
     bindings: List[Dict[str, Any]],
     context: Optional[ConnectorToolContext] = None,
 ) -> List[Any]:
+    # Imported after this module initializes: flow tools also reuse these connector helpers.
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountGuard, SandboxMountValidationError
+
     context = context or ConnectorToolContext()
     tools: List[Any] = []
     effective_workspace_names = (
@@ -1077,6 +1081,8 @@ def create_connector_tools(
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
         binding_auth_env = binding.get("auth_env") or {}
         binding_dynamic_headers = binding.get("dynamic_headers") or []
+        image_mount_guards: Dict[str, SandboxMountGuard] = {}
+        available_actions = {str(action.get("action_key") or "") for action in binding.get("actions") or []}
 
         if not connector_id.strip():
             continue
@@ -1182,6 +1188,8 @@ def create_connector_tools(
                 _citation_mode: str = citation_mode,
                 _result_mapping: Dict[str, Any] = result_mapping,
                 _connector_slug: str = connector_slug,
+                _image_mount_guards: Dict[str, SandboxMountGuard] = image_mount_guards,
+                _available_actions: set[str] = available_actions,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -1259,10 +1267,27 @@ def create_connector_tools(
                 invocation_id = getattr(tool_context, "invocation_id", "") or ""
                 if invocation_id:
                     effective_auth_headers["x-execution-id"] = invocation_id
+                context_state = getattr(tool_context, "state", {})
+                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug == "code-interpreter" else {}
+                image_paths = image_state.get("paths", []) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else []
+                # Paths originate only from validated platform image receipts for this turn.
+                image_paths = sorted(set(path for path in image_paths if isinstance(path, str)
+                    and re.fullmatch(r"/mnt/workspace/generated-images/[a-f0-9]{24}\.(png|jpg|webp)", path)))
+                if len(image_paths) > MAX_IMAGE_SANDBOX_INPUTS:
+                    return {"error": "Too many image inputs for bounded sandbox validation."}
+                current_connector_context = _connector_context
+                if image_paths and _session_id:
+                    owner = _header_user_id(effective_auth_headers)
+                    if not owner:
+                        return {"error": "Image sandbox inputs require an authenticated owner."}
+                    # Exact keys refresh inputs added after the turn's original document manifest.
+                    image_keys = [f"{owner}/system_{_session_id}/{path.removeprefix('/mnt/workspace/')}" for path in image_paths]
+                    current_connector_context = {**_connector_context,
+                        "file_paths": _unique_strings([*(_connector_context.get("file_paths") or []), *image_keys])}
                 if _transport_type == "streamable_http":
                     effective_auth_headers = _apply_streamable_http_context_headers(
                         effective_auth_headers,
-                        _connector_context,
+                        current_connector_context,
                         _session_id,
                         _agent_id,
                     )
@@ -1289,15 +1314,27 @@ def create_connector_tools(
                     if key in merged_params and merged_params[key] != value:
                         return {"error": "The requested resource is outside the execution scope."}
                     merged_params[key] = value
-                response = await call_mcp_tool(
-                    _transport_type,
-                    _server_url,
-                    effective_server_config,
-                    _action_key,
-                    merged_params,
-                    auth_headers=effective_auth_headers,
-                    auth_env=_auth_env,
-                )
+                async def call_action(action: str, params: Dict[str, Any]) -> Any:
+                    return await call_mcp_tool(_transport_type, _server_url, effective_server_config,
+                        action, params, auth_headers=effective_auth_headers, auth_env=_auth_env)
+
+                if _connector_slug == "code-interpreter" and image_paths and _action_key != "sandbox_destroy":
+                    guard = _image_mount_guards.get(invocation_id)
+                    try:
+                        if _action_key == "sandbox_create":
+                            if guard is None:
+                                guard = SandboxMountGuard([{"path": path, "kind": "file"} for path in image_paths], _available_actions)
+                                _image_mount_guards[invocation_id] = guard
+                            response = await guard.create_validated(call_action, merged_params)
+                        else:
+                            if guard is None or guard.authoritative_paths != image_paths:
+                                return {"error": "Create and validate the sandbox after preparing all image inputs."}
+                            await guard.wait_until_ready()
+                            response = await call_action(_action_key, merged_params)
+                    except SandboxMountValidationError:
+                        return {"error": "Required image inputs were not mounted after bounded sandbox validation. No substitute paths were used."}
+                else:
+                    response = await call_action(_action_key, merged_params)
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations import normalize_web_connector_response
 

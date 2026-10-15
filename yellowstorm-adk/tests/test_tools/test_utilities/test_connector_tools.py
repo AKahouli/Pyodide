@@ -99,6 +99,121 @@ def _first_connector_tool(
     return tools[-1]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stays_missing", [False, True])
+async def test_current_image_mounts_validate_exact_paths_and_recreate_stale_sandbox_once(monkeypatch, stays_missing):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    path = f"/mnt/workspace/generated-images/{'a' * 24}.png"
+    calls = []
+    checks = 0
+
+    async def call(*args, **kwargs):
+        nonlocal checks
+        action, params = args[3:5]
+        calls.append((action, params))
+        assert kwargs["auth_headers"]["x-file-paths"] == f"user-1/system_c1/generated-images/{'a' * 24}.png"
+        if action == "file_list":
+            assert params == {"path": path}
+            checks += 1
+            return {"text": "No such file or directory" if stays_missing or checks == 1 else "image.png 1234 bytes"}
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    binding = _connector_binding({}, auth_headers={"X-User-Id": "user-1"}, connector_slug="code-interpreter")
+    binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
+        for action in ["sandbox_create", "sandbox_destroy", "file_list", "shell_exec"]]
+    tools = {tool.name: tool for tool in create_connector_tools([binding], ConnectorToolContext(session_id="c1"))}
+    context = SimpleNamespace(invocation_id="current", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
+        {"invocation": "current", "paths": [path, "/mnt/workspace/../untrusted"]}})
+    result = await tools["code-interpreter_sandbox_create"].func(tool_context=context)
+    assert [action for action, _ in calls] == ["sandbox_create", "file_list", "sandbox_destroy", "sandbox_create", "file_list"]
+    assert ("error" in result) is stays_missing
+    before = len(calls)
+    result = await tools["code-interpreter_shell_exec"].func(tool_context=context)
+    assert ("error" in result) is stays_missing
+    assert len(calls) == before + (0 if stays_missing else 1)
+    before = len(calls)
+    repeated = await tools["code-interpreter_sandbox_create"].func(tool_context=context)
+    assert "error" in repeated
+    assert len(calls) == before  # Never recreate again in the same invocation.
+
+
+@pytest.mark.asyncio
+async def test_new_image_receipt_refreshes_exact_mount_headers_after_binding_created(monkeypatch):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    captured = []
+
+    async def call(*args, **kwargs):
+        captured.append(dict(kwargs["auth_headers"]))
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    binding = _connector_binding({}, auth_headers={"X-user-id": "owner", "Authorization": "kept"}, connector_slug="code-interpreter")
+    binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
+        for action in ["sandbox_create", "sandbox_destroy", "file_list"]]
+    tools = {tool.name: tool for tool in create_connector_tools([binding], ConnectorToolContext(
+        session_id="conversation", user_id="owner", brain_documents=[{"filepath": "owner/source/input.pdf"}]))}
+    # A generated/imported image arrives after connector construction, as it does live.
+    path = f"/mnt/workspace/generated-images/{'a' * 24}.png"
+    context = SimpleNamespace(invocation_id="turn", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
+        {"invocation": "turn", "paths": [path]}})
+    await tools["code-interpreter_sandbox_create"].func(tool_context=context)
+    assert len(captured) == 2  # create and its exact private validation probe
+    for headers in captured:
+        assert headers["x-file-paths"] == f"owner/source/input.pdf,owner/system_conversation/generated-images/{'a' * 24}.png"
+        assert headers["x-workspace-paths"].endswith("owner/system_conversation")
+        assert headers["Authorization"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_image_shell_waits_until_mount_validation_finishes(monkeypatch):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    creating, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def call(*args, **kwargs):
+        action = args[3]
+        calls.append(action)
+        if action == "sandbox_create":
+            creating.set()
+            await release.wait()
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    binding = _connector_binding({}, connector_slug="code-interpreter")
+    binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
+        for action in ["sandbox_create", "sandbox_destroy", "file_list", "shell_exec"]]
+    tools = {tool.name: tool for tool in create_connector_tools([binding])}
+    context = SimpleNamespace(invocation_id="current", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
+        {"invocation": "current", "paths": [f"/mnt/workspace/generated-images/{'a' * 24}.png"]}})
+    create = asyncio.create_task(tools["code-interpreter_sandbox_create"].func(tool_context=context))
+    await creating.wait()
+    shell = asyncio.create_task(tools["code-interpreter_shell_exec"].func(tool_context=context))
+    await asyncio.sleep(0)
+    assert not shell.done()
+    assert calls == ["sandbox_create"]
+    release.set()
+    await asyncio.gather(create, shell)
+    assert calls == ["sandbox_create", "file_list", "shell_exec"]
+
+
+@pytest.mark.asyncio
+async def test_image_mount_recovery_never_uses_prior_turn_receipts(monkeypatch):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    calls = []
+
+    async def call(*args, **kwargs):
+        calls.append(args[3])
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    tool = _first_connector_tool({}, action_key="sandbox_create", connector_slug="code-interpreter")
+    context = SimpleNamespace(invocation_id="new", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
+        {"invocation": "old", "paths": [f"/mnt/workspace/generated-images/{'a' * 24}.png"]}})
+    await tool.func(tool_context=context)
+    assert calls == ["sandbox_create"]
+
+
 def test_connector_tool_injects_bound_workspace_name(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = {}
 

@@ -25,16 +25,23 @@ describe('ConversationArtifactService', () => {
     const agents = { findByIds: jest.fn() };
     const tools = { findAllActive: jest.fn() };
     const models = { findById: jest.fn() };
-    const workspaces = { uploadSmallFile: jest.fn(), findById: jest.fn() };
-    const conversations = { getConversationDocument: jest.fn(), ensureSystemWorkspace: jest.fn() };
+    const workspaces = { uploadSmallFile: jest.fn(), findById: jest.fn(), findByMultipleWorkspaces: jest.fn() };
+    const conversations = { getConversationDocument: jest.fn(), ensureSystemWorkspace: jest.fn(),
+      filterAccessibleWorkspaceIds: jest.fn() };
+    const downloader = { assertUrlIsSafe: jest.fn(), download: jest.fn() };
     const generator = new ConversationArtifactService(messageService as never, documentService as never,
-      conversations as never, workspaces as never, undefined, undefined, undefined,
+      conversations as never, workspaces as never, undefined, undefined, downloader as never,
       models as never, { getHttpClient: () => ({ post }) } as never, agents as never, tools as never);
     const request = { conversationId: 'c', userId: 'u', agentId: 'a', model: 'gpt-image-2.5-flare',
       prompt: 'A mountain', aspectRatio: 'landscape' as const };
     beforeEach(() => {
       conversations.getConversationDocument.mockResolvedValue({ createdBy: 'u', systemWorkspaceId: 'w' });
       conversations.ensureSystemWorkspace.mockResolvedValue('w');
+      conversations.filterAccessibleWorkspaceIds.mockResolvedValue(['allowed']);
+      workspaces.findByMultipleWorkspaces.mockResolvedValue({ documents: [{ id: 'upload', filename: 'photo.png',
+        originalName: 'photo.png', path: 'allowed/photo.png', mimeType: 'image/png', size: png.length, status: 'completed' }],
+        pagination: { total: 1 } });
+      downloader.download.mockResolvedValue({ data: png, headers: { 'content-type': 'image/png' } });
       agents.findByIds.mockResolvedValue([{ isActive: true, tools: ['t'], agentType: { slug: 'mono' } }]);
       tools.findAllActive.mockResolvedValue([{ id: 't', name: 'generate_image', attributes: [], defaultAgentTypes: [] }]);
       models.findById.mockResolvedValue({ isActive: true, type: 'image_generation', types: [] });
@@ -83,6 +90,7 @@ describe('ConversationArtifactService', () => {
     });
     it('edits only a generated source from this conversation using multipart image bytes and saves a new version', async () => {
       const result = await generator.generateImage({ ...request, sourceImage: `generated-image:${id}` });
+      if (!('imageSource' in result)) throw new Error('Expected image receipt');
       expect(workspaces.findById).toHaveBeenCalledWith('w', id);
       expect(documentService.openReadStream).toHaveBeenCalledWith('stored/image.png');
       const [endpoint, form, options] = post.mock.calls[0];
@@ -96,7 +104,7 @@ describe('ConversationArtifactService', () => {
       expect(result.imageSource).toBe(`generated-image:${id}`);
     });
     it('rejects arbitrary paths, foreign source records and oversized source streams before the provider call', async () => {
-      await expect(generator.generateImage({ ...request, sourceImage: 'https://other.test/image.png' })).rejects.toThrow('not found');
+      await expect(generator.generateImage({ ...request, sourceImage: 'other/private/image.png' })).rejects.toThrow('not found');
       workspaces.findById.mockRejectedValueOnce(new Error('Image not found'));
       await expect(generator.generateImage({ ...request, sourceImage: `generated-image:${id}` })).rejects.toThrow('not found');
       documentService.openReadStream.mockImplementationOnce(async () => ({ body: Readable.from([Buffer.alloc(20 * 1024 * 1024 + 1)]) }));
@@ -113,7 +121,7 @@ describe('ConversationArtifactService', () => {
     it('reauthorizes image storage on reload and refuses cross-message references', async () => {
       documentService.generateSasUrl.mockResolvedValue('https://storage.test/fresh');
       expect(await generator.resolveGeneratedImage('c', 'm', id)).toEqual({ url: 'https://storage.test/fresh',
-        fileName: 'generated-test.png', mimeType: 'image/png' });
+        fileName: 'generated-test.png', mimeType: 'image/png', generated: true });
       expect(workspaces.findById).toHaveBeenCalledWith('w', id);
       await expect(generator.resolveGeneratedImage('other', 'm', id)).rejects.toThrow('not found');
       await expect(generator.resolveGeneratedImage('c', 'm', '000000000000000000000000')).rejects.toThrow('not found');
@@ -126,6 +134,79 @@ describe('ConversationArtifactService', () => {
       });
       await expect(generator.generateImage(request, controller.signal)).rejects.toThrow();
       expect(post).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.objectContaining({ signal: controller.signal }));
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+    });
+    it('imports an accessible uploaded image without generation and preserves the original for direct edits', async () => {
+      const reused = await generator.generateImage({ ...request, reuseImage: 'photo.png' });
+      expect(reused).toMatchObject({ imageSource: `generated-image:${id}`, generated: false });
+      expect(workspaces.findByMultipleWorkspaces).toHaveBeenCalledWith(['allowed', 'w'], expect.objectContaining({ search: 'photo.png' }));
+      expect(post).not.toHaveBeenCalled();
+      const edited = await generator.generateImage({ ...request, sourceImage: 'photo.png' });
+      expect(edited).toMatchObject({ generated: true, originalImageSource: `generated-image:${id}` });
+      expect(post).toHaveBeenCalledWith('/v1/images/edits', expect.any(FormData), expect.anything());
+    });
+    it('rejects raw paths, ambiguous names, incomplete files and inaccessible sources', async () => {
+      for (const sourceImage of ['../photo.png', 'allowed/photo.png', 'C:\\photo.png', '.', '..']) {
+        await expect(generator.generateImage({ ...request, sourceImage })).rejects.toThrow('not found');
+      }
+      const doc = { id: 'upload', originalName: 'photo.png', path: 'allowed/photo.png', mimeType: 'image/png', status: 'completed' };
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [doc, doc], pagination: { total: 2 } });
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png' })).rejects.toThrow('ambiguous');
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [{ ...doc, status: 'uploading' }], pagination: { total: 1 } });
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png' })).rejects.toThrow('not found');
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [], pagination: { total: 0 } });
+      await expect(generator.generateImage({ ...request, reuseImage: 'private.png' })).rejects.toThrow('not found');
+      expect(post).not.toHaveBeenCalled();
+      expect(documentService.copy).not.toHaveBeenCalled();
+    });
+    it('bounds uploaded source metadata and actual stream bytes before import', async () => {
+      const doc = { id: 'upload', originalName: 'photo.png', path: 'allowed/photo.png', mimeType: 'image/png', status: 'completed' };
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [{ ...doc, size: 20 * 1024 * 1024 + 1 }], pagination: { total: 1 } });
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png' })).rejects.toThrow('size limit');
+      documentService.openReadStream.mockImplementationOnce(async () => ({ body: Readable.from([Buffer.alloc(20 * 1024 * 1024 + 1)]) }));
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png' })).rejects.toThrow('size limit');
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [{ ...doc, mimeType: 'text/html' }], pagination: { total: 1 } });
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png' })).rejects.toThrow('Unsupported');
+      await expect(generator.generateImage({ ...request, reuseImage: 'photo.png', preparedImage: png.toString('base64') })).rejects.toThrow('requires a PDF');
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+    });
+    it('imports public HTTPS images only through pinned guarded downloads with MIME and magic checks', async () => {
+      const url = 'https://images.example/photo.png';
+      expect(await generator.generateImage({ ...request, reuseImage: url })).toMatchObject({ generated: false });
+      expect(downloader.assertUrlIsSafe).toHaveBeenCalledWith(url);
+      expect(downloader.download).toHaveBeenCalledWith(url, { maxBytes: 20971520, deadlineMs: 15000, pinDns: true });
+      await expect(generator.generateImage({ ...request, reuseImage: 'https://user:password@images.example/photo.png' })).rejects.toThrow('Invalid image URL');
+      downloader.assertUrlIsSafe.mockRejectedValueOnce(new Error('Blocked private address'));
+      await expect(generator.generateImage({ ...request, reuseImage: 'https://127.0.0.1/photo.png' })).rejects.toThrow('Blocked');
+      downloader.download.mockResolvedValueOnce({ data: png, headers: { 'content-type': 'text/html' } });
+      await expect(generator.generateImage({ ...request, reuseImage: url })).rejects.toThrow('Unsupported source image');
+      downloader.download.mockResolvedValueOnce({ data: Buffer.from('html'), headers: { 'content-type': 'image/png' } });
+      await expect(generator.generateImage({ ...request, reuseImage: url })).rejects.toThrow('Unsupported source image');
+      downloader.download.mockResolvedValueOnce({ data: Buffer.alloc(20 * 1024 * 1024 + 1), headers: { 'content-type': 'image/png' } });
+      await expect(generator.generateImage({ ...request, reuseImage: url })).rejects.toThrow('Unsupported source image');
+    });
+    it('prepares only authorized PDFs and reauthorizes the internal raster roundtrip before import', async () => {
+      const pdf = Buffer.from('%PDF-1.7\nfixture');
+      workspaces.findByMultipleWorkspaces.mockResolvedValue({ documents: [{ id: 'pdf', originalName: 'chart.pdf',
+        path: 'allowed/chart.pdf', mimeType: 'application/pdf', size: pdf.length, status: 'completed' }], pagination: { total: 1 } });
+      documentService.openReadStream.mockImplementation(async () => ({ body: Readable.from([pdf]) }));
+      const input = { ...request, reuseImage: 'chart.pdf', sourcePage: 2 };
+      expect(await generator.generateImage(input)).toEqual({ sourcePdf: pdf.toString('base64'), mimeType: 'application/pdf', page: 2 });
+      expect(post).not.toHaveBeenCalled();
+      expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
+      expect(await generator.generateImage({ ...input, preparedImage: png.toString('base64') })).toMatchObject({ generated: false });
+      expect(workspaces.findByMultipleWorkspaces).toHaveBeenCalledTimes(2);
+      workspaces.findByMultipleWorkspaces.mockResolvedValueOnce({ documents: [], pagination: { total: 0 } });
+      await expect(generator.generateImage({ ...input, preparedImage: png.toString('base64') })).rejects.toThrow('not found');
+      await expect(generator.generateImage({ ...input, preparedImage: Buffer.from('bad').toString('base64') })).rejects.toThrow('Unsupported source image');
+      await expect(generator.generateImage({ ...input, sourcePage: 0 })).rejects.toThrow('Invalid PDF');
+    });
+    it('does not label imported originals as generated after reload', async () => {
+      workspaces.findById.mockResolvedValueOnce({ id, originalName: 'generated-import-original.png', path: 'stored/image.png', mimeType: 'image/png' });
+      documentService.generateSasUrl.mockResolvedValue('https://storage.test/import');
+      expect(await generator.resolveGeneratedImage('c', 'm', id)).toMatchObject({ generated: false });
+      workspaces.findById.mockResolvedValueOnce({ id, originalName: 'generated-import-original.png', path: 'stored/image.png', mimeType: 'image/png' });
+      expect(await generator.generateImage({ ...request, reuseImage: `generated-image:${id}` })).toMatchObject({ generated: false });
       expect(workspaces.uploadSmallFile).not.toHaveBeenCalled();
     });
   });

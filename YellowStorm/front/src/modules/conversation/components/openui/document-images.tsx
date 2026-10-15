@@ -13,40 +13,44 @@ const DOCUMENT_REFERENCE = /^\[(\d+)\]$/;
 export const GENERATED_IMAGE_REFERENCE = /^generated-image:([a-f\d]{24})$/;
 
 export async function loadGeneratedImage(source: string, scope: OpenUiCitationScope, signal?: AbortSignal): Promise<Blob> {
+  return (await loadGeneratedImageDetails(source, scope, signal)).blob;
+}
+
+async function loadGeneratedImageDetails(source: string, scope: OpenUiCitationScope, signal?: AbortSignal): Promise<{ blob: Blob; generated: boolean }> {
   const id = GENERATED_IMAGE_REFERENCE.exec(source)?.[1];
   if (!id) throw new Error('Invalid generated image reference');
   const location = await getGeneratedImageUrl(scope.conversationId, scope.messageId, id, signal);
   if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(location.mimeType)) throw new Error('Unsupported generated image');
   const response = await fetch(location.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
   const { readImage } = await import('./slide-export');
-  return readImage(response, signal ?? new AbortController().signal);
+  return { blob: await readImage(response, signal ?? new AbortController().signal), generated: location.generated !== false };
 }
 
 export function GeneratedImage({ source, alt, scope, streaming = false }: { source: string; alt: string; scope?: OpenUiCitationScope; streaming?: boolean }) {
   const { t } = useModuleTranslation('conversation');
   const key = JSON.stringify([source, scope?.conversationId, scope?.messageId]);
-  const [state, setState] = useState<{ key: string; url?: string; failed?: boolean }>({ key: '' });
+  const [state, setState] = useState<{ key: string; url?: string; generated?: boolean; failed?: boolean }>({ key: '' });
   useEffect(() => {
     if (streaming || !scope) return;
     const controller = new AbortController();
     let url: string | undefined;
-    void loadGeneratedImage(source, scope, controller.signal).then((blob) => {
+    void loadGeneratedImageDetails(source, scope, controller.signal).then(({ blob, generated }) => {
       if (controller.signal.aborted) return;
-      url = URL.createObjectURL(blob); setState({ key, url });
+      url = URL.createObjectURL(blob); setState({ key, url, generated });
     }).catch(() => { if (!controller.signal.aborted) setState({ key, failed: true }); });
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [source, scope?.conversationId, scope?.messageId, streaming]);
   const ready = !streaming && state.key === key && state.url;
   return <span className='inline-flex max-w-full flex-col gap-2'>
-    {ready ? <><img src={state.url} alt={alt} className='h-auto max-h-96 w-auto max-w-full rounded-lg object-contain' /><GeneratedImageLinks url={state.url!} /></>
+    {ready ? <><img src={state.url} alt={alt} className='h-auto max-h-96 w-auto max-w-full rounded-lg object-contain' /><GeneratedImageLinks url={state.url!} generated={state.generated} /></>
       : <span role={state.failed || !scope ? 'alert' : 'status'}>{t(state.failed || !scope ? 'openui.image.unavailable' : 'openui.image.loading')}</span>}
   </span>;
 }
 
-function GeneratedImageLinks({ url }: { url: string }) {
+function GeneratedImageLinks({ url, generated = true }: { url: string; generated?: boolean }) {
   const { t } = useModuleTranslation('conversation');
   return <span className='inline-flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
-    <span>{t('openui.image.generated')}</span>
+    {generated && <span>{t('openui.image.generated')}</span>}
     <a href={url} target='_blank' rel='noreferrer' className='underline'>{t('openui.image.preview')}</a>
     <a href={url} download='generated-image.png' className='underline'>{t('openui.image.download')}</a>
   </span>;
@@ -103,22 +107,26 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
     const citations = [...references].map((reference) => byReference.get(reference));
     const requestKey = JSON.stringify([scope, [...references], citations]);
     const [retry, setRetry] = useState(0);
-    const [state, setState] = useState<{ key: string; urls: Map<string, string>; error?: boolean }>({ key: '', urls: new Map() });
+    const [state, setState] = useState<{ key: string; urls: Map<string, string>; generated: Set<string>; error?: boolean }>({ key: '', urls: new Map(), generated: new Set() });
 
     useEffect(() => {
       if (references.size === 0 || streaming) return;
       let disposed = false;
       const controller = new AbortController();
       const urls = new Map<string, string>();
-      setState({ key: requestKey, urls: new Map() });
+      const generated = new Set<string>();
+      setState({ key: requestKey, urls: new Map(), generated });
       void Promise.allSettled([...references].map(async (reference) => {
         if (!scope) throw new Error('Missing image scope');
         const citation = byReference.get(reference);
-        const blob = GENERATED_IMAGE_REFERENCE.test(reference) ? await loadGeneratedImage(reference, scope, controller.signal)
-          : citation ? await loadDocumentImage(citation, scope) : await Promise.reject(new Error('Unknown document citation'));
-        if (!disposed) urls.set(reference, URL.createObjectURL(blob));
+        const image = GENERATED_IMAGE_REFERENCE.test(reference) ? await loadGeneratedImageDetails(reference, scope, controller.signal)
+          : citation ? { blob: await loadDocumentImage(citation, scope), generated: false } : await Promise.reject(new Error('Unknown document citation'));
+        if (!disposed) {
+          urls.set(reference, URL.createObjectURL(image.blob));
+          if (image.generated) generated.add(reference);
+        }
       })).then((results) => {
-        if (!disposed) setState({ key: requestKey, urls, error: results.some((result) => result.status === 'rejected') });
+        if (!disposed) setState({ key: requestKey, urls, generated, error: results.some((result) => result.status === 'rejected') });
       });
       return () => {
         disposed = true;
@@ -155,7 +163,7 @@ export function withDocumentImages(Stock: StockComponent, name: string): StockCo
         )}
         <div className='flex flex-wrap items-center gap-1 text-xs text-muted-foreground'>
           {[...references].filter((reference) => GENERATED_IMAGE_REFERENCE.test(reference)).map((reference) => state.key === requestKey && state.urls.get(reference)
-            ? <GeneratedImageLinks key={reference} url={state.urls.get(reference)!} /> : <span key={reference}>{t('openui.image.generated')}</span>)}
+            ? <GeneratedImageLinks key={reference} url={state.urls.get(reference)!} generated={state.generated.has(reference)} /> : null)}
           {citations.map((citation, index) => citation && <span key={index} className='inline-flex items-center gap-1'>
             <span>{citation.fileName || citation.source.split('/').at(-1)}{citation.page ? ` · ${t('openui.image.page', { page: citation.page })}` : ''}</span>
             <SingleInlineCitation citation={citation} citationScope={scope} />
