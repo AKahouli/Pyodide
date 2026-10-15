@@ -754,6 +754,8 @@ export async function searchUsers(
 
 export interface WorkspaceUploadSettings {
   allowedExtensions: string[];
+  maxFileSizeMb?: number;
+  conversationWorkspaceStorageMb?: number;
   supportedExtensions?: string[];
   updatedAt?: string;
 }

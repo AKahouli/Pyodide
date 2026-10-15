@@ -65,6 +65,18 @@ describe('WorkspaceUploadSettingsService', () => {
     service = moduleRef.get(WorkspaceUploadSettingsService);
   });
 
+  it('preserves legacy defaults and persists numeric limits across updates', async () => {
+    expect(await service.getSettings()).toMatchObject({ maxFileSizeMb: 500, conversationWorkspaceStorageMb: 50 });
+    await service.updateSettings(['.png'], 'admin', { maxFileSizeMb: 50, conversationWorkspaceStorageMb: 200 });
+    expect(await service.updateSettings(['.pdf'], 'admin')).toMatchObject({ maxFileSizeMb: 50, conversationWorkspaceStorageMb: 200 });
+    const fresh = new WorkspaceUploadSettingsService(store, buildLogger());
+    expect(await fresh.getSettings()).toMatchObject({ maxFileSizeMb: 50, conversationWorkspaceStorageMb: 200 });
+  });
+
+  it.each([0, -1, 1.5, 10241, NaN])('rejects invalid upload limit %s', async (maxFileSizeMb) => {
+    await expect(service.updateSettings(['.png'], 'admin', { maxFileSizeMb })).rejects.toThrow(BadRequestException);
+  });
+
   it('seeds the default extension list when no document exists', async () => {
     await service.ensureDefaultSettings();
     const result = await service.getSettings();

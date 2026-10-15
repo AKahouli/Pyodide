@@ -169,5 +169,6 @@
   "share.header.subtitle": "Shared conversation · {{formattedCount}} views",
   "share.header.openApp": "Open App",
   "share.footer.sharedOn": "Shared on {{date}}",
-  "mention.sharedHeading": "Shared with me"
+  "mention.sharedHeading": "Shared with me",
+  "promptInput.maxFileSizeExceeded": "Some files exceed the maximum upload size."
 }

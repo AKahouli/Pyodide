@@ -1853,11 +1853,23 @@ export interface CatalogImportResult {
 export interface WorkspaceUploadSettingsResponse {
   allowedExtensions: string[];
   supportedExtensions: string[];
+  maxFileSizeMb?: number;
+  conversationWorkspaceStorageMb?: number;
   updatedAt?: string;
 }
 
 export interface UpdateWorkspaceUploadSettingsRequest {
   allowedExtensions: string[];
+  maxFileSizeMb?: number;
+  conversationWorkspaceStorageMb?: number;
+}
+
+export interface WorkspaceStorageResponse {
+  id: string;
+  name: string;
+  isSystem: boolean;
+  allocatedStorage: number;
+  usedStorage: number;
 }
 
 export interface WorkspaceEvidenceSearchSettingsResponse { connectorId: string | null; updatedAt?: string; }

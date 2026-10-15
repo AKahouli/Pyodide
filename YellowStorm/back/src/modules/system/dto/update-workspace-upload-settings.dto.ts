@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayUnique, IsArray, IsString } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsString, IsInt, Min, Max, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class UpdateWorkspaceUploadSettingsDto {
@@ -14,4 +14,28 @@ export class UpdateWorkspaceUploadSettingsDto {
   @ArrayUnique()
   @IsString({ each: true })
   allowedExtensions!: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10240)
+  maxFileSizeMb?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1048576)
+  conversationWorkspaceStorageMb?: number;
+}
+
+export class UpdateWorkspaceStorageDto {
+  @IsInt()
+  @Min(1)
+  @Max(1048576)
+  allocatedStorageMb!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(Number.MAX_SAFE_INTEGER)
+  expectedAllocatedStorage!: number;
 }

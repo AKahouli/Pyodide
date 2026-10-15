@@ -344,3 +344,14 @@ describe('PgUploadSessionStore.findExpired', () => {
     expect(result.map((r) => r.files.length)).toEqual([1, 2]);
   });
 });
+
+describe('WorkspaceDocumentSupport configured upload limit', () => {
+  it('reads the current admin limit for every upload, including generated images', async () => {
+    let maxFileSizeMb = 2;
+    const settings = { getAllowedExtensions: jest.fn().mockResolvedValue(['.png']), getAllowedMimeTypesForExtension: jest.fn().mockReturnValue(['image/png']), getSettings: jest.fn(async () => ({ maxFileSizeMb })) };
+    const support = new WorkspaceDocumentSupport({} as never, settings as never, { get: jest.fn((_k, d) => d) } as never, {} as never, logger() as never);
+    await expect(support.validateFile('test.png', 'image/png', 2 * 1048576)).resolves.toBeUndefined();
+    maxFileSizeMb = 1;
+    await expect(support.validateFile('test.png', 'image/png', 2 * 1048576)).rejects.toThrow('exceeds maximum 1MB');
+  });
+});

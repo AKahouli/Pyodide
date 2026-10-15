@@ -168,5 +168,6 @@
   "share.notFound.cta": "Aller à l'accueil",
   "share.header.subtitle": "Conversation partagée · {{formattedCount}} vues",
   "share.header.openApp": "Ouvrir l'application",
-  "share.footer.sharedOn": "Partagée le {{date}}"
+  "share.footer.sharedOn": "Partagée le {{date}}",
+  "promptInput.maxFileSizeExceeded": "Certains fichiers dépassent la taille maximale autorisée."
 }

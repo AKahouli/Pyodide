@@ -1,11 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 
-import { renderWithProviders } from '@/test/renderWithProviders';
+const renderWithProviders = (ui: ReactElement) => ({ user: userEvent.setup(), ...render(ui) });
 import { WorkspaceSettingsPage } from './WorkspaceSettingsPage';
 import {
   getAdminWorkspaceEvidenceSearchSettings,
   getAdminWorkspaceUploadSettings,
+  getAdminWorkspaceStorage,
+  updateAdminWorkspaceStorage,
   getAdminWorkspaceEvidenceSearchConnectors,
   getAdminWorkspaceTransformationAgents,
   getAdminWorkspaceTransformationSettings,
@@ -21,6 +25,12 @@ const TRANSLATIONS: Record<string, string> = {
   'workspaceSettings.title': 'Workspace Settings',
   'workspaceSettings.description': 'Configure global policies.',
   'workspaceSettings.loading': 'Loading...',
+  'workspaceSettings.limits.upload': 'Maximum upload size (MiB)',
+  'workspaceSettings.limits.conversation': 'New conversation workspace quota (MiB)',
+  'workspaceSettings.storage.id': 'Workspace ID',
+  'workspaceSettings.storage.load': 'Load workspace',
+  'workspaceSettings.storage.quota': 'Total storage quota (MiB)',
+  'workspaceSettings.storage.save': 'Save workspace quota',
   'workspaceSettings.uploads.title': 'Authorized upload extensions',
   'workspaceSettings.uploads.description': 'Choose file extensions.',
   'workspaceSettings.field.label': 'Add an extension',
@@ -68,10 +78,8 @@ vi.mock('@/modules/auth/useAuth', () => ({ useAuth: useAuthMock }));
 vi.mock('@/modules/workspace/api', () => ({
   getWorkspaceUploadSettings: vi.fn().mockResolvedValue({ allowedExtensions: [] }),
 }));
-vi.mock('@/modules/localization', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/modules/localization')>();
+vi.mock('@/modules/localization', () => {
   return {
-    ...actual,
     useModuleTranslation: () => ({
       t: translateMock,
       ready: localizationState.ready,
@@ -81,6 +89,8 @@ vi.mock('@/modules/localization', async (importOriginal) => {
 });
 
 vi.mock('../api', () => ({
+  getAdminWorkspaceStorage: vi.fn(),
+  updateAdminWorkspaceStorage: vi.fn(),
   getAdminWorkspaceUploadSettings: vi.fn().mockResolvedValue({ allowedExtensions: [], supportedExtensions: ['.pdf', '.png'] }),
   updateAdminWorkspaceUploadSettings: vi.fn().mockResolvedValue({ allowedExtensions: [], supportedExtensions: ['.pdf', '.png'] }),
   getAdminWorkspaceEvidenceSearchSettings: vi.fn().mockResolvedValue({ connectorId: null }),
@@ -146,7 +156,7 @@ describe('WorkspaceSettingsPage', () => {
     await user.click(saveButtons[0]);
 
     await waitFor(() => {
-      expect(mockedUpdate).toHaveBeenCalledWith({ allowedExtensions: ['.pdf', '.docx', '.png'] });
+      expect(mockedUpdate).toHaveBeenCalledWith({ allowedExtensions: ['.pdf', '.docx', '.png'], maxFileSizeMb: 500, conversationWorkspaceStorageMb: 50 });
     });
   });
 
@@ -178,6 +188,74 @@ describe('WorkspaceSettingsPage', () => {
 
     expect(await screen.findByText(/unsupported extension/i)).toBeInTheDocument();
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  it('loads and updates only the selected workspace quota using the saved revision', async () => {
+    mockedGet.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'], maxFileSizeMb: 80, conversationWorkspaceStorageMb: 60 });
+    const storage = { id: '90a1a8b5430fbf15356a04bd', name: 'system-conversation', isSystem: true, allocatedStorage: 50 * 1048576, usedStorage: 49 * 1048576 };
+    vi.mocked(getAdminWorkspaceStorage).mockResolvedValue(storage);
+    vi.mocked(updateAdminWorkspaceStorage).mockResolvedValue({ ...storage, allocatedStorage: 200 * 1048576 });
+    const { user } = renderWithProviders(<WorkspaceSettingsPage />);
+    expect(await screen.findByLabelText('Maximum upload size (MiB)')).toHaveValue(80);
+    expect(screen.getByLabelText('New conversation workspace quota (MiB)')).toHaveValue(60);
+    await user.type(screen.getByLabelText('Workspace ID'), storage.id);
+    await user.click(screen.getByRole('button', { name: 'Load workspace' }));
+    const quota = await screen.findByLabelText('Total storage quota (MiB)');
+    await user.clear(quota);
+    await user.type(quota, '200');
+    await user.click(screen.getByRole('button', { name: 'Save workspace quota' }));
+    await waitFor(() => expect(updateAdminWorkspaceStorage).toHaveBeenCalledWith(storage.id, { allocatedStorageMb: 200, expectedAllocatedStorage: 50 * 1048576 }));
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText('Workspace ID'), 'a');
+    expect(screen.queryByLabelText('Total storage quota (MiB)')).not.toBeInTheDocument();
+  });
+
+  it('locks the workspace ID during a pending load and clears loaded data after an ID change', async () => {
+    mockedGet.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'] });
+    const storage = { id: '90a1a8b5430fbf15356a04bd', name: 'system-conversation', isSystem: true, allocatedStorage: 50 * 1048576, usedStorage: 49 * 1048576 };
+    let resolveLoad!: (value: typeof storage) => void;
+    vi.mocked(getAdminWorkspaceStorage).mockReturnValueOnce(new Promise((resolve) => { resolveLoad = resolve; }));
+    vi.mocked(updateAdminWorkspaceStorage).mockClear();
+    const { user } = renderWithProviders(<WorkspaceSettingsPage />);
+    const idInput = await screen.findByLabelText('Workspace ID');
+    await user.type(idInput, storage.id);
+    await user.click(screen.getByRole('button', { name: 'Load workspace' }));
+    expect(idInput).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save workspace quota' })).not.toBeInTheDocument();
+    resolveLoad(storage);
+    await screen.findByLabelText('Total storage quota (MiB)');
+    expect(idInput).toBeEnabled();
+    await user.clear(idInput);
+    await user.type(idInput, 'a'.repeat(24));
+    expect(screen.queryByLabelText('Total storage quota (MiB)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save workspace quota' })).not.toBeInTheDocument();
+    expect(updateAdminWorkspaceStorage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a workspace quota below existing storage use', async () => {
+    mockedGet.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'] });
+    const storage = { id: '90a1a8b5430fbf15356a04bd', name: 'system-conversation', isSystem: true, allocatedStorage: 50 * 1048576, usedStorage: 49 * 1048576 };
+    vi.mocked(getAdminWorkspaceStorage).mockResolvedValueOnce(storage);
+    vi.mocked(updateAdminWorkspaceStorage).mockClear();
+    const { user } = renderWithProviders(<WorkspaceSettingsPage />);
+    await user.type(await screen.findByLabelText('Workspace ID'), storage.id);
+    await user.click(screen.getByRole('button', { name: 'Load workspace' }));
+    const quota = await screen.findByLabelText('Total storage quota (MiB)');
+    await user.clear(quota); await user.type(quota, '48');
+    await user.click(screen.getByRole('button', { name: 'Save workspace quota' }));
+    expect(updateAdminWorkspaceStorage).not.toHaveBeenCalled();
+  });
+
+  it('saves configured upload and new-conversation limits without resizing existing workspaces', async () => {
+    mockedGet.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'] });
+    mockedUpdate.mockResolvedValue({ allowedExtensions: ['.pdf'], supportedExtensions: ['.pdf'], maxFileSizeMb: 100, conversationWorkspaceStorageMb: 200 });
+    const { user } = renderWithProviders(<WorkspaceSettingsPage />);
+    const upload = await screen.findByLabelText('Maximum upload size (MiB)');
+    await user.clear(upload); await user.type(upload, '100');
+    const quota = screen.getByLabelText('New conversation workspace quota (MiB)');
+    await user.clear(quota); await user.type(quota, '200');
+    await user.click(screen.getAllByRole('button', { name: 'Save changes' })[0]);
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledWith({ allowedExtensions: ['.pdf'], maxFileSizeMb: 100, conversationWorkspaceStorageMb: 200 }));
   });
 
   it('shows every active connector and saves the selected evidence search connector', async () => {

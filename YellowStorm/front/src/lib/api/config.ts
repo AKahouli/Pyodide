@@ -165,6 +165,7 @@ export const API_ENDPOINTS = {
   },
   adminWorkspaceUploadSettings: {
     base: '/admin/workspace-settings/uploads',
+    storage: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/admin-storage`,
   },
   workspaceArtifacts: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/artifacts`,

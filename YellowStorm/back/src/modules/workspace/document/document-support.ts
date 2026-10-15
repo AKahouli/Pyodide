@@ -49,7 +49,7 @@ export function isUniqueDocumentNameViolation(error: unknown): boolean {
 
 @Injectable()
 export class WorkspaceDocumentSupport {
-  private readonly maxFileSizeMb: number;
+
 
   constructor(
     @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
@@ -62,7 +62,6 @@ export class WorkspaceDocumentSupport {
     @Optional() private readonly featureVisibility?: FeatureVisibilityService,
   ) {
     this.logger.setContext('WorkspaceDocumentSupport');
-    this.maxFileSizeMb = this.configService.get<number>('workspace.maxFileSizeMb', 500);
   }
 
   /**
@@ -187,10 +186,11 @@ export class WorkspaceDocumentSupport {
       );
     }
 
-    const maxSizeBytes = this.maxFileSizeMb * 1024 * 1024;
+    const maxFileSizeMb = (await this.uploadSettingsService.getSettings()).maxFileSizeMb;
+    const maxSizeBytes = maxFileSizeMb * 1024 * 1024;
     if (size > maxSizeBytes) {
       throw new BadRequestException(
-        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${this.maxFileSizeMb}MB`,
+        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${maxFileSizeMb}MB`,
       );
     }
   }

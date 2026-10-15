@@ -2,6 +2,23 @@
 
 The Workspace module provides document management capabilities, allowing users to create workspaces where they can upload, organize, and manage documents. It includes workspace settings (with template support), document upload with real-time progress tracking, and plan-based storage quotas.
 
+### Administrator storage and upload controls
+
+Admin → Workspace stores the global per-file upload limit and new conversation
+workspace quota in the existing workspace upload settings record. Defaults retain
+the configured `WORKSPACE_MAX_FILE_SIZE_MB` (500 MiB) and
+`CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES` (50 MiB). Stored limits take precedence
+at runtime. Changing a default does not resize an existing workspace; regular
+workspace creation continues to use the user's subscription plan.
+
+`GET/PUT /workspaces/:workspaceId/admin-storage` requires `workspaces.*` and supports
+conversation system workspaces. PUT accepts `allocatedStorageMb` and the exact
+previous `expectedAllocatedStorage` in bytes. Its atomic update rejects stale
+allocations and limits below live used storage; it changes only the named workspace
+and records an audit event. Ordinary workspace owner edits cannot change quotas.
+Upload size checks use current settings for both direct and presigned flows; the
+separate small multipart transport threshold is unchanged.
+
 ## Table of Contents
 
 - [Overview](#overview)

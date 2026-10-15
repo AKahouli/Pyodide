@@ -9,8 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminWorkspaceEvidenceSearchConnectors, getAdminWorkspaceEvidenceSearchSettings, getAdminWorkspaceUploadSettings, getAdminWorkspaceTransformationAgents, getAdminWorkspaceTransformationSettings, updateAdminWorkspaceEvidenceSearchSettings, updateAdminWorkspaceTransformationSettings, updateAdminWorkspaceUploadSettings } from '../api';
-import type { WorkspaceEvidenceSearchConnectorOption, WorkspaceTransformationAgentOption } from '../types';
+import { getAdminWorkspaceStorage, updateAdminWorkspaceStorage, getAdminWorkspaceEvidenceSearchConnectors, getAdminWorkspaceEvidenceSearchSettings, getAdminWorkspaceUploadSettings, getAdminWorkspaceTransformationAgents, getAdminWorkspaceTransformationSettings, updateAdminWorkspaceEvidenceSearchSettings, updateAdminWorkspaceTransformationSettings, updateAdminWorkspaceUploadSettings } from '../api';
+import type { WorkspaceStorageResponse, WorkspaceEvidenceSearchConnectorOption, WorkspaceTransformationAgentOption } from '../types';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 
 const EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9+-]{0,15}$/i;
@@ -30,6 +30,12 @@ export function WorkspaceSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [extensions, setExtensions] = useState<string[]>([]);
   const [supportedExtensions, setSupportedExtensions] = useState<string[]>([]);
+  const [maxFileSizeMb, setMaxFileSizeMb] = useState('500');
+  const [conversationWorkspaceStorageMb, setConversationWorkspaceStorageMb] = useState('50');
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [workspaceStorage, setWorkspaceStorage] = useState<WorkspaceStorageResponse | null>(null);
+  const [allocatedStorageMb, setAllocatedStorageMb] = useState('');
+  const [savingStorage, setSavingStorage] = useState(false);
   const [draftInput, setDraftInput] = useState('');
   const [invalidEntry, setInvalidEntry] = useState<string | null>(null);
   const [unsupportedEntry, setUnsupportedEntry] = useState<string | null>(null);
@@ -48,6 +54,8 @@ export function WorkspaceSettingsPage() {
         if (cancelled) return;
         setExtensions(response.allowedExtensions);
         setSupportedExtensions(response.supportedExtensions);
+        setMaxFileSizeMb(String(response.maxFileSizeMb ?? 500));
+        setConversationWorkspaceStorageMb(String(response.conversationWorkspaceStorageMb ?? 50));
         setEvidenceConnectorId(evidence.connectorId ?? 'none');
         setConnectors(connectorList);
         try {
@@ -132,6 +140,10 @@ export function WorkspaceSettingsPage() {
   };
 
   const handleSave = async (): Promise<void> => {
+    if (![maxFileSizeMb, conversationWorkspaceStorageMb].every((value) => Number.isSafeInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 1048576) || Number(maxFileSizeMb) > 10240) {
+      showError(t('workspaceSettings.limits.invalid'));
+      return;
+    }
     if (extensions.length === 0) {
       showError(t('workspaceSettings.validation.empty'), {
         description: t('workspaceSettings.validation.emptyDescription'),
@@ -140,9 +152,11 @@ export function WorkspaceSettingsPage() {
     }
     setSaving(true);
     try {
-      const result = await updateAdminWorkspaceUploadSettings({ allowedExtensions: extensions });
+      const result = await updateAdminWorkspaceUploadSettings({ allowedExtensions: extensions, maxFileSizeMb: Number(maxFileSizeMb), conversationWorkspaceStorageMb: Number(conversationWorkspaceStorageMb) });
       setExtensions(result.allowedExtensions);
       setSupportedExtensions(result.supportedExtensions);
+      setMaxFileSizeMb(String(result.maxFileSizeMb ?? maxFileSizeMb));
+      setConversationWorkspaceStorageMb(String(result.conversationWorkspaceStorageMb ?? conversationWorkspaceStorageMb));
       await refreshUploadExtensions();
       showSuccess(t('workspaceSettings.toasts.saved.title'), {
         description: t('workspaceSettings.toasts.saved.description'),
@@ -154,6 +168,27 @@ export function WorkspaceSettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStorage = async (save: boolean): Promise<void> => {
+    const id = workspaceId.trim();
+    if (!/^[a-f0-9]{24}$/i.test(id) || (save && (!workspaceStorage || workspaceStorage.id !== id || !Number.isSafeInteger(Number(allocatedStorageMb)) || Number(allocatedStorageMb) < 1 || Number(allocatedStorageMb) > 1048576 || Number(allocatedStorageMb) * 1048576 < workspaceStorage.usedStorage))) {
+      showError(t('workspaceSettings.storage.invalid'));
+      return;
+    }
+    setSavingStorage(true);
+    try {
+      const result = save
+        ? await updateAdminWorkspaceStorage(id, { allocatedStorageMb: Number(allocatedStorageMb), expectedAllocatedStorage: workspaceStorage!.allocatedStorage })
+        : await getAdminWorkspaceStorage(id);
+      setWorkspaceStorage(result);
+      setAllocatedStorageMb(String(Math.ceil(result.allocatedStorage / 1048576)));
+      if (save) showSuccess(t('workspaceSettings.storage.saved'));
+    } catch (error) {
+      // Reload before retrying a conflicting administrator change.
+      setWorkspaceStorage(null);
+      showError(t('workspaceSettings.storage.error'), { description: error instanceof Error ? error.message : undefined });
+    } finally { setSavingStorage(false); }
   };
 
   return (
@@ -179,6 +214,18 @@ export function WorkspaceSettingsPage() {
             </div>
           ) : (
             <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="upload-size-limit">{t('workspaceSettings.limits.upload')}</Label>
+                  <Input id="upload-size-limit" type="number" min={1} max={10240} step={1} value={maxFileSizeMb} onChange={(event) => setMaxFileSizeMb(event.target.value)} />
+                  <p className="text-xs text-muted-foreground">{t('workspaceSettings.limits.uploadHelp')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="conversation-storage-limit">{t('workspaceSettings.limits.conversation')}</Label>
+                  <Input id="conversation-storage-limit" type="number" min={1} max={1048576} step={1} value={conversationWorkspaceStorageMb} onChange={(event) => setConversationWorkspaceStorageMb(event.target.value)} />
+                  <p className="text-xs text-muted-foreground">{t('workspaceSettings.limits.conversationHelp')}</p>
+                </div>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="extension-input">{t('workspaceSettings.field.label')}</Label>
                 <form className="flex gap-2" onSubmit={handleAddSubmit}>
@@ -260,6 +307,29 @@ export function WorkspaceSettingsPage() {
               </div>
             </>
           )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('workspaceSettings.storage.title')}</CardTitle>
+          <CardDescription>{t('workspaceSettings.storage.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="storage-workspace-id">{t('workspaceSettings.storage.id')}</Label>
+            <div className="flex flex-wrap gap-2">
+              <Input id="storage-workspace-id" className="min-w-48 flex-1" disabled={savingStorage} value={workspaceId} onChange={(event) => { setWorkspaceId(event.target.value); setWorkspaceStorage(null); }} />
+              <Button variant="secondary" disabled={savingStorage || !workspaceId.trim()} onClick={() => void handleStorage(false)}>{t('workspaceSettings.storage.load')}</Button>
+            </div>
+          </div>
+          {workspaceStorage && <>
+            <p className="text-sm">{workspaceStorage.name} · {t('workspaceSettings.storage.usage', { used: (workspaceStorage.usedStorage / 1048576).toFixed(2), allocated: (workspaceStorage.allocatedStorage / 1048576).toFixed(2) })}</p>
+            <div className="max-w-sm space-y-2">
+              <Label htmlFor="workspace-storage-limit">{t('workspaceSettings.storage.quota')}</Label>
+              <Input id="workspace-storage-limit" type="number" min={Math.max(1, Math.ceil(workspaceStorage.usedStorage / 1048576))} max={1048576} step={1} value={allocatedStorageMb} onChange={(event) => setAllocatedStorageMb(event.target.value)} />
+            </div>
+            <Button disabled={savingStorage} onClick={() => void handleStorage(true)}>{savingStorage ? t('workspaceSettings.actions.saving') : t('workspaceSettings.storage.save')}</Button>
+          </>}
         </CardContent>
       </Card>
       <Card>

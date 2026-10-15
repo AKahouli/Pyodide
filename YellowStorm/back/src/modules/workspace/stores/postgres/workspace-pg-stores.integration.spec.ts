@@ -47,6 +47,16 @@ describeIntegration('workspace PG stores (internal write paths)', () => {
   });
   afterAll(close);
 
+  it('workspace quota update checks both expected allocation and live usage atomically', async () => {
+    const id = await createWorkspace({ allocatedStorage: 52428800, usedStorage: 52323990 });
+    const other = await createWorkspace({ allocatedStorage: 52428800 });
+    expect(await workspaceStore.updateStorageQuota(id, 209715200, 52428800)).toBe(true);
+    expect(await workspaceStore.updateStorageQuota(id, 104857600, 52428800)).toBe(false);
+    expect(await workspaceStore.updateStorageQuota(id, 1048576, 209715200)).toBe(false);
+    expect((await workspaceStore.findById(id))?.allocatedStorage).toBe(209715200);
+    expect((await workspaceStore.findById(other))?.allocatedStorage).toBe(52428800);
+  });
+
   it('workspace store: create/find/update/counters/access filters', async () => {
     expect(await workspaceStore.backfillStoragePrefixFromAlias()).toBe(0);
 

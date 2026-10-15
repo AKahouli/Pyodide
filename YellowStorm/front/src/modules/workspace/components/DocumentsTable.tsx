@@ -28,7 +28,7 @@ interface DocumentsTableProps {
 
 export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const { t } = useModuleTranslation('workspace');
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
   const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
@@ -77,7 +77,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0 || !selectedWorkspace) return;
 
-    const { validFiles } = validateFiles(files);
+    const { validFiles } = validateFiles(files, maxFileSize);
     if (validFiles.length > 0) {
       addFilesToQueue(validFiles, selectedWorkspace.id, currentUploadFolderId ?? undefined);
       void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());

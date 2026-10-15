@@ -132,6 +132,15 @@ See the module README and `document-export.test.ts`, `openui-export-assets.test.
 
 ### Image actions (2026-10-15)
 
+Conversation system workspace storage can be adjusted under Admin → Workspace by
+loading its workspace ID. This admin-only override is distinct from the default
+quota for new conversation workspaces and the global per-file upload limit.
+Existing workspace quotas use an atomic expected-allocation and live-usage check;
+regular owner edits cannot change capacity. The existing upload settings record
+owns the numeric policy; ordinary workspace defaults remain plan based. See
+`workspace.controller.spec.ts`, `workspace-pg-stores.integration.spec.ts`,
+`workspace-upload-settings.service.spec.ts` and `WorkspaceSettingsPage.test.tsx`.
+
 Chat/report/slide image previews expose explicit edit, saved-image comparison,
 reuse and authorized blob download actions. Edit/reuse retains the saved producing
 text component and agent identity; unknown or ambiguous ownership fails closed.

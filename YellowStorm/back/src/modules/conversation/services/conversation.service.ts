@@ -1,3 +1,4 @@
+import { WorkspaceUploadSettingsService } from '../../system/workspace-upload-settings.service';
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -66,6 +67,7 @@ export class ConversationService {
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
     @Optional() private readonly workspaceShareService?: WorkspaceShareService,
     @Optional() private readonly audienceAuthorization?: GovernanceAudienceAuthorizationService,
+    @Optional() private readonly workspaceUploadSettings?: WorkspaceUploadSettingsService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -431,10 +433,9 @@ export class ConversationService {
     const current = await this.conversationStore.findById(conversationId, true);
     if (!current) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
     if (current.systemWorkspaceId) return current.systemWorkspaceId;
-    const allocatedStorage = this.configService.get<number>(
-      'conversation.systemWorkspaceStorageBytes',
-      52428800,
-    );
+    const allocatedStorage = this.workspaceUploadSettings
+      ? (await this.workspaceUploadSettings.getSettings()).conversationWorkspaceStorageMb * 1048576
+      : this.configService.get<number>('conversation.systemWorkspaceStorageBytes', 52428800);
     try {
       const workspace = await this.workspaceService.createSystemWorkspace(
         userId,

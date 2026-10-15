@@ -1,3 +1,4 @@
+import { AuthorizationModule } from '../authorization/authorization.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ConversationPersistenceModule } from '../conversation/persistence/conversation-persistence.module';
@@ -59,6 +60,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
 @Module({
   imports: [
     ConfigModule.forFeature(workspaceConfig),
+    forwardRef(() => AuthorizationModule),
     PostgresModule,
     forwardRef(() => AuthModule),
     forwardRef(() => UsageModule),

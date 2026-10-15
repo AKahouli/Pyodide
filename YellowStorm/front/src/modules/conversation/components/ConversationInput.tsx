@@ -26,7 +26,7 @@ interface ConversationInputProps {
 export function ConversationInput({ conversationId }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const updateConversation = useConversationStore((s) => s.updateConversation);
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
   const conversationSettings = useConversationSettings();
   const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const stopStream = useConversationStore((s) => s.stopStream);
@@ -284,6 +284,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         onFileRemoved={handleFileRemoved}
         uploadingFiles={uploadFiles}
         accept={accept}
+        maxFileSize={maxFileSize}
         maxFiles={5}
         attachmentsDisabled={attachmentsDisabled}
         members={membersToTag}

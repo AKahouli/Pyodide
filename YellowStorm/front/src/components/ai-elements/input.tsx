@@ -72,6 +72,7 @@ interface InputProps {
   uploadingFiles?: FileUploadInfo[];
   accept?: string;
   maxFiles?: number;
+  maxFileSize?: number;
   /** Hides the add-attachments entry (admin attachment feature off). */
   attachmentsDisabled?: boolean;
   members?: Array<{ id: string; name: string }>;
@@ -95,7 +96,7 @@ interface InputProps {
   autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, maxFileSize, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -532,8 +533,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
   return (
     <div>
       {/* maxFiles 0 also blocks drag-drop when attachments are disabled */}
-      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} onError={(err) => toast.error(err.message)}>
-        <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} maxFileSize={maxFileSize} onError={(err) => toast.error(err.message)}>
+        <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles} maxFileSize={maxFileSize}>
           <PromptInputAttachments>
             {(attachment) => {
               const uploadInfo = uploadingFiles?.find((f) => f.localId === attachment.id);

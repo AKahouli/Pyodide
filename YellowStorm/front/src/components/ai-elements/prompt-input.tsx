@@ -77,6 +77,7 @@ export type PromptInputProviderProps = PropsWithChildren<{
   initialInput?: string;
   draftKey?: string;
   maxFiles?: number;
+  maxFileSize?: number;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
   onError?: (err: { code: 'max_files' | 'max_file_size' | 'accept'; message: string }) => void;
@@ -86,7 +87,8 @@ export type PromptInputProviderProps = PropsWithChildren<{
  * Optional global provider that lifts PromptInput state outside of PromptInput.
  * If you don't use it, PromptInput stays fully self-managed.
  */
-export function PromptInputProvider({ initialInput: initialTextInput = '', draftKey, maxFiles, onFilesAdded, onFileRemoved, onError, children }: PromptInputProviderProps) {
+export function PromptInputProvider({ initialInput: initialTextInput = '', draftKey, maxFiles, maxFileSize, onFilesAdded, onFileRemoved, onError, children }: PromptInputProviderProps) {
+  const { t } = useModuleTranslation('common');
   // ----- textInput state
   const storageKey = draftKey ? `yellostorm_draft:${draftKey}` : null;
   const [textInput, setTextInput] = useState(() => {
@@ -118,7 +120,11 @@ export function PromptInputProvider({ initialInput: initialTextInput = '', draft
 
   const add = useCallback(
     (files: File[] | FileList) => {
-      const incoming = Array.from(files);
+      const candidates = Array.from(files);
+      const incoming = candidates.filter((file) => !maxFileSize || file.size <= maxFileSize);
+      if (incoming.length < candidates.length) {
+        onError?.({ code: 'max_file_size', message: t('promptInput.maxFileSizeExceeded') });
+      }
       if (incoming.length === 0) {
         return;
       }
@@ -159,7 +165,7 @@ export function PromptInputProvider({ initialInput: initialTextInput = '', draft
         return prev.concat(newItems);
       });
     },
-    [maxFiles, onFilesAdded, onError],
+    [maxFiles, maxFileSize, onFilesAdded, onError, t],
   );
 
   const remove = useCallback(

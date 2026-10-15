@@ -1,8 +1,15 @@
+import { Permissions } from '../authorization/constants/permissions';
+import { PermissionsGuard } from '../authorization/guards/permissions.guard';
+import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
+import { AuditLogService } from '../authorization/services/audit-log.service';
+import { UpdateWorkspaceStorageDto } from '../system/dto/update-workspace-upload-settings.dto';
 import {
   Controller,
   Get,
   Post,
   Patch,
+  Put,
+  Optional,
   Delete,
   Body,
   Param,
@@ -50,7 +57,24 @@ export class WorkspaceController {
     private readonly semanticModelProvisioning: SemanticModelProvisioningService,
     @Inject(forwardRef(() => UsageService))
     private readonly usageService: UsageService,
+    @Optional() private readonly auditLogService?: AuditLogService,
   ) {}
+
+  @Get(':workspaceId/admin-storage')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.WORKSPACES_ALL)
+  async getAdminStorage(@Param('workspaceId') workspaceId: string) {
+    return this.workspaceService.getAdminStorage(workspaceId);
+  }
+
+  @Put(':workspaceId/admin-storage')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.WORKSPACES_ALL)
+  async updateAdminStorage(@Param('workspaceId') workspaceId: string, @Body() body: UpdateWorkspaceStorageDto, @CurrentUser() user: AuthUser) {
+    const result = await this.workspaceService.updateAdminStorage(workspaceId, body.allocatedStorageMb, body.expectedAllocatedStorage);
+    this.auditLogService?.logSuccess({ actorId: user._id.toString(), actorEmail: user.email, action: 'workspace.storage.update', metadata: { workspaceId, previousAllocatedStorage: body.expectedAllocatedStorage, allocatedStorage: result.allocatedStorage } });
+    return result;
+  }
 
   /**
    * Create a new workspace

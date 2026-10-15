@@ -539,3 +539,18 @@ describe('ConversationService neutral persistence', () => {
     });
   });
 });
+
+describe('Conversation system workspace configured quota', () => {
+  it('uses the admin default for new workspaces and preserves existing quota', async () => {
+    const service = Object.create(ConversationService.prototype) as ConversationService;
+    const conversationStore = { findById: jest.fn().mockResolvedValue({ id: 'conversation', systemWorkspaceId: null }), setSystemWorkspace: jest.fn() };
+    const workspaceService = { createSystemWorkspace: jest.fn().mockResolvedValue({ id: 'new-workspace' }) };
+    const workspaceUploadSettings = { getSettings: jest.fn().mockResolvedValue({ conversationWorkspaceStorageMb: 200 }) };
+    Object.assign(service, { conversationStore, workspaceService, workspaceUploadSettings });
+    await expect(service.ensureSystemWorkspace('owner', 'conversation')).resolves.toBe('new-workspace');
+    expect(workspaceService.createSystemWorkspace).toHaveBeenCalledWith('owner', 'conversation', 209715200);
+    conversationStore.findById.mockResolvedValue({ systemWorkspaceId: 'existing-workspace' });
+    await expect(service.ensureSystemWorkspace('owner', 'conversation')).resolves.toBe('existing-workspace');
+    expect(workspaceService.createSystemWorkspace).toHaveBeenCalledTimes(1);
+  });
+});

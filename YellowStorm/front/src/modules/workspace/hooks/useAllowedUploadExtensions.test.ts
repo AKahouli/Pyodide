@@ -33,6 +33,17 @@ describe('useAllowedUploadExtensions', () => {
     expect(mockedFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('propagates configured and refreshed size limits to all consumers', async () => {
+    mockedFetch.mockResolvedValueOnce({ allowedExtensions: ['.png'], maxFileSizeMb: 50 })
+      .mockResolvedValueOnce({ allowedExtensions: ['.png'], maxFileSizeMb: 200 });
+    const first = renderHook(() => useAllowedUploadExtensions());
+    const second = renderHook(() => useAllowedUploadExtensions());
+    await waitFor(() => expect(first.result.current.maxFileSizeMb).toBe(50));
+    expect(second.result.current.maxFileSize).toBe(50 * 1024 * 1024);
+    await act(async () => { await first.result.current.refresh(); });
+    expect(second.result.current.maxFileSize).toBe(200 * 1024 * 1024);
+  });
+
   it('shares the cache across multiple consumers', async () => {
     mockedFetch.mockResolvedValue({ allowedExtensions: ['.txt'] });
 
@@ -80,5 +91,6 @@ describe('useAllowedUploadExtensions', () => {
     expect(result.current.error).toBeInstanceOf(Error);
     expect(result.current.allowedExtensions).toEqual([]);
     expect(result.current.accept).toMatch(/\.pdf/);
+    expect(result.current.maxFileSizeMb).toBe(500);
   });
 });

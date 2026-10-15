@@ -163,6 +163,15 @@ export class PgWorkspaceStore {
     return workspaceRowToRecord(rows[0]);
   }
 
+  async updateStorageQuota(id: string, allocatedStorage: number, expectedAllocatedStorage: number): Promise<boolean> {
+    const rows = await this.q.update(WORKSPACES)
+      .set({ allocatedStorage, updatedAt: new Date() })
+      .where(and(eq(WORKSPACES.id, id), eq(WORKSPACES.allocatedStorage, expectedAllocatedStorage),
+        sql`${WORKSPACES.usedStorage} <= ${allocatedStorage}`))
+      .returning({ id: WORKSPACES.id });
+    return rows.length === 1;
+  }
+
   async updateFields(id: string, patch: WorkspaceUpdatePatch): Promise<void> {
     const values: Partial<typeof WORKSPACES.$inferInsert> = {};
     if (patch.name !== undefined) values.name = patch.name;

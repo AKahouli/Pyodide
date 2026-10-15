@@ -5,6 +5,7 @@ import { setWorkspaceTranslator, useAllWorkspaces, useWorkspaceStore } from './s
 import type { Workspace } from './types';
 
 const workspaceApiMock = vi.hoisted(() => ({
+  getWorkspaceUploadSettings: vi.fn(),
   createWorkspace: vi.fn(),
   getWorkspaces: vi.fn(),
   getWorkspace: vi.fn(),
@@ -61,6 +62,32 @@ describe('workspace store', () => {
     vi.clearAllMocks();
     setWorkspaceTranslator();
     useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true);
+  });
+
+  it('loads current upload limits before queuing files', async () => {
+    const addFilesToQueue = vi.fn();
+    const startUpload = vi.fn().mockResolvedValue(undefined);
+    const refreshPageData = vi.fn().mockResolvedValue(undefined);
+    const refreshWorkspace = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({ selectedWorkspaceId: 'ws-1', addFilesToQueue, startUpload, refreshPageData, refreshWorkspace });
+    const file = new File(['x'], 'image.png', { type: 'image/png' });
+    Object.defineProperty(file, 'size', { value: 2 * 1024 * 1024 });
+    workspaceApiMock.getWorkspaceUploadSettings.mockResolvedValueOnce({ maxFileSizeMb: 1 });
+    await useWorkspaceStore.getState().uploadPageFiles([file]);
+    expect(addFilesToQueue).not.toHaveBeenCalled();
+    workspaceApiMock.getWorkspaceUploadSettings.mockResolvedValueOnce({ maxFileSizeMb: 2 });
+    await useWorkspaceStore.getState().uploadPageFiles([file]);
+    expect(addFilesToQueue).toHaveBeenCalledWith([file], 'ws-1');
+    expect(startUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks uploads and surfaces settings fetch failures', async () => {
+    const addFilesToQueue = vi.fn();
+    useWorkspaceStore.setState({ selectedWorkspaceId: 'ws-1', addFilesToQueue });
+    workspaceApiMock.getWorkspaceUploadSettings.mockRejectedValueOnce(new Error('offline'));
+    await useWorkspaceStore.getState().uploadPageFiles([new File(['x'], 'test.pdf', { type: 'application/pdf' })]);
+    expect(addFilesToQueue).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalled();
   });
 
   it('fetches workspaces into cache without auto-selecting', async () => {

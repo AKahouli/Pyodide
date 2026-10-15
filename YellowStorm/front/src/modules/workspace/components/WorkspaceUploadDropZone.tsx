@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
 import { Upload, FileUp, Link2, ChevronDown } from 'lucide-react';
 
+import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
-import { MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize, extractUrlFromText } from '../utils';
+import { MAX_FILES_PER_UPLOAD, formatFileSize, extractUrlFromText } from '../utils';
 import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
@@ -18,7 +19,8 @@ export function WorkspaceUploadDropZone() {
   const addLinkDialog = useWorkspaceStore((s) => s.addLinkDialog);
   const openAddLink = useWorkspaceStore((s) => s.openAddLink);
   const closeAddLink = useWorkspaceStore((s) => s.closeAddLink);
-  const { accept } = useAllowedUploadExtensions();
+  const { accept, maxFileSize } = useAllowedUploadExtensions();
+  const { t } = useModuleTranslation('workspace');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -107,7 +109,7 @@ export function WorkspaceUploadDropZone() {
             {isDragOver ? 'Déposez ici' : 'Glissez un fichier ou un lien ici'}
           </p>
           <p className='text-xs text-muted-foreground'>
-            jusqu'à {MAX_FILES_PER_UPLOAD} fichiers, max {formatFileSize(MAX_FILE_SIZE)} chacun
+            {t('uploadDropZone.limits', { count: MAX_FILES_PER_UPLOAD, size: formatFileSize(maxFileSize) })}
           </p>
         </div>
 

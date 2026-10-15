@@ -1,6 +1,6 @@
 import { fireEvent, render } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { PromptInput, PromptInputTextarea, usePromptInputAttachments } from './prompt-input';
+import { PromptInput, PromptInputProvider, PromptInputTextarea, usePromptInputAttachments } from './prompt-input';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -44,6 +44,23 @@ describe('PromptInputTextarea paste', () => {
     );
 
     expect(getByTestId('count').textContent).toBe('0');
+  });
+
+  it('enforces the provider size limit for pasted images', () => {
+    const onError = vi.fn();
+    const onFilesAdded = vi.fn();
+    const { container, getByTestId } = render(
+      <PromptInputProvider maxFileSize={1} onError={onError} onFilesAdded={onFilesAdded}>
+        <PromptInput onSubmit={() => {}}><PromptInputTextarea /><AttachmentCount /></PromptInput>
+      </PromptInputProvider>,
+    );
+    const tooLarge = new File(['xx'], 'large.png', { type: 'image/png' });
+    pasteClipboard(container.querySelector('textarea')!, [{ kind: 'file', type: 'image/png', getAsFile: () => tooLarge }], '');
+    expect(getByTestId('count').textContent).toBe('0');
+    expect(onFilesAdded).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'max_file_size' }));
+    pasteClipboard(container.querySelector('textarea')!, [{ kind: 'file', type: 'image/png', getAsFile: () => imageFile() }], '');
+    expect(getByTestId('count').textContent).toBe('1');
   });
 
   it('still attaches image-only pastes like screenshots', () => {
