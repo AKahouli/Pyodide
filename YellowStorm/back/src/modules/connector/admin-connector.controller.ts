@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { isTrustedMcpServerUrl, trustedMcpServerUrls } from './utils/trusted-mcp-server.util';
+import { isTrustedMcpServerUrl, jwtCapableMcpServerUrls } from './utils/trusted-mcp-server.util';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -122,7 +122,7 @@ export class AdminConnectorController {
     // excepted per WP05.5).
     try {
       await assertMcpDestinationAllowed(connector?.mcpServerUrl ?? body.serverUrl, {
-        allowExactEndpoints: [...trustedMcpServerUrls(this.configService)],
+        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.configService)],
       });
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
@@ -357,7 +357,7 @@ export class AdminConnectorController {
     this.connectorService.assertInspectableTransport(connector.mcpTransportType);
     try {
       await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-        allowExactEndpoints: [...trustedMcpServerUrls(this.configService)],
+        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.configService)],
       });
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {

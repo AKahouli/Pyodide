@@ -18,7 +18,7 @@ import {
   isRemoteInspectableMcpTransport,
   sanitizeEndpointUrl,
 } from './utils/remote-mcp-transport.util';
-import { trustedMcpServerUrls } from './utils/trusted-mcp-server.util';
+import { jwtCapableMcpServerUrls } from './utils/trusted-mcp-server.util';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError, McpDestinationPolicyOptions } from './utils/mcp-destination-policy.util';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
@@ -687,7 +687,7 @@ export class ConnectorService {
       .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
     const nodeEnv = config?.get<string>('NODE_ENV', 'development');
     const allowInsecureHttp = (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false) && nodeEnv !== 'production';
-    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, allowExactEndpoints: [...trustedMcpServerUrls(config)] };
+    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, allowExactEndpoints: [...jwtCapableMcpServerUrls(config)] };
   }
 
   private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {

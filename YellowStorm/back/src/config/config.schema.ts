@@ -417,12 +417,14 @@ export const configValidationSchema = Joi.object({
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer').when('NODE_ENV', {
-    // WP06.1/WP07.6: production must fail startup on the developer-only
-    // shared Bearer mode, or the assistant actor guard would accept a naked
-    // user-id header next to the service credential.
+  // WP06.1/WP07.6: the conditional REPLACES the schema in production (a
+  // nested .valid would union with the base allowlist and still accept
+  // Bearer), so the developer-only naked user-id fallback cannot exist next
+  // to the service credential.
+  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().when('NODE_ENV', {
     is: 'production',
-    then: Joi.string().valid('JWT').required(),
+    then: Joi.string().required().valid('JWT'),
+    otherwise: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
   }),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),

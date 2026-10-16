@@ -1000,13 +1000,46 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
       createPlaybookBindingSyncServiceMock() as any,
-      { get: (key: string, fallback?: string) => (key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp' : fallback) } as any,
+      { get: (key: string, fallback?: string) => (
+        key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp'
+          : key === 'SEMANTIC_MODEL_MCP_AUTH_MODE' ? 'JWT'
+          : fallback
+      ) } as any,
     );
 
     await service.inspectMcp('streamable_http', 'http://localhost:8027/mcp');
 
     expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://localhost:8027/mcp', expect.objectContaining({
       allowExactEndpoints: expect.arrayContaining(['http://localhost:8027/mcp']),
+    }));
+  });
+
+  it('denies a Bearer-mode internal endpoint the WP05.5 exception does not cover (JWT-only services)', async () => {
+    const store = connectorStoreMock();
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+      { get: (key: string, fallback?: string) => (
+        key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp'
+          : key === 'SEMANTIC_MODEL_MCP_AUTH_MODE' ? 'Bearer'
+          : fallback
+      ) } as any,
+    );
+
+    // The stubbed policy resolves; the wiring assertion is that a Bearer-mode
+    // service URL grants NO exception — the real denial logic is covered in
+    // the policy util's own suite.
+    await service.inspectMcp('streamable_http', 'http://localhost:8027/mcp');
+
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://localhost:8027/mcp', expect.objectContaining({
+      allowExactEndpoints: [],
     }));
   });
 

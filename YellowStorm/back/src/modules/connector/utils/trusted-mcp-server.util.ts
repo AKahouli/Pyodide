@@ -30,3 +30,22 @@ export function isTrustedMcpServerUrl(config: ConfigReader | undefined, url: unk
   const normalized = normalizeMcpServerUrl(url);
   return Boolean(normalized) && trustedMcpServerUrls(config).has(normalized);
 }
+
+/**
+ * Service endpoints the backend actually signs MCP JWTs for (WP05.5): a
+ * service URL counts as an egress-policy exception ONLY while its MCP auth
+ * mode is JWT, because the exception contract requires service-issued JWT
+ * authentication. Bearer-mode internal servers must satisfy the public
+ * destination rules like any other endpoint.
+ */
+export function jwtCapableMcpServerUrls(config: ConfigReader | undefined): string[] {
+  const entries: readonly [urlKey: string, modeKey: string][] = [
+    ['PLAYBOOK_MCP_SERVER_URL', 'PLAYBOOK_MCP_AUTH_MODE'],
+    ['AGENT_MCP_SERVER_URL', 'AGENT_MCP_AUTH_MODE'],
+    ['SEMANTIC_MODEL_MCP_SERVER_URL', 'SEMANTIC_MODEL_MCP_AUTH_MODE'],
+  ];
+  return entries
+    .filter(([, modeKey]) => (config?.get<string>(modeKey, 'Bearer') ?? 'Bearer') === 'JWT')
+    .map(([urlKey]) => config?.get<string>(urlKey, '') ?? '')
+    .filter(Boolean);
+}

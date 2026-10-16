@@ -9,7 +9,7 @@ import type { ConnectorAuthService } from '../interfaces/connector-auth.interfac
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
-import { trustedMcpServerUrls } from '../utils/trusted-mcp-server.util';
+import { jwtCapableMcpServerUrls } from '../utils/trusted-mcp-server.util';
 import { denyRedirectFetch } from '../connector.service';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
@@ -64,7 +64,7 @@ export class ConnectorMcpRuntimeService {
     // exact admin-configured internal endpoints (WP05.5) stay reachable.
     try {
       await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-        allowExactEndpoints: [...trustedMcpServerUrls(this.config)],
+        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.config)],
       });
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
