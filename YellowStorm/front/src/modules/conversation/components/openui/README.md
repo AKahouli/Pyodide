@@ -85,8 +85,12 @@ would mean overriding each report component, which is not done.
 - Each assistant text part is rendered as its own OpenUI program (a tool call between two texts starts a new `root = ...`).
   Non-text parts (choices, sources, artifacts) keep their regular renderers.
 - While streaming the Renderer is given `isStreaming`; the program is parsed incrementally.
-- `continue_conversation` actions (buttons, forms, follow-ups) are sent as a user message through
-  `useConversationStore.sendMessage`, with submitted form values appended as readable field/value lines. `open_url` opens http(s) links only.
+- `continue_conversation` actions retain bounded typed form values and parameters in saved `openUiSubmission` metadata through
+  `useConversationStore.sendMessage`. Chat bubbles show a readable action label; accepted values hydrate the renderer after reload. `open_url` opens http(s) links only.
+- Named primitive-cell chat tables support filtering, numeric/string column sorting and original row selection.
+  Apply table view saves `TableView` values under the existing interaction's `__ysExplore` form; drafts remain local.
+  Exports use the last applied view, including selected rows (or all filtered rows when none are selected), independent of mounted DOM.
+  Answer export fetches saved message pages so older accepted selections remain available after reload.
 - Download actions resolve a unique ready artifact attached to the same answer and request a fresh authorized download URL on click, including after reload. Model-authored sandbox paths are never fetched directly.
 - A load or render failure falls back to the markdown renderer for that text part.
 - `toolProvider`, `AgentInterface` and `fetchLLM` are deliberately not used.

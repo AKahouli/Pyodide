@@ -22,6 +22,30 @@ const messages = (content = program): Message[] => [{
 } as unknown as Message];
 
 describe('saved OpenUI export projection', () => {
+  const tableProgram = 'root = Card([table])\ntable = Table([Col("City"),Col("Visits", "number")], [["Tokyo",2],["Paris",10],["Kyoto",0],["Osaka",5]])';
+  const tableState = { __ysExplore: { 'table:table': { componentType: 'TableView', value: { query: 'o', sortColumn: 1, direction: 'desc', selectedRows: [0, 2] } } } };
+  it('projects typed table filters, numeric sorting and original selected row indices', async () => {
+    const markdown = exportPartsToMarkdown(await projectOpenUiProgram(tableProgram, tableState));
+    expect(markdown).toContain('| Tokyo | 2 |\n| Kyoto | 0 |');
+    expect(markdown).not.toContain('Paris');
+    expect(markdown).not.toContain('Osaka');
+    const unselected = { __ysExplore: { 'table:table': { componentType: 'TableView', value: { query: 'o', sortColumn: 1, direction: 'desc', selectedRows: [] } } } };
+    expect(exportPartsToMarkdown(await projectOpenUiProgram(tableProgram, unselected))).toContain('| Osaka | 5 |\n| Tokyo | 2 |\n| Kyoto | 0 |');
+  });
+  it('rehydrates accepted scoped table values identically for answer exports and MCP', async () => {
+    const answer = { ...messages(tableProgram)[0], conversationId: 'conversation' };
+    const submission = { id: 'saved', conversationId: 'conversation', conversationType: 'user', createdAt: '2026-10-16T12:00:00Z', interaction: {
+      type: 'openui', schemaVersion: 1, sourceMessageId: answer.id, componentId: 'part', actionType: 'continue_conversation', formState: tableState,
+    } } as Message;
+    const persisted = JSON.parse(JSON.stringify([submission])) as Message[];
+    const [block] = await buildStructuredExportBlocks([answer], { user: 'U', assistant: 'A' }, undefined, undefined, persisted);
+    expect(block.markdown).toContain('| Tokyo | 2 |\n| Kyoto | 0 |');
+    expect((await buildMcpExportManifest(answer, persisted)).parts).toEqual(block.parts?.map((part) => ({ ...part, componentId: 'part' })));
+    for (const foreign of [{ ...submission, conversationId: 'other' }, { ...submission, id: 'temp-pending' }, { ...submission, interaction: { ...submission.interaction, sourceMessageId: 'other' } } as Message]) {
+      const [untouched] = await buildStructuredExportBlocks([answer], { user: 'U', assistant: 'A' }, undefined, undefined, [foreign]);
+      expect(untouched.markdown).toContain('Paris');
+    }
+  });
   it('selects regenerated answers before resolving assets from obsolete branches', async () => {
     const oldAnswer = { ...messages('root = Card([i])\ni = Image("Deleted original", "generated-image:aaaaaaaaaaaaaaaaaaaaaaaa")')[0], id: 'old', questionMessageId: 'question' };
     const replacement = { ...messages()[0], id: 'replacement', questionMessageId: 'question', createdAt: '2026-10-15T10:01:00Z' };

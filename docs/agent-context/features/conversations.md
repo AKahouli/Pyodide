@@ -132,6 +132,10 @@ See the module README and `document-export.test.ts`, `openui-export-assets.test.
 
 ### Interactive OpenUI answers (2026-10-16)
 
+Maintainer source review: `5f71b6483`, including DTO/controller validation,
+renderer hydration and the focused regression definitions. This review does not
+rerun or independently certify the implementation's reported runtime QA.
+
 Form submissions and filter/chart/table follow-up parameters keep their typed JSON
 in the existing user-message `interaction` record (`type: openui`). The request's
 `openUiSubmission` identifies its saved assistant text component and form name.
@@ -143,12 +147,17 @@ renderer. The model receives exact JSON; the chat bubble displays the action lab
 Named forms show submitting, saved and retryable-error states. Duplicate pending
 or unchanged accepted submissions are suppressed; retries reuse their request ID.
 Reload hydrates accepted typed form values from saved messages. Unsubmitted drafts
-are local; no new persistence table or draft store is introduced. Tests:
+are local and are not restored after reload; no new persistence table or draft
+store is introduced. Untouched slider defaults are registered as typed values.
+Tests:
 `send-message.dto.spec.ts`, `message.controller.spec.ts`,
 `openui-submission.integration.spec.ts`, `interactive-forms.test.tsx`,
 `OpenUiAnswer.test.tsx` and `actions.test.ts`.
 
 ### Scoped OpenUI image loading (2026-10-16)
+
+Maintainer source review: `d04f3d8e0`, including cache lifetime, cancellation and
+partial-failure regression definitions; runtime QA is separate implementation evidence.
 
 Each answer provider owns an in-memory image cache scoped to conversation, message
 and text component. Pending and completed loads share a promise by source and full
@@ -161,6 +170,25 @@ Image components render successful references progressively while naming each fa
 reference with its own retry action. Retrying one failure retains successful image
 URLs and other failure states. Source changes cannot publish stale results. Tests:
 `document-images.test.tsx`, `document-images-cache.test.ts`, `pdf-image.test.ts`.
+
+### OpenUI table exploration (2026-10-16)
+
+Primitive-cell tables support a text filter, stable numeric/string column sorting
+and row selection using original row indices. Applying a view submits typed
+`__ysExplore` form state and selected row values through the existing OpenUI
+submission contract. A changed filter clears selection. Tables containing
+executable component cells retain the stock renderer.
+
+Only applied views persist: reload hydrates their filter, sort direction and
+selected rows; unsubmitted changes remain local. Initial default registration
+reads current SDK state at effect time so StrictMode replay cannot replace a
+hydrated view. Saved-answer exports use the applied filtered/sorted view and,
+when rows are selected, only that selected subset. Typed values reach the existing
+MCP export manifest; the export path does not execute component actions.
+Source/tests: `DataTable.tsx`, `data-exploration.ts`, `DataTable.test.tsx`,
+`MessageActions.test.tsx`, `document-export.test.ts` and `plain-text.test.ts`.
+Live/export QA outcomes belong to the implementation checkpoint; this section's
+maintainer review covers the source and regression definitions.
 
 ### Image actions (2026-10-15)
 

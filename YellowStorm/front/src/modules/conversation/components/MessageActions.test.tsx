@@ -11,6 +11,7 @@ const toastSuccessMock = vi.hoisted(() => vi.fn());
 const toastErrorMock = vi.hoisted(() => vi.fn());
 const branchConversationMock = vi.hoisted(() => vi.fn());
 const prepareConversationPlaybookHandoffMock = vi.hoisted(() => vi.fn());
+const fetchMessagesMock = vi.hoisted(() => vi.fn().mockResolvedValue({ items: [], hasMore: false }));
 const openHandoffMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -75,6 +76,7 @@ vi.mock('@/modules/auth', () => ({
   }),
 }));
 vi.mock('../api', () => ({
+  fetchMessages: fetchMessagesMock,
   branchConversation: branchConversationMock,
   prepareConversationPlaybookHandoff: prepareConversationPlaybookHandoffMock,
 }));
@@ -602,6 +604,23 @@ describe('MessageActions', () => {
       { type: 'citation', data: { image_source: { reference: '2', fileName: 'chart.pdf', page: '3', externalId: 'pdf-id' } } },
     ],
   };
+
+  it('loads saved interaction pages before exporting an answer outside the loaded window', async () => {
+    const answer = { ...agentExportMessage, conversationId: 'conv-1', components: [{ id: 'text-1', type: 'text', data: { content: 'root = Card([t])\nt = Table([Col("City"),Col("Count")], [["Tokyo",2],["Paris",10]])' } }] };
+    fetchMessagesMock.mockResolvedValueOnce({ items: [], hasMore: true, nextCursor: 'older' }).mockResolvedValueOnce({ items: [{
+      id: 'saved-selection', conversationId: 'conv-1', conversationType: 'user', createdAt: '2026-10-16T12:00:00Z', interaction: {
+        type: 'openui', sourceMessageId: answer.id, componentId: 'text-1', formState: { __ysExplore: { 'table:t': { componentType: 'TableView', value: { query: '', sortColumn: null, direction: 'asc', selectedRows: [1] } } } },
+      },
+    }], hasMore: false });
+    render(<MessageActions message={answer as never} isLastAiMessage={false} conversationId="conv-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportAgentDocx' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', { mode: 'cursor', limit: 100, cursor: 'older' });
+    const request = JSON.parse(sendMessageMock.mock.calls[0][1].content);
+    const markdown = JSON.stringify(JSON.parse(request.manifest).parts);
+    expect(markdown).toContain('| Paris | 10 |');
+    expect(markdown).not.toContain('Tokyo');
+  });
 
   it.each([['messageActions.exportAgentDocx', 'DOCX'], ['messageActions.exportEditablePptx', 'PPTX']])('submits %s only on explicit click with exact saved sources and all citation mappings', async (action, format) => {
     document.body.innerHTML = '<div id="message-ai-export"><img src="blob:temporary-preview" /></div>';

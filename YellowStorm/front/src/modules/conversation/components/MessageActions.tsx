@@ -11,7 +11,7 @@ import { useConversationStore } from '../store';
 import { componentsToMarkdown, mapConversationComponentsToContentParts } from '../utils';
 import { createOpenUiTextProjector, isOpenUiProgram } from './openui/plain-text';
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
-import { buildExportFilename, buildMcpExportManifest, buildStructuredExportBlocks } from '../utils/document-export';
+import { buildExportFilename, buildMcpExportManifest, buildStructuredExportBlocks, fetchAllMessagesForExport } from '../utils/document-export';
 import { resolveOpenUiExportImage } from '../utils/openui-export-assets';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
 import { exportBlocksToHtml, exportUrlTransform } from '../utils/html-export';
@@ -26,7 +26,7 @@ import remarkGfm from 'remark-gfm';
 import { PdfExportPortal } from './PdfExportPortal';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
-import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
+import { branchConversation, prepareConversationPlaybookHandoff, fetchMessages } from '../api';
 import { useModelById } from '@/modules/models';
 import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { usePlatformCopilotPanelStore } from '@/modules/platform-copilot/platformCopilotPanelStore';
@@ -168,9 +168,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   };
 
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
-  const buildAnswerExportBlocks = () => buildStructuredExportBlocks([message],
+  const savedExportMessages = () => message.components?.some(component => component.type === 'text' && isOpenUiProgram(component.data?.content))
+    ? fetchAllMessagesForExport(conversationId, fetchMessages) : Promise.resolve(messages);
+  const buildAnswerExportBlocks = async () => buildStructuredExportBlocks([message],
     { user: t('export.userLabel'), assistant: t('export.assistantLabel') },
-    () => formattedCreatedAt, resolveOpenUiExportImage);
+    () => formattedCreatedAt, resolveOpenUiExportImage, await savedExportMessages());
 
   const handleOpenSource = useCallback(
     async (citation: CitationData) => {
@@ -222,7 +224,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     agentExportLock.current = true;
     setIsExportingViaAgent(true);
     try {
-      const manifest = await buildMcpExportManifest(message);
+      const manifest = await buildMcpExportManifest(message, await savedExportMessages());
       if (!manifest.parts.length) throw new Error('Empty export');
       const citationMappings = mapConversationComponentsToContentParts(message.components ?? []).flatMap((part) => {
         if (part.type !== 'text') return [];

@@ -9,6 +9,7 @@ import { inlineTextOverrides, withCitedHeader, type StockComponent } from './inl
 import { withDocumentImages } from './document-images';
 import { OpenUiSubmissionContext } from './actions';
 import { useModuleTranslation } from '@/modules/localization';
+import { withDataTable } from './DataTable';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -43,12 +44,13 @@ const resolveCited = (renderNode: Args['renderNode']): Args['renderNode'] => (no
 
 /** Same table as the stock one; cells (rows are `cells[]` arrays) with a marker go through `renderNode` as chips. */
 function withCitedTable(Stock: StockComponent): StockComponent {
-  return function CitedTable({ props, renderNode }) {
+  return function CitedTable(args) {
+    const { props, renderNode } = args;
     const { byReference } = useContext(OpenUiCitationContext);
     const rows = (props.rows ?? []).map((row: unknown) => (Array.isArray(row)
       ? row.map((cell) => (hasMarker(cell, byReference) ? cited(cell) : cell))
       : row));
-    return <Stock props={{ ...props, rows }} renderNode={resolveCited(renderNode)} />;
+    return <Stock {...args} props={{ ...props, rows }} renderNode={resolveCited(renderNode)} />;
   };
 }
 
@@ -67,7 +69,7 @@ const overrides: Record<string, (stock: StockComponent) => StockComponent> = {
   Card: () => CardBlock,
   TextContent: () => OpenUiTextContent as StockComponent,
   Header: withCitedHeader,
-  Table: withCitedTable,
+  Table: (Stock) => withDataTable(withCitedTable(Stock)),
   Slider: (Stock) => function RegisteredSlider(args) {
     const formName = useFormName();
     const getFieldValue = useGetFieldValue();

@@ -17,7 +17,7 @@ export type ExportImageResolver = (source: string, component: MessageComponent, 
 
 /** Ephemeral instructions for the existing MCP export flow. Persistent selectors
  * are preserved exactly; the authorized agent resolves them before execution. */
-export async function buildMcpExportManifest(message: Message): Promise<{ parts: Array<OpenUiExportPart & { componentId?: string }> }> {
+export async function buildMcpExportManifest(message: Message, submissionMessages: readonly Message[] = []): Promise<{ parts: Array<OpenUiExportPart & { componentId?: string }> }> {
   const parts: Array<OpenUiExportPart & { componentId?: string }> = [];
   if (message.conversationType === 'user') {
     if (message.content?.trim()) parts.push({ kind: 'markdown', markdown: message.content });
@@ -25,7 +25,7 @@ export async function buildMcpExportManifest(message: Message): Promise<{ parts:
   }
   for (const component of message.components ?? []) {
     if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
-      parts.push(...(await projectOpenUiProgram(String(component.data?.content))).map((part) => ({ ...part, componentId: component.id })));
+      parts.push(...(await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages))).map((part) => ({ ...part, componentId: component.id })));
     } else {
       if (isVisualConversationComponent(component)) throw new Error('Legacy visual MCP export is unsupported');
       const markdown = componentToMarkdown(component);
@@ -35,6 +35,17 @@ export async function buildMcpExportManifest(message: Message): Promise<{ parts:
   return { parts };
 }
 
+/** Accepted submissions survive reload; optimistic or foreign-scope values never affect exports. */
+function savedViewState(source: Message, componentId: string | undefined, messages: readonly Message[]): Record<string, unknown> {
+  if (!componentId) return {};
+  return messages.filter((message) => message.conversationType === 'user' && !message.id.startsWith('temp-')
+    && message.conversationId === source.conversationId && message.interaction?.type === 'openui'
+    && message.interaction.sourceMessageId === source.id && message.interaction.componentId === componentId)
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+    .reduce<Record<string, unknown>>((state, message) => message.interaction?.type === 'openui'
+      ? { ...state, ...message.interaction.formState } : state, {});
+}
+
 /** Export only saved content. Resolving assets here makes every format use the
  * same validated image and prevents temporary UI URLs leaking into saved files. */
 export async function buildStructuredExportBlocks(
@@ -42,6 +53,7 @@ export async function buildStructuredExportBlocks(
   labels: { user: string; assistant: string },
   formatTimestamp?: (iso: string) => string,
   resolveImage?: ExportImageResolver,
+  submissionMessages: readonly Message[] = messages,
 ): Promise<ExportBlock[]> {
   // Choose the saved branch before parsing/resolving it. An obsolete answer's
   // deleted image must not prevent exporting the replacement answer.
@@ -67,7 +79,7 @@ export async function buildStructuredExportBlocks(
     const components: MessageComponent[] = [];
     for (const component of message.components ?? []) {
       if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
-        const projectedParts = await projectOpenUiProgram(String(component.data?.content));
+        const projectedParts = await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages));
         for (const part of projectedParts) {
           if (part.kind !== 'image') { parts.push(part); continue; }
           if (!resolveImage) throw new Error('OpenUI export image resolver required');

@@ -1,5 +1,6 @@
 import type { MessageComponent } from '../../types';
 import { splitReportProgram } from './report-program';
+import { getTableRows, tableView } from './data-exploration';
 
 /** An OpenUI Lang program always opens with its `root = Component(...)` statement. */
 const OPENUI_PROGRAM = /^\s*root\s*=\s*[A-Z]\w*\(/m;
@@ -86,7 +87,7 @@ const INTERACTIVE = /^(?:Action|Button|FollowUp|Form|Input|Select|Checkbox|Radio
 
 /** Parsing never executes queries/mutations. Partial/dynamic content fails explicitly
  * rather than producing a plausible but incomplete document. */
-export async function projectOpenUiProgram(program: string): Promise<OpenUiExportPart[]> {
+export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>): Promise<OpenUiExportPart[]> {
   const [{ createParser }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
     import('@openuidev/lang-core'), import('@openuidev/thesys'),
   ]);
@@ -123,7 +124,13 @@ export async function projectOpenUiProgram(program: string): Promise<OpenUiExpor
     }
     if (name === 'Table') {
       if (!Array.isArray(props.columns) || !Array.isArray(props.rows)) throw new Error('Incomplete OpenUI export table');
-      table(props.columns.map((column) => typeof column === 'string' ? column : (column as { props?: { label?: unknown } })?.props?.label), props.rows as unknown[][]);
+      const exploration = viewState?.__ysExplore as Record<string, { componentType?: string; value?: unknown }> | undefined;
+      const saved = exploration?.[`table:${node.statementId}`];
+      const view = saved?.componentType === 'TableView' ? saved.value : undefined;
+      const allRows = props.rows as unknown[][];
+      const selectedRows = tableView(view).selectedRows;
+      const rows = getTableRows(allRows, view).filter(({ index }) => !selectedRows.length || selectedRows.includes(index));
+      table(props.columns.map((column) => typeof column === 'string' ? column : (column as { props?: { label?: unknown } })?.props?.label), rows.map(({ row }) => row));
       return;
     }
     if (/Chart$/.test(name) && Array.isArray(props.labels) && Array.isArray(props.series)) {

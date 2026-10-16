@@ -9,7 +9,7 @@ describe('openUiLibrary', () => {
     expect(openUiLibrary.root).toBe(chatLibrary.root);
     expect(Object.keys(openUiLibrary.components)).toEqual(Object.keys(chatLibrary.components));
     const swapped = Object.keys(openUiLibrary.components).filter((name) => openUiLibrary.components[name].component !== chatLibrary.components[name].component);
-    expect(swapped.sort()).toEqual(['BoldText', 'CalloutV2', 'Card', 'EntityList', 'Header', 'IconText', 'InlineHeader', 'List', 'StepsItem', 'Table', 'Text', 'TextContent']);
+    expect(swapped.sort()).toEqual(['BoldText', 'CalloutV2', 'Card', 'CompositeCardBlock', 'ContextCardBlock', 'EntityList', 'Form', 'Header', 'IconText', 'Image', 'ImageBlock', 'ImageGallery', 'ImageText', 'ImageTextLarge', 'InlineHeader', 'List', 'OptionCards', 'OverviewCardBlock', 'Slider', 'SnippetCardBlock', 'StepsItem', 'Table', 'Text', 'TextContent', 'VisualCardBlock']);
     expect(openUiLibrary.components.TextContent.component).toBe(OpenUiTextContent);
   });
 });
