@@ -10,6 +10,7 @@ import { withDocumentImages } from './document-images';
 import { OpenUiSubmissionContext } from './actions';
 import { useModuleTranslation } from '@/modules/localization';
 import { withDataTable } from './DataTable';
+import { withChartExplorer } from './ChartExplorer';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -70,6 +71,9 @@ const overrides: Record<string, (stock: StockComponent) => StockComponent> = {
   TextContent: () => OpenUiTextContent as StockComponent,
   Header: withCitedHeader,
   Table: (Stock) => withDataTable(withCitedTable(Stock)),
+  BarChart: withChartExplorer,
+  HorizontalBarChart: withChartExplorer,
+  LineChart: withChartExplorer,
   Slider: (Stock) => function RegisteredSlider(args) {
     const formName = useFormName();
     const getFieldValue = useGetFieldValue();

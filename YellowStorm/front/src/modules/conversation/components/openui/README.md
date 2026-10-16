@@ -91,6 +91,10 @@ would mean overriding each report component, which is not done.
   Apply table view saves `TableView` values under the existing interaction's `__ysExplore` form; drafts remain local.
   Exports use the last applied view, including selected rows (or all filtered rows when none are selected), independent of mounted DOM.
   Answer export fetches saved message pages so older accepted selections remain available after reload.
+- Named chat bar, horizontal bar and line charts provide series/category selectors and category drill-down buttons.
+  Apply chart view saves original series/category indices as typed `ChartView` values in that same interaction form.
+  All series/categories remain visible by default; applying a selection drives reload and export projection, including numeric zero.
+  Report/presentation chart schemas and unsubmitted draft persistence are unchanged.
 - Download actions resolve a unique ready artifact attached to the same answer and request a fresh authorized download URL on click, including after reload. Model-authored sandbox paths are never fetched directly.
 - A load or render failure falls back to the markdown renderer for that text part.
 - `toolProvider`, `AgentInterface` and `fetchLLM` are deliberately not used.

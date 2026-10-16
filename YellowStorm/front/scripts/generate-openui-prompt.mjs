@@ -51,6 +51,7 @@ const citationRules = [
  * follow-ups) is written here, against the signatures of the library we render.
  */
 const usageRules = [
+  'Assign explorable chat BarChart, HorizontalBarChart and LineChart components to stable named statements. The host provides series selection and category drill-down controls, with an explicit Apply chart view action returning exact original indices and numeric values. Acknowledge applied selections without recreating the source chart.',
   'Assign each explorable chat Table to a stable named statement (for example cities = Table(...)); the host provides row filtering, column sorting, row selection and an explicit Apply table view action. Keep numeric cells as numbers. Applied view state and original selected row identities are returned as typed interaction data; do not recreate the source table when acknowledging its selection.',
   'Answer with a Card program by default: `root = Card(...)` is the first line. Order: Header(title, subtitle), a one or two sentence TextContent that gives the answer itself, then the supporting blocks, then a FollowUpBlock of two or three useful next questions. Keep every text short and never repeat the same facts in two blocks.',
   'Make the answer visual: when the content fits a card, a chart, an icon list or a tag, use it instead of a paragraph or a callout. TextContent is for the one-line answer and short explanations; a table or a callout is not a substitute for stat cards and charts when the answer rests on numbers.',

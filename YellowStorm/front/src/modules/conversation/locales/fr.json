@@ -1,4 +1,10 @@
 {
+  "openui.explore.series": "Série",
+  "openui.explore.allSeries": "Toutes les séries",
+  "openui.explore.category": "Catégorie",
+  "openui.explore.allCategories": "Toutes les catégories",
+  "openui.explore.drillDown": "Explorer les catégories du graphique",
+  "openui.explore.applyChart": "Appliquer la vue du graphique : {{name}}",
   "openui.explore.filter": "Filtrer {{name}}",
   "openui.explore.filterPlaceholder": "Filtrer les lignes…",
   "openui.explore.selection": "Sélection",

@@ -26,3 +26,15 @@ export function getTableRows(rows: unknown[][], value: unknown): { row: unknown[
   });
   return result;
 }
+
+export interface ChartView { seriesIndex: number; labelIndex: number | null }
+export function getChartData(labels: unknown[], series: { category?: string; values?: unknown[] }[], value: unknown) {
+  const raw = value && typeof value === 'object' ? value as Partial<ChartView> : {};
+  const view: ChartView = {
+    seriesIndex: Number.isInteger(raw.seriesIndex) && Number(raw.seriesIndex) >= 0 && Number(raw.seriesIndex) < series.length ? Number(raw.seriesIndex) : -1,
+    labelIndex: Number.isInteger(raw.labelIndex) && Number(raw.labelIndex) >= 0 && Number(raw.labelIndex) < labels.length ? Number(raw.labelIndex) : null,
+  };
+  const chosen = view.seriesIndex < 0 ? series : [series[view.seriesIndex]];
+  return { view, labels: view.labelIndex === null ? labels : [labels[view.labelIndex]],
+    series: chosen.map(entry => ({ ...entry, values: view.labelIndex === null ? entry.values : [entry.values?.[view.labelIndex]] })) };
+}

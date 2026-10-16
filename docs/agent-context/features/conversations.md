@@ -190,6 +190,28 @@ Source/tests: `DataTable.tsx`, `data-exploration.ts`, `DataTable.test.tsx`,
 Live/export QA outcomes belong to the implementation checkpoint; this section's
 maintainer review covers the source and regression definitions.
 
+### OpenUI chart drill-down (2026-10-16)
+
+Chat `BarChart`, `HorizontalBarChart` and `LineChart` support native series and
+category selectors plus category drill-down buttons. These controls filter the
+stock visualization and expose a textual selected-value summary. All series and
+categories are selected initially; invalid saved indices fall back to those defaults.
+
+Applying a chart view saves `ChartView` values under the existing `__ysExplore`
+form state and submits original numeric series/category indices and selected point
+values, including zero. Accepted views hydrate after reload using the same
+effect-time default-registration guard as tables. Unsubmitted changes are local.
+Saved-answer exports project only the applied chart subset into the existing
+chart data-table representation; reports, presentations and unsupported chart types
+retain their existing export behavior. The controls do not run model-authored code.
+
+Maintainer source review covers `ChartExplorer.tsx`, `data-exploration.ts`, chat
+library overrides and `plain-text.ts`. Regression definitions in
+`ChartExplorer.test.tsx` and `document-export.test.ts` cover typed zero values,
+StrictMode hydration, stale indices and selected data exports; live QA and executed
+test outcomes remain separate implementation evidence. Existing indexes remain
+applicable because this extends the documented Conversation v1 feature.
+
 ### Image actions (2026-10-15)
 
 Conversation system workspace storage can be adjusted under Admin → Workspace by

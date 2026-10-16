@@ -1,6 +1,6 @@
 import type { MessageComponent } from '../../types';
 import { splitReportProgram } from './report-program';
-import { getTableRows, tableView } from './data-exploration';
+import { getChartData, getTableRows, tableView } from './data-exploration';
 
 /** An OpenUI Lang program always opens with its `root = Component(...)` statement. */
 const OPENUI_PROGRAM = /^\s*root\s*=\s*[A-Z]\w*\(/m;
@@ -93,6 +93,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   ]);
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
+  let chatExploration = false;
   const add = (markdown: string) => { if (markdown.trim()) parts.push({ kind: 'markdown', markdown }); };
   const cell = (value: unknown): string => {
     if (value === null || value === undefined) return '';
@@ -137,8 +138,13 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
       if (typeof props.heading === 'string') add(`## ${props.heading}`);
       if (typeof props.description === 'string') add(props.description);
       add(`\`\`\`json\n${JSON.stringify({ chart: name, xLabel: props.xLabel, yLabel: props.yLabel, unit: props.unit, variant: props.variant })}\n\`\`\``);
-      const series = props.series as Array<{ category?: string; values?: unknown[] }>;
-      table(['', ...series.map((entry) => entry.category ?? '')], props.labels.map((label, index) => [label, ...series.map((entry) => entry.values?.[index])]));
+      const originalSeries = props.series as Array<{ category?: string; values?: unknown[] }>;
+      const exploration = viewState?.__ysExplore as Record<string, { componentType?: string; value?: unknown }> | undefined;
+      const saved = exploration?.[`chart:${node.statementId}`];
+      const supported = chatExploration && ['BarChart', 'HorizontalBarChart', 'LineChart'].includes(name);
+      const data = supported ? getChartData(props.labels, originalSeries, saved?.componentType === 'ChartView' ? saved.value : undefined)
+        : { labels: props.labels, series: originalSeries };
+      table(['', ...data.series.map((entry) => entry.category ?? '')], data.labels.map((label, index) => [label, ...data.series.map((entry) => entry.values?.[index])]));
       return;
     }
     if (/Chart$/.test(name) && Array.isArray(props.slices)) {
@@ -179,6 +185,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
   };
   for (const source of [split.chat, split.report].filter((entry): entry is string => Boolean(entry))) {
     const library = /^\s*root\s*=\s*Presentation\(/.test(source) ? presentationLibrary : /^\s*root\s*=\s*Report\(/.test(source) ? reportLibrary : chatLibrary;
+    chatExploration = library === chatLibrary;
     const parsed = createParser(library.toJSONSchema()).parse(source);
     if (!parsed.root || parsed.meta.incomplete || parsed.meta.errors.length || parsed.meta.unresolved.length || Object.keys(parsed.stateDeclarations).length || parsed.queryStatements.length || parsed.mutationStatements.length) throw new Error('Invalid or interactive OpenUI export');
     walk(parsed.root);

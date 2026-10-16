@@ -1,4 +1,10 @@
 {
+  "openui.explore.series": "Series",
+  "openui.explore.allSeries": "All series",
+  "openui.explore.category": "Category",
+  "openui.explore.allCategories": "All categories",
+  "openui.explore.drillDown": "Explore chart categories",
+  "openui.explore.applyChart": "Apply chart view: {{name}}",
   "openui.explore.filter": "Filter {{name}}",
   "openui.explore.filterPlaceholder": "Filter rows…",
   "openui.explore.selection": "Selection",

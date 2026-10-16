@@ -22,6 +22,28 @@ const messages = (content = program): Message[] => [{
 } as unknown as Message];
 
 describe('saved OpenUI export projection', () => {
+  const chartProgram = 'root = Card([chart])\nchart = BarChart(["Jan","Feb","Mar"], [{category:"Visits",values:[2,5,0]},{category:"Sales",values:[4,6,8]}])';
+  const chartState = { __ysExplore: { 'chart:chart': { componentType: 'ChartView', value: { seriesIndex: 0, labelIndex: 2 } } } };
+  it.each(['BarChart', 'HorizontalBarChart', 'LineChart'])('projects %s series index zero and a selected category without losing numeric zero', async (chartType) => {
+    const source = chartProgram.replace('BarChart(', `${chartType}(`);
+    const markdown = exportPartsToMarkdown(await projectOpenUiProgram(source, chartState));
+    expect(markdown).toContain('|  | Visits |\n| --- | --- |\n| Mar | 0 |');
+    expect(markdown).not.toContain('Sales');
+    expect(markdown).not.toContain('Jan');
+    const all = exportPartsToMarkdown(await projectOpenUiProgram(source));
+    expect(all).toContain('| Jan | 2 | 4 |');
+    expect(all).toContain('| Mar | 0 | 8 |');
+  });
+  it('uses saved chart selections after reload in both structured documents and MCP manifests', async () => {
+    const answer = { ...messages(chartProgram)[0], conversationId: 'conversation' };
+    const saved = JSON.parse(JSON.stringify([{ id: 'chart-saved', conversationId: 'conversation', conversationType: 'user', createdAt: '2026-10-16T13:00:00Z', interaction: {
+      type: 'openui', schemaVersion: 1, sourceMessageId: answer.id, componentId: 'part', actionType: 'continue_conversation', formState: chartState,
+    } }])) as Message[];
+    const [block] = await buildStructuredExportBlocks([answer], { user: 'U', assistant: 'A' }, undefined, undefined, saved);
+    expect(block.markdown).toContain('| Mar | 0 |');
+    expect((await buildMcpExportManifest(answer, saved)).parts).toEqual(block.parts?.map(part => ({ ...part, componentId: 'part' })));
+    expect(exportBlocksToHtml([block], 'Selected chart')).toBeInstanceOf(Blob);
+  });
   const tableProgram = 'root = Card([table])\ntable = Table([Col("City"),Col("Visits", "number")], [["Tokyo",2],["Paris",10],["Kyoto",0],["Osaka",5]])';
   const tableState = { __ysExplore: { 'table:table': { componentType: 'TableView', value: { query: 'o', sortColumn: 1, direction: 'desc', selectedRows: [0, 2] } } } };
   it('projects typed table filters, numeric sorting and original selected row indices', async () => {
