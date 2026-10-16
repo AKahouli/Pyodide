@@ -1,0 +1,57 @@
+filters:
+  and:
+    - file.inFolder("Tools")
+    - tool != null
+properties:
+  note.tool:
+    displayName: Tool
+  note.category:
+    displayName: Category
+  note.summary:
+    displayName: Summary
+  note.signature:
+    displayName: Signature
+  note.requires_sandbox:
+    displayName: Needs sandbox
+  note.mutates:
+    displayName: Mutates
+  note.idempotent:
+    displayName: Idempotent
+  note.returns:
+    displayName: Returns
+  note.source:
+    displayName: Source
+views:
+  - type: table
+    name: All tools
+    order:
+      - tool
+      - category
+      - requires_sandbox
+      - mutates
+      - idempotent
+      - summary
+    sort:
+      - property: category
+        direction: ASC
+      - property: tool
+        direction: ASC
+  - type: table
+    name: By category
+    order:
+      - tool
+      - signature
+      - summary
+      - mutates
+    group_by: category
+  - type: table
+    name: Signatures
+    order:
+      - tool
+      - signature
+      - source
+  - type: cards
+    name: Cards
+    order:
+      - tool
+      - summary

@@ -1,0 +1,10 @@
+{
+  "name": "mcp-outlook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Outlook/Calendar MCP server (Python). These npm scripts are convenience wrappers around `python server.py` and the MCP Inspector; no Node runtime is used by the server itself.",
+  "scripts": {
+    "start": "python server.py",
+    "inspect": "npx @modelcontextprotocol/inspector"
+  }
+}
