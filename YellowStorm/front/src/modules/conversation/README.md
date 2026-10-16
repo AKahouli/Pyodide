@@ -2119,3 +2119,13 @@ Also wires mention-seen observers for group-capable data shape; group-specific U
 ### Group member tagging (input)
 
 In group conversations, the input receives **members** (everyone except the current user) for `@` tagging. When replying to a specific member, **`autoMention`** can prefill a mention—see input and **`EditableUserMessage`** for details.
+
+### OpenUI image loading
+
+`OpenUiRenderer` owns a bounded `createScopedImageCache` for each answer scope.
+Repeated sources share pending/settled blobs; views own and revoke their object URLs.
+The cache limits concurrency to four, caps entries at 128 and settled data at 32
+images/64 MiB, and aborts on scope teardown. Failed references render individual
+labeled retry actions; retrying one preserves successful URLs and other failures.
+PDF loading/rendering observes cancellation. Coverage: `document-images.test.tsx`,
+`document-images-cache.test.ts` and `pdf-image.test.ts`.

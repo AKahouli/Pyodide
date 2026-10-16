@@ -293,8 +293,8 @@ export async function fetchSlideExportImage(conversationId: string, messageId: s
   return response.data.data.dataUrl;
 }
 
-export async function getCitationViewUrl(conversationId: string, messageId: string, citation: { source: string; fileName?: string; reference?: string }): Promise<{ url: string; fileName: string; mimeType: string }> {
-  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.citationUrl(conversationId, messageId), citation);
+export async function getCitationViewUrl(conversationId: string, messageId: string, citation: { source: string; fileName?: string; reference?: string }, signal?: AbortSignal): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(API_ENDPOINTS.conversations.citationUrl(conversationId, messageId), citation, { signal });
   return response.data.data;
 }
 

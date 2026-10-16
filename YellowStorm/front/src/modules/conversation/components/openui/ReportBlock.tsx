@@ -81,6 +81,7 @@ interface ReportBlockProps {
  */
 export function ReportBlock({ program, isStreaming, panelId, citations, citationScope, onParseResult }: Readonly<ReportBlockProps>) {
   const { t } = useModuleTranslation('conversation');
+  const { imageCache } = useContext(OpenUiCitationContext);
   const presentation = /^\s*root\s*=\s*Presentation\s*\(/.test(program);
   const library = presentation ? openUiPresentationLibrary : openUiReportLibrary;
   const activeId = useStore(reportPanelStore, (state) => state.activeDetailedViewId);
@@ -98,7 +99,7 @@ export function ReportBlock({ program, isStreaming, panelId, citations, citation
       <ChatProvider llm={INERT_LLM}>
         <DetailedViewContext.Provider value={reportPanelStore}>
           <ReportScopeContext.Provider value={panelId}>
-            <OpenUiCitationContext.Provider value={{ byReference: imageCitations.byReference, scope: citationScope }}>
+            <OpenUiCitationContext.Provider value={{ byReference: imageCitations.byReference, scope: citationScope, imageCache }}>
               <Renderer response={program} library={library} isStreaming={isStreaming} onParseResult={onParseResult} />
             </OpenUiCitationContext.Provider>
           </ReportScopeContext.Provider>

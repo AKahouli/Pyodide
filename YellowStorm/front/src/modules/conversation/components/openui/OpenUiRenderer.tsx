@@ -1,5 +1,5 @@
 import './devtools-off';
-import { useContext, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Renderer, type ActionEvent, type ParseResult } from '@openuidev/react-lang';
 import { CardSourceProvider, ThemeProvider } from '@openuidev/react-ui';
 import '@openuidev/react-ui/styles/index.css';
@@ -11,6 +11,7 @@ import { openUiLibrary } from './library';
 import { ReportBlock } from './ReportBlock';
 import { splitReportProgram } from './report-program';
 import { OPENUI_COMPACT_THEME } from './theme';
+import { createScopedImageCache } from './document-images';
 
 export interface OpenUiRendererProps {
   content: string;
@@ -49,7 +50,9 @@ export default function OpenUiRenderer({ content, isStreaming, onAction, citatio
   const { chat, report } = useMemo(() => splitReportProgram(content), [content]);
   const { byReference, trailing } = useMemo(() => splitCitations(citations, content, citationScope), [citations, content, citationScope]);
   const stockSources = useMemo(() => toStockSources(byReference), [byReference]);
-  const citationValue = useMemo(() => ({ byReference, scope: citationScope }), [byReference, citationScope]);
+  const imageCache = useMemo(() => createScopedImageCache(), [citationScope?.conversationId, citationScope?.messageId, citationScope?.componentId, partId]);
+  useEffect(() => () => imageCache.dispose(), [imageCache]);
+  const citationValue = useMemo(() => ({ byReference, scope: citationScope, imageCache }), [byReference, citationScope, imageCache]);
   const reportCitations = useMemo(() => Array.from(byReference).filter(([reference]) => report?.includes(`[${reference}]`) && !chat.includes(`[${reference}]`)).map(([, citation]) => citation), [byReference, report, chat]);
   const hasChat = chat.trim() !== '';
   // While streaming, partial or invalid text must never swap the view: only a

@@ -148,6 +148,20 @@ are local; no new persistence table or draft store is introduced. Tests:
 `openui-submission.integration.spec.ts`, `interactive-forms.test.tsx`,
 `OpenUiAnswer.test.tsx` and `actions.test.ts`.
 
+### Scoped OpenUI image loading (2026-10-16)
+
+Each answer provider owns an in-memory image cache scoped to conversation, message
+and text component. Pending and completed loads share a promise by source and full
+citation identity; no cache is shared across answers or accounts. Loads are limited
+to four concurrent requests and 128 entries, with settled LRU eviction at 32 images
+or 64 MiB. Failed entries are evicted. Scope teardown aborts queued/in-flight work;
+each view revokes its own object URLs. PDF rendering also cancels and destroys tasks.
+
+Image components render successful references progressively while naming each failed
+reference with its own retry action. Retrying one failure retains successful image
+URLs and other failure states. Source changes cannot publish stale results. Tests:
+`document-images.test.tsx`, `document-images-cache.test.ts`, `pdf-image.test.ts`.
+
 ### Image actions (2026-10-15)
 
 Conversation system workspace storage can be adjusted under Admin → Workspace by

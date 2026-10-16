@@ -32,4 +32,24 @@ describe('PDF image rendering', () => {
     expect(engine.renderPageRect).not.toHaveBeenCalled();
     expect(engine.destroy).toHaveBeenCalledTimes(2);
   });
+
+  it('does not allocate an engine for an already cancelled image request', async () => {
+    const controller = new AbortController(); controller.abort();
+    await expect(renderPdfImage('https://storage.example/source.pdf', 1, undefined, controller.signal)).rejects.toThrow();
+    expect(createPdfiumEngine).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending PDF task and releases its engine on scope teardown', async () => {
+    let rejectTask!: (reason: unknown) => void;
+    const task = { toPromise: () => new Promise((_, reject) => { rejectTask = reject; }), abort: vi.fn((reason: unknown) => rejectTask(reason)) };
+    engine.openDocumentUrl.mockReturnValueOnce(task as ReturnType<typeof engine.openDocumentUrl>);
+    const controller = new AbortController();
+    const request = renderPdfImage('https://storage.example/source.pdf', 1, undefined, controller.signal);
+    const outcome = request.catch((error: unknown) => error);
+    await Promise.resolve(); await Promise.resolve();
+    controller.abort(); await outcome;
+    expect(task.abort).toHaveBeenCalledTimes(1);
+    expect(engine.destroy).toHaveBeenCalledTimes(1);
+    expect(engine.renderPageRect).not.toHaveBeenCalled();
+  });
 });
