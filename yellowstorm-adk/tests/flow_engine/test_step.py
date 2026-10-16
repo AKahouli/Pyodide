@@ -973,6 +973,92 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
     assert image_blocks[0]["image_url"]["url"] == "data:image/png;base64,YWJjMTIz"
 
 
+def _image_blocks(messages):
+    return [
+        block
+        for message in messages
+        if isinstance(message.get("content"), list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_keeps_images_when_model_input_modalities_include_image(monkeypatch):
+    from tests.flow_engine.step_agent_test_helper import run_step_with_tools
+    from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        # Emulate the global LiteLLM patch: it normalizes messages to the request
+        # model's registered input modalities right before the provider call.
+        kwargs["messages"] = normalize_messages_for_model(
+            kwargs.get("model"), kwargs.get("messages")
+        )
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "read_content", "arguments": '{"expression":"ignored"}'},
+                }],
+            )
+        return _ToolCallResponse("The answer is in image p1_b8.")
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="modality-vision-model",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentMcpImageTool()],
+        agent_config={"input_modalities": ["text", "image"]},
+    )
+
+    assert output == "The answer is in image p1_b8."
+    assert len(_image_blocks(calls[1]["messages"])) == 1
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_strips_images_when_model_is_text_only(monkeypatch):
+    from tests.flow_engine.step_agent_test_helper import run_step_with_tools
+    from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        kwargs["messages"] = normalize_messages_for_model(
+            kwargs.get("model"), kwargs.get("messages")
+        )
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "read_content", "arguments": '{"expression":"ignored"}'},
+                }],
+            )
+        return _ToolCallResponse("No relevant information found.")
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="modality-text-only-model",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ReadContentMcpImageTool()],
+        agent_config={"input_modalities": ["text"]},
+    )
+
+    assert output == "No relevant information found."
+    assert _image_blocks(calls[1]["messages"]) == []
+
+
 @pytest.mark.anyio
 async def test_run_step_with_tools_retries_text_only_after_mcp_image_rejection(monkeypatch):
     from tests.flow_engine.step_agent_test_helper import run_step_with_tools

@@ -12,7 +12,10 @@ from src.flow_engine.observability.usage_extractor import extract_usage
 from src.guardrails.models import GuardrailContext
 from src.guardrails.runtime import GuardrailRuntime
 from src.guardrails.config import resolve_effective_guardrails
-from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
+from src.smart_rag.infrastructure.model_parameters import (
+    normalize_temperature_for_model,
+    register_model_input_modalities,
+)
 
 
 def _message_payload(message: BaseMessage) -> dict[str, Any]:
@@ -121,6 +124,12 @@ def build_model_node(tools: list[Any]):
 
     async def model_node(state: StepAgentState, runtime: Runtime[StepRuntimeContext]) -> dict[str, Any]:
         context = runtime.context
+        # Mirror smart_rag: register the model's admin-configured input modalities
+        # for this request context. Without it, normalize_messages_for_model (applied
+        # by the LiteLLM patch) defaults to text-only and silently strips image
+        # blocks that tool results attached, so vision models never see them.
+        agent_config = context.agent_config if isinstance(context.agent_config, dict) else {}
+        register_model_input_modalities(context.model_id, agent_config.get("input_modalities"))
         messages = list(state.get("messages") or [])
         next_iteration = int(state.get("tool_iterations") or 0) + (1 if _completed_tool_round(messages) else 0)
         if next_iteration >= context.max_tool_iterations:
