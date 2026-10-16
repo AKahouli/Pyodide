@@ -12,9 +12,7 @@ never claim a root cause solely because the symptom disappeared.
 
 Use native Task with `background: true` for independent long work. Completion
 notifications deliver results; foreground is for an immediately needed dependency.
-The maintainer is always background, including follow-ups with the same `task_id`.
-The installed plugin rejects foreground maintainer Task calls; it adds no scheduler.
-Direct manual agent selection is outside this Task-call guard.
+Prefer background maintainer tasks when the current Task schema supports them. If background execution is unavailable, the primary completes the exact scoped documentation directly using the existing handoff and evidence; a bounded foreground maintainer is also allowed when useful. Do not invent unsupported arguments, ask for authorization again, or leave documentation pending solely because background routing is unavailable.
 
 Supply a compact handoff:
 
@@ -37,8 +35,9 @@ Never poll/sleep to keep the parent busy, duplicate tasks, or treat launch as PA
 On host interruption, reconcile checkpoint child IDs with actual child state;
 notifications are not guaranteed while a process is stopped. Never relaunch without
 establishing that the previous work ended. Resume invalidates stale read/check inputs.
-If native background execution is unavailable, report host version/feature recovery,
-leave maintainer/docs pending and continue coding. No foreground maintainer fallback.
+If native background execution is unavailable, the primary applies and reviews the
+scoped documentation using the existing handoff; bounded foreground delegation is
+also allowed. Record progress rather than leaving a routing-only blocker.
 
 ## Parallel checks and first result
 

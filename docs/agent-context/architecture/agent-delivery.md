@@ -1,17 +1,14 @@
 # Agent delivery and asynchronous documentation
 
 Scope: OpenCode SDLC harness. Evidence inspected on 2026-10-13 in branch
-`baseline/semantic-model-001`; approved policy is recorded in ADR-0013.
+`baseline/semantic-model-001`; policy is recorded in ADR-0013, with the capability fallback updated by ADR-0016.
 
 ## Execution and handoff
 
 - `build` owns integration, user interaction and the earliest verified testable flow.
   Small fixes stay with the primary; useful independent long work uses native
   `Task(background: true)` with bounded criteria and disjoint owned paths.
-- Every maintainer invocation, including a follow-up using the same `task_id`,
-  requires `background: true`. The plugin rejects foreground maintainer calls.
-  Unsupported background execution leaves documentation pending with a recovery
-  action; coding continues, without a foreground maintainer fallback.
+- Prefer background maintainer tasks when the current Task schema supports them. If background execution is unavailable, the primary completes the exact scoped documentation directly using the existing handoff and evidence; a bounded foreground maintainer is also allowed when useful. Do not invent unsupported arguments, ask for authorization again, or leave documentation pending solely because background routing is unavailable.
 - Supply absolute worktree root/branch, checkpoint ID, exact owned docs, stable
   source revision or task-scoped diff, changed behavior/rationale, existing checks,
   required review state and confirmed architecture approval when applicable.

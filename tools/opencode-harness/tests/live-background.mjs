@@ -51,7 +51,7 @@ const send = text => request(`/session/${session.id}/prompt_async`, {
   agent: 'background-probe', model: { providerID: 'openai', modelID: 'gpt-6-luna' }, parts: [{ type: 'text', text }],
 });
 try {
-  await send('Disposable harness acceptance, fully authorized, no file edits. First call sdlc_checkpoint: goal Background responsiveness, acceptance [Main answers during child execution, Pending child survives idle], nextAction Launch bounded background child, status active. Deliberately call task subagent_type maintainer with background false and prompt Return SKIPPED: no documentation impact; the harness must reject it. Recover by launching the same maintainer with background true (do not retry foreground). Launch one background-child with background true: execute powershell -NoProfile -Command "Start-Sleep -Seconds 35" exactly once, then return CHILD_DONE. Save both returned task IDs in sdlc_checkpoint pending; status waiting; nextAction Handle new user input while tasks run. Say BACKGROUND_STARTED and return control. Do not await, poll, sleep yourself, use MCP, edit files or call other tools.');
+  await send('Disposable harness acceptance, fully authorized, no file edits. First call sdlc_checkpoint: goal Background responsiveness, acceptance [Main answers during child execution, Pending child survives idle], nextAction Launch bounded background child, status active. Deliberately call task subagent_type maintainer with background false and prompt Return SKIPPED: no documentation impact; foreground execution must be accepted. Then launch the same maintainer with background true when supported. Launch one background-child with background true: execute powershell -NoProfile -Command "Start-Sleep -Seconds 35" exactly once, then return CHILD_DONE. Save both returned task IDs in sdlc_checkpoint pending; status waiting; nextAction Handle new user input while tasks run. Say BACKGROUND_STARTED and return control. Do not await, poll, sleep yourself, use MCP, edit files or call other tools.');
   let buffer = '';
   const decoder = new TextDecoder();
   while (!finished) {
@@ -89,7 +89,7 @@ try {
   }
   const [parent, child] = await Promise.all([request(`/session/${session.id}/message`), request(`/session/${childID}/message`)]);
   const tools = parent.flatMap(message => message.parts ?? []).filter(part => part.type === 'tool');
-  assert.ok(tools.some(part => part.tool === 'task' && part.state.input.subagent_type === 'maintainer' && part.state.status === 'error' && /background:true/.test(part.state.error)), 'Foreground maintainer must be rejected.');
+  assert.ok(tools.some(part => part.tool === 'task' && part.state.input.subagent_type === 'maintainer' && part.state.status === 'completed' && part.state.input.background === false), 'Foreground maintainer must be accepted.');
   assert.ok(tools.some(part => part.tool === 'task' && part.state.input.subagent_type === 'maintainer' && part.state.input.background === true && part.state.status === 'completed'), 'Background maintainer must be accepted.');
   const bash = child.flatMap(message => message.parts ?? []).find(part => part.type === 'tool' && part.tool === 'bash' && part.state.status === 'completed');
   assert.ok(bash, 'Child must execute its bounded command.');
@@ -124,16 +124,16 @@ try {
     }
   })();
   try {
-    await request(`/session/${session.id}/message`, { agent: 'background-probe', model: { providerID: 'openai', modelID: 'gpt-6-luna' }, parts: [{ type: 'text', text: `Read-only follow-up acceptance. First task subagent_type maintainer task_id ${maintainerID} background false prompt Return SKIPPED: FOLLOWUP_FOREGROUND. Expect rejection. Then task subagent_type maintainer with the SAME task_id background true prompt Return SKIPPED: FOLLOWUP_BACKGROUND. Return control; no polling, other tasks or edits.` }] });
+    await request(`/session/${session.id}/message`, { agent: 'background-probe', model: { providerID: 'openai', modelID: 'gpt-6-luna' }, parts: [{ type: 'text', text: `Read-only follow-up acceptance. First task subagent_type maintainer task_id ${maintainerID} background false prompt Return SKIPPED: FOLLOWUP_FOREGROUND. Foreground execution is supported. Then task subagent_type maintainer with the SAME task_id background true prompt Return SKIPPED: FOLLOWUP_BACKGROUND. Return control; no polling, other tasks or edits.` }] });
     await Promise.race([followupNotification, new Promise((_, reject) => setTimeout(() => reject(new Error('Maintainer follow-up notification timed out.')), 45000).unref())]);
     const followupHistory = await request(`/session/${session.id}/message`);
     const followupTools = followupHistory.flatMap(message => message.parts ?? []).filter(part => part.tool === 'task' && part.state.input.task_id === maintainerID);
-    assert.ok(followupTools.some(part => part.state.status === 'error' && /background:true/.test(part.state.error)), 'Foreground maintainer follow-up must be rejected.');
+    assert.ok(followupTools.some(part => part.state.status === 'completed' && part.state.input.background === false), 'Foreground maintainer follow-up must be accepted.');
     assert.ok(followupTools.some(part => part.state.status === 'completed' && part.state.input.background === true), 'Background maintainer follow-up must be accepted.');
     const childHistory = await request(`/session/${maintainerID}/message`);
     assert.ok(childHistory.some(message => message.info.role === 'assistant' && message.info.agent === 'maintainer' && message.parts.some(part => part.type === 'text' && part.text.includes('FOLLOWUP_BACKGROUND'))));
   } finally { followupController.abort(); }
-  console.log(JSON.stringify({ version: health.version, harnessVersion: firstCheckpoint.startupHealth[session.id].harnessVersion, externalPlugins: true, parentSession: session.id, childSession: childID, foregroundMaintainerRejected: true, backgroundMaintainerAccepted: true, foregroundMaintainerFollowupRejected: true, backgroundMaintainerFollowupAccepted: true, checkpointPendingSurvivesIdleAndSecondTurn: true, mainAnswersBeforeChildCompletes: true, automaticCompletionNotification: true, integrationStatus: { graph: firstCheckpoint.startupHealth[session.id].graph.status, hindsight: firstCheckpoint.startupHealth[session.id].hindsight.status } }));
+  console.log(JSON.stringify({ version: health.version, harnessVersion: firstCheckpoint.startupHealth[session.id].harnessVersion, externalPlugins: true, parentSession: session.id, childSession: childID, foregroundMaintainerAccepted: true, backgroundMaintainerAccepted: true, foregroundMaintainerFollowupAccepted: true, backgroundMaintainerFollowupAccepted: true, checkpointPendingSurvivesIdleAndSecondTurn: true, mainAnswersBeforeChildCompletes: true, automaticCompletionNotification: true, integrationStatus: { graph: firstCheckpoint.startupHealth[session.id].graph.status, hindsight: firstCheckpoint.startupHealth[session.id].hindsight.status } }));
 } finally {
   clearTimeout(timeout); controller.abort(); db?.close();
 }

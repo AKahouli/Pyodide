@@ -53,9 +53,7 @@ Git documentation as the fallback. Checkpoint failures do not block coding.
 ## Background handoff and scoped recipes
 
 Native Task handles asynchronous execution and completion notifications.
-Every maintainer initial/follow-up invocation requires `background:true`; the
-plugin rejects foreground maintainer Task calls in healthy and degraded modes.
-Unsupported background support leaves docs pending while coding continues.
+Prefer background maintainer tasks when the current Task schema supports them. If background execution is unavailable, the primary completes the exact scoped documentation directly using the existing handoff and evidence; a bounded foreground maintainer is also allowed when useful. Do not invent unsupported arguments, ask for authorization again, or leave documentation pending solely because background routing is unavailable.
 The guard covers Task invocations, not direct manual agent selection.
 
 Save child IDs, owned paths, source inputs and pending results in existing

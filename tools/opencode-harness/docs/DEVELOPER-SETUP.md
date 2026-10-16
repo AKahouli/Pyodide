@@ -325,8 +325,7 @@ The verified CLI result does not establish desktop GUI behavior.
 
 In your desktop session, request one bounded background task, then send another
 message while it runs. Expect the main agent to answer and later report completion.
-Maintainer calls must always use background mode, including follow-ups; unsupported
-execution leaves docs pending with recovery instructions, not a foreground fallback.
+Prefer background maintainer tasks when the current Task schema supports them. If background execution is unavailable, the primary completes the exact scoped documentation directly using the existing handoff and evidence; a bounded foreground maintainer is also allowed when useful. Do not invent unsupported arguments, ask for authorization again, or leave documentation pending solely because background routing is unavailable.
 
 For advanced two-process startup verification, use
 [the parallel readiness procedure](PARALLEL-VERIFICATION.md).
@@ -373,7 +372,8 @@ testable phase.”
 | BLOCKED | Missing environment/access/evidence; includes an exact recovery action |
 
 Routine reviewers and documentation do not delay ready-to-test delivery.
-The maintainer always runs asynchronously. It updates affected behavior,
+Prefer asynchronous maintenance when supported; otherwise the primary completes
+the scoped documentation directly. Maintenance updates affected behavior,
 architecture and contracts after source stabilizes; the primary reviews results
 and records pending/updated paths. Full completion includes those updates.
 

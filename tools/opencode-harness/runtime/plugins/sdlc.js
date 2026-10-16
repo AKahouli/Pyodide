@@ -3,12 +3,6 @@ import path from 'node:path';
 import { openHarness } from '../lib/sdlc-core.mjs';
 import { probeStartup, healthLine, captureFailure } from '../lib/startup-health.mjs';
 
-function requireBackgroundMaintainer(input, output) {
-  if (input.tool === 'task' && output.args.subagent_type === 'maintainer' && output.args.background !== true) {
-    throw new Error('SDLC: maintainer requires Task(background:true), including follow-ups. If unsupported, report documentation pending and continue coding; do not use a foreground fallback.');
-  }
-}
-
 export const SdlcHarness = async ({ worktree, directory, client }) => {
   const harnessVersion = '2026-10-14-advisory-checkpoints';
   const candidate = worktree && path.parse(worktree).root !== worktree ? worktree : directory;
@@ -79,7 +73,6 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
     'chat.message': async input => { await check(input.sessionID); },
     'experimental.chat.system.transform': async (input, output) => { if (input.sessionID) output.system.push(startupText(await check(input.sessionID))); },
     'tool.execute.before': async (input, output) => {
-      requireBackgroundMaintainer(input, output);
     },
     event: async ({ event }) => { if (event.type === 'session.created' && event.properties?.info?.id) await check(event.properties.info.id); },
   };
@@ -133,7 +126,6 @@ export const SdlcHarness = async ({ worktree, directory, client }) => {
       if (resumeNotices.has(input.sessionID)) output.system.push(`SDLC resume selection/result: ${report(resumeNotices.get(input.sessionID))}`);
     },
     'tool.execute.before': async (input, output) => {
-      requireBackgroundMaintainer(input, output);
       if (/code.review.graph.*(?:list_graph_stats_tool|get_minimal_context_tool)$/.test(input.tool) || input.tool === 'hindsight_diagnose') {
         await check(input.sessionID);
         observedCalls.set(input.callID, { generation: generations.get(input.sessionID), sessionID: input.sessionID });

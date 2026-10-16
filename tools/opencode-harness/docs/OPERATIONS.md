@@ -45,7 +45,7 @@ checkpoint stores. A ZIP release never transfers those runtime databases.
 | Evidence save denied by Chrome | Verify MCP roots/allowed active repository workspace; keep files in owned `qa-artifacts/` and avoid unrestricted path flags. |
 | Specialist model unavailable | Change/remove its explicit `model:` override, select an accessible primary model, restart the host. |
 | `Task(background: true)` unsupported/foreground only | Enable `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=1` in the launching process and restart the host; verify the tested OpenCode version. |
-| Maintainer Task rejected | Use `background:true` for initial and resumed `task_id` calls. If unsupported, keep documentation pending and continue coding; no foreground fallback. |
+| Background maintainer unavailable | Primary completes the scoped docs from the existing handoff, or uses supported bounded foreground delegation. No repeated authorization or routing-only pending state. |
 | Shell command denied | Inspect the current agent's native permissions. Restricted specialists return runtime/log needs to the primary; the plugin no longer filters shell commands. Authored source changes still use native edit tools. |
 | Resume has several candidates | Select the real task ID; reconcile source/check fingerprints before continuing. An active old process must park/interrupt its task first. |
 

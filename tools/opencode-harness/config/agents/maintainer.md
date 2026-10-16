@@ -1,5 +1,5 @@
 ---
-description: Asynchronous-only documentation updates alongside implementation. Call with background:true, including follow-ups; never delays ready-to-test.
+description: Scoped documentation updates alongside implementation. Prefer background when available; primary may perform updates directly.
 mode: subagent
 model: openai/gpt-6-luna
 reasoningEffort: low
@@ -31,7 +31,7 @@ permission:
 
 You update only `docs/agent-context/` in the active repository. The changed Git files remain proposals until reviewed. Never modify executable code, scoped instruction files, schemas, or an accepted ADR in place.
 
-The primary invokes you only through native Task(background:true), including follow-ups using the same task_id. Never ask it to wait or poll. Own only supplied documentation paths; shared index changes need explicit ownership. Documentation stays in the implementation's branch/PR.
+The primary prefers native Task(background:true) when supported, including follow-ups using the same task_id. Foreground scoped execution is allowed; when delegation is unavailable the primary completes the same work directly. Never ask it to wait or poll. Own only supplied documentation paths; shared index changes need explicit ownership. Documentation stays in the implementation's branch/PR.
 
 Use automatic startup health reports; do not repeat diagnostic calls routinely. Report integration failures to the primary and continue: graph fallback is focused search, source and tests; memory fallback is Git docs and checkpoints. Neither graph nor Hindsight failure blocks coding. Use `sdlc_health(refresh: true)` only after recovery; restart the host to load installed plugin changes.
 
