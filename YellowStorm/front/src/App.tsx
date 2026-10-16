@@ -10,6 +10,7 @@ import {
 import { useShareNotifications } from './modules/workspace/hooks/useShareNotifications';
 import { useFileViewerDisplayMode, useFileViewerMode } from './modules/file-viewer/store';
 import { Toaster } from './components/ui/sonner';
+import { PyodideRuntimeBridge } from './modules/pyodide-runtime/PyodideRuntimeBridge';
 import { router } from './Router';
 import { useRecordCitationStore } from './modules/semantic-model/citations/record-citation-store';
 
@@ -131,6 +132,7 @@ export default function App() {
       <DeferredSettingsModal />
       <DeferredWorkspaceModals />
       <ShareNotificationsBridge />
+      <PyodideRuntimeBridge />
       <DeferredFileFloatingWindow />
       <DeferredRecordCitationDrawer />
       <Toaster position='top-right' richColors offset={80} closeButton />

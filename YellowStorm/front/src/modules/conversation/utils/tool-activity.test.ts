@@ -7,6 +7,7 @@ import {
   resolveToolRequest,
   resolveToolResponse,
   resolveToolDisplayKey,
+  resolveToolRenderKind,
   resolveToolSummary,
   sanitizeRunCodeInput,
 } from './tool-activity';
@@ -144,7 +145,12 @@ describe('resolveToolDisplayKey', () => {
     ['code-interpreter_file_list', 'findFiles'],
     ['code-interpreter_file_find', 'findFiles'],
     ['code-interpreter_shell_exec', 'runCommand'],
+    ['pyodide_execute_python', 'runCode'],
   ])('maps %s to %s for mixed-version activities', (toolName, displayKey) => {
     expect(resolveToolDisplayKey({ toolName })).toBe(displayKey);
+  });
+
+  it('renders the browser Python MCP tool as a code execution', () => {
+    expect(resolveToolRenderKind('pyodide_execute_python')).toBe('run_code');
   });
 });
