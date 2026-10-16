@@ -14,6 +14,7 @@ async def run_step_with_tools(
     agent_role: str = "parent",
     agent_name: str = "",
     summary_session_id: str = "",
+    agent_config: Any = None,
     **_kwargs: Any,
 ) -> str:
     return await run_step_agent(
@@ -25,5 +26,6 @@ async def run_step_with_tools(
             on_trace_update=on_trace_update, trace_collector=trace_collector,
             agent_role=agent_role, agent_name=agent_name,
             summary_session_id=summary_session_id, tools_enabled=True,
+            agent_config=dict(agent_config or {}),
         ),
     )
