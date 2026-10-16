@@ -24,15 +24,21 @@ class SemanticModelBackendError(RuntimeError):
 
 
 class YellowStormSemanticModelClient:
-    def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(self, base_url: str, internal_token: str, timeout_seconds: float = 120, max_response_bytes: int = 2 * 1024 * 1024,
+                 transport: httpx.AsyncBaseTransport | None = None, service_token: str = "") -> None:
         if not internal_token:
             raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+        if not service_token:
+            # WP07.2: backend assistant routes authenticate the
+            # semantic-model-mcp service principal with its scoped secret.
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
         self._internal_token = internal_token
+        self._service_token = service_token
         self._max_response_bytes = max_response_bytes
 
     async def close(self) -> None:
@@ -51,12 +57,13 @@ class YellowStormSemanticModelClient:
         return await self._request("DELETE", path, user_id)
 
     async def _request(self, method: str, path: str, user_id: str, payload: dict[str, Any] | None = None) -> Any:
-        # The backend-issued MCP JWT is forwarded as a signed actor assertion
-        # (WP06.4) so the backend derives the actor from its signature instead
-        # of the naked user-id header. Never logged.
+        # Service identity comes from the scoped semantic-model-mcp principal
+        # (WP07.2); the backend-issued MCP JWT travels as the signed actor
+        # assertion (WP06.4). Never logged.
         assertion = verified_mcp_jwt.get()
         headers = {
-            "X-Internal-Token": self._internal_token,
+            "X-Yellowstorm-Service-Principal": "semantic-model-mcp",
+            "X-Yellowstorm-Service-Token": self._service_token,
             "X-YellowStorm-User-Id": user_id,
             **self._actor_headers(),
         }

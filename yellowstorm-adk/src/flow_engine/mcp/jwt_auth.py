@@ -1,5 +1,6 @@
 """Renew delegated MCP tokens through the trusted YellowStorm backend."""
 
+import os
 import time
 from urllib.parse import urlsplit
 
@@ -18,9 +19,12 @@ async def renew_mcp_jwt(server_url: str, auth_env: dict, headers: dict) -> tuple
     from src.config.settings import get_settings
 
     settings = get_settings()
-    secret = settings.INTERNAL_SERVICE_SECRET
-    if not secret or not settings.API_URL:
-        raise RuntimeError("MCP JWT renewal requires backend API_URL and INTERNAL_SERVICE_SECRET")
+    # WP07.2: token renewal authenticates the semantic-model-mcp service
+    # principal with its scoped secret; the legacy shared internal token is
+    # no longer accepted on the renewal route.
+    service_token = getattr(settings, "SEMANTIC_MODEL_MCP_SERVICE_TOKEN", "") or os.getenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", "")
+    if not service_token or not settings.API_URL:
+        raise RuntimeError("MCP JWT renewal requires backend API_URL and SEMANTIC_MODEL_MCP_SERVICE_TOKEN")
     api_url = settings.API_URL.rstrip("/")
     if api_url.endswith("/api"):
         api_url += "/v1"
@@ -30,7 +34,10 @@ async def renew_mcp_jwt(server_url: str, auth_env: dict, headers: dict) -> tuple
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.post(
                 f"{api_url}/connectors/internal/mcp-token",
-                headers={"X-Internal-Token": secret},
+                headers={
+                    "X-Yellowstorm-Service-Principal": "semantic-model-mcp",
+                    "X-Yellowstorm-Service-Token": service_token,
+                },
                 json={"connectorId": auth_env["YELLOWSTORM_MCP_JWT_CONNECTOR_ID"],
                       "userId": auth_env["YELLOWSTORM_MCP_JWT_USER_ID"]},
             )

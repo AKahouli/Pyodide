@@ -18,6 +18,7 @@ import {
   isRemoteInspectableMcpTransport,
   sanitizeEndpointUrl,
 } from './utils/remote-mcp-transport.util';
+import { trustedMcpServerUrls } from './utils/trusted-mcp-server.util';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError, McpDestinationPolicyOptions } from './utils/mcp-destination-policy.util';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
@@ -45,6 +46,10 @@ export function mcpToolSafety(annotations: unknown): 'read' | 'write' | 'delete'
   if (hints.destructiveHint === true) return 'delete';
   return hints.readOnlyHint === false ? 'write' : 'read';
 }
+
+/** fetch wrapper that refuses redirects — shared by SSE transports whose
+ * eventsource layer would otherwise force `redirect: follow` (WP05.3). */
+export const denyRedirectFetch: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' });
 
 @Injectable()
 export class ConnectorService {
@@ -569,13 +574,21 @@ export class ConnectorService {
       }
 
       if (transportType === 'sse') {
-         
+
         const sseMod = await import('@modelcontextprotocol/sdk/client/sse.js').catch(() => null);
         if (!sseMod) {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const SSEClientTransport = sseMod.SSEClientTransport;
-        transport = new SSEClientTransport(new URL(serverUrl), { requestInit });
+        // The SSE transport fetches its event stream through the `eventsource`
+        // package, which ignores requestInit.redirect and forces follow. A
+        // fetch override is the only way to refuse redirects on that hop too
+        // (WP05.3): a policy-approved endpoint must never bounce the probe to
+        // an unvalidated destination.
+        transport = new SSEClientTransport(new URL(serverUrl), {
+          requestInit,
+          eventSourceInit: { fetch: denyRedirectFetch } as never,
+        });
       } else {
         // streamable_http — the guard above already rejected every other value.
         const httpMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(() => null);
@@ -664,7 +677,8 @@ export class ConnectorService {
     return Object.keys(headers).length > 0 ? { headers } : undefined;
   }
 
-  /** Egress policy knobs from typed config; production stays https-only (WP05.1). */
+  /** Egress policy knobs from typed config; production stays https-only (WP05.1)
+   * and only exact admin-configured internal endpoints bypass the public rules (WP05.5). */
   private mcpDestinationPolicyOptions(): McpDestinationPolicyOptions {
     const config = this.configService;
     const ports = (config?.get<string>('MCP_EGRESS_ALLOWED_PORTS') ?? '80,443,8443')
@@ -673,7 +687,7 @@ export class ConnectorService {
       .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
     const nodeEnv = config?.get<string>('NODE_ENV', 'development');
     const allowInsecureHttp = (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false) && nodeEnv !== 'production';
-    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp };
+    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, allowExactEndpoints: [...trustedMcpServerUrls(config)] };
   }
 
   private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {

@@ -417,7 +417,13 @@ export const configValidationSchema = Joi.object({
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer').when('NODE_ENV', {
+    // WP06.1/WP07.6: production must fail startup on the developer-only
+    // shared Bearer mode, or the assistant actor guard would accept a naked
+    // user-id header next to the service credential.
+    is: 'production',
+    then: Joi.string().valid('JWT').required(),
+  }),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),

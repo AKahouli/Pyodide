@@ -23,7 +23,8 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { isTrustedMcpServerUrl } from './utils/trusted-mcp-server.util';
+import { isTrustedMcpServerUrl, trustedMcpServerUrls } from './utils/trusted-mcp-server.util';
+import { assertMcpDestinationAllowed, McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
@@ -114,6 +115,24 @@ export class AdminConnectorController {
     // Reject non-remote transports BEFORE any token retrieval or credential
     // resolution, so denied inspections have zero auth side effects (WP-01).
     this.connectorService.assertInspectableTransport(connector?.mcpTransportType ?? body.transportType);
+    // Same for the destination (WP-05/WP05.7): run the egress policy before
+    // OAuth token retrieval, runtime auth resolution or dynamic-header
+    // evaluation — a blocked destination must cause zero credential side
+    // effects. Options mirror ConnectorService (trusted internal endpoints
+    // excepted per WP05.5).
+    try {
+      await assertMcpDestinationAllowed(connector?.mcpServerUrl ?? body.serverUrl, {
+        allowExactEndpoints: [...trustedMcpServerUrls(this.configService)],
+      });
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+          'This MCP server destination is not allowed.',
+        );
+      }
+      throw error;
+    }
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
@@ -332,9 +351,23 @@ export class AdminConnectorController {
     @Body() dto: InspectConnectorDto,
   ) {
     // SERVER-ONLY runtime lookup (WP-02); stdio/unknown transports are denied
-    // before token retrieval or any inspection side effect (WP-01).
+    // before token retrieval or any inspection side effect (WP-01), and the
+    // destination passes the egress policy before any credential work (WP-05).
     const connector = await this.connectorService.getRuntimeById(id);
     this.connectorService.assertInspectableTransport(connector.mcpTransportType);
+    try {
+      await assertMcpDestinationAllowed(connector.mcpServerUrl, {
+        allowExactEndpoints: [...trustedMcpServerUrls(this.configService)],
+      });
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+          'This MCP server destination is not allowed.',
+        );
+      }
+      throw error;
+    }
 
     if (dto.useOAuth && !connector.connectedAppKey) {
       throw new BadRequestException(

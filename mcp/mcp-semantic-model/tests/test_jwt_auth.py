@@ -114,11 +114,19 @@ async def test_rejects_wrong_signature_and_duplicate_authorization(keys):
 
 def test_auth_mode_configuration():
     settings = Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
-        auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm")
+        service_token="service-secret", auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm")
     settings.validate()
     for mode in ("invalid", "Bearer"):
         with pytest.raises(ValueError):
-            Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152, auth_mode=mode).validate()
+            Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
+                service_token="service-secret", auth_mode=mode).validate()
+
+
+def test_service_principal_token_is_required():
+    # WP07.2: without the scoped secret the backend rejects every assistant
+    # call, so startup must fail instead.
+    with pytest.raises(ValueError, match="SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required"):
+        Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152).validate()
 
 
 def test_production_requires_jwt_mode():
@@ -126,8 +134,8 @@ def test_production_requires_jwt_mode():
     # running the developer-only shared bearer token.
     with pytest.raises(ValueError, match="must be JWT in production"):
         Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
-            auth_mode="Bearer", environment="production").validate()
+            service_token="service-secret", auth_mode="Bearer", environment="production").validate()
     jwt_settings = Settings("http://localhost:3000", "internal", "", 120, 8027, 2097152,
-        auth_mode="JWT", jwt_public_key_file="public.pem", jwt_issuer="yellowstorm",
-        environment="production")
+        service_token="service-secret", auth_mode="JWT", jwt_public_key_file="public.pem",
+        jwt_issuer="yellowstorm", environment="production")
     jwt_settings.validate()

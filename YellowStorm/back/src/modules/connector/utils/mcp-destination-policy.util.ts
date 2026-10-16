@@ -58,6 +58,13 @@ export interface McpDestinationPolicyOptions {
   allowedPorts?: number[];
   /** Allow plain http (development only). Defaults to false (https-only). */
   allowInsecureHttp?: boolean;
+  /**
+   * Exact admin-configured internal service endpoints (WP05.5): an exact
+   * canonical match skips the DNS/forbidden-range and port rules because the
+   * endpoint is a fixed private-network rule reached with service-issued
+   * JWTs. Lookalike URLs inherit nothing.
+   */
+  allowExactEndpoints?: string[];
   /** DNS resolver; overridable for tests. */
   resolver?: Pick<Resolver, 'resolve4' | 'resolve6'>;
 }
@@ -192,9 +199,84 @@ export function assertMcpDestinationUrl(serverUrl: string, options: McpDestinati
  * records with every address checked against the forbidden ranges. Resolves
  * with the validated address list or throws {@link McpDestinationPolicyError}.
  */
-export async function assertMcpDestinationAllowed(serverUrl: string, options: McpDestinationPolicyOptions = {}): Promise<string[]> {
-  const parsed = assertMcpDestinationUrl(serverUrl, options);
+/** Shape checks that apply to EVERY destination, including exact configured
+ * internal endpoints: parseability, http/https only, no userinfo, no
+ * fragment, sane percent-encoding, hostname present. */
+function parseAndAssertBasicShape(serverUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(serverUrl);
+  } catch {
+    throw new McpDestinationPolicyError('invalid_url', '');
+  }
   const host = normalizeMcpDestinationHost(parsed.hostname);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new McpDestinationPolicyError('unsupported_scheme', host);
+  }
+  if (parsed.username || parsed.password) {
+    throw new McpDestinationPolicyError('embedded_credentials', host);
+  }
+  if (parsed.hash) {
+    throw new McpDestinationPolicyError('fragment_present', host);
+  }
+  if (hasMalformedPercentEncoding(serverUrl)) {
+    throw new McpDestinationPolicyError('malformed_percent_encoding', host);
+  }
+  if (!host) {
+    throw new McpDestinationPolicyError('missing_hostname', host);
+  }
+  return parsed;
+}
+
+/** Canonical scheme://host:port/path form so URL spellings cannot differ from
+ * an admin-configured endpoint. Null for anything unusable. */
+export function canonicalMcpEndpoint(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
+  if (parsed.hash || parsed.search) return null;
+  const host = normalizeMcpDestinationHost(parsed.hostname);
+  if (!host) return null;
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+  return `${parsed.protocol}//${host}:${port}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+function matchesExactEndpoint(serverUrl: string, allowExactEndpoints?: string[]): boolean {
+  const endpoints = (allowExactEndpoints ?? [])
+    .map((entry) => canonicalMcpEndpoint(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  if (endpoints.length === 0) return false;
+  const candidate = canonicalMcpEndpoint(serverUrl);
+  return Boolean(candidate) && endpoints.includes(candidate as string);
+}
+
+export async function assertMcpDestinationAllowed(serverUrl: string, options: McpDestinationPolicyOptions = {}): Promise<string[]> {
+  const parsed = parseAndAssertBasicShape(serverUrl);
+  const host = normalizeMcpDestinationHost(parsed.hostname);
+
+  // WP05.5: exact admin-configured internal service endpoints are a fixed
+  // private-network rule reached with service-issued JWTs — they bypass the
+  // public-destination rules (plain http, non-allowlisted ports, private DNS
+  // ranges) but nothing else. Matching is canonical and exact, so lookalike
+  // URLs inherit nothing.
+  if (matchesExactEndpoint(serverUrl, options.allowExactEndpoints)) {
+    return [];
+  }
+
+  if (parsed.protocol === 'http:' && !(options.allowInsecureHttp ?? false)) {
+    throw new McpDestinationPolicyError('insecure_http', host);
+  }
+  const allowedPorts = options.allowedPorts ?? DEFAULT_PORTS;
+  const port = parsed.port ? Number.parseInt(parsed.port, 10) : parsed.protocol === 'https:' ? 443 : 80;
+  if (!allowedPorts.includes(port)) {
+    throw new McpDestinationPolicyError('port_not_allowed', host);
+  }
+
   // Literal-IP destinations (any spelling WHATWG canonicalizes) never touch DNS.
   if (isIP(host)) {
     if (isForbiddenEgressIp(host)) {

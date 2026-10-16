@@ -55,20 +55,20 @@ replayed ticket is rejected even under a race. A reconnect needs a fresh ticket.
 
 ### Bind auth (APImanus → YellowStorm)
 
-`POST /internal/app-runtime/bind` requires header `X-Internal-Token`.
+`POST /internal/app-runtime/bind` requires the scoped `app-runtime` service principal headers (WP-07): `X-Yellowstorm-Service-Principal: app-runtime` + `X-Yellowstorm-Service-Token`. The bind token is valid ONLY on this surface — it authenticates no other internal route.
 
 | Side | Env var |
 |---|---|
 | APImanus | `APP_RUNTIME_BIND_TOKEN` |
-| YellowStorm | `APP_RUNTIME_BIND_TOKEN` (preferred) or legacy `INTERNAL_SERVICE_SECRET` |
+| YellowStorm | `APP_RUNTIME_BIND_TOKEN` (required in production, min 16 chars) |
 
-Values must match. Prefer setting the same `APP_RUNTIME_BIND_TOKEN` on both services.
+Values must match.
 
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `APP_RUNTIME_BIND_TOKEN` | — | Shared internal token for bind (alias of `INTERNAL_SERVICE_SECRET`) |
+| `APP_RUNTIME_BIND_TOKEN` | — | Scoped `app-runtime` principal token for bind/tool-invoke (never valid on other internal routes) |
 | `APP_RUNTIME_MCP_ENABLED` | `true` | When false, MCP endpoint returns 503 |
 | `APP_RUNTIME_MCP_URL` | — | Explicit public MCP URL returned on bind |
 | `APP_RUNTIME_PUBLIC_BASE_URL` | — | Used to derive MCP URL if `MCP_URL` unset |

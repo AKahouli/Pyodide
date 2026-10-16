@@ -1,10 +1,26 @@
 import { AdminConnectorController } from './admin-connector.controller';
 import { ConnectorService } from './connector.service';
 import { BadRequestException, ErrorCode } from '../exceptions';
+import { McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import type { ConnectorRow } from './persistence/connector.store';
+
+const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
+
+// Hermetic like connector.service.spec: the pre-check wiring is stubbed so
+// trusted/untrusted header tests stay DNS-free; the policy's decision logic
+// has its own suite and the denial tests below override the stub.
+jest.mock('./utils/mcp-destination-policy.util', () => ({
+  ...jest.requireActual('./utils/mcp-destination-policy.util'),
+  assertMcpDestinationAllowed: (...args: unknown[]) => assertMcpDestinationAllowed(...(args as [string])),
+}));
 
 describe('AdminConnectorController MCP inspection', () => {
   const user = { _id: { toString: () => 'user-1' } } as never;
+
+  beforeEach(() => {
+    assertMcpDestinationAllowed.mockReset();
+    assertMcpDestinationAllowed.mockResolvedValue([]);
+  });
 
   const playbookConnector = {
     id: 'connector-1',
@@ -18,7 +34,9 @@ describe('AdminConnectorController MCP inspection', () => {
     mcpServerConfig: {},
   } as unknown as ConnectorRow;
   const config = { get: jest.fn((key: string, fallback?: string) => (
-    key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp/' : fallback
+    key === 'PLAYBOOK_MCP_SERVER_URL' ? 'http://localhost:8025/mcp/'
+      : key === 'TRUSTED_MCP_SERVER_URLS' ? 'http://localhost:8099/mcp'
+      : fallback
   )) };
 
   function createController(connector: unknown = playbookConnector) {
@@ -172,6 +190,63 @@ describe('AdminConnectorController MCP inspection', () => {
     }, user)).rejects.toBeInstanceOf(BadRequestException);
     expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
     expect(connectorAuthService.resolveRuntimeAuth).not.toHaveBeenCalled();
+  });
+
+  it('denies a blocked destination before OAuth token retrieval or runtime auth resolution (WP-05)', async () => {
+    const { controller, connectorAdminAuthService, connectorAuthService } = createController({
+      ...playbookConnector,
+      mcpServerUrl: 'https://metadata.internal/mcp',
+    });
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError('forbidden_address', 'metadata.internal'));
+
+    await expect(controller.inspectMcp({
+      connectorId: 'connector-1',
+      transportType: 'streamable_http',
+      connectedAppKey: 'github',
+    } as never, user)).rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED });
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+    expect(connectorAuthService.resolveRuntimeAuth).not.toHaveBeenCalled();
+  });
+
+  it('denies a blocked draft destination before any credential resolution (WP-05)', async () => {
+    const { controller, connectorAdminAuthService, connectorAuthService } = createController(null);
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError('forbidden_address', '169.254.169.254'));
+
+    await expect(controller.inspectMcp({
+      transportType: 'streamable_http',
+      serverUrl: 'https://169.254.169.254/mcp',
+      connectedAppKey: 'github',
+    }, user)).rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED });
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+    expect(connectorAuthService.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
+
+  it('runs the destination pre-check on :id/inspect before OAuth token retrieval (WP-05)', async () => {
+    const { controller, connectorAdminAuthService } = createController({
+      ...playbookConnector,
+      mcpServerUrl: 'https://metadata.internal/mcp',
+    });
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError('forbidden_address', 'metadata.internal'));
+
+    await expect(controller.inspectConnector('connector-1', user, {})).rejects.toMatchObject({
+      code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED,
+    });
+    expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps an exact configured internal endpoint inspectable without OAuth side effects (WP05.5)', async () => {
+    const { controller, connectorService, store } = createController();
+    const inspectMcp = jest.spyOn(connectorService, 'inspectMcp')
+      .mockResolvedValue({ serverName: 'playbook', tools: [] });
+
+    await controller.inspectMcp({
+      connectorId: 'connector-1',
+      transportType: 'streamable_http',
+      serverUrl: 'http://localhost:8025/mcp',
+    }, user);
+
+    expect(inspectMcp).toHaveBeenCalled();
+    expect(store.findById).toHaveBeenCalledWith('connector-1');
   });
 
   it('denies stdio transports on the admin draft import endpoint without creating a connector', async () => {

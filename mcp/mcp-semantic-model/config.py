@@ -26,6 +26,7 @@ class Settings:
     timeout_seconds: float
     port: int
     max_response_bytes: int
+    service_token: str = ""
     auth_mode: str = "Bearer"
     jwt_public_key_file: str = ""
     jwt_issuer: str = ""
@@ -41,6 +42,7 @@ class Settings:
             timeout_seconds=float(os.getenv("SEMANTIC_MODEL_MCP_TIMEOUT_SECONDS", "120")),
             port=int(os.getenv("MCP_PORT", "8027")),
             max_response_bytes=int(os.getenv("SEMANTIC_MODEL_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
+            service_token=os.getenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", ""),
             auth_mode=os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE", "Bearer"),
             jwt_public_key_file=os.getenv("SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("SEMANTIC_MODEL_MCP_JWT_ISSUER", ""),
@@ -49,8 +51,11 @@ class Settings:
         )
 
     def validate(self) -> None:
-        if not self.internal_token:
-            raise ValueError("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is required")
+        if not self.service_token:
+            # WP07.2: every backend assistant call authenticates the
+            # semantic-model-mcp service principal; without the scoped secret
+            # the backend rejects the server, so fail at startup.
+            raise ValueError("SEMANTIC_MODEL_MCP_SERVICE_TOKEN is required")
         if self.auth_mode not in ("JWT", "Bearer"):
             raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT or Bearer")
         if self.auth_mode == "JWT":

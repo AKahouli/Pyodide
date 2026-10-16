@@ -166,4 +166,43 @@ describe('McpDestinationPolicy destination checks (WP05.2/WP05.3)', () => {
       .rejects.toMatchObject({ reason: 'embedded_credentials' });
     expect(resolver.resolve4).not.toHaveBeenCalled();
   });
+
+  describe('exact admin-configured internal endpoints (WP05.5)', () => {
+    const exact = ['http://localhost:8027/mcp', 'https://mcp.internal.example/mcp'];
+
+    it('allows an exact configured internal endpoint despite loopback, plain http and a non-allowlisted port', async () => {
+      const resolver = fakeResolver(['8.8.8.8']);
+
+      await expect(assertMcpDestinationAllowed('http://localhost:8027/mcp', { allowExactEndpoints: exact, resolver }))
+        .resolves.toEqual([]);
+      expect(resolver.resolve4).not.toHaveBeenCalled();
+    });
+
+    it('canonicalizes spellings so case, trailing slash and explicit default port still match', async () => {
+      await expect(assertMcpDestinationAllowed('HTTP://LOCALHOST:8027/mcp/', { allowExactEndpoints: exact }))
+        .resolves.toEqual([]);
+      await expect(assertMcpDestinationAllowed('https://mcp.internal.example:443/mcp', { allowExactEndpoints: exact }))
+        .resolves.toEqual([]);
+    });
+
+    it.each([
+      ['http://localhost:8027/other', 'different path'],
+      ['http://localhost:9999/mcp', 'different port'],
+      ['http://localhost.evil.test:8027/mcp', 'lookalike host'],
+      ['http://localhost:8027/mcp/extra/deeper', 'extended path'],
+      ['https://localhost:8027/mcp?other=1', 'query appended'],
+    ])('denies the lookalike %s (%s)', async (url) => {
+      const resolver = fakeResolver(new Error('ENOTFOUND'), new Error('ENOTFOUND'));
+
+      await expect(assertMcpDestinationAllowed(url, { allowExactEndpoints: exact, resolver }))
+        .rejects.toBeInstanceOf(McpDestinationPolicyError);
+    });
+
+    it('still rejects configured endpoints that carry userinfo or a fragment', async () => {
+      await expect(assertMcpDestinationAllowed('http://user:pass@localhost:8027/mcp', { allowExactEndpoints: exact }))
+        .rejects.toMatchObject({ reason: 'embedded_credentials' });
+      await expect(assertMcpDestinationAllowed('http://localhost:8027/mcp#frag', { allowExactEndpoints: exact }))
+        .rejects.toMatchObject({ reason: 'fragment_present' });
+    });
+  });
 });

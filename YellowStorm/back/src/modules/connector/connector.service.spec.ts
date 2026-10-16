@@ -19,7 +19,7 @@ const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
 // prove the denial wiring (WP-05).
 jest.mock('./utils/mcp-destination-policy.util', () => ({
   ...jest.requireActual('./utils/mcp-destination-policy.util'),
-  assertMcpDestinationAllowed: (serverUrl: string) => assertMcpDestinationAllowed(serverUrl),
+  assertMcpDestinationAllowed: (...args: unknown[]) => assertMcpDestinationAllowed(...(args as [string])),
 }));
 
 jest.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
@@ -985,7 +985,29 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
 
     await service.inspectMcp('streamable_http', 'https://mcp.example.test/mcp');
 
-    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('https://mcp.example.test/mcp');
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('https://mcp.example.test/mcp', expect.objectContaining({ allowExactEndpoints: expect.any(Array) }));
+  });
+
+  it('keeps exact admin-configured internal MCP endpoints inspectable (WP05.5)', async () => {
+    const store = connectorStoreMock();
+    const service = new ConnectorService(
+      store,
+      categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
+      null as any,
+      {
+        resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+        resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+      } as any,
+      createPlaybookBindingSyncServiceMock() as any,
+      { get: (key: string, fallback?: string) => (key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp' : fallback) } as any,
+    );
+
+    await service.inspectMcp('streamable_http', 'http://localhost:8027/mcp');
+
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://localhost:8027/mcp', expect.objectContaining({
+      allowExactEndpoints: expect.arrayContaining(['http://localhost:8027/mcp']),
+    }));
   });
 
   it.each([

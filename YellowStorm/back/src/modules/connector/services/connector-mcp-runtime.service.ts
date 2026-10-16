@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -8,6 +9,8 @@ import type { ConnectorAuthService } from '../interfaces/connector-auth.interfac
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
+import { trustedMcpServerUrls } from '../utils/trusted-mcp-server.util';
+import { denyRedirectFetch } from '../connector.service';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -37,6 +40,7 @@ export class ConnectorMcpRuntimeService {
     private readonly logger: LoggerService,
     private readonly workspaceShares: WorkspaceShareService,
     @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly config?: ConfigService,
   ) {
     this.logger.setContext(ConnectorMcpRuntimeService.name);
   }
@@ -56,9 +60,12 @@ export class ConnectorMcpRuntimeService {
     }
 
     // SSRF egress policy (WP-05): the same destination rules as inspection
-    // apply to runtime tool calls, before any transport is constructed.
+    // apply to runtime tool calls, before any transport is constructed. The
+    // exact admin-configured internal endpoints (WP05.5) stay reachable.
     try {
-      await assertMcpDestinationAllowed(connector.mcpServerUrl);
+      await assertMcpDestinationAllowed(connector.mcpServerUrl, {
+        allowExactEndpoints: [...trustedMcpServerUrls(this.config)],
+      });
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
         this.logger.warn('Denied MCP runtime tool call destination', {
@@ -133,11 +140,16 @@ export class ConnectorMcpRuntimeService {
   }
 
   private async createTransport(transportType: string, serverUrl: string, headers: Record<string, string>): Promise<Transport> {
-    // No-follow redirects on every runtime hop (WP05.3).
+    // No-follow redirects on every runtime hop (WP05.3). SSE streams flow
+    // through the eventsource layer, which ignores requestInit.redirect —
+    // the fetch override is the only refusal that reaches that hop.
     const requestInit: RequestInit = { headers, redirect: 'error' };
     if (transportType === 'sse') {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
-      return new SSEClientTransport(new URL(serverUrl), { requestInit });
+      return new SSEClientTransport(new URL(serverUrl), {
+        requestInit,
+        eventSourceInit: { fetch: denyRedirectFetch } as never,
+      });
     }
     const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
     return new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });
