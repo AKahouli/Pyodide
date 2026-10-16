@@ -136,6 +136,7 @@ export function formatChoiceSubmissionContent(content: string): string {
 }
 
 export function getUserMessageDisplayText(msg: Message): string {
+  if (msg.interaction?.type === 'openui' && msg.interaction.label) return msg.interaction.label;
   if (msg.interactions?.length) {
     const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
     return displayTexts.length ? displayTexts.join(', ') : msg.content || '';

@@ -16,7 +16,7 @@ import { StreamService } from '../services/stream.service';
 import { ConversationService } from '../services/conversation.service';
 import { ModelsService } from '../../models/models.service';
 import { TeamService } from '../../team/team.service';
-import { SendMessageDto } from '../dto/send-message.dto';
+import { SendMessageDto, isValidOpenUiSubmission } from '../dto/send-message.dto';
 import { MessageQueryDto } from '../dto/message-query.dto';
 import { MessageFeedbackDto } from '../dto/message-feedback.dto';
 import { UpdateMessageDto } from '../dto/update-message.dto';
@@ -159,6 +159,10 @@ export class MessageController {
     activateBackendPreAdkTracker(this.conversationSettings.isLatencyInstrumentationEnabledCached());
     beginBackendPreAdkStage('controllerValidationRoutingMs');
     const requestId = dto.requestId ?? this.requestContext.getRequestId();
+    if (dto.openUiSubmission !== undefined && (!isValidOpenUiSubmission(dto.openUiSubmission)
+      || dto.interaction || dto.interactions?.length || dto.rootContinuation || dto.playbookHandoffId)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid or mixed OpenUI submission');
+    }
     const requestFingerprint = this.fingerprintTurn(dto);
 
     this.logger.log('Request received', {
@@ -183,6 +187,9 @@ export class MessageController {
     }
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
+    if (dto.openUiSubmission && conversation.runtimeMode === 'governed') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'OpenUI submissions require an idle standard conversation');
+    }
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
     if (dto.rootContinuation && (platformCopilot || conversation.isGroup || dto.memberIds?.length)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Native continuation requires a standard root conversation');
@@ -277,6 +284,25 @@ export class MessageController {
         }
         return { userMessage: existingTurn.userMessage, aiMessageId: existingTurn.aiMessageId };
       }
+    }
+
+    let canonicalOpenUi: { interaction: Record<string, unknown>; content: string } | undefined;
+    if (dto.openUiSubmission) {
+      if (this.streamService.isConversationStreaming(user._id.toString(), conversationId)) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'OpenUI submissions require an idle standard conversation');
+      }
+      let source: Awaited<ReturnType<MessageService['getMessageDocument']>> | undefined;
+      try { source = await this.messageService.getMessageDocument(dto.openUiSubmission.sourceMessageId); }
+      catch { throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source'); }
+      const component = source?.components?.find(item => item.id === dto.openUiSubmission!.componentId && item.type === 'text');
+      if (!source || source.conversationId !== conversationId || source.conversationType !== 'ai'
+        || source.isStreaming || !source.isComplete || typeof component?.data?.content !== 'string'
+        || !/^\s*root\s*=\s*[A-Z]\w*\(/m.test(component.data.content)) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
+      }
+      const interaction = JSON.parse(JSON.stringify(dto.openUiSubmission)) as Record<string, unknown>;
+      canonicalOpenUi = { interaction,
+        content: `${dto.openUiSubmission.label || 'OpenUI form submitted'}\n\n${JSON.stringify(interaction, null, 2)}` };
     }
 
     // If files attached, ensure system workspace exists
@@ -418,7 +444,10 @@ export class MessageController {
     let canonicalInteractions: Record<string, unknown>[] | undefined;
     let canonicalContent = dto.content;
     let canonicalTaskSummary: string | undefined;
-    if (dto.interaction) {
+    if (canonicalOpenUi) {
+      canonicalInteraction = canonicalOpenUi.interaction;
+      canonicalContent = canonicalOpenUi.content;
+    } else if (dto.interaction) {
       const canonicalChoice = await this.choiceInteractionService.canonicalize(conversationId, dto.interaction);
       canonicalInteraction = canonicalChoice.interaction;
       canonicalContent = canonicalChoice.content;
@@ -770,6 +799,7 @@ export class MessageController {
       parentMessageId: dto.parentMessageId ?? null,
       connectorRepo: dto.connectorRepo ?? null,
       skillIds: dto.skillIds ?? [],
+      ...(dto.openUiSubmission ? { openUiSubmission: dto.openUiSubmission } : {}),
       interaction: dto.interaction ?? null,
       interactions: dto.interactions ?? null,
       clientContext: dto.clientContext ?? null,

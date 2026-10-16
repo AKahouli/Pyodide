@@ -1,7 +1,9 @@
-import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty,IsInt, Min, Max } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty,IsInt, Min, Max, ValidateBy } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RootContinuationDto } from './root-continuation.dto';
+import { BadRequestException } from '../../exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 class ConnectorRepoDto {
   @ApiProperty()
@@ -61,7 +63,82 @@ export class ChoiceInteractionDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(1000) displayText?: string;
 }
 
+/** Structural transport validation only; form values remain untrusted user input. */
+export class OpenUiSubmissionDto {
+  @IsIn(['openui']) type!: 'openui';
+  @IsIn([1]) schemaVersion!: 1;
+  @IsMongoId() sourceMessageId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(128) componentId!: string;
+  @IsIn(['continue_conversation']) actionType!: 'continue_conversation';
+  @IsOptional() @IsString() @MaxLength(128) formName?: string;
+  @IsOptional() @IsString() @MaxLength(1000) label?: string;
+  @ApiProperty({ type: 'object', additionalProperties: true })
+  formState!: Record<string, unknown>;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  params?: Record<string, unknown>;
+}
+
+export function isValidOpenUiSubmission(value: unknown): value is OpenUiSubmissionDto {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (![Object.prototype, null, OpenUiSubmissionDto.prototype].includes(Object.getPrototypeOf(value))) return false;
+  const submission = value as Record<string, unknown>;
+  const keys = new Set(['type', 'schemaVersion', 'sourceMessageId', 'componentId', 'actionType', 'formName', 'label', 'formState', 'params']);
+  if (Reflect.ownKeys(submission).some(key => typeof key !== 'string' || !keys.has(key)
+    || Object.getOwnPropertyDescriptor(submission, key)?.get !== undefined
+    || Object.getOwnPropertyDescriptor(submission, key)?.set !== undefined
+    || !Object.getOwnPropertyDescriptor(submission, key)?.enumerable)) return false;
+  if (submission.type !== 'openui' || submission.schemaVersion !== 1 || submission.actionType !== 'continue_conversation'
+    || typeof submission.sourceMessageId !== 'string' || !/^[a-f\d]{24}$/i.test(submission.sourceMessageId)
+    || typeof submission.componentId !== 'string' || !submission.componentId.length || submission.componentId.length > 128
+    || (submission.formName !== undefined && (typeof submission.formName !== 'string' || submission.formName.length > 128))
+    || (submission.label !== undefined && (typeof submission.label !== 'string' || submission.label.length > 1000))) return false;
+  let items = 0;
+  const seen = new Set<object>();
+  const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object'
+    && !Array.isArray(item) && [Object.prototype, null].includes(Object.getPrototypeOf(item));
+  const visit = (item: unknown, depth: number): boolean => {
+    if (++items > 200 || depth > 8) return false;
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') return true;
+    if (typeof item === 'number') return Number.isFinite(item);
+    if (typeof item !== 'object' || !item || seen.has(item)) return false;
+    seen.add(item);
+    if (Array.isArray(item)) return item.length <= 200
+      && Reflect.ownKeys(item).every(key => key === 'length' || (typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key)
+        && Object.getOwnPropertyDescriptor(item, key)?.get === undefined
+        && Object.getOwnPropertyDescriptor(item, key)?.set === undefined
+        && Object.getOwnPropertyDescriptor(item, key)?.enumerable === true))
+      && Array.from({ length: item.length }, (_, index) => Object.prototype.hasOwnProperty.call(item, index) && visit(item[index], depth + 1)).every(Boolean);
+    return record(item) && Reflect.ownKeys(item).every(key => typeof key === 'string'
+      && !['__proto__', 'prototype', 'constructor'].includes(key)
+      && Object.getOwnPropertyDescriptor(item, key)?.get === undefined
+      && Object.getOwnPropertyDescriptor(item, key)?.set === undefined
+      && Object.getOwnPropertyDescriptor(item, key)?.enumerable === true
+      && visit(item[key], depth + 1));
+  };
+  if (!record(submission.formState) || !visit(submission.formState, 0)
+    || (submission.params !== undefined && (!record(submission.params) || !visit(submission.params, 0)))) return false;
+  try { return Buffer.byteLength(JSON.stringify(submission), 'utf8') <= 20 * 1024; } catch { return false; }
+}
+
 export class SendMessageDto {
+  @ApiPropertyOptional({ type: OpenUiSubmissionDto })
+  // Validate original JSON: class-transformer's key filtering must not silently accept a changed payload.
+  @Type(options => {
+    // Bounds and dangerous keys must be checked before the transformer traverses arbitrary form JSON.
+    const value: unknown = options?.object?.openUiSubmission;
+    if (value !== undefined && !isValidOpenUiSubmission(value)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI submission');
+    }
+    return Object;
+  })
+  @Transform(({ obj }) => obj.openUiSubmission, { toClassOnly: true })
+  @IsOptional()
+  @ValidateBy({ name: 'boundedOpenUiSubmission', validator: {
+    validate: isValidOpenUiSubmission,
+    defaultMessage: () => 'openUiSubmission must be a bounded OpenUI form submission',
+  } })
+  openUiSubmission?: OpenUiSubmissionDto;
+
   @ApiPropertyOptional({ type: RootContinuationDto })
   @IsOptional() @ValidateNested() @Type(() => RootContinuationDto)
   rootContinuation?: RootContinuationDto;

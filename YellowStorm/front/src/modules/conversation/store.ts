@@ -1278,7 +1278,7 @@ export const useConversationStore = create<ConversationState>()(
           content: payload.content,
           modelId: payload.modelId,
           reasoningEffort: payload.reasoningEffort,
-          interaction: payload.interaction,
+          interaction: payload.openUiSubmission ?? payload.interaction,
           interactions: payload.interactions,
           attachedFileIds: payload.attachedFileIds,
           attachedFiles: payload.attachedFiles,

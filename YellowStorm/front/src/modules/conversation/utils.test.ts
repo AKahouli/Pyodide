@@ -3,6 +3,12 @@ import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, formatChoiceSubmissionContent, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
+  it('shows the label of a typed OpenUI submission while keeping its stored values separate', () => {
+    expect(getUserMessageDisplayText({ id: 'submission', conversationId: 'conversation', conversationType: 'user',
+      content: 'Apply filters\n\n{"count":0}', createdAt: '2026-10-16',
+      interaction: { type: 'openui', schemaVersion: 1, actionType: 'continue_conversation', sourceMessageId: 'answer',
+        componentId: 'form', label: 'Apply filters', formState: { count: 0, enabled: false } } })).toBe('Apply filters');
+  });
   it('renders a recovered interruption beside the saved partial answer', () => {
     const translate = vi.spyOn(i18nInstance, 't').mockImplementation(((key: string) => key) as typeof i18nInstance.t);
     try {

@@ -340,6 +340,19 @@ export interface ConversationUsageMetrics {
   };
 }
 
+export type OpenUiJson = null | boolean | number | string | OpenUiJson[] | { [key: string]: OpenUiJson };
+export interface OpenUiSubmission {
+  type: 'openui';
+  schemaVersion: 1;
+  sourceMessageId: string;
+  componentId: string;
+  actionType: 'continue_conversation';
+  formName?: string;
+  label?: string;
+  formState: Record<string, OpenUiJson>;
+  params?: Record<string, OpenUiJson>;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -347,7 +360,7 @@ export interface Message {
   conversationType: 'user' | 'ai';
   content?: string;
   components?: MessageComponent[];
-  interaction?: ChoiceInteractionMetadata;
+  interaction?: ChoiceInteractionMetadata | OpenUiSubmission;
   interactions?: ChoiceInteractionMetadata[];
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
@@ -648,6 +661,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SendMessagePayload {
+  openUiSubmission?: OpenUiSubmission;
   rootContinuation?: {
     executionId: string;
     inputResponses: Array<{ inputId: string; inputVersion?: number; response: Record<string, unknown> }>;

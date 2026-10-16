@@ -1,12 +1,14 @@
 import './devtools-off';
 import { useContext, type ReactNode } from 'react';
-import { createLibrary, useIsStreaming, type DefinedComponent } from '@openuidev/react-lang';
+import { createLibrary, useIsStreaming, useFormName, useGetFieldValue, useSetDefaultValue, type DefinedComponent } from '@openuidev/react-lang';
 import { Card as OpenUICard } from '@openuidev/react-ui';
 import { chatLibrary } from '@openuidev/thesys';
 import { cn } from '@/lib/utils';
 import { CitationMarkdown, hasMarker, OpenUiCitationContext, OpenUiTextContent } from './citations';
 import { inlineTextOverrides, withCitedHeader, type StockComponent } from './inline-text';
 import { withDocumentImages } from './document-images';
+import { OpenUiSubmissionContext } from './actions';
+import { useModuleTranslation } from '@/modules/localization';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -66,6 +68,26 @@ const overrides: Record<string, (stock: StockComponent) => StockComponent> = {
   TextContent: () => OpenUiTextContent as StockComponent,
   Header: withCitedHeader,
   Table: withCitedTable,
+  Slider: (Stock) => function RegisteredSlider(args) {
+    const formName = useFormName();
+    const getFieldValue = useGetFieldValue();
+    // The stock slider applies its fallback before checking whether state needs hydration.
+    // Register the actual default so an untouched slider is included in submissions.
+    useSetDefaultValue({ formName, componentType: 'Slider', name: args.props.name,
+      existingValue: getFieldValue(formName, args.props.name), defaultValue: args.props.defaultValue });
+    return <Stock {...args} />;
+  },
+  Form: (Stock) => function InteractiveForm(args) {
+    const statuses = useContext(OpenUiSubmissionContext);
+    const { t } = useModuleTranslation('conversation');
+    const status = statuses[String(args.props.name ?? '')];
+    return <fieldset disabled={status === 'submitting'} className='m-0 min-w-0 border-0 p-0' aria-busy={status === 'submitting'}>
+      <Stock {...args} />
+      {status && status !== 'error' && <p role='status' className='mt-2 text-sm text-muted-foreground'>
+        {t(`openui.interaction.${status}`)}
+      </p>}
+    </fieldset>;
+  },
 };
 
 const IMAGE_COMPONENTS = new Set(['Image', 'ImageBlock', 'ImageGallery', 'ImageText', 'ImageTextLarge', 'List', 'OptionCards',

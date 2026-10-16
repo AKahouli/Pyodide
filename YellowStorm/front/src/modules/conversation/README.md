@@ -1,5 +1,16 @@
 # Conversation Module
 
+### Typed OpenUI interactions
+
+`OpenUiAnswer` sends bounded `openUiSubmission` JSON with exact form values and
+action parameters, source message/component and form name. Accepted submissions
+reuse the existing message interaction field, hydrate the SDK renderer after
+reload and keep a readable action label in the user bubble. Named forms retain
+SDK validation, show submission progress/errors and allow changed values to be
+submitted again. Failed retries retain their request ID; unchanged accepted or
+pending submissions do not create another turn. Draft values remain local.
+Server source/JSON checks do not turn user-entered values into trusted tool input.
+
 ### Saved image version history
 
 `ImageVersionHistory` lazily loads the saved image's authorized family through

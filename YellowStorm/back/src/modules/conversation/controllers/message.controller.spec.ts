@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { MessageController } from './message.controller';
 import { ConflictException } from '../../exceptions';
+import { OpenUiSubmissionDto } from '../dto/send-message.dto';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 describe('MessageController.sendMessage sticky routing', () => {
@@ -493,6 +494,71 @@ describe('MessageController.sendMessage sticky routing', () => {
     const result = await controller.sendMessage(user, conversationId, { content: 'hello' } as any);
 
     expect(result).toEqual(expect.objectContaining({ aiMessageId }));
+  });
+
+  const openUiSubmission = (): OpenUiSubmissionDto => ({ type: 'openui', schemaVersion: 1,
+    sourceMessageId: 'a'.repeat(24), componentId: 'text-form', actionType: 'continue_conversation',
+    formName: 'travel', label: 'Plan the trip', formState: { enabled: false, days: 0, budget: 1.5,
+      empty: '', optional: null, choices: ['a', 2], field: { componentType: 'Input', value: '' } }, params: {} });
+  const openUiSource = () => ({ conversationId, conversationType: 'ai', isStreaming: false, isComplete: true,
+    components: [{ id: 'text-form', type: 'text', data: { content: 'root = Card([])' } }] });
+
+  it('persists and streams exact typed OpenUI submission values using canonical content', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockResolvedValue(openUiSource());
+    const interaction = openUiSubmission();
+    await controller.sendMessage(user, conversationId, { content: 'untrusted display text', openUiSubmission: interaction });
+    const saved = messageService.createUserMessage.mock.calls[0][0];
+    expect(saved.interaction).toEqual(interaction);
+    expect(saved.content).toBe(`Plan the trip\n\n${JSON.stringify(interaction, null, 2)}`);
+    expect(saved.replayContext.content).toBe(saved.content);
+    expect(streamService.startStream.mock.calls[0][3].content).toBe(saved.content);
+    expect(choiceInteractionService.canonicalize).not.toHaveBeenCalled();
+  });
+
+  it.each([{ interaction: { type: 'choice' } }, { interactions: [{ type: 'choice' }] },
+    { rootContinuation: {} }, { playbookHandoffId: 'handoff' }])('rejects mixed OpenUI turns: %p', async patch => {
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission(), ...patch } as never)).rejects.toThrow('mixed OpenUI');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([{ conversationId: 'b'.repeat(24) }, { conversationType: 'user' }, { isStreaming: true }, { isComplete: false },
+    { components: [] }, { components: [{ id: 'foreign', type: 'text', data: { content: 'root = Card([])' } }] },
+    { components: [{ id: 'text-form', type: 'text', data: { content: 'Ordinary markdown' } }] },
+  ])('rejects foreign, incomplete or non-OpenUI source: %p', async patch => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockResolvedValue({ ...openUiSource(), ...patch });
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('Invalid OpenUI source');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown sources and idle/governance violations', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    messageService.getMessageDocument.mockRejectedValueOnce(new Error('not found'));
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('Invalid OpenUI source');
+    streamService.isConversationStreaming.mockReturnValue(true);
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('idle standard');
+    streamService.isConversationStreaming.mockReturnValue(false);
+    conversationService.getConversationDocument.mockResolvedValue({ runtimeMode: 'governed', createdBy: userId, members: [] });
+    await expect(controller.sendMessage(user, conversationId,
+      { content: '', openUiSubmission: openUiSubmission() })).rejects.toThrow('idle standard');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates identical OpenUI retries and conflicts when typed values change', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    const dto = { content: '', requestId: 'openui-retry', openUiSubmission: openUiSubmission() };
+    const fingerprint = (controller as unknown as { fingerprintTurn: (value: typeof dto) => string }).fingerprintTurn(dto);
+    messageService.findTurnByRequestId.mockResolvedValue({ requestFingerprint: fingerprint,
+      userMessage: { id: 'saved-user', interaction: dto.openUiSubmission }, aiMessageId: 'saved-ai' });
+    expect(await controller.sendMessage(user, conversationId, dto)).toEqual({ userMessage: expect.objectContaining({ id: 'saved-user' }), aiMessageId: 'saved-ai' });
+    await expect(controller.sendMessage(user, conversationId,
+      { ...dto, openUiSubmission: { ...dto.openUiSubmission, formState: { days: '0' } } })).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
   });
 
   it('uses canonical choice content for persistence and agent streaming', async () => {

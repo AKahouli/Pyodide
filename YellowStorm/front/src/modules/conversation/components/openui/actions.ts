@@ -1,8 +1,37 @@
 import type { ActionEvent } from '@openuidev/react-lang';
-import type { ArtifactActivityData } from '../../types';
+import { createContext } from 'react';
+import type { ArtifactActivityData, OpenUiSubmission } from '../../types';
+
+export const OpenUiSubmissionContext = createContext<Record<string, 'submitting' | 'submitted' | 'error'>>({});
+export const submissionKey = (submission: Pick<OpenUiSubmission, 'formName' | 'label'>): string => submission.formName ?? submission.label ?? '';
+export function submissionSignature(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(submissionSignature).join(',')}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${submissionSignature(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+/** Reject non-JSON values rather than coercing them and changing their meaning. */
+export function typedActionData(value: unknown): Record<string, import('../../types').OpenUiJson> {
+  let entries = 0;
+  const visit = (node: unknown, depth: number): void => {
+    if (depth > 8 || ++entries > 200) throw new Error('Invalid action data');
+    if (node === null || typeof node === 'string' || typeof node === 'boolean' || (typeof node === 'number' && Number.isFinite(node))) return;
+    if (Array.isArray(node)) { node.forEach(child => visit(child, depth + 1)); return; }
+    if (!isRecord(node) || Object.getPrototypeOf(node) !== Object.prototype) throw new Error('Invalid action data');
+    for (const [key, child] of Object.entries(node)) {
+      if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('Invalid action data');
+      visit(child, depth + 1);
+    }
+  };
+  if (!isRecord(value)) throw new Error('Invalid action data');
+  visit(value, 0);
+  const encoded = JSON.stringify(value);
+  if (new TextEncoder().encode(encoded).length > 20_000) throw new Error('Invalid action data');
+  return JSON.parse(encoded) as Record<string, import('../../types').OpenUiJson>;
+}
 
 export type FollowUp =
-  | { kind: 'message'; content: string }
+  | { kind: 'message'; content: string; submission?: Pick<OpenUiSubmission, 'formName' | 'label' | 'formState' | 'params'> }
   | { kind: 'open-url'; url: string }
   | { kind: 'download-artifact'; artifact: ArtifactActivityData }
   | { kind: 'ignore' };
@@ -56,9 +85,15 @@ export function toFollowUpMessage(event: ActionEvent, artifacts: readonly Artifa
   if (event.type === CONTINUE_CONVERSATION) {
     const label = event.humanFriendlyMessage?.trim();
     const hasForm = event.formState && Object.keys(event.formState).length > 0;
-    if (!label && !hasForm) return { kind: 'ignore' };
-    const values = hasForm ? formatFormValues(event.formState!).join('\n') : '';
+    const hasParams = Object.keys(event.params ?? {}).length > 0;
+    if (!label && !hasForm && !hasParams) return { kind: 'ignore' };
+    const formState = typedActionData(event.formState ?? {});
+    const params = typedActionData(event.params ?? {});
+    const values = hasForm ? formatFormValues(formState).join('\n') : '';
     const content = values ? `${label ?? ''}\n\n${values}`.trim() : label;
+    if (hasForm || hasParams) return { kind: 'message', content: content || JSON.stringify(event.formState ?? event.params),
+      submission: { ...(event.formName ? { formName: event.formName } : {}), ...(label ? { label } : {}),
+        formState, params } };
     if (!content) return { kind: 'ignore' };
     return { kind: 'message', content };
   }

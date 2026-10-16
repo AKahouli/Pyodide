@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from '../activity/ConversationAssistantBubble';
 import { useAgentStore } from '@/modules/agent/store';
 import { preloadOpenUiForAgent } from './preload';
-import type { MessageComponent } from '../../types';
+import type { MessageComponent, OpenUiSubmission } from '../../types';
+import { useConversationStore } from '../../store';
 import type { ActionEvent } from '@openuidev/react-lang';
 import { OpenUiAnswer } from './OpenUiAnswer';
 
@@ -20,14 +21,15 @@ vi.mock('./preload', async (importOriginal) => {
   return { ...actual, preloadOpenUiForAgent: vi.fn(actual.preloadOpenUiForAgent) };
 });
 vi.mock('./OpenUiRenderer', () => ({
-  default: ({ content, isStreaming, onAction, citationScope }: { content: string; isStreaming: boolean; onAction: (event: ActionEvent) => void; citationScope?: { componentId?: string } }) => {
+  default: ({ content, isStreaming, onAction, citationScope, initialState }: { content: string; isStreaming: boolean; onAction: (event: ActionEvent) => void; citationScope?: { componentId?: string }; initialState?: Record<string, unknown> }) => {
     if (rendererState.shouldThrow || rendererState.throwOn?.(content)) throw new Error('renderer crashed');
-    return <div data-testid='openui-stub' data-streaming={String(isStreaming)} data-component-id={citationScope?.componentId}>{content}{rendererState.action && <button onClick={() => onAction(rendererState.action!)}>Download test</button>}</div>;
+    return <div data-testid='openui-stub' data-streaming={String(isStreaming)} data-state={JSON.stringify(initialState)} data-component-id={citationScope?.componentId}>{content}{rendererState.action && <button onClick={() => onAction(rendererState.action!)}>Download test</button>}</div>;
   },
 }));
 
 const program = 'root = Stack([title])\ntitle = TextContent("Hello")';
 const answer: MessageComponent = { id: 'answer', type: 'text', data: { content: program, actorId: 'agent-1' } };
+const originalSend = useConversationStore.getState().sendMessage;
 const bubble = (isStreaming = false) => <ConversationAssistantBubble conversationId='c' messageId='m' components={[answer]} isStreaming={isStreaming} />;
 
 describe('answer render mode', () => {
@@ -40,10 +42,49 @@ describe('answer render mode', () => {
     rendererState.throwOn = null;
     rendererState.action = null;
     vi.clearAllMocks();
+    useConversationStore.setState({ messages: [], isStreaming: false, currentConversationId: null, sendMessage: originalSend });
     vi.stubEnv('VITE_OPENUI_RENDER_ENABLED', 'true');
     useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Generative UI agent', slug: 'research-assistant', genUiEnabled: true }] as never, isInitialized: true });
   });
   afterEach(() => vi.unstubAllEnvs());
+
+  it('preserves typed form state, blocks concurrent duplicate submits and restores accepted values on remount', async () => {
+    const formState = { filters: { count: { value: 0, componentType: 'Slider' }, enabled: { value: false, componentType: 'SwitchItem' }, notes: { value: '', componentType: 'TextArea' } } };
+    rendererState.action = { type: 'continue_conversation', params: { row: 0 }, humanFriendlyMessage: 'Apply', formName: 'filters', formState };
+    let finish!: () => void;
+    const send = vi.fn().mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    useConversationStore.setState({ sendMessage: send });
+    const props = { content: program, isStreaming: false, conversationId: 'c', messageId: 'm', partId: 'part' };
+    const view = render(<OpenUiAnswer {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download test' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Download test' }));
+    expect(send).toHaveBeenCalledTimes(1);
+    const payload = send.mock.calls[0][1];
+    expect(payload.openUiSubmission).toMatchObject({ type: 'openui', componentId: 'part', sourceMessageId: 'm', formName: 'filters', formState, params: { row: 0 } });
+    finish();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Download test' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Download test' }));
+    expect(send).toHaveBeenCalledTimes(1);
+    view.unmount();
+    useConversationStore.setState({ messages: [{ id: 'saved', conversationId: 'c', conversationType: 'user', interaction: payload.openUiSubmission as OpenUiSubmission, createdAt: '2026-10-16' }] });
+    render(<OpenUiAnswer {...props} />);
+    expect(JSON.parse((await screen.findByTestId('openui-stub')).getAttribute('data-state')!)).toEqual(formState);
+    fireEvent.click(screen.getByRole('button', { name: 'Download test' }));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains values and reuses the request ID when a rejected submission is retried', async () => {
+    rendererState.action = { type: 'continue_conversation', params: {}, humanFriendlyMessage: 'Apply', formName: 'filters', formState: { active: false } };
+    const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+    useConversationStore.setState({ sendMessage: send });
+    render(<OpenUiAnswer content={program} isStreaming={false} conversationId='c' messageId='m' partId='part' />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download test' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Download test' }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[0][1].requestId).toBe(send.mock.calls[1][1].requestId);
+    expect(send.mock.calls[1][1].openUiSubmission.formState).toEqual({ active: false });
+  });
 
   it('signs the matching answer artifact on every click after remount and reports delivery errors', async () => {
     rendererState.action = { type: 'download_artifact', params: { filename: 'report.docx' }, humanFriendlyMessage: '' };

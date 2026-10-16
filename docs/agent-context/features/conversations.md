@@ -130,6 +130,24 @@ execute model-authored actions in the browser or imply successful file delivery.
 See the module README and `document-export.test.ts`, `openui-export-assets.test.ts`,
 `docx-export.test.ts` and `MessageActions.test.tsx` for the implementation contract.
 
+### Interactive OpenUI answers (2026-10-16)
+
+Form submissions and filter/chart/table follow-up parameters keep their typed JSON
+in the existing user-message `interaction` record (`type: openui`). The request's
+`openUiSubmission` identifies its saved assistant text component and form name.
+The server checks source ownership, completion, standard runtime, bounded JSON and
+turn compatibility; the values remain untrusted user input, not business-policy
+approval. OpenUI's declared field rules validate primary form submissions in the
+renderer. The model receives exact JSON; the chat bubble displays the action label.
+
+Named forms show submitting, saved and retryable-error states. Duplicate pending
+or unchanged accepted submissions are suppressed; retries reuse their request ID.
+Reload hydrates accepted typed form values from saved messages. Unsubmitted drafts
+are local; no new persistence table or draft store is introduced. Tests:
+`send-message.dto.spec.ts`, `message.controller.spec.ts`,
+`openui-submission.integration.spec.ts`, `interactive-forms.test.tsx`,
+`OpenUiAnswer.test.tsx` and `actions.test.ts`.
+
 ### Image actions (2026-10-15)
 
 Conversation system workspace storage can be adjusted under Admin → Workspace by
