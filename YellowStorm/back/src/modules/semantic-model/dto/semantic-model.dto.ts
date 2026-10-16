@@ -470,6 +470,23 @@ export class DocumentLabelsDto {
   documentIds!: string[];
 }
 
+/** Read-only proposals; normal graph and mapping commands apply the reviewed selection. */
+export class DocumentFieldSuggestionsDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(128)
+  conceptId!: string;
+
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(128)
+  workspaceId!: string;
+
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5) @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(200, { each: true })
+  documentIds!: string[];
+
+  @ApiPropertyOptional({ maxLength: 2000, description: 'Concept purpose used for this discovery' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  description?: string;
+}
+
 /** One part of a joined input: an input (as a single input names it) or a fixed text. */
 export class ComputedJoinPartDto {
   @ApiProperty({ enum: ['file', 'field', 'column', 'text'] })

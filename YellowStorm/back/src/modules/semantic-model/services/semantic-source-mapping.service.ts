@@ -34,6 +34,7 @@ import type {
   SourceMappingPreviewDto,
   ComputedFieldPreviewDto,
   DocumentLabelsDto,
+  DocumentFieldSuggestionsDto,
   SheetFieldPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
@@ -314,6 +315,28 @@ export class SemanticSourceMappingService {
     const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
     return this.runtime.suggestDocumentLabels({
       actorUserId: userId,
+      sources: documents.map((document) => ({
+        workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
+        uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
+        indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
+      })),
+    });
+  }
+
+  async documentFieldSuggestions(userId: string, modelId: string, dto: DocumentFieldSuggestionsDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.access.assertSourceEditable(userId, model.id, dto.workspaceId);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, []);
+    const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
+    if (documents.some((document) => !DOCUMENT_MIME_TYPES.has(document.mimeType))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Choose readable document sources');
+    }
+    return this.runtime.suggestDocumentFields({
+      actorUserId: userId,
+      concept: { id: concept.id, label: concept.label, description: dto.description ?? '',
+        attributes: concept.attributes.map(({ key, label, type, description }) => ({ key, label, type, ...(description ? { description } : {}) })),
+      },
       sources: documents.map((document) => ({
         workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
         uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   createBulkDocumentSourceMappings: vi.fn(),
   createWorkspaceSourceMapping: vi.fn(),
   getDocumentLabels: vi.fn(),
+  suggestDocumentFields: vi.fn(),
 }));
 const workspaceApi = vi.hoisted(() => ({ getDocuments: vi.fn(), getFolderContents: vi.fn(), getDocument: vi.fn() }));
 
@@ -47,6 +48,49 @@ describe('DocumentSourceMappingDrawer', () => {
     ] });
     api.previewSourceMapping.mockResolvedValue({ entities: [], stats: { scannedRows: 1, resolvedEntities: 0, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 }, identityEvidence: [], warnings: [] });
     api.createBulkDocumentSourceMappings.mockResolvedValue({ revision: 1, mappingCount: 2 });
+  });
+
+  it.each(['document', 'workspace'])('reviews suggested fields before applying and saving a %s mapping', async (kind) => {
+    api.suggestDocumentFields.mockResolvedValue({ documentsRead: 1, documentsRequested: 1, unread: [], truncated: true, suggestions: [
+      { key: 'contract_number', label: 'Contract number', type: 'text', description: 'Reference', mapping: { targetAttribute: 'contract_number', sourceField: 'Ref', mode: 'extract', extractionStrategy: 'ai' }, evidence: [], matchedDocuments: 1 },
+      { key: 'purpose', label: 'Purpose', type: 'text', description: 'What this contract is for', mapping: { targetAttribute: 'purpose', sourceField: 'Purpose', mode: 'extract', extractionStrategy: 'ai' },
+        evidence: [{ documentId: 'document-1', filename: 'One.pdf', page: 2, quote: 'Equipment loan' }], matchedDocuments: 1 },
+      { key: 'filename', label: 'Filename', type: 'text', description: 'Source filename', mapping: { targetAttribute: 'filename', sourceField: 'document_name', mode: 'metadata', extractionStrategy: 'deterministic' }, evidence: [], matchedDocuments: 1 },
+    ] });
+    workspaceApi.getDocuments.mockResolvedValue({ documents: [{ id: 'document-1', originalName: 'One.pdf', mimeType: 'application/pdf' }] });
+    api.createSourceMapping.mockResolvedValue({ revision: 2, mappingCount: 1 });
+    api.createWorkspaceSourceMapping.mockResolvedValue({ revision: 2, fileCount: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: kind === 'document' ? 'document-1' : 'workspace:workspace-1:all', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf',
+      ...(kind === 'workspace' ? { workspace: { workspaceId: 'workspace-1', name: 'Legal', workspaceName: 'Legal' } } : {}),
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'fieldDiscovery.title' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'fieldDiscovery.purpose' }), { target: { value: 'One record per contract' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'fieldDiscovery.analyze' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'fieldDiscovery.analyze' }));
+    await screen.findByText('Equipment loan');
+    expect(api.suggestDocumentFields).toHaveBeenCalledWith('model-1', { conceptId: 'concept-1', workspaceId: 'workspace-1', documentIds: ['document-1'], description: 'One record per contract' });
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes).toHaveLength(2);
+    const includes = screen.getAllByRole('checkbox', { name: 'fieldDiscovery.include' });
+    expect(includes[0]).not.toBeChecked();
+    expect(includes[1]).toBeChecked();
+    expect(screen.getByText(/fieldDiscovery.truncated/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'fieldDiscovery.apply' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0]).toMatchObject({ description: 'One record per contract', attributes: expect.arrayContaining([
+      { key: 'purpose', label: 'Purpose', type: 'text', description: 'What this contract is for', required: false }, graph.nodes[0].attributes[0],
+    ]) });
+    // Complete the normal graph autosave before saving the source mapping.
+    act(() => useSemanticModelEditorStore.getState().markSaved(1, 1));
+    fireEvent.click(screen.getByRole('button', { name: kind === 'document' ? 'mapping.save' : 'mapping.workspaceSave' }));
+    const saveMapping = kind === 'document' ? api.createSourceMapping : api.createWorkspaceSourceMapping;
+    await waitFor(() => expect(saveMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({ fieldMappings: expect.arrayContaining([
+      expect.objectContaining({ targetAttribute: 'purpose', mode: 'extract', extractionStrategy: 'ai', semanticDefinition: 'What this contract is for' }),
+      expect.objectContaining({ targetAttribute: 'contract_number', extractionStrategy: 'deterministic' }),
+    ]) })));
+    const metadataMapping = saveMapping.mock.lastCall![1].fieldMappings.find((mapping: { targetAttribute: string }) => mapping.targetAttribute === 'filename');
+    expect(metadataMapping).toMatchObject({ mode: 'metadata', sourceField: 'document_name' });
+    expect(metadataMapping).not.toHaveProperty('extractionStrategy');
   });
 
   it('previews representative documents and saves one bulk mapping', async () => {

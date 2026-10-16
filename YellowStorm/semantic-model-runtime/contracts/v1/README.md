@@ -32,6 +32,29 @@ and type/choice checks before storing them. Sender/receiver coverage lives in
 backend `semantic-runtime-client.service.spec.ts` and runtime
 `tests/test_semantic_ai_runtime.py` / `tests/test_attribute_extraction_client.py`.
 
+## Document field suggestions
+
+`POST /v1/semantic-model-population/document-field-suggestions` is read-only
+on the existing service-authenticated population router. Executable bounds and
+response shaping live in `app/population/field_discovery.py`. The coordinator
+requires model edit access, an enabled editable workspace link and a draft
+concept, then resolves authoritative source metadata. The runtime reauthorizes
+every asset for the acting user before reading indexed text or calling AI.
+
+Discovery samples up to five documents and supplies AI with at most forty usable
+blocks and 12,000 text characters per document, reporting unread files and
+truncated coverage. Underlying source reads retain existing index closure limits. Quotes
+must occur in supplied text. Only locally generated rules verified against every
+complete, uncut sample are offered as deterministic; other grounded fields use
+AI. File identity/name suggestions use metadata. The existing runtime-owned
+profile handles inference; no database migration or new service is needed.
+
+Proposals are reviewed in the document/workspace mapper before Apply. Apply uses
+existing graph commands to autosave new fields and the reviewed concept purpose,
+and prepares the selected mappings. The normal Save mapping command persists
+those mappings after graph autosave completes. Existing field definitions remain
+unchanged; an existing mapping is replaced only when explicitly selected.
+
 ## Captured datasource schemas
 
 | File | Purpose |

@@ -418,6 +418,25 @@ export interface SourceFieldMapping {
   rules?: ExtractionRules;
 }
 
+/** Read-only proposals, grounded in the sampled documents; selection is applied by the mapping editor. */
+export interface DocumentFieldSuggestion {
+  key: string;
+  label: string;
+  type: 'text' | 'number' | 'boolean' | 'date';
+  description: string;
+  mapping: SourceFieldMapping;
+  evidence: Array<{ documentId: string; filename: string; page?: number; quote: string }>;
+  matchedDocuments: number;
+}
+
+export interface DocumentFieldSuggestions {
+  documentsRead: number;
+  documentsRequested: number;
+  unread: Array<{ assetId: string; status: string }>;
+  truncated: boolean;
+  suggestions: DocumentFieldSuggestion[];
+}
+
 /** One input a recipe reads: the file name (documents), another field, or a column (sheets; a source field for records). */
 export type ComputedInputRef = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string } | { kind: 'column'; name: string };
 /** One part of a joined input: an input, or a fixed text. */

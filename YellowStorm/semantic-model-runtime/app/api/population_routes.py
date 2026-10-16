@@ -37,6 +37,7 @@ from app.population.age_projection import (ProjectionUnavailable, projection_gra
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.population.model_check import check_model
+from app.population.field_discovery import FieldDiscoveryRequest, discover_fields
 from app.workers.celery_app import POPULATION_QUEUES
 
 events = structlog.get_logger(__name__)
@@ -1045,6 +1046,18 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         preview.update({"records": records, "recordCount": len(read["records"]),
                         "unevenFields": read.get("unevenFields") or []})
     return preview
+
+
+@router.post("/document-field-suggestions", status_code=status.HTTP_200_OK)
+async def suggest_document_fields(body: FieldDiscoveryRequest, request: Request) -> dict[str, Any]:
+    """Read-only proposals; existing service authentication and per-asset authorization apply."""
+    pool = getattr(request.app.state, "index_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="index_unavailable")
+    try:
+        return await discover_fields(pool, body)
+    except AttributeExtractionError as exc:
+        raise _ai_http_error(exc) from exc
 
 
 # How many of a document's records its preview shows.

@@ -7,6 +7,7 @@ SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPrevie
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult, ModelHealth } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 import type { MyJobsPage, MyJobsQuery } from './types';
+import type { DocumentFieldSuggestions } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -307,6 +308,9 @@ export const semanticModelApi = {
   /** Labels and headings that recur across up to 10 documents of a source, to suggest as rule labels. */
   async getDocumentLabels(id: string, body: { workspaceId: string; documentIds: string[] }): Promise<DocumentLabelsResponse> {
     return unwrap(await apiClient.post<ApiResponse<DocumentLabelsResponse>>(API_ENDPOINTS.semanticModels.sourceMappingDocumentLabels(id), body, { timeout: 60_000 }));
+  },
+  async suggestDocumentFields(id: string, body: { conceptId: string; workspaceId: string; documentIds: string[]; description: string }): Promise<DocumentFieldSuggestions> {
+    return unwrap(await apiClient.post<ApiResponse<DocumentFieldSuggestions>>(API_ENDPOINTS.semanticModels.documentFieldSuggestions(id), body, { timeout: 130_000 }));
   },
   async previewSourceMapping(id: string, draft: SourceMappingPreviewDraft): Promise<SourceMappingPreviewResponse> {
     // A document read with AI can take a couple of minutes.

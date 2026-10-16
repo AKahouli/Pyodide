@@ -102,6 +102,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   updateAdminRunLimits: 'command',
   previewSourceMapping: 'evidence-read',
   getDocumentLabels: 'evidence-read',
+  suggestDocumentFields: 'evidence-read',
   previewComputedField: 'evidence-read',
   previewSheetFields: 'evidence-read',
   previewDerivedFields: 'evidence-read',

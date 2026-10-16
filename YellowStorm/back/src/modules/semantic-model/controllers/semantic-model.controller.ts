@@ -26,6 +26,7 @@ import {
   ComputedFieldPreviewDto,
   SheetFieldPreviewDto,
   DocumentLabelsDto,
+  DocumentFieldSuggestionsDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
   SaveIdentityRuleDto, SaveLabelFieldDto,
@@ -433,6 +434,15 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   suggestDocumentLabels(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DocumentLabelsDto) {
     return this.sourceMappings.documentLabels(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/document-field-suggestions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Propose concept fields and document mappings for human review' })
+  @RateLimit({ limit: 6, windowMs: 60_000, keyPrefix: 'semantic-model:field-suggestions' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  suggestDocumentFields(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DocumentFieldSuggestionsDto) {
+    return this.sourceMappings.documentFieldSuggestions(user._id.toString(),modelId,dto);
   }
 
   @Post(':modelId/source-mappings/sheet-preview')

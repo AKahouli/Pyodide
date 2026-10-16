@@ -118,7 +118,8 @@ def uses_ai_extraction(payload: dict[str, Any]) -> bool:
     return False
 
 
-async def _completion(profile: ExtractionProfile, prompt: str, http: httpx.AsyncClient) -> dict[str, Any]:
+async def _completion(profile: ExtractionProfile, prompt: str, http: httpx.AsyncClient,
+                      response_key: str = "extractions") -> dict[str, Any]:
     body = {"model": profile.model, "messages": [{"role": "user", "content": prompt + "\n\nReturn the response as valid JSON only."}],
             "max_tokens": profile.max_tokens, "response_format": {"type": "json_object"}}
     response = None
@@ -155,7 +156,7 @@ async def _completion(profile: ExtractionProfile, prompt: str, http: httpx.Async
             if not match:
                 raise ValueError
             result = json.loads(match.group())
-        if not isinstance(result, dict) or not isinstance(result.get("extractions"), list):
+        if not isinstance(result, dict) or not isinstance(result.get(response_key), list):
             raise ValueError
         return result
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:

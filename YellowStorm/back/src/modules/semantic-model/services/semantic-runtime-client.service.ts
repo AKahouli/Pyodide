@@ -9,7 +9,8 @@ import {
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { GraphExposure } from '../domain/semantic-graph-exposure';
-import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
+import type { ResolvedEntity, SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import type { AttributeDefinition } from '../domain/semantic-model.types';
 import { runtimeErrorMessage, runtimeUnreachableMessage } from '../domain/runtime-error-messages';
 import type { ModelCheckIssue } from '../domain/semantic-model-check';
 
@@ -409,6 +410,19 @@ export interface RuntimeDocumentLabels {
   documentsRead: number;
   unread: { assetId: string; status: string }[];
   labels: { label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }[];
+}
+
+export interface RuntimeDocumentFieldSuggestions {
+  documentsRead: number;
+  documentsRequested: number;
+  unread: { assetId: string; status: string }[];
+  truncated: boolean;
+  suggestions: Array<{
+    key: string; label: string; type: 'text' | 'number' | 'boolean' | 'date'; description: string;
+    mapping: SourceFieldMapping;
+    evidence: Array<{ documentId: string; filename: string; page?: number; quote: string }>;
+    matchedDocuments: number;
+  }>;
 }
 
 /** What a build would send, for the runtime to check without running it (`POST .../population/check`). */
@@ -1019,6 +1033,24 @@ export class SemanticRuntimeClientService {
       throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, `Semantic runtime could not read the document labels (${res.status})`);
     }
     return await res.json() as RuntimeDocumentLabels;
+  }
+
+  async suggestDocumentFields(body: RuntimeDocumentLabelsRequest & {
+    concept: { id: string; label: string; description: string; attributes: Array<Pick<AttributeDefinition, 'key' | 'label' | 'type' | 'description'>> };
+  }): Promise<RuntimeDocumentFieldSuggestions> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.requireRuntime()}/v1/semantic-model-population/document-field-suggestions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch (error) { throw this.translate(error); }
+    if (res.status === 422) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, this.errorDetail({ data: await this.readErrorPayload(res) }) || 'The documents could not be analyzed');
+    }
+    if (!res.ok) throw await this.failure(res);
+    return await res.json() as RuntimeDocumentFieldSuggestions;
   }
 
   async previewDocumentFields(body: RuntimeDocumentPreviewRequest): Promise<RuntimeDocumentPreview> {

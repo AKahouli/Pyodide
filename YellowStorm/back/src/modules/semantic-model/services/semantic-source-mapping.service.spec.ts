@@ -653,6 +653,40 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(request.sources[0]).toMatchObject({ workspaceId: 'workspace-1', originalName: 'a.pdf', uploaderUserId: 'u-2', indexingStatus: 'ready' });
   });
 
+  it('scopes field discovery to the draft concept and authorized linked source, without writing', async () => {
+    const { service, database, models, documents } = buildService();
+    database.query.mockResolvedValue({ rows: [{ label: 'Contract', attributes: [
+      { key: 'id', label: 'ID', type: 'text', required: true, aliases: ['reference'], graph: { expose: true } },
+    ] }] });
+    const suggestions = { suggestions: [], documentsRead: 1, documentsRequested: 1, unread: [], truncated: false };
+    const runtime = (service as unknown as { runtime: { suggestDocumentFields: jest.Mock } }).runtime;
+    runtime.suggestDocumentFields = jest.fn().mockResolvedValue(suggestions);
+    await expect(service.documentFieldSuggestions('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentIds: ['document-1', 'document-1'], description: 'Loan contracts',
+    })).resolves.toEqual(suggestions);
+    expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(documents.findById).toHaveBeenCalledTimes(1);
+    expect(runtime.suggestDocumentFields).toHaveBeenCalledWith(expect.objectContaining({
+      actorUserId: 'user-1', concept: { id: 'concept-1', label: 'Contract', description: 'Loan contracts', attributes: [{ key: 'id', label: 'ID', type: 'text' }] },
+      sources: [expect.objectContaining({ workspaceId: 'workspace-1', assetId: 'document-1', originalName: 'Source.pdf', mimeType: 'application/pdf' })],
+    }));
+    expect(database.query.mock.calls.every(([sql]) => /^SELECT/.test(String(sql).trim()))).toBe(true);
+  });
+
+  it('refuses discovery before inference for a missing draft concept or a non-document asset', async () => {
+    const { service, database, models } = buildService('text/csv');
+    const runtime = (service as unknown as { runtime: { suggestDocumentFields: jest.Mock } }).runtime;
+    runtime.suggestDocumentFields = jest.fn();
+    const dto = { conceptId: 'missing', workspaceId: 'workspace-1', documentIds: ['document-1'] };
+    database.query.mockResolvedValueOnce({ rows: [{}] }).mockResolvedValueOnce({ rows: [] });
+    await expect(service.documentFieldSuggestions('user-1', 'model-1', dto)).rejects.toThrow('Concept not found');
+    database.query.mockResolvedValue({ rows: [{ label: 'Contract', attributes: [] }] });
+    await expect(service.documentFieldSuggestions('user-1', 'model-1', dto)).rejects.toThrow('readable document');
+    expect(runtime.suggestDocumentFields).not.toHaveBeenCalled();
+    models.requireActiveRole.mockRejectedValue(new ForbiddenException(ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED));
+    await expect(service.documentFieldSuggestions('user-1', 'model-1', dto)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('refuses whole pages without a usable page span', async () => {
     const pdf = buildService();
     pdf.database.query.mockResolvedValue({ rows: [{}] });

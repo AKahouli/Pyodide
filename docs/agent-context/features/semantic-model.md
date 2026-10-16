@@ -16,6 +16,44 @@ Autonomous AI ownership migration: `e9ef1676c` / `baseline/semantic-model-001`, 
 
 ## Purpose and workflows
 
+### Reviewed document/workspace field suggestions
+
+Verified 2026-10-16 against the scoped implementation diff on `security/p0p1-remediation`
+(base `4461025e4`), using the 2026-10-15 automated checks, source review and signed-in
+Chrome QA. In a document or workspace mapper, **Suggest fields & mappings** uses
+the editable concept purpose and existing attributes. **Analyze documents** returns
+local proposals with source quotes/page links, coverage and unread/truncation notices.
+Review names, types and extraction definitions/methods; new fields start selected,
+existing fields unchecked. **Apply selected** autosaves new attributes and the reviewed
+purpose, preserves existing field definitions, and prepares only selected mappings.
+The normal mapping save persists them after graph autosave; unselected mappings remain.
+
+The existing authorized backend resolves sources; the runtime reauthorizes each asset
+and owns inference under ADR-0015. AI receives bounded samples from at most five files,
+forty usable blocks and 12,000 characters per file; these are AI context limits, not
+underlying indexed-document read limits. Workspace sampling does not establish coverage
+of every workspace file. Proposals require grounded excerpts or authoritative metadata.
+Only locally generated rules verified against every complete, uncut sampled document
+with accepted text/date values are offered as deterministic; other grounded fields use
+AI definitions. Metadata mappings contain no extraction-only settings. Suggestions
+create no population records and do not guarantee extraction values.
+
+Owners: [review panel](../../../YellowStorm/front/src/modules/semantic-model/components/mapping/DocumentFieldSuggestions.tsx),
+[mapping drawer](../../../YellowStorm/front/src/modules/semantic-model/components/mapping/DocumentSourceMappingDrawer.tsx),
+[source authorization/coordinator](../../../YellowStorm/back/src/modules/semantic-model/services/semantic-source-mapping.service.ts),
+[runtime discovery](../../../YellowStorm/semantic-model-runtime/app/population/field_discovery.py)
+and [runtime contract](../../../YellowStorm/semantic-model-runtime/contracts/v1/README.md#document-field-suggestions).
+
+Focused evidence: backend source-mapping 50 tests and build passed; runtime discovery
+and extraction transport 36 tests passed; frontend mapping/split/review 15 tests passed.
+Required source review passed with no critical/major findings. Chrome QA on owned copy
+`7f99f4fe-b699-4273-89ed-c9fe87ad1249` verified document and whole-workspace review,
+selection, Apply, save and reopen; document evidence navigated to page 11. A preview
+returned a cited value on page 8; other fields could be `not_found`, and no population
+run was claimed. Full frontend typecheck was blocked by unrelated diagnostics, with
+none in the changed discovery/mapping/API/types/read-provider paths. Existing index
+rows still describe this feature and its owners; no new page, index row or ADR is needed.
+
 Semantic models describe concepts, fields and relationships, map workspace data to those definitions, and produce inspectable population revisions for search and use by agents.
 
 | Workflow | Implemented entry point / behavior |
