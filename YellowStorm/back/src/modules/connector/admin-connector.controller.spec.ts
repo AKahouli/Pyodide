@@ -73,7 +73,7 @@ describe('AdminConnectorController MCP inspection', () => {
     return { controller, connectorService, connectorAuthService, connectorAdminAuthService, store };
   }
 
-  it('sends a complete actor envelope when the connector points at a trusted internal MCP server, whatever its slug', async () => {
+  it('does not confer naked identity authority from an environment-trusted URL', async () => {
     const { controller, connectorService } = createController();
     const inspectMcp = jest.spyOn(connectorService, 'inspectMcp')
       .mockResolvedValue({ serverName: 'playbook', tools: [] });
@@ -94,11 +94,8 @@ describe('AdminConnectorController MCP inspection', () => {
       undefined,
       {
         Authorization: 'Bearer server-secret',
-        'X-YellowStorm-User-Id': 'user-1',
-        'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
-        'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',
-        'X-Correlation-Id': 'admin-connector-inspection',
       },
+      'connector-1',
     );
   });
 
@@ -202,6 +199,7 @@ describe('AdminConnectorController MCP inspection', () => {
     await expect(controller.inspectMcp({
       connectorId: 'connector-1',
       transportType: 'streamable_http',
+      serverUrl: 'https://metadata.internal/mcp',
       connectedAppKey: 'github',
     } as never, user)).rejects.toMatchObject({ code: ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED });
     expect(connectorAdminAuthService.getValidToken).not.toHaveBeenCalled();

@@ -26,6 +26,31 @@ calls LiteLLM directly. ADK has no semantic-model extraction package, dedicated
 endpoint or configuration. The generic `/agentic/attribute_extraction` and batch
 document extraction features below are separate capabilities.
 
+## Shared MCP connections and authentication
+
+Conversation connector tools and Playbook factories share `src/mcp/`; the client is
+not owned by `flow_engine`. Import `src.mcp` with the project root on `PYTHONPATH`,
+not `src/`, to avoid shadowing the installed `mcp` SDK. Each tool call creates a
+client protocol session; application conversation history remains independently
+persisted. Semantic Model MCP uses stateless HTTP and per-request actor isolation.
+
+Authentication follows each connector's approved profile, not a universal JWT rule.
+For YellowStorm internal JWT delegation, the backend supplies the initial token
+bound to the connector and security revision. Provision
+`ADK_RUNTIME_MCP_RENEWAL_TOKEN` in deployment secrets on both ADK and backend.
+`src/mcp/jwt_auth.py` renews with the `adk-runtime` principal and current signed
+assertion; a user ID alone or an expired token cannot bootstrap delegation. Rebind
+authenticated execution after expiry or policy changes. Never put the renewal
+secret in connector JSON or tool arguments.
+
+Apply backend migration `0049_connector_mcp_security.sql` using the existing
+operational process before deploying the new backend. Configure approved connector
+IDs explicitly through the Connector UI and provision the receiving MCP's trusted
+issuer/audience/verifier separately. See
+[ADR-0017](../docs/agent-context/decisions/ADR-0017-mcp-security-and-authentication-baseline.md)
+and [ADR-0018](../docs/agent-context/decisions/ADR-0018-connector-managed-mcp-security.md).
+Design acceptance and passing focused tests do not certify a deployed integration.
+
 ## Key Features
 
 - **Multi-Agent Orchestration** -- A manager agent dynamically creates and coordinates specialized sub-agents using Google ADK's `Runner` and `Agent` primitives. Supports sequential and parallel workflows.

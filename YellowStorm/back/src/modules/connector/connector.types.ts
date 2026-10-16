@@ -1,4 +1,13 @@
 /** Plain connector types (remediation 4.1) — moved out of the connector schemas. */
+export interface McpSecurityPolicy {
+  version: 1;
+  profile: 'configured' | 'internal_jwt' | 'public';
+  audience?: string;
+  actorDelegation: 'none' | 'verified_user';
+  allowPrivateNetwork: boolean;
+  requiredPermissions: string[];
+}
+
 export enum ConnectorActionSafety {
   READ = 'read',
   WRITE = 'write',

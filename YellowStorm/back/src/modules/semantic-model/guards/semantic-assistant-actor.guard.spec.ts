@@ -30,11 +30,11 @@ describe('SemanticAssistantActorGuard', () => {
   });
 
   it('derives the actor from a verified MCP assertion and pins the verified identity onto the request (WP06.4)', async () => {
-    mcpJwt.verifyMcpAssertion.mockReturnValue({ sub: userId });
+    mcpJwt.verifyMcpAssertion.mockResolvedValue({ sub: userId });
     users.findById.mockResolvedValue({ status: 'active' });
     const request: { headers: Record<string, string> } = { headers: { 'x-yellowstorm-mcp-assertion': 'signed-jwt', 'x-correlation-id': 'request-1' } };
     await expect(guard().canActivate(context(request.headers))).resolves.toBe(true);
-    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('signed-jwt');
+    expect(mcpJwt.verifyMcpAssertion).toHaveBeenCalledWith('signed-jwt', 'mcp-semantic-model');
     expect(request.headers['x-yellowstorm-user-id']).toBe(userId);
   });
 

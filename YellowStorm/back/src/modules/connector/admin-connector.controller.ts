@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
-import { isTrustedMcpServerUrl, jwtCapableMcpServerUrls } from './utils/trusted-mcp-server.util';
+import { normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -86,7 +86,7 @@ export class AdminConnectorController {
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PublicConnectorDto> {
-    const connector = await this.connectorService.create(user._id.toString(), dto);
+    const connector = await this.connectorService.create(user._id.toString(), dto, user.permissions ?? []);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
       actorEmail: user.email,
@@ -112,6 +112,9 @@ export class AdminConnectorController {
     const connector = body.connectorId
       ? await this.connectorService.getRuntimeById(body.connectorId)
       : undefined;
+    if (connector && (body.serverUrl !== connector.mcpServerUrl || body.transportType !== connector.mcpTransportType)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Save connector connection changes before testing');
+    }
     // Reject non-remote transports BEFORE any token retrieval or credential
     // resolution, so denied inspections have zero auth side effects (WP-01).
     this.connectorService.assertInspectableTransport(connector?.mcpTransportType ?? body.transportType);
@@ -121,9 +124,8 @@ export class AdminConnectorController {
     // effects. Options mirror ConnectorService (trusted internal endpoints
     // excepted per WP05.5).
     try {
-      await assertMcpDestinationAllowed(connector?.mcpServerUrl ?? body.serverUrl, {
-        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.configService)],
-      });
+      if (connector) await this.connectorService.assertRuntimeDestination(connector, user._id.toString());
+      else await assertMcpDestinationAllowed(body.serverUrl);
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
         throw new BadRequestException(
@@ -136,10 +138,9 @@ export class AdminConnectorController {
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
       : undefined;
-    // An internal MCP server (trusted by URL) authorizes tool listing as a user, like a tool call.
-    const trustedServer = isTrustedMcpServerUrl(this.configService, connector?.mcpServerUrl ?? body.serverUrl);
+    const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
     const runtimeAuthConfig = body.runtimeAuthConfig;
-    const resolvedAuth = connector
+    const resolvedAuth = connector && policy.profile === 'configured'
       ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
           authSourceType: connector.authSourceType,
           connectedAppKey: connector.connectedAppKey,
@@ -160,15 +161,7 @@ export class AdminConnectorController {
     if (Object.keys(dynamicHeaders).some((name) => name.toLowerCase() === 'x-user-id')) {
       resolvedAuthHeaders['x-conversation-id'] = `admin-connector-inspection-${randomUUID()}`;
     }
-    const inspectionHeaders = trustedServer
-      ? {
-          ...resolvedAuthHeaders,
-          'X-YellowStorm-User-Id': user._id.toString(),
-          'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
-          'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',
-          'X-Correlation-Id': 'admin-connector-inspection',
-        }
-      : resolvedAuthHeaders;
+    const inspectionHeaders = policy.profile === 'public' ? {} : resolvedAuthHeaders;
 
     return this.connectorService.inspectMcp(
       connector?.mcpTransportType ?? body.transportType,
@@ -179,6 +172,7 @@ export class AdminConnectorController {
       body.runtimeAuthConfig,
       resolvedToken,
       inspectionHeaders,
+      connector?.id,
     );
   }
 
@@ -237,7 +231,7 @@ export class AdminConnectorController {
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<PublicConnectorDto> {
-    const connector = await this.connectorService.update(id, dto);
+    const connector = await this.connectorService.update(id, dto, user.permissions ?? []);
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
       actorEmail: user.email,
@@ -356,9 +350,7 @@ export class AdminConnectorController {
     const connector = await this.connectorService.getRuntimeById(id);
     this.connectorService.assertInspectableTransport(connector.mcpTransportType);
     try {
-      await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.configService)],
-      });
+      await this.connectorService.assertRuntimeDestination(connector, user._id.toString());
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
         throw new BadRequestException(
@@ -388,6 +380,8 @@ export class AdminConnectorController {
       undefined,
       connector.runtimeAuthConfig,
       resolvedToken,
+      undefined,
+      connector.id,
     );
   }
 }

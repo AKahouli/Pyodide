@@ -95,6 +95,25 @@ No direct frontend→ADK transport was found; frontend reaches ADK through NestJ
 
 ## State, memory, and tools
 
+### Shared MCP transport and identity (2026-10-16)
+
+`yellowstorm-adk/src/mcp/{__init__,jwt_auth}.py` owns the shared client used by
+conversation connector tools and Playbook tool factories. It replaces the misleading
+`src/flow_engine/mcp` location; there is one implementation. Import it as `src.mcp`,
+keeping project root on `PYTHONPATH` so the installed `mcp` SDK is not shadowed.
+Each tool call creates/initializes a client session; this is separate from persistent
+application conversation history. Semantic Model MCP explicitly executes statelessly
+with per-request verified identity and cleanup.
+
+Internal JWT bindings originate in current backend connector policy. Renewal uses
+the deployment-only `ADK_RUNTIME_MCP_RENEWAL_TOKEN` and an existing valid signed
+assertion bound to connector/revision, never an editable user ID. Expired proof needs
+authenticated rebinding. Other connectors keep their selected authentication profile;
+JWT is not universal. Destination and no-redirect enforcement must precede credential
+attachment for each supported transport. See
+[ADR-0018](../decisions/ADR-0018-connector-managed-mcp-security.md) for configuration,
+ownership, rollout and the verification gate; no server is certified as a reference.
+
 - Sessions: PostgreSQL-backed via ADK `DatabaseSessionService`
   (`DATABASE_URL`, `LANGGRAPH_CHECKPOINT_*` settings).
 - Memory: mem0 over Azure AI Search; RAG via hybrid vector+keyword search

@@ -1,5 +1,5 @@
 import { ConnectorService, mcpToolSafety } from './connector.service';
-import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
+import { ConnectorActionSafety, ConnectorAuthSourceType, DynamicHeaderSource } from './connector.types';
 import { BadRequestException, ErrorCode } from '../exceptions';
 import * as childProcess from 'node:child_process';
 import type {
@@ -11,6 +11,7 @@ import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
 import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
 import { McpDestinationPolicyError } from './utils/mcp-destination-policy.util';
+import { Permissions } from '../authorization/constants/permissions';
 
 const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
 
@@ -71,6 +72,7 @@ const baseRow = (over: RowOver = {}): ConnectorRow =>
     authSourceType: 'none',
     connectedAppKey: '',
     runtimeAuthConfig: {},
+    securityRevision: 1,
     mcpTransportType: 'streamable_http',
     mcpServerUrl: '',
     mcpServerConfig: {},
@@ -148,6 +150,86 @@ describe('mcpToolSafety', () => {
     expect(mcpToolSafety({ readOnlyHint: false })).toBe('write');
     expect(mcpToolSafety(undefined)).toBe('read');
     expect(mcpToolSafety({ title: 'x' })).toBe('read');
+  });
+});
+
+describe('ConnectorService security write contract', () => {
+  const policy = { version: 1 as const, profile: 'configured' as const, actorDelegation: 'none' as const,
+    allowPrivateNetwork: true, requiredPermissions: [Permissions.CONNECTORS_READ] };
+  const setup = (row = baseRow({ mcpSecurityPolicy: policy, mcpServerUrl: 'https://example.com/mcp' })) => {
+    const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue(row) });
+    const service = new ConnectorService(store, categoryStoreMock(),
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as never, null as never, null as never,
+      createPlaybookBindingSyncServiceMock() as never);
+    return { store, service, row };
+  };
+
+  it.each([
+    { mcpSecurityPolicy: { ...policy, requiredPermissions: [] }, expectedSecurityRevision: 1 },
+    { mcpServerUrl: 'https://attacker.example/mcp', expectedSecurityRevision: 1 },
+    { isActive: true, expectedSecurityRevision: 1 },
+  ])('denies privileged mutation without management permission (%j)', async patch => {
+    const { service, store, row } = setup(baseRow({ mcpSecurityPolicy: policy, isActive: false }));
+    await expect(service.update(row.id, patch, [Permissions.CONNECTORS_UPDATE])).rejects.toMatchObject({ code: ErrorCode.PERMISSION_DENIED });
+    expect(store.update).not.toHaveBeenCalled();
+  });
+
+  it('preserves grants and stored credentials on ordinary metadata updates', async () => {
+    const { service, store, row } = setup();
+    await service.update(row.id, { name: 'Renamed' }, [Permissions.CONNECTORS_UPDATE]);
+    expect(store.update).toHaveBeenCalledWith(row.id, { name: 'Renamed' });
+    expect(row.mcpSecurityPolicy).toEqual(policy);
+  });
+  it('requires explicit clearing of saved credentials when transitioning to public', async () => {
+    const { service, store, row } = setup(baseRow({
+      mcpSecurityPolicy: policy, authSourceType: 'credential',
+      runtimeAuthConfig: { strategy: 'http_header_bearer' },
+      mcpServerConfig: { headers: { Authorization: 'Bearer stored' } },
+    }));
+    const patch = { mcpSecurityPolicy: { version: 1 as const, profile: 'public' as const,
+      actorDelegation: 'none' as const, allowPrivateNetwork: false, requiredPermissions: [] },
+      authSourceType: ConnectorAuthSourceType.NONE, expectedSecurityRevision: 1 };
+    await expect(service.update(row.id, patch, [Permissions.CONNECTORS_SECURITY_MANAGE])).rejects.toThrow('cannot inject');
+    expect(store.update).not.toHaveBeenCalled();
+    await service.update(row.id, { ...patch, mcpServerConfig: {}, clearRuntimeAuthConfig: true }, [Permissions.CONNECTORS_SECURITY_MANAGE]);
+    expect(store.update).toHaveBeenCalledWith(row.id, {
+      mcpSecurityPolicy: patch.mcpSecurityPolicy, authSourceType: 'none', mcpServerConfig: {}, runtimeAuthConfig: {},
+    }, 1);
+  });
+
+  it.each([undefined, 0, 2])('rejects missing/stale security revision %s before persistence', async expectedSecurityRevision => {
+    const { service, store, row } = setup();
+    await expect(service.update(row.id, { mcpServerUrl: 'https://new.example/mcp', expectedSecurityRevision },
+      [Permissions.CONNECTORS_SECURITY_MANAGE])).rejects.toThrow('reload before saving');
+    expect(store.update).not.toHaveBeenCalled();
+  });
+
+  it('fences authorized destination changes with the expected revision', async () => {
+    const { service, store, row } = setup();
+    await service.update(row.id, { mcpServerUrl: 'https://new.example/mcp', expectedSecurityRevision: 1 }, [Permissions.CONNECTORS_SECURITY_MANAGE]);
+    expect(store.update).toHaveBeenCalledWith(row.id, { mcpServerUrl: 'https://new.example/mcp' }, 1);
+  });
+
+  it.each([
+    { mcpServerConfig: { headers: { 'X-YellowStorm-User-Id': 'victim' } } },
+    { runtimeAuthConfig: { envMap: { YELLOWSTORM_MCP_JWT_USER_ID: 'victim' } } },
+    { dynamicHeaders: [{ headerName: 'X-YellowStorm-Mcp-Assertion', source: DynamicHeaderSource.USER_ID, enabled: true }] },
+  ])('rejects reserved raw/dynamic identity overrides even for security managers (%j)', async patch => {
+    const { service, store, row } = setup();
+    await expect(service.update(row.id, { ...patch, expectedSecurityRevision: 1 }, [Permissions.CONNECTORS_SECURITY_MANAGE]))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(store.update).not.toHaveBeenCalled();
+  });
+
+  it('derives the exact private-network exception only from saved connector policy', async () => {
+    const { service, row } = setup();
+    assertMcpDestinationAllowed.mockResolvedValue([]);
+    await service.assertRuntimeDestination(row);
+    expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(row.mcpServerUrl,
+      expect.objectContaining({ allowExactEndpoints: [row.mcpServerUrl] }));
+    await service.assertRuntimeDestination({ ...row, mcpSecurityPolicy: { ...policy, allowPrivateNetwork: false } });
+    expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(row.mcpServerUrl,
+      expect.objectContaining({ allowExactEndpoints: [] }));
   });
 });
 
@@ -673,6 +755,17 @@ describe('ConnectorService findByIdsForGrpc', () => {
       createPlaybookBindingSyncServiceMock() as any,
     );
   };
+  it.each(['missing', 'revoked', 'failed'])('rejects %s connected-account auth without trace or static-header fallback', async failure => {
+    const row = baseRow({ authSourceType: 'connected_app', connectedAppKey: 'provider',
+      mcpServerUrl: 'https://example.test/mcp', mcpServerConfig: { headers: { Authorization: 'Bearer forbidden-fallback' } },
+      actions: [{ key: 'search', isEnabled: true }] });
+    const auth = { resolveRuntimeAuth: failure === 'failed' ? jest.fn().mockRejectedValue(new Error('credential revoked'))
+      : jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-User-Id': 'user', 'X-Correlation-ID': 'trace' }) };
+    const service = buildService(row, auth);
+    await expect(service.findByIdsForGrpc([row.id], 'user-1')).rejects.toThrow();
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
 
   it('maps a connector to the gRPC wire shape with resolved auth + JSON-string schema', async () => {
     const connectorId = '507f1f77bcf86cd799439031';
@@ -823,6 +916,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
         id: '507f1f77bcf86cd799439038',
         name: 'Code Interpreter',
         slug: 'code-interpreter',
+        mcpSecurityPolicy: { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] },
         authSourceType: 'none',
         mcpTransportType: 'streamable_http',
         mcpServerUrl: 'https://ci/mcp',
@@ -988,7 +1082,7 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
     expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('https://mcp.example.test/mcp', expect.objectContaining({ allowExactEndpoints: expect.any(Array) }));
   });
 
-  it('keeps exact admin-configured internal MCP endpoints inspectable (WP05.5)', async () => {
+  it('does not grant private-network egress from environment URL trust alone', async () => {
     const store = connectorStoreMock();
     const service = new ConnectorService(
       store,
@@ -1010,7 +1104,7 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
     await service.inspectMcp('streamable_http', 'http://localhost:8027/mcp');
 
     expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://localhost:8027/mcp', expect.objectContaining({
-      allowExactEndpoints: expect.arrayContaining(['http://localhost:8027/mcp']),
+      allowExactEndpoints: [],
     }));
   });
 
@@ -1171,6 +1265,7 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
         mcpServerConfig: { headers: { 'X-API-Key': CANARY } },
       } as never),
       await service.update(row.id, {
+        expectedSecurityRevision: 1,
         runtimeAuthConfig: { headerPrefix: `Bearer ${CANARY}` },
       } as never),
     ];
@@ -1247,8 +1342,8 @@ describe('ConnectorService secret-free public projections (SEC-02 / WP-02)', () 
     expect(store.update).toHaveBeenCalledWith('507f1f77bcf86cd799439042', expect.not.objectContaining({ runtimeAuthConfig: expect.anything() }));
 
     // The explicit flag clears without reading.
-    await service.update('507f1f77bcf86cd799439042', { clearRuntimeAuthConfig: true } as never);
-    expect(store.update).toHaveBeenLastCalledWith('507f1f77bcf86cd799439042', expect.objectContaining({ runtimeAuthConfig: {} }));
+    await service.update('507f1f77bcf86cd799439042', { clearRuntimeAuthConfig: true, expectedSecurityRevision: 1 } as never);
+    expect(store.update).toHaveBeenLastCalledWith('507f1f77bcf86cd799439042', expect.objectContaining({ runtimeAuthConfig: {} }), 1);
   });
 
   it('keeps runtime bindings server-side: findByIdsForGrpc still receives raw secret-bearing rows', async () => {

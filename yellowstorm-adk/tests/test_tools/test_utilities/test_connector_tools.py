@@ -118,7 +118,7 @@ async def test_current_image_mounts_validate_exact_paths_and_recreate_stale_sand
             return {"text": "No such file or directory" if stays_missing or checks == 1 else "image.png 1234 bytes"}
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", call)
     binding = _connector_binding({}, auth_headers={"X-User-Id": "user-1"}, connector_slug="code-interpreter")
     binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
         for action in ["sandbox_create", "sandbox_destroy", "file_list", "shell_exec"]]
@@ -147,7 +147,7 @@ async def test_new_image_receipt_refreshes_exact_mount_headers_after_binding_cre
         captured.append(dict(kwargs["auth_headers"]))
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", call)
     binding = _connector_binding({}, auth_headers={"X-user-id": "owner", "Authorization": "kept"}, connector_slug="code-interpreter")
     binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
         for action in ["sandbox_create", "sandbox_destroy", "file_list"]]
@@ -179,7 +179,7 @@ async def test_image_shell_waits_until_mount_validation_finishes(monkeypatch):
             await release.wait()
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", call)
     binding = _connector_binding({}, connector_slug="code-interpreter")
     binding["actions"] = [{"action_key": action, "parameter_schema": {"type": "object", "properties": {}}}
         for action in ["sandbox_create", "sandbox_destroy", "file_list", "shell_exec"]]
@@ -206,7 +206,7 @@ async def test_image_mount_recovery_never_uses_prior_turn_receipts(monkeypatch):
         calls.append(args[3])
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", call)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", call)
     tool = _first_connector_tool({}, action_key="sandbox_create", connector_slug="code-interpreter")
     context = SimpleNamespace(invocation_id="new", state={IMAGE_SANDBOX_INPUTS_STATE_KEY:
         {"invocation": "old", "paths": [f"/mnt/workspace/generated-images/{'a' * 24}.png"]}})
@@ -222,7 +222,7 @@ def test_connector_tool_injects_bound_workspace_name(monkeypatch: pytest.MonkeyP
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -266,7 +266,7 @@ async def test_trusted_connector_scope_cannot_be_overridden(monkeypatch, overrid
         calls.append(args[4])
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", remote)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", remote)
     binding = _connector_binding({"type": "object", "properties": {"repo_id": {"type": "string"}}})
     binding["enforced_params"] = {"repo_id": "allowed"}
     tool = create_connector_tools([binding], ConnectorToolContext())[-1]
@@ -291,7 +291,7 @@ def test_connector_tool_declares_display_purpose_but_does_not_forward_it(
         captured["params"] = args[4]
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     tool = _first_connector_tool({
         "type": "object",
         "properties": {"query": {"type": "string"}},
@@ -341,7 +341,7 @@ def test_connector_tool_name_sanitization_does_not_change_mcp_action(
         captured["action_key"] = args[3]
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     tool = _first_connector_tool({}, action_key="search\u001c")
 
     asyncio.run(tool.func(query="revenue"))
@@ -360,7 +360,7 @@ def test_connector_tool_does_not_inject_workspace_id_for_strict_schema(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -384,7 +384,7 @@ def test_connector_tool_does_not_inject_workspace_id_for_strict_empty_schema(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -404,7 +404,7 @@ def test_connector_tool_strips_nullish_optional_parameters_before_mcp_call(
         captured["params"] = args[4]
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
 
     tool = _first_connector_tool(
         {
@@ -447,7 +447,7 @@ def test_connector_tool_uses_serialized_parameter_schema_for_model_contract(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -487,7 +487,7 @@ def test_connector_tool_preserves_explicit_workspace_name(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -518,7 +518,7 @@ def test_connector_tool_binds_workspace_id_alias(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -552,7 +552,7 @@ def test_connector_tool_prefers_explicit_workspace_id_over_names(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -584,7 +584,7 @@ def test_connector_tool_replaces_placeholder_workspace_id(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -617,7 +617,7 @@ def test_connector_tool_forwards_auth_headers_and_strips_user_id(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -650,7 +650,7 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -710,7 +710,7 @@ def test_connector_tool_percent_encodes_unsafe_file_paths(
         captured["auth_headers"] = kwargs.get("auth_headers")
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
 
     tool = _first_connector_tool(
         {},
@@ -757,7 +757,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
         captured["auth_headers"] = kwargs.get("auth_headers")
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     binding = _connector_binding(
         {
             "type": "object",
@@ -801,7 +801,7 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
         "Authorization": "Bearer token",
         "Workspace-Id": "workspace-alice,workspace-bob",
     }
-    from src.flow_engine.mcp import _build_headers
+    from src.mcp import _build_headers
 
     assert _build_headers(
         captured.get("server_config"), captured["auth_headers"]
@@ -824,7 +824,7 @@ def test_sse_connector_tool_gets_conversation_and_execution_ids(
         captured["auth_headers"] = kwargs.get("auth_headers")
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
 
     binding = _connector_binding({"type": "object", "properties": {}})
     binding["mcp_transport_type"] = "sse"
@@ -857,7 +857,7 @@ def test_connector_tool_injects_single_file_name_header(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -888,7 +888,7 @@ def test_code_interpreter_mounts_selected_workspace_without_selected_documents(
         captured["auth_headers"] = kwargs.get("auth_headers")
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     tool = _first_connector_tool(
         {},
         workspace_id="selected-workspace",
@@ -922,7 +922,7 @@ def test_code_interpreter_keeps_selected_root_when_workspace_aliases_collide(
         captured["auth_headers"] = kwargs.get("auth_headers")
         return {"text": "ok"}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     tool = _first_connector_tool(
         {},
         workspace_id="selected-workspace",
@@ -971,7 +971,7 @@ def test_read_section_tool_passes_images_through_with_runtime_tool_context(
         return dict(payload)
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -1010,7 +1010,7 @@ def test_connector_tool_buffers_mcp_image_parts_for_model(
         }
 
     monkeypatch.setattr(
-        "src.flow_engine.mcp.call_mcp_tool",
+        "src.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 

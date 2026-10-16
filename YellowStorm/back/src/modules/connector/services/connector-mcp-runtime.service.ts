@@ -7,9 +7,9 @@ import { LoggerService } from '@modules/logger';
 import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
-import { SemanticModelMcpJwtService } from './semantic-model-mcp-jwt.service';
+import { McpJwtService } from './mcp-jwt.service';
+import { hasMcpCredentialHeaders, normalizeMcpSecurityPolicy } from '../utils/mcp-security-policy';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
-import { jwtCapableMcpServerUrls } from '../utils/trusted-mcp-server.util';
 import { denyRedirectFetch } from '../connector.service';
 
 const MAX_RESPONSE_BYTES = 1_000_000;
@@ -39,7 +39,7 @@ export class ConnectorMcpRuntimeService {
     @Inject('ConnectorAuthService') private readonly auth: ConnectorAuthService,
     private readonly logger: LoggerService,
     private readonly workspaceShares: WorkspaceShareService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
     @Optional() private readonly config?: ConfigService,
   ) {
     this.logger.setContext(ConnectorMcpRuntimeService.name);
@@ -52,6 +52,7 @@ export class ConnectorMcpRuntimeService {
 
     // SERVER-ONLY runtime lookup: credentials stay off the public projection (WP-02).
     const connector = await this.connectors.getRuntimeById(input.connectorId);
+    const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
     if (!connector.isActive) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected evidence-search connector is inactive.');
     }
@@ -64,7 +65,8 @@ export class ConnectorMcpRuntimeService {
     // exact admin-configured internal endpoints (WP05.5) stay reachable.
     try {
       await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-        allowExactEndpoints: [...jwtCapableMcpServerUrls(this.config)],
+        allowExactEndpoints: policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [],
+        requireTls: this.config?.get<string>('NODE_ENV') === 'production',
       });
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
@@ -85,25 +87,29 @@ export class ConnectorMcpRuntimeService {
     }
 
     await this.workspaceShares.assertUserHasAccess(input.authorizationUserId, [input.workspaceId]);
+    if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, input.authorizationUserId);
     const credentialOwnerUserId = connector.createdBy.toString();
-    const resolvedAuth = await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
+    const resolvedAuth = policy.profile === 'configured' ? await this.auth.resolveRuntimeAuth(credentialOwnerUserId, {
       authSourceType: connector.authSourceType,
       connectedAppKey: connector.connectedAppKey,
       runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
       connectorId: connector.id,
-    });
-    if (!this.mcpJwt?.isJwtServer(connector.mcpServerUrl) && connector.authSourceType !== 'none' && Object.keys(resolvedAuth.headers).length === 0) {
+    }) : { headers: {}, env: {} };
+    // Evidence calls intentionally strip sensitive raw serverConfig headers.
+    // Only resolved auth material that will actually be attached can satisfy
+    // authentication here; an unused stored secret must not authorize a call.
+    if (policy.profile === 'configured' && !hasMcpCredentialHeaders(resolvedAuth.headers)) {
       throw new BadRequestException(ErrorCode.EXTERNAL_SERVICE_ERROR, 'The selected connector has no usable background credential.');
     }
 
-    const dynamicHeaders = await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []);
+    const dynamicHeaders = policy.profile === 'configured' ? await this.auth.resolveDynamicHeaders(credentialOwnerUserId, connector.dynamicHeaders ?? []) : {};
     let headers = {
       ...this.safeConfiguredHeaders(connector.mcpServerConfig),
       ...resolvedAuth.headers,
       ...dynamicHeaders,
       ...(input.authoritativeHeaders ?? {}),
     };
-    if (this.mcpJwt) headers = await this.mcpJwt.headers(connector.mcpServerUrl, input.authorizationUserId, headers);
+    if (this.mcpJwt) headers = await this.mcpJwt.headers(connector.mcpServerUrl, input.authorizationUserId, headers, connector.id);
     const transport = await this.createTransport(connector.mcpTransportType, connector.mcpServerUrl, headers);
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const client = new Client({ name: 'yellowstorm-evidence-search', version: '1.0.0' });

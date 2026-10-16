@@ -1,14 +1,34 @@
-"""Factory for calling MCP tools from server configuration."""
+"""Shared one-shot MCP transport for conversation and Playbook callers."""
 
 import base64
 import json
 import logging
+from contextvars import ContextVar
 from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 _MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 _MCP_LOG_PAYLOAD_MAX_CHARS = 100
+_http_diagnostic_scope = ContextVar("mcp_http_diagnostic_scope", default=False)
+
+
+class _TransportDiagnosticFilter(logging.Filter):
+    """SDK/httpx diagnostics can include credential-bearing URLs and tracebacks."""
+
+    def filter(self, record):
+        if not _http_diagnostic_scope.get():
+            return True
+        record.msg = "MCP HTTP transport diagnostic (details suppressed)"
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+for _transport_logger in ("mcp.client.sse", "mcp.client.streamable_http", "httpx"):
+    logging.getLogger(_transport_logger).addFilter(_TransportDiagnosticFilter())
 
 
 def _log_payload(value: Any) -> str:
@@ -556,6 +576,7 @@ async def call_mcp_tool(
         _log_payload(params) if log_payload else "[suppressed]",
     )
 
+    diagnostic_scope = _http_diagnostic_scope.set(transport_type in ("sse", "streamable_http"))
     try:
         jwt_env = auth_env or {}
         jwt_expiry = 0
@@ -563,8 +584,21 @@ async def call_mcp_tool(
         if renew_jwt:
             if transport_type != "streamable_http":
                 raise ValueError("Delegated MCP JWTs require streamable_http")
-            from .jwt_auth import renew_mcp_jwt
-            merged_headers, jwt_expiry = await renew_mcp_jwt(server_url, jwt_env, merged_headers or {})
+            from .jwt_auth import assertion_expiry, renew_mcp_jwt
+            import time
+            # Bootstrap only from authenticated backend binding headers, never
+            # editable connector headers (including case-variant collisions).
+            merged_headers = {
+                key: value for key, value in (merged_headers or {}).items()
+                if key.lower() != "authorization"
+            }
+            merged_headers.update({
+                key: value for key, value in (auth_headers or {}).items()
+                if key.lower() == "authorization"
+            })
+            jwt_expiry = assertion_expiry(merged_headers, jwt_env)
+            if jwt_expiry <= time.time() + 30:
+                merged_headers, jwt_expiry = await renew_mcp_jwt(server_url, jwt_env, merged_headers)
 
         if transport_type == "stdio":
             from mcp.client.stdio import stdio_client, StdioServerParameters
@@ -589,8 +623,18 @@ async def call_mcp_tool(
 
         elif transport_type == "sse":
             from mcp.client.sse import sse_client
+            import httpx
 
-            async with sse_client(url=server_url, headers=merged_headers) as streams:
+            def _sse_client_factory(headers=None, timeout=None, auth=None):
+                async def attach(request):
+                    _check_http_destination(server_url, str(request.url), same_origin=True)
+                    for key, value in (headers or {}).items():
+                        request.headers[key] = value
+                return httpx.AsyncClient(timeout=timeout, auth=auth, follow_redirects=False,
+                    event_hooks={"request": [attach], "response": [_deny_http_redirect]})
+
+            async with sse_client(url=server_url, headers=merged_headers,
+                                  httpx_client_factory=_sse_client_factory) as streams:
                 read_stream, write_stream = streams
                 from mcp import ClientSession
 
@@ -605,6 +649,7 @@ async def call_mcp_tool(
             client_headers = merged_headers or {}
             async def _inject_mcp_headers(request: httpx.Request) -> None:
                 nonlocal client_headers, jwt_expiry
+                _check_http_destination(server_url, str(request.url))
                 if renew_jwt:
                     from .jwt_auth import _server_identity
                     import time
@@ -619,9 +664,8 @@ async def call_mcp_tool(
                     request.headers[key] = value
 
             async with httpx.AsyncClient(
-                headers=client_headers,
-                event_hooks={"request": [_inject_mcp_headers]},
-                follow_redirects=not renew_jwt,
+                event_hooks={"request": [_inject_mcp_headers], "response": [_deny_http_redirect]},
+                follow_redirects=False,
                 # read=None: no timeout on SSE stream reads (tool calls can take >5s)
                 timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
             ) as http_client:
@@ -703,13 +747,26 @@ async def call_mcp_tool(
         )
         return normalized_response
     except Exception as e:
+        # SDK/httpx exceptions may embed credential-bearing URLs or remote bodies.
+        http_transport = transport_type in ("sse", "streamable_http")
+        safe_errors = {
+            "MCP JWT requires a current assertion; rebind authenticated execution",
+            "MCP JWT assertion invalid; rebind authenticated execution",
+            "MCP JWT assertion expired; rebind authenticated execution",
+            "MCP JWT renewal failed",
+            "MCP JWT renewal requires backend API_URL and ADK_RUNTIME_MCP_RENEWAL_TOKEN",
+            "Refusing to forward an MCP JWT to another server",
+            "Refusing to forward MCP credentials to another destination",
+            "Invalid MCP server URL", "MCP HTTP invalid destination", "MCP HTTP redirects are disabled",
+        }
+        detail = str(e) if not http_transport or str(e) in safe_errors else "MCP HTTP transport failed"
         error_response = (
-            f"Connector action '{action_key}' failed: {str(e)}"
+            f"Connector action '{action_key}' failed: {detail}"
             if log_payload
             else f"Connector action '{action_key}' failed"
         )
         if log_payload:
-            logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, str(e))
+            logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, detail)
         else:
             logger.error("MCP tool call failed: action=%s error_type=%s error=[suppressed]", action_key, type(e).__name__)
         # Unwrap ExceptionGroup / TaskGroup sub-exceptions for visibility
@@ -727,7 +784,7 @@ async def call_mcp_tool(
                     "MCP sub-exception: action=%s type=%s error=%s",
                     action_key,
                     type(sub).__name__,
-                    str(sub) if log_payload else "[suppressed]",
+                    str(sub) if log_payload and not http_transport else "[suppressed]",
                 )
                 if isinstance(sub, _BEG):
                     for nested in sub.exceptions:  # type: ignore[attr-defined]
@@ -735,7 +792,7 @@ async def call_mcp_tool(
                             "MCP nested-exception: action=%s type=%s error=%s",
                             action_key,
                             type(nested).__name__,
-                            str(nested) if log_payload else "[suppressed]",
+                            str(nested) if log_payload and not http_transport else "[suppressed]",
                         )
         logger.info(
             "mcp_call_tool_response action=%s transport=%s response_payload=%s",
@@ -744,6 +801,27 @@ async def call_mcp_tool(
             _log_payload(error_response) if log_payload else "[suppressed]",
         )
         return error_response
+    finally:
+        _http_diagnostic_scope.reset(diagnostic_scope)
+
+
+def _check_http_destination(configured: str, actual: str, *, same_origin: bool = False) -> None:
+    """Bind external URLs including queries; SSE POST paths may differ by protocol."""
+    def identity(value):
+        parsed = urlparse(value)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username or parsed.password or parsed.fragment
+                or any(c.isspace() or ord(c) < 32 for c in value)):
+            raise RuntimeError("MCP HTTP invalid destination")
+        origin = (parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        return origin if same_origin else (*origin, parsed.path or "/", parsed.query)
+    if identity(configured) != identity(actual):
+        raise RuntimeError("Refusing to forward MCP credentials to another destination")
+
+
+async def _deny_http_redirect(response) -> None:
+    if 300 <= response.status_code < 400:
+        raise RuntimeError("MCP HTTP redirects are disabled")
 
 
 def _build_headers(

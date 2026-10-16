@@ -8,6 +8,7 @@ records and check any superseding decision before editing. Do not load every ADR
 | --- | --- | --- | --- |
 | [ADR-0015: runtime-owned semantic AI extraction](ADR-0015-runtime-owned-semantic-ai-extraction.md) | accepted | Semantic-model AI extraction, backend/runtime/ADK ownership or their contracts | Semantic runtime owns inference execution; verify the record's boundary and rollout constraints |
 | [ADR-0017: MCP security and authentication](ADR-0017-mcp-security-and-authentication-baseline.md) | accepted | MCP servers/clients, transport, credentials, identity or authorization | Select the applicable transport/deployment profile and verify its controls; do not apply one profile universally |
+| [ADR-0018: connector-managed MCP security and isolation](ADR-0018-connector-managed-mcp-security.md) | accepted | Connector UI-managed trust, shared MCP client/JWT ownership or Semantic MCP transport | Connector policy/revision and restricted security management; stateless Semantic MCP, neutral `src/mcp`, assertion-bound runtime renewal; design acceptance is not deployment certification |
 
 Use the record's current contents as authority; this table is a locator. If no
 record applies, record that conclusion briefly instead of inventing a decision.

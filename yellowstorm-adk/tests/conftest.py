@@ -30,8 +30,9 @@ for field_name, field_info in mock_fields.items():
         env_value = str(field_value)
     os.environ[field_name] = env_value
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Import application packages as src.*; adding src itself shadows the installed
+# top-level mcp SDK with our neutral src.mcp client package.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
 from src.smart_rag.infrastructure.processing.prompt_processor import PromptProcessor
@@ -340,7 +341,7 @@ def mock_external_deps(monkeypatch):
     mock_mcp_toolset_class = MagicMock()
 
     monkeypatch.setattr("google.adk.Agent", mock_agent_class)
-    monkeypatch.setattr("google.adk.tools.mcp_tool.MCPToolset", mock_mcp_toolset_class)
+    monkeypatch.setattr("google.adk.tools.mcp_tool.mcp_toolset.MCPToolset", mock_mcp_toolset_class)
 
     # Mock logger
     mock_logger = MagicMock()

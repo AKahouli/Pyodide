@@ -37,7 +37,7 @@ async def owned_tool(action='locate_answer_citations', execution='child'):
 async def test_recorded_locator_response_is_captured_inside_real_compiled_connector(monkeypatch):
     async def remote(*args, **kwargs):
         return copy.deepcopy(RESPONSE)
-    monkeypatch.setattr('src.flow_engine.mcp.call_mcp_tool', remote)
+    monkeypatch.setattr('src.mcp.call_mcp_tool', remote)
     tool = await owned_tool()
     context = SimpleNamespace(function_call_id='native-call', invocation_id='invocation', state={})
     result = await tool.run_async(args={'display_purpose': 'Locate fixture sources'}, tool_context=context)
@@ -66,7 +66,7 @@ async def test_recorded_locator_response_is_captured_inside_real_compiled_connec
 async def test_untrusted_or_unbound_sources_do_not_become_owned_evidence(monkeypatch, action, response):
     async def remote(*args, **kwargs):
         return copy.deepcopy(response)
-    monkeypatch.setattr('src.flow_engine.mcp.call_mcp_tool', remote)
+    monkeypatch.setattr('src.mcp.call_mcp_tool', remote)
     tool = await owned_tool(action)
     context = SimpleNamespace(function_call_id='native-call', state={})
     await tool.run_async(args={'display_purpose': 'Locate fixture sources'}, tool_context=context)

@@ -20,12 +20,13 @@ describe('ConnectorMcpRuntimeService', () => {
     const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
       id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
       mcpServerUrl: 'http://localhost:8027/mcp', mcpServerConfig: {},
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-semantic-model', actorDelegation: 'verified_user', allowPrivateNetwork: true, requiredPermissions: [] },
       authSourceType: 'credential', createdBy: { toString: () => 'owner' },
       actions: [{ key: 'find_records', isEnabled: true, safety: 'read' }],
     }) };
     const auth = { resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
     const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
-    const mcpJwt = { isJwtServer: jest.fn().mockReturnValue(true), headers: jest.fn().mockResolvedValue({ Authorization: 'Bearer signed' }) };
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), headers: jest.fn().mockResolvedValue({ Authorization: 'Bearer signed' }) };
     const service = new ConnectorMcpRuntimeService(connectors as never, auth as never,
       { setContext: jest.fn(), warn: jest.fn() } as never, shares as never, mcpJwt as never);
     const transport = jest.spyOn(service as any, 'createTransport').mockRejectedValue(new Error('transport reached'));
@@ -33,7 +34,7 @@ describe('ConnectorMcpRuntimeService', () => {
       authorizationUserId: 'requesting-user', toolName: 'find_records', allowedTools: ['find_records'],
       arguments: {}, authoritativeHeaders: { Authorization: 'Bearer arbitrary' },
     })).rejects.toThrow('transport reached');
-    expect(mcpJwt.headers).toHaveBeenCalledWith('http://localhost:8027/mcp', 'requesting-user', { Authorization: 'Bearer arbitrary' });
+    expect(mcpJwt.headers).toHaveBeenCalledWith('http://localhost:8027/mcp', 'requesting-user', { Authorization: 'Bearer arbitrary' }, 'connector-1');
     expect(transport).toHaveBeenCalledWith('streamable_http', 'http://localhost:8027/mcp', { Authorization: 'Bearer signed' });
     expect(shares.assertUserHasAccess.mock.invocationCallOrder[0]).toBeLessThan(mcpJwt.headers.mock.invocationCallOrder[0]);
   });
@@ -51,6 +52,66 @@ describe('ConnectorMcpRuntimeService', () => {
     expect(workspaceShares.assertUserHasAccess).toHaveBeenCalledWith('requesting-user', ['workspace-1']);
     expect(auth.resolveRuntimeAuth).not.toHaveBeenCalled();
   });
+  it('fails configured connections with missing credentials before constructing a transport', async () => {
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
+      id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.test/mcp', mcpServerConfig: {}, authSourceType: 'credential',
+      createdBy: 'owner', actions: [{ key: 'search', safety: 'read', isEnabled: true }],
+    }) };
+    const auth = { resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }), resolveDynamicHeaders: jest.fn() };
+    const service = new ConnectorMcpRuntimeService(connectors as never, auth as never,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never);
+    const transport = jest.spyOn(service as any, 'createTransport');
+    await expect(service.callTool({ connectorId: 'connector-1', workspaceId: 'workspace-1',
+      authorizationUserId: 'requesting-user', toolName: 'search', allowedTools: ['search'], arguments: {} }))
+      .rejects.toThrow('no usable background credential');
+    expect(transport).not.toHaveBeenCalled();
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
+  it.each(['empty', 'failed'])('denies %s connected-account auth despite caller trace and stored static credentials', async failure => {
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
+      id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.test/mcp', authSourceType: 'connected_app', connectedAppKey: 'provider',
+      mcpServerConfig: { headers: { Authorization: 'Bearer forbidden-static' } }, createdBy: 'owner',
+      actions: [{ key: 'search', safety: 'read', isEnabled: true }],
+    }) };
+    const auth = { resolveRuntimeAuth: failure === 'failed' ? jest.fn().mockRejectedValue(new Error('credential revoked'))
+      : jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-User-Id': 'owner', 'X-Correlation-ID': 'trace' }) };
+    const service = new ConnectorMcpRuntimeService(connectors as never, auth as never,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never);
+    const transport = jest.spyOn(service as any, 'createTransport');
+    await expect(service.callTool({ connectorId: 'connector-1', workspaceId: 'workspace-1',
+      authorizationUserId: 'user-1', toolName: 'search', allowedTools: ['search'], arguments: {},
+      authoritativeHeaders: { 'X-User-Id': 'user-1', 'X-Correlation-ID': 'caller-trace' } })).rejects.toThrow();
+    expect(transport).not.toHaveBeenCalled();
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['credential', 'Authorization'], ['credential', 'X-Api-Key'],
+    ['server_config', 'Authorization'], ['server_config', 'X-Api-Key'],
+  ])('rejects static-only %s/%s credentials that evidence transport would strip', async (authSourceType, header) => {
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
+      id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.test/mcp', authSourceType,
+      mcpServerConfig: { headers: { [header]: 'static-only-canary' } }, createdBy: 'owner',
+      actions: [{ key: 'search', safety: 'read', isEnabled: true }],
+    }) };
+    const auth = { resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-Correlation-Id': 'trace' }) };
+    const service = new ConnectorMcpRuntimeService(connectors as never, auth as never,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never);
+    const transport = jest.spyOn(service as any, 'createTransport').mockRejectedValue(new Error('transport reached'));
+    await expect(service.callTool({ connectorId: 'connector-1', workspaceId: 'workspace-1',
+      authorizationUserId: 'user-1', toolName: 'search', allowedTools: ['search'], arguments: {},
+    })).rejects.toThrow('no usable background credential');
+    expect(transport).not.toHaveBeenCalled();
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+  });
+
   it('applies the egress policy to the runtime destination before any transport is built and denies with ERR_3103', async () => {
     const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
       id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',

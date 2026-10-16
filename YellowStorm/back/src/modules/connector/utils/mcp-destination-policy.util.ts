@@ -58,11 +58,12 @@ export interface McpDestinationPolicyOptions {
   allowedPorts?: number[];
   /** Allow plain http (development only). Defaults to false (https-only). */
   allowInsecureHttp?: boolean;
+  /** Production transport requirement, including approved internal destinations. */
+  requireTls?: boolean;
   /**
    * Exact admin-configured internal service endpoints (WP05.5): an exact
-   * canonical match skips the DNS/forbidden-range and port rules because the
-   * endpoint is a fixed private-network rule reached with service-issued
-   * JWTs. Lookalike URLs inherit nothing.
+    * canonical match may permit approved private ranges and non-public ports.
+    * DNS and metadata/link-local prohibitions still apply. Lookalikes inherit nothing.
    */
   allowExactEndpoints?: string[];
   /** DNS resolver; overridable for tests. */
@@ -265,7 +266,17 @@ export async function assertMcpDestinationAllowed(serverUrl: string, options: Mc
   // ranges) but nothing else. Matching is canonical and exact, so lookalike
   // URLs inherit nothing.
   if (matchesExactEndpoint(serverUrl, options.allowExactEndpoints)) {
-    return [];
+    if (options.requireTls && parsed.protocol !== 'https:') throw new McpDestinationPolicyError('insecure_http', host);
+    const resolver = options.resolver ?? DEFAULT_RESOLVER;
+    const addresses = isIP(host) ? [host] : (await Promise.all([
+      resolver.resolve4(host).catch(() => [] as string[]),
+      resolver.resolve6(host).catch(() => [] as string[]),
+    ])).flat();
+    if (!addresses.length) throw new McpDestinationPolicyError('dns_failure', host);
+    if (addresses.some(address => isForbiddenEgressIp(address) && !isApprovedPrivateAddress(address))) {
+      throw new McpDestinationPolicyError('forbidden_address', host);
+    }
+    return addresses;
   }
 
   if (parsed.protocol === 'http:' && !(options.allowInsecureHttp ?? false)) {
@@ -298,4 +309,16 @@ export async function assertMcpDestinationAllowed(serverUrl: string, options: Mc
     throw new McpDestinationPolicyError('forbidden_address', host);
   }
   return addresses;
+}
+
+/** Exact trust may permit loopback/RFC1918/ULA, never metadata or link-local. */
+function isApprovedPrivateAddress(address: string): boolean {
+  if (isIP(address) === 4) {
+    const value = ipv4ToInt(address);
+    return [['10.0.0.0', 8], ['127.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16]]
+      .some(([base, bits]) => inSubnet(value, ipv4ToInt(String(base)), Number(bits)));
+  }
+  const value = ipv6ToBigInt(address);
+  if (value === ipv6ToBigInt('fd00:ec2::254')) return false;
+  return value === 1n || inSubnet6(value, ipv6ToBigInt('fc00::'), 7);
 }

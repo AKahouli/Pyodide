@@ -72,7 +72,12 @@ async def test_accepts_token_at_the_five_minute_limit_and_forwards_the_assertion
         "iat": now, "exp": now + 300}, keys[0], algorithm="RS256")
     from auth import verified_mcp_jwt
     messages = []
-    middleware = TrustedIdentityMiddleware(app, "ingress-secret", auth_mode="JWT",
+
+    async def assertion_app(scope, receive, send):
+        assert verified_mcp_jwt.get() == token
+        await app(scope, receive, send)
+
+    middleware = TrustedIdentityMiddleware(assertion_app, "ingress-secret", auth_mode="JWT",
         jwt_public_key=keys[1], jwt_issuer="yellowstorm")
 
     async def send(message):
@@ -81,7 +86,7 @@ async def test_accepts_token_at_the_five_minute_limit_and_forwards_the_assertion
     await middleware({"type": "http", "path": "/mcp", "headers": [
         (b"authorization", f"Bearer {token}".encode())]}, lambda: None, send)
     assert messages[0]["status"] == 200
-    assert verified_mcp_jwt.get() == token
+    assert verified_mcp_jwt.get() is None
 
 
 @pytest.mark.asyncio
