@@ -22,6 +22,30 @@ sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
   `vectorstores.py`, `response_correction.py`, `response_evaluation.py`,
   `sse_stream.py`, `authentification.py`, `health.py`.
 
+## Conversation native Responses boundary (2026-10-16)
+
+`team_orchestrator.py` adapts the library-built single-agent parent with
+`LLMFactory.for_conversation()`. Recognized OpenAI/Azure model names use the pinned
+ADK native Responses adapter through the existing LiteLLM gateway. Workers, other
+providers and manager/team paths are unchanged. No service or wire contract is added.
+
+Every call replays application/ADK history with `store=false` and no provider
+response/conversation linkage. The pinned adapter skips reasoning-item replay;
+cross-call reasoning continuity is not promised. Per-turn SDK clients close in the
+orchestrator's `finally` path. MCP tools and identity are unchanged.
+
+Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
+calls use `CapacityClient.create()` with retries disabled when capacity is enabled.
+Stream validation requires a terminal Responses event before EOF. Truncated text
+or tool arguments fail and uncertain dispatched calls retain their slot.
+
+Sources: `src/smart_rag/infrastructure/factories/llm_factory.py`,
+`src/smart_rag/infrastructure/monitoring/{instrumented_lite_llm,model_response_recovery}.py`,
+`src/root_runtime/model_capacity.py`. Checks: `tests/test_native_responses.py`, existing
+latency/factory/orchestrator tests, opt-in `tests/wp10/qualify_native_responses.py`.
+Live synthetic gateway qualification passed with `gpt-5.4-mini` and capacity enabled;
+browser/end-user QA is separate. See proposed [ADR-0019](../decisions/ADR-0019-conversation-native-responses.md).
+
 ## Conversation image inputs for Code Interpreter (2026-10-15)
 
 The existing `generate_image` utility calls the authenticated backend image boundary and

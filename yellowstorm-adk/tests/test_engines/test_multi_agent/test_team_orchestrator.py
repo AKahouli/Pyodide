@@ -173,9 +173,14 @@ class TestAutoAgentGenerationTeam:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("role", [None, "ROOT", "ROOT_FANOUT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
-    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role):
+    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role, monkeypatch):
         """Mono conversation parents should evaluate child results, not use child tools directly."""
         mock_config = MagicMock()
+        from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
+        from types import SimpleNamespace
+        native_model = SimpleNamespace(client=SimpleNamespace(close=AsyncMock()))
+        native_adapter = MagicMock(return_value=native_model)
+        monkeypatch.setattr(LLMFactory, 'for_conversation', native_adapter)
         mock_config.user_id = "user123"
         orchestrator = AutoAgentGenerationTeam(mock_config)
         orchestrator.streaming_processor = MagicMock()
@@ -245,6 +250,8 @@ class TestAutoAgentGenerationTeam:
                 mock_session_factory.assert_not_awaited()
 
         assert result == "parent answer"
+        assert native_adapter.call_count == (0 if worker else 1)
+        assert native_model.client.close.await_count == (0 if worker else 1)
         if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
             assert mock_agent.tools == [] and mock_agent.sub_agents == []
             assert mock_agent.disallow_transfer_to_parent and mock_agent.disallow_transfer_to_peers

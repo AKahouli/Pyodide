@@ -50,6 +50,39 @@ class LLMFactory:
         create_no_tool_calls_llm: Creates LLM instance without tool calling capabilities.
     """
     @staticmethod
+    def for_conversation(model):
+        """Adapt the built OpenAI conversation model; keep other providers unchanged."""
+        from google.adk.models.lite_llm import LiteLlm
+        from openai import AsyncOpenAI
+        from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedResponsesLlm
+        if not isinstance(model, LiteLlm):
+            return model
+        name = model.model.lower()
+        if not name.startswith(('openai/', 'azure/', 'gpt-', 'o1', 'o3', 'o4')):
+            return model
+        args = model._additional_args
+        extra = {'max_output_tokens': args.get('max_completion_tokens', 20000)}
+        for key in ('temperature', 'user'):
+            if key in args:
+                extra[key] = args[key]
+        # The final request may have no tools after a callback/skill activation.
+        if args.get('tool_choice') is not None:
+            extra['tool_choice'] = args['tool_choice']
+        return InstrumentedResponsesLlm(
+            model=model.model,
+            client=AsyncOpenAI(
+                base_url=app_settings.LITELLM_API_BASE_URL,
+                api_key=app_settings.LITELLM_API_SECRET_KEY,
+                timeout=args.get('timeout', LLM_REQUEST_TIMEOUT_SECONDS),
+                max_retries=0 if getattr(get_settings(), 'ROOT_WORK_LLM_CAPACITY_ENABLED', False) else args.get('num_retries', LLM_REQUEST_NUM_RETRIES),
+            ),
+            store=False,
+            parallel_tool_calls=args.get('parallel_tool_calls'),
+            reasoning={'effort': args['reasoning_effort']} if args.get('reasoning_effort') else None,
+            extra_request_args=extra,
+        )
+
+    @staticmethod
     def create_parallel_tool_calls_llm(model_name: str, temperature=0.0,max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance with parallel tool calls enabled.
 

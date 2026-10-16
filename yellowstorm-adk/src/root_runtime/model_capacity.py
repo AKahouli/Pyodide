@@ -92,6 +92,14 @@ class CapacityClient:
                 _streams.reset(token)
 
     async def acompletion(self, **kwargs):
+        return await self._call(self.client.acompletion, {**kwargs, 'num_retries': 0})
+
+    async def create(self, **kwargs):
+        # The native OpenAI client is constructed with max_retries=0 by its owner.
+        from src.smart_rag.infrastructure.monitoring.model_response_recovery import ResponsesStream
+        return await self._call(self.client.create, kwargs, ResponsesStream)
+
+    async def _call(self, create, kwargs, stream_wrapper=None):
         pool = self.pool or capacity_pool()
         permit = await pool.acquire()
         dispatched = False
@@ -99,12 +107,14 @@ class CapacityClient:
             await pool.transition(permit, 'running')
             dispatched = True
             # A timeout retry could overlap the original provider request.
-            response = await self.client.acompletion(**{**kwargs, 'num_retries': 0})
+            response = await create(**kwargs)
         except BaseException as error:
             rejected = getattr(error, 'status_code', None) in (400, 401, 403, 404, 413, 422, 429)
             await _finish(pool, permit, 'free' if not dispatched or rejected else 'outcome_unknown')
             raise
         if kwargs.get('stream'):
+            if stream_wrapper:
+                response = stream_wrapper(response)
             stream = CapacityStream(response, pool, permit)
             if _streams.get() is not None:
                 _streams.get().append(stream)

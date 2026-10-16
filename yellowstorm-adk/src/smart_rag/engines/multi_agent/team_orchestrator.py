@@ -735,6 +735,7 @@ Do not render charts for single values or non-numeric content.
         Returns:
             Optional[str]: The agent's final response text, if any.
         """
+        native_client = None
         try:
             from src.root_runtime.background_sessions import FencedBackgroundSessionService, validate_background_request
             if isinstance(session_service, FencedBackgroundSessionService):
@@ -802,6 +803,12 @@ Do not render charts for single values or non-numeric content.
                 install_background_action_guard(agent, session_service)
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            if not worker_role:
+                from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
+                original_model = agent.model
+                agent.model = LLMFactory.for_conversation(original_model)
+                if agent.model is not original_model:
+                    native_client = agent.model.client
             if await stopped_during_bootstrap():
                 return None
             _mark_first_model_agent_ready()
@@ -920,6 +927,10 @@ Do not render charts for single values or non-numeric content.
                 await q.put(error_component)
                 await q.put(None)
             return None
+
+        finally:
+            if native_client is not None:
+                await native_client.close()
 
     async def _create_agent_team(self, team_config, session_id):
         """Create an agent team from configuration."""

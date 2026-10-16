@@ -26,6 +26,39 @@ calls LiteLLM directly. ADK has no semantic-model extraction package, dedicated
 endpoint or configuration. The generic `/agentic/attribute_extraction` and batch
 document extraction features below are separate capabilities.
 
+## Native Responses for the conversation agent
+
+The single-agent conversation parent uses ADK `OpenAIResponsesLlm` through the
+configured LiteLLM gateway for `gpt-*`, `o1*`, `o3*`, `o4*`, `openai/` and `azure/`
+model names. Its library-selected model alias, tools, callbacks and session stay
+unchanged. Leaf workers, other providers and manager/team execution retain their
+existing model adapters. No dependency upgrade or database migration is required.
+
+`LLMFactory.for_conversation()` adapts the built model at the single-agent runner
+boundary. History stays in the application/ADK session: every request replays its
+contents with `store=false` and no provider response/conversation linkage. The
+pinned native adapter does not replay reasoning items; this migration does not
+provide cross-call reasoning-state continuity.
+
+The instrumented adapter preserves latency diagnostics and empty-response recovery.
+When `ROOT_WORK_LLM_CAPACITY_ENABLED` is enabled, native requests use the existing
+durable slot pool and disable SDK retries. A slot remains occupied through the
+stream tail; cancellation, transport failure or EOF without a terminal Responses
+event retains `outcome_unknown`. Stream handles and per-turn SDK clients are closed
+on teardown. Existing gRPC/SSE message components and MCP security are unchanged.
+
+Focused checks: `conda run -n meta pytest tests/test_native_responses.py -q`.
+An opt-in live check uses only synthetic inputs, an in-memory ADK session and a
+local tool, through the real configured gateway and capacity pool:
+
+```powershell
+conda run -n meta python tests/wp10/qualify_native_responses.py --env-file <private-runtime-env> --model gpt-5.4-mini --capacity
+```
+
+It never resets shared slots or edits application conversations. Treat an uncertain
+slot according to the existing capacity recovery process; never steal it to make
+a test pass. Review model-name routing when introducing a custom gateway alias.
+
 ## Shared MCP connections and authentication
 
 Conversation connector tools and Playbook factories share `src/mcp/`; the client is

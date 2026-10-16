@@ -16,10 +16,13 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Optional, Tuple
 from contextlib import aclosing
+from functools import cached_property
+from types import SimpleNamespace
 
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
 from google.adk.models.llm_request import LlmRequest
+from google.adk.integrations.openai import OpenAIResponsesLlm
 
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
@@ -92,3 +95,70 @@ class InstrumentedLiteLlm(LiteLlm):
         finally:
             if capacity:
                 await capacity.end(token)
+
+
+class InstrumentedResponsesLlm(OpenAIResponsesLlm):
+    """Native Responses with application-owned history and the conversation gates."""
+
+    @cached_property
+    def _openai_client(self):
+        client = super()._openai_client
+        from src.config.settings import get_settings
+        if getattr(get_settings(), 'ROOT_WORK_LLM_CAPACITY_ENABLED', False):
+            from src.root_runtime.model_capacity import CapacityClient
+            return SimpleNamespace(responses=CapacityClient(client.with_options(max_retries=0).responses))
+        return client
+
+    def _get_response_create_kwargs(self, llm_request, *, stream):
+        # Never mutate a shared request or attach provider-owned conversation state.
+        request = llm_request.model_copy(update={'previous_interaction_id': None})
+        kwargs = super()._get_response_create_kwargs(request, stream=stream)
+        kwargs['store'] = False
+        kwargs.pop('previous_response_id', None)
+        kwargs.pop('conversation', None)
+        if not kwargs.get('tools'):
+            kwargs.pop('parallel_tool_calls', None)
+            kwargs.pop('tool_choice', None)
+        return kwargs
+
+    async def generate_content_async(self, llm_request, stream=False):
+        trace = get_current_conversation_latency_trace()
+        primary = trace is not None and trace.claim_first_model_call()
+        if primary:
+            trace.mark_llm_request_start()
+            emit_runner_pre_model_log(
+                trace, session_id=str(trace.session_id or ''),
+                agent_name=str(trace.diagnostics.agent_name or 'unknown'),
+                llm_counts=_cheap_llm_counts(llm_request),
+            )
+        from src.root_runtime.model_capacity import CapacityClient
+        from src.smart_rag.infrastructure.monitoring.model_response_recovery import recover_empty_response, ResponsesStream
+        resource = self._openai_client.responses
+        capacity = resource if isinstance(resource, CapacityClient) else None
+        token = capacity.begin() if capacity else None
+        streams = []
+        async def create(**kwargs):
+            result = await resource.create(**kwargs)
+            if kwargs.get('stream'):
+                if not capacity:
+                    result = ResponsesStream(result)
+                streams.append(result)
+            return result
+        provider = self.model_copy()
+        provider.__dict__['_openai_client'] = SimpleNamespace(responses=SimpleNamespace(create=create))
+        try:
+            async with aclosing(recover_empty_response(
+                super(InstrumentedResponsesLlm, provider).generate_content_async, llm_request, stream, self.model,
+            )) as responses:
+                async for response in responses:
+                    if primary:
+                        trace.mark_llm_first_delta()
+                    yield response
+        finally:
+            try:
+                for opened in streams:
+                    close = getattr(opened, 'aclose', None) or opened.close
+                    await close()
+            finally:
+                if capacity:
+                    await capacity.end(token)

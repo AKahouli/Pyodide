@@ -40,6 +40,14 @@ These are implemented entry points, not a guarantee that every deployment enable
 
 ## Ownership and request flow
 
+Single-agent conversation parents with recognized OpenAI/Azure model names use
+native ADK Responses through the existing LiteLLM gateway. Application/ADK history
+remains authoritative; provider storage and conversation linkage are disabled.
+Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
+Workers and other providers retain their adapters. Truncated native streams fail
+instead of finalizing partial text/tool calls. Cross-call reasoning-state replay
+is not provided by the pinned adapter. See the runtime architecture record.
+
 1. The [hash router](../../../YellowStorm/front/src/Router.tsx) lazy-loads the new/existing conversation pages.
 2. [ConversationPage](../../../YellowStorm/front/src/modules/conversation/ConversationPage.tsx) loads thread state and dispatches group threads to the group page.
 3. The module API uses the shared API client; [message controller](../../../YellowStorm/back/src/modules/conversation/controllers/message.controller.ts) owns message HTTP operations.
