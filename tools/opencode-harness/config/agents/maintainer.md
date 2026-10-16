@@ -41,6 +41,11 @@ The caller supplies the absolute root/branch, checkpoint task ID, exact owned do
 
 ## Rules
 
+- Platform ADRs belong to `docs/agent-context/decisions/`; harness decisions belong
+  to `tools/opencode-harness/docs/decisions/` with new IDs using `HADR-NNNN`.
+  Harness documentation is outside your edit scope: return its exact proposed
+  update to the primary. Keep the indexes separate and preserve accepted history.
+
 - Before writing feature documentation, read `docs/agent-context/templates/feature.md`. Every feature page uses schema 1 metadata and the seven H2 sections in that exact order; additional detail uses H3. Preserve evidence and mark inapplicable sections with a reason. The feature-page template is distinct from your internal handoff format below.
 - Assess the root context index, feature index and affected subfolder indexes on every update. New/renamed/removed records or changed scope require matching rows and inbound links. Preserve unrelated pages and current branch evidence. Edit shared indexes only with explicit ownership; otherwise return exact pending changes to the primary. An unchanged index needs a specific reason.
 - Before returning, compare updated feature pages with the template and check local links. Report format/index/link results and pending work; do not claim documentary completeness from a successful write alone.

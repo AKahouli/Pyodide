@@ -33,7 +33,7 @@ with fail-before/pass-after evidence when feasible. Reuse existing fixture
 helpers and approved test accounts. Allocate independent auth/report paths
 and namespaced records per concurrent run; use separate accounts/tenants or
 serialize flows that mutate account-wide state. Cleanup affects owned records
-only. See [fixture guidance](../testing/qa-fixtures.md).
+only. See [fixture guidance](../../../../docs/agent-context/testing/qa-fixtures.md).
 
 ## Rationale
 

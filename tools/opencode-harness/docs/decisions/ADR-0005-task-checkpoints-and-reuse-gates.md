@@ -67,5 +67,5 @@ Read receipts and a declared reuse decision do not prove semantic uniqueness.
 Allowed project scripts are trusted code, not an OS sandbox. Check freshness
 depends on the input files supplied; credential detection is heuristic. Keep
 secrets/raw logs out of checkpoints and use local, non-synced SQLite storage.
-The owning [harness guide](../../../tools/opencode-harness/README.md) contains
+The owning [harness guide](../../README.md) contains
 installation, lifecycle, tools, recovery, and verification details.

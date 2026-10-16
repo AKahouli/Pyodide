@@ -54,7 +54,7 @@ invent rationale from code alone (per [change control](change-control.md)).
   refresh-queue auth, and MCP-delegated (NestJS-authoritative) Playbook design
   likewise not reconstructed.
 - If an owner confirms a durable decision with alternatives/rationale, file it as
-  `docs/agent-context/decisions/ADR-0008-<topic>.md` (`status: proposed` until
+  `docs/agent-context/decisions/ADR-<next-unused-ID>-<topic>.md` (`status: proposed` until
   explicitly approved with reviewed implementation evidence; next free number is
   **0008** — primary agent owns numbering). Supersede accepted records with a new
   ADR; never rewrite them.

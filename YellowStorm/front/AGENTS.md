@@ -2,6 +2,7 @@
 
 Applies to `YellowStorm/front/`; root `AGENTS.md` still governs workflow and delivery.
 Read this file before edits, then load only matching references below.
+Before coding, select applicable decisions from the [platform ADR index](../../docs/agent-context/decisions/README.md) and record their constraints; reuse the primary's current selection in worker handoffs.
 
 ## Essential rules
 

@@ -56,7 +56,7 @@ Unresolved requirements, new high-risk design, or several plausible implementati
 1. Resolve the exact open question; reuse acceptance criteria and evidence supplied by the caller.
 2. Reuse current scoped graph evidence. Query only unanswered relationships/impact with the explicit root and minimal detail; use focused source fallback for gaps. Never launch another agent or repeat the primary agent's investigation.
 3. Read only the source and guideline sections relevant to the affected area (grep guideline headings first). Do not run broad architecture/flow listings unless the planning question needs them.
-4. Read only missing relevant Git decision records. Historical experience is supplied by the primary agent and never treated as policy.
+4. Consult the owning ADR index and read only missing applicable current decision records. State their IDs and concrete constraints, or that none apply; check status and supersession. Reuse the primary's selection for unchanged scope. Historical experience is never treated as policy.
 5. Use Context7 only when the plan depends on external library behavior local code cannot establish.
 6. Identify the smallest cohesive change, contract impact on both sides, verification commands, and required gates. For substantial multi-phase work, name each testable outcome and its acceptance criteria. Reuse the caller's execution choice; return any necessary question to the primary agent instead of asking the user yourself.
 

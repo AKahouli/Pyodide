@@ -58,6 +58,11 @@ Use automatic startup health reports; do not repeat diagnostic calls routinely. 
 
 ## Severity
 
+For architectural or boundary changes, verify the applicable ADR IDs and constraints
+against current records, scope, status and supersession. If the handoff omits them,
+consult the owning ADR index. Report a concrete decision violation; missing narration
+alone does not establish an implementation defect.
+
 - `critical`: data loss, vulnerability, outage, broken primary behavior. Verdict FAIL.
 - `major`: likely regression, contract violation, missing essential verification. Verdict FAIL.
 - `minor`: non-blocking. PASS allowed.

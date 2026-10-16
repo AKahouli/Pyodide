@@ -1,0 +1,26 @@
+# Yellowmind platform architecture decisions
+
+Read this small index before platform code changes. Select decisions whose source
+paths, ownership, interfaces or security boundary intersect the task; read those
+records and check any superseding decision before editing. Do not load every ADR.
+
+| Decision | Status | Applies when | Constraint to verify |
+| --- | --- | --- | --- |
+| [ADR-0015: runtime-owned semantic AI extraction](ADR-0015-runtime-owned-semantic-ai-extraction.md) | accepted | Semantic-model AI extraction, backend/runtime/ADK ownership or their contracts | Semantic runtime owns inference execution; verify the record's boundary and rollout constraints |
+| [ADR-0017: MCP security and authentication](ADR-0017-mcp-security-and-authentication-baseline.md) | accepted | MCP servers/clients, transport, credentials, identity or authorization | Select the applicable transport/deployment profile and verify its controls; do not apply one profile universally |
+
+Use the record's current contents as authority; this table is a locator. If no
+record applies, record that conclusion briefly instead of inventing a decision.
+Proposed records are not approved policy. Check the index on the implementation
+branch and reconcile source differences or conflicting decisions explicitly.
+
+Before the first edit, record applicable ADR IDs and their concrete constraints in
+the task context/checkpoint decisions or inline plan. Worker handoffs carry the same
+selection. Review verifies the implementation against those constraints. For a
+material architectural change, briefly identify the governing ADR in the delivery.
+This is a workflow requirement, not a tool permission or edit lock.
+
+Platform ADRs remain in this directory. Use the next unused `ADR-NNNN` ID and
+preserve accepted history; a changed decision gets a superseding record. The primary
+allocates IDs for parallel workers. Harness decisions have their own
+[index](../../../tools/opencode-harness/docs/decisions/README.md) and `HADR` namespace.

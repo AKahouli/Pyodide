@@ -27,7 +27,7 @@ Assess documentation impact on every task. Changed architectural decisions requi
 new ADRs that preserve/supersede accepted history; changed relationships, contracts,
 ownership or deployment require updated owning architecture references. Routine
 changes with no durable impact record a reason instead of creating an ADR.
-The [change-control guide](../architecture/change-control.md) owns the procedure.
+The [change-control guide](../../../../docs/agent-context/architecture/change-control.md) owns the procedure.
 
 Background maintenance may follow ready-to-test delivery. Full completion requires
 reviewed relevant documentation updates or a no-impact reason. The primary owns

@@ -43,12 +43,12 @@ contexts, source/read freshness, architecture approvals and branch documentation
 Graph/Hindsight failures remain advisory under [ADR-0011](ADR-0011-advisory-integrations-and-native-policy.md).
 No schema, runtime or service is added; use existing `pending`/`nextAction` fields.
 This refines the maintainer scheduling policy in ADR-0012 without editing its
-accepted history. Operational details: [agent delivery](../architecture/agent-delivery.md).
+accepted history. Operational details: [agent delivery](../../../../docs/agent-context/architecture/agent-delivery.md).
 
 ## Verification and acceptance
 
 Installed non-pure OpenCode CLI 1.18.34 with harness
-`2026-10-13-background-handoff` passed [live acceptance](../../../tools/opencode-harness/tests/live-background.mjs)
+`2026-10-13-background-handoff` passed [live acceptance](../../tests/live-background.mjs)
 using `--create-fixture`: foreground maintainer rejected, background accepted,
 checkpoint/pending IDs survived idle and another turn. Parent response completed
 5.9 seconds into the child's 35.6-second command; automatic completion resumed it.

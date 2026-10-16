@@ -1,6 +1,7 @@
 # Backend instructions
 
 Inherits the repository `AGENTS.md`. Apply these rules to `YellowStorm/back/**`.
+Before coding, select applicable decisions from the [platform ADR index](../../docs/agent-context/decisions/README.md) and record their constraints; reuse the primary's current selection in worker handoffs.
 
 ## Before editing
 

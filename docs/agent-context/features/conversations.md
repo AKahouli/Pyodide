@@ -272,7 +272,7 @@ Authentication, runtime availability, actual provider answers, database migratio
 - [System overview](../architecture/overview.md), [component map](../architecture/component-map.md), [ADK runtime](../architecture/adk-runtime.md).
 - [Persistence](../backend/persistence.md), [backend realtime](../backend/realtime.md), [frontend realtime](../frontend/realtime.md), [QA fixtures](../testing/qa-fixtures.md).
 - [Detailed frontend module README](../../../YellowStorm/front/src/modules/conversation/README.md) is a navigation aid; verify its examples against current code before reuse.
-- [Architecture change control](../architecture/change-control.md) and [ADR-0007](../decisions/ADR-0007-architecture-approval-and-documentation.md) govern new boundaries/persistence and durable design decisions.
-- [ADR-0005](../decisions/ADR-0005-task-checkpoints-and-reuse-gates.md) governs checkpoint/reuse evidence; it does not define product conversation behavior.
+- [Architecture change control](../architecture/change-control.md) and [ADR-0007](../../../tools/opencode-harness/docs/decisions/ADR-0007-architecture-approval-and-documentation.md) govern new boundaries/persistence and durable design decisions.
+- [ADR-0014](../../../tools/opencode-harness/docs/decisions/ADR-0014-advisory-checkpoints-without-edit-locks.md) governs advisory checkpoints without edit gates; it does not define product conversation behavior.
 
 When behavior or ownership changes, update this record alongside the implementation and link affected contracts/tests. Update architecture documents when boundaries change, and add a proposed ADR for a new durable decision. Preserve accepted ADRs. Maintainer updates must use verified implementation evidence and identify any remaining live-verification gap.
