@@ -10,7 +10,10 @@ import { RuntimeConnectorDefinition } from '../../connector/interfaces/connector
 import { isRemoteInspectableMcpTransport } from '../../connector/utils/remote-mcp-transport.util';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
-import { SemanticModelMcpJwtService } from '../../connector/services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from '../../connector/services/mcp-jwt.service';
+import { hasConfiguredMcpCredential, normalizeMcpSecurityPolicy } from '../../connector/utils/mcp-security-policy';
+import { UnauthorizedException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -25,7 +28,7 @@ export class AgentConnectorRuntimeService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly configService: ConfigService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {
     this.logger.setContext(AgentConnectorRuntimeService.name);
   }
@@ -202,7 +205,7 @@ export class AgentConnectorRuntimeService {
       // Stored stdio (or unknown) transports are never bound: the agent runtime
       // can spawn local processes from binding config (WP-01).
       .filter((connector): connector is RuntimeConnectorDefinition => {
-        if (connector && isRemoteInspectableMcpTransport(connector.mcpTransportType)) return true;
+        if (connector && connector.isActive !== false && isRemoteInspectableMcpTransport(connector.mcpTransportType)) return true;
         this.logger.warn('Skipping connector with non-remote MCP transport for agent runtime binding', {
           connector_id: connector?.id,
         });
@@ -245,7 +248,12 @@ export class AgentConnectorRuntimeService {
     if (userId) {
       for (const binding of bindings) {
         const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType && connector.authSourceType !== 'none') {
+        if (!connector) continue;
+        const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
+        await this.connectorService.assertRuntimeDestination(connector);
+        if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
+        if (policy.profile !== 'configured') continue;
+        if (connector.authSourceType && connector.authSourceType !== 'none') {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
@@ -260,7 +268,11 @@ export class AgentConnectorRuntimeService {
               connector_id: binding.connector_id,
               error: (err as Error).message,
             });
+            throw err;
           }
+        }
+        if (!hasConfiguredMcpCredential(connector, binding.auth_headers)) {
+          throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
         }
         try {
           const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
@@ -280,21 +292,6 @@ export class AgentConnectorRuntimeService {
             connector_id: binding.connector_id,
             error: (err as Error).message,
           });
-        }
-      }
-    }
-
-    const mcpLogicalSearchKey = this.configService.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
-    if (mcpLogicalSearchKey) {
-      for (const binding of bindings) {
-        const transport = String(binding.mcp_transport_type || '');
-        const authHeaders = binding.auth_headers as Record<string, unknown> | undefined;
-        const hasAuth = Boolean(authHeaders?.['Authorization']);
-        if (transport === 'streamable_http' && !hasAuth) {
-          binding.auth_headers = {
-            ...(binding.auth_headers),
-            Authorization: `Bearer ${mcpLogicalSearchKey}`,
-          };
         }
       }
     }

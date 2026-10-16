@@ -16,7 +16,7 @@ describe('InternalServicePrincipalGuard (WP07.2/WP07.3)', () => {
   const semanticToken = 'semantic-mcp-principal-secret-0001';
   const bindToken = 'app-runtime-bind-secret-00000001';
 
-  const makeGuard = (principal: 'semantic-model-mcp' | 'app-runtime', env: Record<string, string>) => {
+  const makeGuard = (principal: 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime', env: Record<string, string>) => {
     const config = {
       get: jest.fn((key: string) => env[key]),
     } as unknown as ConfigService;
@@ -61,6 +61,18 @@ describe('InternalServicePrincipalGuard (WP07.2/WP07.3)', () => {
       'x-yellowstorm-service-principal': 'semantic-model-mcp',
       'x-yellowstorm-service-token': semanticToken,
     }))).toThrow(/not configured/);
+  });
+
+  it('limits renewal to the dedicated adk-runtime principal and secret', () => {
+    const guard = makeGuard('adk-runtime', { ADK_RUNTIME_MCP_RENEWAL_TOKEN: 'renewal-secret-0001' });
+    expect(guard.canActivate(ctx({ 'x-yellowstorm-service-principal': 'adk-runtime',
+      'x-yellowstorm-service-token': 'renewal-secret-0001' }))).toBe(true);
+    for (const principal of ['semantic-model-mcp', 'app-runtime']) {
+      expect(() => guard.canActivate(ctx({ 'x-yellowstorm-service-principal': principal,
+        'x-yellowstorm-service-token': 'renewal-secret-0001' }))).toThrow(UnauthorizedException);
+    }
+    expect(() => guard.canActivate(ctx({ 'x-yellowstorm-service-principal': 'adk-runtime',
+      'x-yellowstorm-service-token': semanticToken }))).toThrow(UnauthorizedException);
   });
 
   it('rejects missing headers and wrong tokens', () => {

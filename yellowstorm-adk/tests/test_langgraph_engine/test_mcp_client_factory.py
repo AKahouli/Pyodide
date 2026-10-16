@@ -10,7 +10,7 @@ if "src.smart_rag.tools.utilities.connector_tools" not in sys.modules:
         import_connector_items_to_workspace_request=lambda *a, **kw: None,
     )
 
-from src.flow_engine.mcp import _log_payload, _normalize_mcp_response
+from src.mcp import _log_payload, _normalize_mcp_response
 
 try:
     from src.smart_rag.tools.utilities.connector_tools import (

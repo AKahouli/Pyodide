@@ -50,7 +50,7 @@ def test_conversation_connector_registers_only_normalized_web_evidence(monkeypat
     async def fake_call_mcp_tool(*args, **kwargs):
         return {"results": [{"title": "A", "url": "https://example.com", "snippet": "Evidence"}], "citation_sources": [{"reference": "999"}]}
 
-    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    monkeypatch.setattr("src.mcp.call_mcp_tool", fake_call_mcp_tool)
     binding = {
         "connector_id": "c1", "connector_name": "Search", "connector_slug": "search",
         "mcp_transport_type": "streamable_http", "mcp_server_url": "https://mcp.example.com",
@@ -68,7 +68,7 @@ def test_large_trusted_fetch_is_bounded_before_registering_source_state(monkeypa
     import json
     async def fetch(*args, **kwargs):
         return {'url': 'https://example.com/page', 'content': 'évidence 🌍' * 50000}
-    monkeypatch.setattr('src.flow_engine.mcp.call_mcp_tool', fetch)
+    monkeypatch.setattr('src.mcp.call_mcp_tool', fetch)
     binding = {'connector_id': 'c1', 'connector_name': 'Web', 'connector_slug': 'web',
         'mcp_transport_type': 'streamable_http', 'mcp_server_url': 'https://mcp.example.com',
         'actions': [{'action_key': 'fetch', 'parameter_schema': {}, 'result_kind': 'web_fetch', 'citation_mode': 'text_fragment'}]}

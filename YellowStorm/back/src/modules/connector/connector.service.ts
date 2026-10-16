@@ -1,4 +1,6 @@
 import { DEFAULT_WORKER_POLICY, isPlatformOrchestration } from './utils/connector-worker-policy';
+import { assertMcpSecurityManager, assertNoReservedMcpOverrides, hasConfiguredMcpCredential, isPrivilegedMcpPolicy, mcpBindingChanged, normalizeMcpSecurityPolicy } from './utils/mcp-security-policy';
+import type { McpSecurityPolicy } from './connector.types';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
@@ -18,7 +20,6 @@ import {
   isRemoteInspectableMcpTransport,
   sanitizeEndpointUrl,
 } from './utils/remote-mcp-transport.util';
-import { jwtCapableMcpServerUrls } from './utils/trusted-mcp-server.util';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError, McpDestinationPolicyOptions } from './utils/mcp-destination-policy.util';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
@@ -34,7 +35,7 @@ import { ConnectorPlaybookBindingSyncService } from './services/connector-playbo
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
 import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { PgConnectorStore } from './persistence/pg-connector.store';
-import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from './services/mcp-jwt.service';
 
 /**
  * What an MCP tool may do, from its annotations: read-only, destructive or another change. A server that
@@ -66,12 +67,15 @@ export class ConnectorService {
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly playbookBindingSyncService: ConnectorPlaybookBindingSyncService,
     @Optional() private readonly configService?: ConfigService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
 
-  async create(createdBy: string, dto: CreateConnectorDto): Promise<PublicConnectorDto> {
+  async create(createdBy: string, dto: CreateConnectorDto, permissions: readonly string[] = []): Promise<PublicConnectorDto> {
+    const policy = normalizeMcpSecurityPolicy(dto.mcpSecurityPolicy);
+    if (dto.mcpSecurityPolicy !== undefined) assertMcpSecurityManager(permissions);
+    this.assertPolicyConfiguration(policy, dto);
     this.assertRemoteMcpTransport(dto.mcpTransportType);
     if (dto.mcpServerUrl) {
       assertNoUrlCredentials(dto.mcpServerUrl);
@@ -101,6 +105,7 @@ export class ConnectorService {
       mcpTransportType: dto.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: dto.mcpServerUrl ?? '',
       mcpServerConfig: sanitizedMcpServerConfig,
+      mcpSecurityPolicy: policy,
       dynamicHeaders,
       workerPolicy: dto.workerPolicy ?? DEFAULT_WORKER_POLICY,
       actions,
@@ -206,6 +211,7 @@ export class ConnectorService {
 
     const bindings: IGrpcConnector[] = [];
     for (const connector of connectors) {
+      if (!connector.isActive) continue;
       // Stored stdio (or unknown) transports are never handed to the agent
       // runtime: binding one would let the runtime spawn a local process from
       // stored config (WP-01).
@@ -227,11 +233,14 @@ export class ConnectorService {
           result_mapping_json: JSON.stringify(action.resultMapping || {}),
         }));
       if (actions.length === 0) continue;
+      const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
+      await this.assertRuntimeDestination(connector);
+      if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
 
       let authHeaders: Record<string, string> = {};
       let authEnv: Record<string, string> = {};
 
-      if (userId && connector.authSourceType !== 'none') {
+      if (policy.profile === 'configured' && userId && connector.authSourceType !== 'none') {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
@@ -246,10 +255,14 @@ export class ConnectorService {
             connector_id: connector.id,
             error: (err as Error).message,
           });
+          throw err;
         }
       }
 
-      if (userId) {
+      if (policy.profile === 'configured' && !hasConfiguredMcpCredential(connector, authHeaders)) {
+        throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+      }
+      if (userId && policy.profile !== 'public') {
         try {
           const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
             userId,
@@ -315,7 +328,7 @@ export class ConnectorService {
     return this.connectorCategoryStore.findNamesByIds(categoryIds);
   }
 
-  async update(id: string, dto: UpdateConnectorDto): Promise<PublicConnectorDto> {
+  async update(id: string, dto: UpdateConnectorDto, permissions: readonly string[] = []): Promise<PublicConnectorDto> {
     this.assertRemoteMcpTransport(dto.mcpTransportType);
     if (dto.mcpServerUrl) {
       assertNoUrlCredentials(dto.mcpServerUrl);
@@ -332,7 +345,14 @@ export class ConnectorService {
       }
     }
 
+    const oldPolicy = normalizeMcpSecurityPolicy(existing.mcpSecurityPolicy);
+    const policy = dto.mcpSecurityPolicy === undefined ? oldPolicy : normalizeMcpSecurityPolicy(dto.mcpSecurityPolicy);
     const updateData: Record<string, unknown> = { ...dto };
+    delete updateData.expectedSecurityRevision;
+    if (dto.mcpSecurityPolicy !== undefined) {
+      assertMcpSecurityManager(permissions);
+      updateData.mcpSecurityPolicy = policy;
+    }
     // Explicit authenticated clear: an admin clears stored runtime credentials
     // without ever reading them (WP02.5). Omitted fields preserve secrets.
     if ((dto as { clearRuntimeAuthConfig?: boolean }).clearRuntimeAuthConfig === true) {
@@ -358,7 +378,18 @@ export class ConnectorService {
       (updateData).categoryId = dto.categoryId || null;
     }
 
-    const updated = await this.connectorStore.update(id, updateData);
+    const bindingChanged = mcpBindingChanged(existing, updateData);
+    if (bindingChanged) {
+      const onlyDisabling = Object.keys(updateData).filter(key => updateData[key] !== undefined).every(key => key === 'isActive') && dto.isActive === false;
+      if (!onlyDisabling && (isPrivilegedMcpPolicy(oldPolicy) || isPrivilegedMcpPolicy(policy))) assertMcpSecurityManager(permissions);
+      if (!Number.isInteger(dto.expectedSecurityRevision) || dto.expectedSecurityRevision !== (existing.securityRevision ?? 1)) {
+        throw new ConflictException(ErrorCode.BAD_REQUEST, 'Connector security changed; reload before saving');
+      }
+      if (!onlyDisabling) this.assertPolicyConfiguration(policy, { ...existing, ...updateData });
+    }
+    const updated = bindingChanged
+      ? await this.connectorStore.update(id, updateData, dto.expectedSecurityRevision)
+      : await this.connectorStore.update(id, updateData);
     if (!updated) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
@@ -487,6 +518,7 @@ export class ConnectorService {
     runtimeAuthConfig?: Record<string, unknown>,
     resolvedToken?: string,
     resolvedAuthHeaders?: Record<string, string>,
+    connectorId?: string,
   ): Promise<IMcpInspectResult> {
     // Hard deny BEFORE any credential resolution, network I/O or transport
     // construction (WP01.1/WP01.2): only remote HTTP transports are inspectable,
@@ -500,12 +532,17 @@ export class ConnectorService {
       );
     }
     assertNoUrlCredentials(serverUrl);
+    const currentConnector = connectorId ? await this.getRuntimeById(connectorId) : undefined;
+    if (currentConnector && currentConnector.mcpServerUrl !== serverUrl) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Save connector changes before testing');
+    }
     // SSRF egress policy (WP-05): the destination must be a permitted public
     // HTTP(S) endpoint BEFORE any DNS-consuming transport is built. Thrown
     // outside the try/catch like the transport denial, with non-sensitive
     // telemetry only (actor, host, reason — never the full URL or headers).
     try {
-      await assertMcpDestinationAllowed(serverUrl, this.mcpDestinationPolicyOptions());
+      await assertMcpDestinationAllowed(serverUrl, this.mcpDestinationPolicyOptions(currentConnector));
+      if (currentConnector && userId && this.mcpJwt) await this.mcpJwt.assertConnectorAccess(currentConnector, userId);
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
         this.logger.warn('Denied MCP inspection destination', {
@@ -566,11 +603,15 @@ export class ConnectorService {
       }
 
       let requestInit = this.buildMcpRequestInit(finalServerConfig);
+      if (currentConnector && normalizeMcpSecurityPolicy(currentConnector.mcpSecurityPolicy).profile === 'configured'
+        && !hasConfiguredMcpCredential(currentConnector, resolvedAuthHeaders ?? this.buildMcpHeaders(finalServerConfig))) {
+        throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'The protected MCP connector has no usable credential');
+      }
       // No-follow redirects for every inspection hop (WP05.3): a redirect must
       // never move the probe to a destination the policy never validated.
       requestInit = { ...requestInit, redirect: 'error' };
-      if (userId && this.mcpJwt?.isJwtServer(serverUrl)) {
-        requestInit = { headers: await this.mcpJwt.headers(serverUrl, userId, this.buildMcpHeaders(finalServerConfig)), redirect: 'error' };
+      if (userId && currentConnector && this.mcpJwt) {
+        requestInit = { headers: await this.mcpJwt.headers(serverUrl, userId, this.buildMcpHeaders(finalServerConfig), currentConnector.id), redirect: 'error' };
       }
 
       if (transportType === 'sse') {
@@ -679,7 +720,7 @@ export class ConnectorService {
 
   /** Egress policy knobs from typed config; production stays https-only (WP05.1)
    * and only exact admin-configured internal endpoints bypass the public rules (WP05.5). */
-  private mcpDestinationPolicyOptions(): McpDestinationPolicyOptions {
+  private mcpDestinationPolicyOptions(connector?: ConnectorRow): McpDestinationPolicyOptions {
     const config = this.configService;
     const ports = (config?.get<string>('MCP_EGRESS_ALLOWED_PORTS') ?? '80,443,8443')
       .split(',')
@@ -687,7 +728,22 @@ export class ConnectorService {
       .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
     const nodeEnv = config?.get<string>('NODE_ENV', 'development');
     const allowInsecureHttp = (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false) && nodeEnv !== 'production';
-    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, allowExactEndpoints: [...jwtCapableMcpServerUrls(config)] };
+    const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
+    return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, requireTls: nodeEnv === 'production',
+      allowExactEndpoints: connector && policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [] };
+  }
+
+  /** Current connector policy, not URL similarity or a feature-name allowlist. */
+  async assertRuntimeDestination(connector: ConnectorRow, userId?: string): Promise<void> {
+    try {
+      await assertMcpDestinationAllowed(connector.mcpServerUrl, this.mcpDestinationPolicyOptions(connector));
+      if (userId && this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
+    } catch (error) {
+      if (error instanceof McpDestinationPolicyError) {
+        throw new BadRequestException(ErrorCode.CONNECTOR_MCP_DESTINATION_BLOCKED, 'This MCP server destination is not allowed.');
+      }
+      throw error;
+    }
   }
 
   private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {
@@ -873,6 +929,8 @@ export class ConnectorService {
       connectedAppKey: doc.connectedAppKey ?? '',
       credentialConfigured,
       mcpTransportType: doc.mcpTransportType,
+      mcpSecurityPolicy: normalizeMcpSecurityPolicy(doc.mcpSecurityPolicy),
+      securityRevision: doc.securityRevision ?? 1,
       mcpServerUrl: sanitizeEndpointUrl(doc.mcpServerUrl),
       inspectionStatus: isRemoteInspectableMcpTransport(doc.mcpTransportType)
         ? 'supported'
@@ -907,6 +965,39 @@ export class ConnectorService {
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };
+  }
+
+  /** Validate raw override paths too; hidden JSON must not override platform identity. */
+  private assertPolicyConfiguration(policy: McpSecurityPolicy, configuration: {
+    mcpTransportType?: unknown; mcpServerConfig?: unknown; runtimeAuthConfig?: unknown;
+    dynamicHeaders?: unknown; authSourceType?: unknown;
+  }): void {
+    assertNoReservedMcpOverrides(configuration.mcpServerConfig);
+    assertNoReservedMcpOverrides(configuration.runtimeAuthConfig);
+    const headers = configuration.dynamicHeaders;
+    if (Array.isArray(headers)) {
+      for (const header of headers) {
+        if (header && typeof header.headerName === 'string') assertNoReservedMcpOverrides({ [header.headerName]: true });
+      }
+    }
+    if (policy.profile === 'internal_jwt' && configuration.mcpTransportType !== 'streamable_http') {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Internal JWT requires Streamable HTTP');
+    }
+    if (policy.profile === 'internal_jwt') {
+      if (!this.mcpJwt) throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP JWT signing is not configured');
+      this.mcpJwt.assertSignerConfigured();
+    }
+    if (policy.profile === 'public' && configuration.authSourceType && configuration.authSourceType !== 'none') {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Public MCP connections cannot inject credentials');
+    }
+    if (policy.profile === 'public') {
+      const config = configuration.mcpServerConfig as Record<string, unknown> | undefined;
+      if ((configuration.runtimeAuthConfig && Object.keys(configuration.runtimeAuthConfig).length > 0)
+        || (Array.isArray(headers) && headers.some(header => header?.enabled !== false))
+        || (config?.headers && Object.keys(config.headers).length > 0) || (config?.env && Object.keys(config.env).length > 0)) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Public MCP connections cannot inject credentials or identity');
+      }
+    }
   }
 
   /** WP01.3: service-level transport validation for connector writes. */

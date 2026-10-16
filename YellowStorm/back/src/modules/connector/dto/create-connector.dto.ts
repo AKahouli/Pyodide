@@ -4,6 +4,8 @@ import {
   IsEnum,
   IsObject,
   IsIn,
+  IsInt,
+  Min,
   IsOptional,
   IsString,
   Matches,
@@ -120,6 +122,17 @@ export class ConnectorActionDto {
 }
 
 export class CreateConnectorDto {
+  @ApiPropertyOptional({ description: 'Connector MCP security policy (privileged changes require connectors.security.manage)' })
+  @IsOptional()
+  @IsObject()
+  mcpSecurityPolicy?: import('../connector.types').McpSecurityPolicy;
+
+  @ApiPropertyOptional({ description: 'Expected security revision for binding-affecting updates' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expectedSecurityRevision?: number;
+
   @ApiPropertyOptional({ type: ConnectorWorkerPolicyDto })
   @IsOptional()
   @ValidateNested()

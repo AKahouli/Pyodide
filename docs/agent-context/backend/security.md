@@ -29,11 +29,69 @@ Decorator-driven: `@RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'auth:reg
 
 | Principal | Env secret / headers | Endpoint group |
 | --- | --- | --- |
-| `semantic-model-mcp` | `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`; headers `X-Yellowstorm-Service-Principal` + `X-Yellowstorm-Service-Token` | `internal/semantic-model-assistant/*`, `connectors/internal/mcp-token` |
+| `semantic-model-mcp` | `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`; headers `X-Yellowstorm-Service-Principal` + `X-Yellowstorm-Service-Token` | `internal/semantic-model-assistant/*` only |
 | `app-runtime` | `APP_RUNTIME_BIND_TOKEN` (same two headers, principal `app-runtime`) | `internal/app-runtime/*` only |
+| `adk-runtime` | `ADK_RUNTIME_MCP_RENEWAL_TOKEN` (same two headers, principal `adk-runtime`) | `connectors/internal/mcp-token` renewal with current signed actor proof only |
 
-The legacy `internal-service.guard.ts` accepts only `INTERNAL_SERVICE_SECRET` and guards the remaining non-semantic internal routes (bounded compatibility path with a removal gate); it never accepts `APP_RUNTIME_BIND_TOKEN`. Both scoped tokens are required (min length 16) at startup when `NODE_ENV=production` and deny per request when unset (fail closed).
+The legacy `internal-service.guard.ts` accepts only `INTERNAL_SERVICE_SECRET` and guards the remaining non-semantic internal routes (bounded compatibility path with a removal gate); it never accepts `APP_RUNTIME_BIND_TOKEN`. The original semantic/app scoped tokens are required (min length 16) at startup when `NODE_ENV=production`. The ADK renewal secret is optional when renewal is unused; if configured it requires at least 16 characters. Every principal denies requests when its secret is unset.
 
-**MCP actor chain (WP-06):** the semantic MCP server authenticates callers with backend-issued RS256 JWTs (`SEMANTIC_MODEL_MCP_AUTH_MODE=JWT`, enforced for production in `config.schema.ts` and the Python server's startup validation; max lifetime 300s, exact issuer/audience, duplicate Authorization headers rejected). The verified original token is forwarded as `X-YellowStorm-Mcp-Assertion`; the backend (`SemanticModelMcpJwtService.verifyMcpAssertion` + `SemanticAssistantActorGuard`) derives the acting user from its signed `sub`, rejects header disagreement, and treats a naked `X-YellowStorm-User-Id` as authoritative only in developer Bearer mode. ADK token renewal (`src/flow_engine/mcp/jwt_auth.py`) uses the same principal headers.
+**MCP profile and control plane (ADR-0017/0018):** JWT is one selected profile,
+not mandatory for every MCP. Existing connector rows own typed `mcpSecurityPolicy`
+and monotonic `securityRevision` (migration `0049`). Profiles are `configured`
+(existing credential/account resolution), `internal_jwt` (C1) and explicit `public`.
+Audience, verified-user delegation, required permissions and an exact private-network
+exception are separate controls. No slug, URL list or `isSystem` flag grants trust.
+The existing editor shows connection/auth first, specialist settings collapsed, and
+requires save before testing current persisted policy. Signing keys and receiving
+verifiers remain deployment-managed. A simple saved bearer value uses a literal
+custom Authorization mapping so it is not concatenated with a per-user token.
 
-**MCP destination/egress policy (WP-05):** every server-side probe of a user-configured MCP destination passes `connector/utils/mcp-destination-policy.util.ts` before any transport is built — https-only outside the `MCP_EGRESS_ALLOW_INSECURE_HTTP` development opt-in, `MCP_EGRESS_ALLOWED_PORTS` allowlist (default 80/443/8443), no userinfo/fragment/malformed percent-encoding, all A/AAAA records resolved with loopback/link-local/RFC1918/ULA/CGNAT/benchmark/multicast/metadata ranges (v4+v6, literal and mapped) denied, redirects refused on every hop including the SSE `eventsource` layer via a fetch override. Exact admin-configured internal endpoints are the only exception — and only while the owning service's MCP auth mode is JWT (`PLAYBOOK_MCP_SERVER_URL`/`AGENT_MCP_SERVER_URL`/`SEMANTIC_MODEL_MCP_SERVER_URL` gated on their `*_MCP_AUTH_MODE`), because the exception contract requires service-issued JWT authentication; Bearer-mode internal servers satisfy the public rules like any other endpoint, `TRUSTED_MCP_SERVER_URLS` grants identity headers but never an egress bypass, and lookalike URLs inherit nothing (canonical exact match). Admin inspection runs the policy before any OAuth token retrieval. Denials are deterministic 400 `ERR_3103`; telemetry logs actor, normalized host and reason only. DNS-rebinding between validation and connect is contained by deployment egress rules (WP05.6) — application filtering is defense in depth.
+**Privileged writes:** `connectors.security.manage` is required in addition to the
+normal create/update permission for policy changes and trust-bearing destination/auth
+changes. Existing `connectors.*`/global wildcard semantics include it. Omitted fields
+preserve stored policy/secrets; binding-affecting updates require an expected revision
+and increment it atomically. Direct catalog overwrite cannot bypass the trusted
+connector fence; new/imported rows gain no trust automatically. Explicit Public
+transitions clear old credential/header configuration. A disabled connector can be
+revoked without granting new authority; reactivation of privileged policy is restricted.
+
+**MCP actor chain:** Semantic Model MCP uses explicit stateless Streamable HTTP and
+backend-issued RS256 JWTs (C1 maximum 300s, trusted issuer/audience, duplicate
+Authorization rejection). Verification does not mutate ambient context; actor,
+assertion and logging values are reset on every exit. Application conversations are
+not transport sessions. The verified token is forwarded as `X-YellowStorm-Mcp-Assertion`
+under a separate authenticated semantic service principal. `McpJwtService` and
+`SemanticAssistantActorGuard` check the trusted expected audience, current connector
+ID/revision, active account, required permissions and verified-user delegation before
+domain resource checks. A naked user-id header remains developer Bearer compatibility
+only; production Semantic MCP requires JWT.
+
+**Issuance/renewal:** user issuance derives the subject from authenticated application
+identity. `src/mcp/jwt_auth.py` renews under the dedicated ADK principal using
+`{connectorId, assertion}`; no caller-selected subject or URL is accepted. Expired,
+wrong-connector or stale-policy proof requires authenticated rebinding. Current
+backend policy is read without an authority cache; already-authorized in-flight
+operations are not retroactively canceled. Short-lived JWT expiry alone is not an
+immediate revocation mechanism at an independent receiving MCP.
+
+**MCP egress:** current connector policy supplies exact exceptions to
+`connector/utils/mcp-destination-policy.util.ts` before credential resolution.
+Production requires TLS, including internal exceptions. Public destinations use the
+port allowlist and deny private/reserved addresses. Approved exact private targets
+still resolve DNS and reject metadata/link-local/reserved destinations; lookalike
+hosts, paths and redirects inherit nothing. Backend inspection refuses redirects
+including the SSE hop. Runtime clients reject redirects for every profile and check
+destinations before attaching credentials: Streamable HTTP binds origin/path/query;
+legacy SSE permits its separate protocol POST path only on the configured origin.
+SDK/httpx diagnostics are suppressed only within the task-local MCP HTTP scope to
+avoid credential-bearing URL leakage; context is restored afterward. Evidence calls
+require resolved auth that is actually attached, not raw secret headers that their
+transport intentionally strips. DNS-rebinding
+between validation and connection still requires deployment network egress controls.
+
+**Rollout:** apply `0049` through the existing migration process, provision the
+dedicated renewal secret on backend/ADK, configure signer/verifier and explicitly
+grant policy to approved connector IDs. Old environment URL lists no longer grant
+identity/egress/JWT authority. A bounded signer-key compatibility adapter accepts
+legacy keys until shared settings replace them. Do not restore unsafe sessions or
+user-id-only renewal during rollback. See [ADR-0018](../decisions/ADR-0018-connector-managed-mcp-security.md).

@@ -8,6 +8,27 @@ It is a thin client of the YellowStorm backend. Every tool calls
 acts for; the backend applies that person's permissions and model roles, through the same services as the
 model editor. Nothing here touches a database.
 
+### Request lifecycle (ADR-0017 C1 / approved ADR-0018 P0)
+
+Streamable HTTP is explicitly **stateless** (`stateless_http=True`); default SSE
+responses remain enabled. Each HTTP request independently authenticates before MCP
+dispatch, including initialization, discovery and tool calls. No transport session
+is retained: an old or supplied `Mcp-Session-Id` cannot select another actor.
+Conversation history belongs to the application, not this transport.
+
+JWT verification does not mutate ambient context. Accepted requests bind the
+verified actor, current signed assertion and logging fields only for dispatch;
+cleanup restores previous values (including nested contexts) on success, errors
+and cancellation. Rejected identity leaves ambient context unchanged. A renewed
+assertion is forwarded on its current call, not retained from initialization.
+The backend remains authoritative for user permissions and resource ownership;
+stateless transport does not revoke already-issued tokens. This P0 change adds no
+connector-ID/revision claim requirements; additional backend claims are accepted.
+
+The focused `tests/test_request_isolation.py` exercises real FastMCP 2.14.7 HTTP
+dispatch with default SSE responses and a mocked backend HTTP boundary. It does
+not certify deployed ingress, live backend authorization or end-to-end ADK renewal.
+
 ## Tools
 
 | Group | Tool | What it does |

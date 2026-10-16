@@ -225,7 +225,7 @@ test('PowerShell opt-out and pending memory preserve core installation', { skip:
       writeFileSync(script, [
         '. $env:TEST_SETUP_SCRIPT',
         '$script:calls = [Collections.Generic.List[string]]::new()',
-        'function Assert-SetupHostsClosed { }',
+        'function Show-SetupHostWarning { }',
         'function Install-SetupPrerequisite { }',
         "function Enable-SetupBackground { $script:calls.Add('background') }",
         'function Get-SetupConfigDirectory { $env:TEST_CONFIG }',
@@ -264,6 +264,32 @@ test('PowerShell opt-out and pending memory preserve core installation', { skip:
       if (scenario === 'N') assert.ok(!report.calls.some(call => call.includes('memory')));
     } finally { f.cleanup(); }
   }
+});
+
+test('setup host detection warns with PIDs and continues without stopping hosts', { skip: process.platform !== 'win32' }, () => {
+  const f = fixture();
+  try {
+    const script = path.join(f.root, 'mock-hosts.ps1');
+    writeFileSync(script, [
+      '. $env:TEST_SETUP_SCRIPT',
+      'function Get-Process { if ($env:TEST_SCENARIO -eq \'running\') { [pscustomobject]@{ Id = 456 }; [pscustomobject]@{ Id = 123 } } }',
+      "function Stop-Process { throw 'Setup must not stop a host' }",
+      '$warnings = @(Show-SetupHostWarning 3>&1)',
+      '@{ continued = $true; warnings = @($warnings | ForEach-Object { $_.ToString() }) } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_RESULT',
+    ].join('\n'));
+    for (const scenario of ['closed', 'running']) {
+      const result = path.join(f.root, scenario + '.json');
+      execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { env: { ...process.env, TEST_SETUP_SCRIPT: fileURLToPath(new URL('../setup.ps1', import.meta.url)), TEST_SCENARIO: scenario, TEST_RESULT: result }, stdio: 'pipe' });
+      const report = JSON.parse(readFileSync(result, 'utf8').replace(/^\uFEFF/, ''));
+      assert.equal(report.continued, true);
+      assert.equal(report.warnings.length, scenario === 'running' ? 1 : 0);
+      if (scenario === 'running') {
+        assert.match(report.warnings[0], /PIDs: 123, 456/);
+        assert.match(report.warnings[0], /Setup will continue without stopping them/);
+        assert.match(report.warnings[0], /fully exit\/restart OpenCode after setup/);
+      }
+    }
+  } finally { f.cleanup(); }
 });
 
 test('graph watcher requires observed readiness without spawning processes in tests', { skip: process.platform !== 'win32' }, () => {

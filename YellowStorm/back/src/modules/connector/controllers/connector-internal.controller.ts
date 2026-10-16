@@ -2,37 +2,30 @@ import { Body, Controller, Post, UseGuards, Optional, Header } from '@nestjs/com
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
-import { SemanticMcpServiceGuard } from '../../auth/guards/internal-service-principal.guard';
+import { AdkRuntimeMcpRenewalGuard } from '../../auth/guards/internal-service-principal.guard';
 import { ConnectorTransferService } from '../connector-transfer.service';
 import { InternalImportConnectorItemDto } from '../dto/connector-transfer.dto';
 import { InternalMcpTokenDto } from '../dto/mcp-token.dto';
 import { ConnectorService } from '../connector.service';
-import { SemanticModelMcpJwtService } from '../services/semantic-model-mcp-jwt.service';
-import { BadRequestException } from '../../exceptions';
-import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { McpJwtService } from '../services/mcp-jwt.service';
 
 @ApiTags('Connectors (Internal)')
 @Controller('connectors/internal')
 export class ConnectorInternalController {
   constructor(private readonly transferService: ConnectorTransferService,
     @Optional() private readonly connectors?: ConnectorService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService) {}
+    @Optional() private readonly mcpJwt?: McpJwtService) {}
 
   @Post('mcp-token')
   @Public()
   @Header('Cache-Control', 'no-store')
-  // Scoped to the semantic-model-mcp principal (WP07.2/WP07.3): the shared
-  // internal secret and the app-runtime bind token must never mint MCP JWTs.
-  @UseGuards(SemanticMcpServiceGuard)
+  // Renewal authority belongs to the runtime, not receiving MCP services.
+  @UseGuards(AdkRuntimeMcpRenewalGuard)
   @ApiHeader({ name: 'X-Yellowstorm-Service-Principal', required: true })
   @ApiHeader({ name: 'X-Yellowstorm-Service-Token', required: true })
-  @ApiOperation({ summary: 'Issue or renew an internal MCP JWT for a trusted runtime' })
+  @ApiOperation({ summary: 'Renew an MCP JWT from a current connector-bound assertion' })
   async issueMcpToken(@Body() dto: InternalMcpTokenDto) {
-    const connector = await this.connectors!.findById(dto.connectorId);
-    if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
-      throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
-    }
-    return this.mcpJwt!.issue(connector.mcpServerUrl, dto.userId);
+    return this.mcpJwt!.renew(dto.connectorId, dto.assertion);
   }
 
   @Post('transfer/import')

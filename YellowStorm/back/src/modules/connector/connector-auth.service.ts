@@ -201,6 +201,17 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
   }
 
   private buildStaticHeaderAuth(config: Record<string, unknown>): { headers: Record<string, string>; env: Record<string, string> } {
+    if (config.strategy === 'custom_headers') {
+      const mappings = config.headerMappings;
+      if (!mappings || typeof mappings !== 'object' || Array.isArray(mappings)) return { headers: {}, env: {} };
+      const entries = Object.entries(mappings);
+      // Static credentials are explicit per-connector values. A template that
+      // needs a missing user credential must never be sent unresolved.
+      if (entries.some(([, value]) => typeof value !== 'string' || !value.trim() || value.includes('{token}'))) {
+        return { headers: {}, env: {} };
+      }
+      return { headers: Object.fromEntries(entries) as Record<string, string>, env: {} };
+    }
     if (config.strategy !== 'http_header_bearer') {
       return { headers: {}, env: {} };
     }

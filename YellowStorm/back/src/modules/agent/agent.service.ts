@@ -48,7 +48,7 @@ import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
 } from './constants/platform-copilot.constants';
-import { isTrustedMcpServerUrl, normalizeMcpServerUrl } from '../connector/utils/trusted-mcp-server.util';
+import { canonicalMcpEndpoint } from '../connector/utils/mcp-destination-policy.util';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -2126,11 +2126,11 @@ export class AgentService {
     if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
 
     // The Copilot uses every current action of the playbook MCP (the connector pointing at PLAYBOOK_MCP_SERVER_URL).
-    const playbookMcpUrl = normalizeMcpServerUrl(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', ''));
+    const playbookMcpUrl = canonicalMcpEndpoint(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', '') ?? '');
     const runtimeSelections = new Map(selected ?? []);
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
-      if (connector && playbookMcpUrl && normalizeMcpServerUrl(connector.mcpServerUrl) === playbookMcpUrl) {
+      if (connector && playbookMcpUrl && canonicalMcpEndpoint(connector.mcpServerUrl) === playbookMcpUrl) {
         runtimeSelections.set(connectorId, new Set(
           connector.actions
             .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
@@ -2193,11 +2193,15 @@ export class AgentService {
   }
 
   /**
-   * Bindings that receive the acting user's identity: connectors pointing at a trusted internal MCP server
-   * (playbook, agent, semantic model, TRUSTED_MCP_SERVER_URLS), matched by server URL, never by slug.
+   * Only bindings resolved under current connector delegation policy receive
+   * the acting identity. Sharing a slug or URL never grants that authority.
    */
   private isTrustedIdentityBinding(binding: Record<string, unknown>): boolean {
-    return isTrustedMcpServerUrl(this.configService, binding.mcp_server_url);
+    // Only current connector policy resolution can create this server-side
+    // delegated binding; sharing a URL with another connector grants nothing.
+    const env = binding.auth_env as Record<string, unknown> | undefined;
+    return typeof env?.YELLOWSTORM_MCP_JWT_CONNECTOR_ID === 'string'
+      && env.YELLOWSTORM_MCP_JWT_CONNECTOR_ID === binding.connector_id;
   }
 
   /**

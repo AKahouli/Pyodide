@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticModelMcpJwtService } from '@modules/connector/services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { UserService } from '@modules/user/user.service';
 import { assertAccountApproved } from '@modules/user/utils/assert-account-accessible';
@@ -27,7 +27,7 @@ export class SemanticAssistantActorGuard implements CanActivate {
     private readonly authorization: AuthorizationService,
     private readonly users: UserService,
     private readonly config: ConfigService,
-    private readonly mcpJwt: SemanticModelMcpJwtService,
+    private readonly mcpJwt: McpJwtService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -43,7 +43,8 @@ export class SemanticAssistantActorGuard implements CanActivate {
     // a user-id header may never disagree with it.
     let userId: string | null = null;
     if (typeof assertion === 'string' && assertion.trim()) {
-      const verified = this.mcpJwt.verifyMcpAssertion(assertion.trim());
+      const verified = await this.mcpJwt.verifyMcpAssertion(assertion.trim(),
+        this.config.get<string>('SEMANTIC_MODEL_MCP_JWT_AUDIENCE', 'mcp-semantic-model'));
       if (!verified || !isObjectId(verified.sub)) {
         throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid semantic MCP actor assertion');
       }

@@ -1697,7 +1697,18 @@ export interface ConnectorDynamicHeader {
   enabled: boolean;
 }
 
+export interface McpSecurityPolicy {
+  version: 1;
+  profile: 'configured' | 'internal_jwt' | 'public';
+  audience?: string;
+  actorDelegation: 'none' | 'verified_user';
+  allowPrivateNetwork: boolean;
+  requiredPermissions: string[];
+}
+
 export interface ConnectorResponse {
+  mcpSecurityPolicy?: McpSecurityPolicy;
+  securityRevision?: number;
   id: string;
   slug: string;
   name: string;
@@ -1739,6 +1750,8 @@ export interface ConnectorListResponse {
 }
 
 export interface CreateConnectorRequest {
+  mcpSecurityPolicy?: McpSecurityPolicy;
+  expectedSecurityRevision?: number;
   slug: string;
   name: string;
   description: string;

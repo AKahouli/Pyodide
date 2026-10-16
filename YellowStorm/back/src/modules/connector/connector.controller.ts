@@ -40,7 +40,7 @@ import { ConnectedAppOAuthService } from '../connected-app/services/connected-ap
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
+import { McpJwtService } from './services/mcp-jwt.service';
 
 @ApiTags('Connectors')
 @ApiBearerAuth()
@@ -53,7 +53,7 @@ export class ConnectorController {
     private readonly transferService: ConnectorTransferService,
     private readonly oauthService: ConnectedAppOAuthService,
     private readonly connectorUserService: ConnectorUserService,
-    @Optional() private readonly mcpJwt?: SemanticModelMcpJwtService,
+    @Optional() private readonly mcpJwt?: McpJwtService,
   ) {}
 
   @Get()
@@ -98,7 +98,7 @@ export class ConnectorController {
     if (!connector.isActive || connector.mcpTransportType !== 'streamable_http') {
       throw new BadRequestException(ErrorCode.INVALID_TOKEN, 'MCP connector is inactive or uses an unsupported transport');
     }
-    return this.mcpJwt!.issue(connector.mcpServerUrl, user._id.toString());
+    return this.mcpJwt!.issue(connector.id, user._id.toString());
   }
 
   @Get(':connectorId/credentials')

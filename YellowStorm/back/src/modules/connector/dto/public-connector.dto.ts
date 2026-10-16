@@ -25,6 +25,8 @@ export class PublicConnectorDto {
   /** True when server-side credential material is configured (never the material itself). */
   credentialConfigured!: boolean;
   mcpTransportType!: string;
+  mcpSecurityPolicy!: import('../connector.types').McpSecurityPolicy;
+  securityRevision!: number;
   /** Endpoint URL with any embedded userinfo stripped. */
   mcpServerUrl!: string;
   /** Whether this connector's transport supports backend HTTP inspection. */

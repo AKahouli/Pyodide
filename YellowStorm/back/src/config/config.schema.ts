@@ -416,6 +416,7 @@ export const configValidationSchema = Joi.object({
   AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
   MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
+  ADK_RUNTIME_MCP_RENEWAL_TOKEN: Joi.string().min(16).allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
   // WP06.1/WP07.6: the conditional REPLACES the schema in production (a
   // nested .valid would union with the base allowlist and still accept

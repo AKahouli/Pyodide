@@ -1567,7 +1567,7 @@ def _create_connector_mcp_tools(
                                 f"Error: No MCP server configured for connector {cid}"
                             )
 
-                        from src.flow_engine.mcp import (
+                        from src.mcp import (
                             call_mcp_tool,
                         )
 

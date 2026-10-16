@@ -1,4 +1,4 @@
-import type { ConnectorActionResponse, ConnectorDynamicHeaderSource } from '../../types';
+import type { ConnectorActionResponse, ConnectorDynamicHeaderSource, McpSecurityPolicy } from '../../types';
 
 export interface DynamicHeaderRow {
   id: string;
@@ -8,6 +8,10 @@ export interface DynamicHeaderRow {
 }
 
 export interface ConnectorFormValues {
+  mcpSecurityPolicy?: ConnectorSecurityPolicy;
+  expectedSecurityRevision?: number;
+  requiredPermissionsInput?: string;
+  accessToken?: string;
   slug: string;
   name: string;
   description: string;
@@ -40,6 +44,22 @@ export interface ConnectorFormValues {
   isActive: boolean;
   isHidden: boolean;
   isSystem: boolean;
+}
+
+export type ConnectorSecurityPolicy = McpSecurityPolicy;
+
+/** Empty draft fields preserve stored secrets; explicit JSON {} clears config. */
+export function serializeConnectorSecretFields(data: ConnectorFormValues) {
+  return {
+    runtimeAuthConfig: data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) as Record<string, unknown> : undefined,
+    clearRuntimeAuthConfig: data.clearCredentials || undefined,
+    mcpServerConfig: data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) as Record<string, unknown> : undefined,
+  };
+}
+
+export function securityPolicyChanged(current: ConnectorSecurityPolicy | undefined, saved: ConnectorSecurityPolicy | undefined) {
+  const normalize = (policy: ConnectorSecurityPolicy | undefined) => policy ? [policy.version, policy.profile, policy.audience ?? '', policy.actorDelegation, policy.allowPrivateNetwork, [...policy.requiredPermissions].sort()] : null;
+  return JSON.stringify(normalize(current)) !== JSON.stringify(normalize(saved));
 }
 
 export const defaultConnectorFormValues: ConnectorFormValues = {

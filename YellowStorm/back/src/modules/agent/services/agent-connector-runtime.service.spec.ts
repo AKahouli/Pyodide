@@ -3,22 +3,55 @@ import { AgentConnectorRuntimeService } from './agent-connector-runtime.service'
 
 describe('AgentConnectorRuntimeService', () => {
   it('injects JWT and renewal metadata even when the connector has no saved credential', async () => {
-    const mcpJwt = { bindingAuth: jest.fn().mockResolvedValue({
+    const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), bindingAuth: jest.fn().mockResolvedValue({
       headers: { Authorization: 'Bearer signed-jwt' },
-      env: { YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1', YELLOWSTORM_MCP_JWT_USER_ID: 'acting-user' },
+      env: { YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1' },
     }) };
     const service = new AgentConnectorRuntimeService(
-      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never, {} as never,
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never, { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never,
       { resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as never,
       { get: jest.fn((_key, fallback) => fallback) } as never, mcpJwt as never,
     );
     const bindings = await service.buildConnectorBindings(new Map([['connector-1', {
       id: 'connector-1', name: 'Semantic', authSourceType: 'none', mcpTransportType: 'streamable_http',
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'mcp-semantic-model', actorDelegation: 'verified_user', allowPrivateNetwork: true, requiredPermissions: [] },
       mcpServerUrl: 'http://localhost:8027/mcp', actions: [{ key: 'find_records', isEnabled: true }],
     } as never]]), ['connector-1'], 'acting-user');
     expect(mcpJwt.bindingAuth).toHaveBeenCalledWith('http://localhost:8027/mcp', 'acting-user', 'connector-1', {}, {});
     expect(bindings[0].auth_headers).toEqual({ Authorization: 'Bearer signed-jwt' });
-    expect(bindings[0].auth_env).toHaveProperty('YELLOWSTORM_MCP_JWT_USER_ID', 'acting-user');
+    expect(bindings[0].auth_env).toEqual({ YELLOWSTORM_MCP_JWT_CONNECTOR_ID: 'connector-1' });
+  });
+  it.each(['missing', 'revoked', 'failed'])('denies %s configured auth before dynamic trace headers or JWT binding', async failure => {
+    const auth = { resolveRuntimeAuth: failure === 'failed' ? jest.fn().mockRejectedValue(new Error('revoked credential'))
+      : jest.fn().mockResolvedValue({ headers: {}, env: {} }),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-User-Id': 'acting-user', 'X-Correlation-ID': 'trace' }) };
+    const jwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), bindingAuth: jest.fn() };
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
+      { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never, auth as never,
+      { get: jest.fn((_key, fallback) => fallback) } as never, jwt as never);
+    await expect(service.buildConnectorBindings(new Map([['connector-1', {
+      id: 'connector-1', name: 'Protected', authSourceType: 'connected_app', connectedAppKey: 'provider',
+      mcpTransportType: 'streamable_http', mcpServerUrl: 'https://example.test/mcp',
+      mcpServerConfig: { headers: { Authorization: 'Bearer forbidden-static-fallback' } },
+      actions: [{ key: 'search', isEnabled: true }],
+    } as never]]), ['connector-1'], 'acting-user')).rejects.toThrow(failure === 'failed' ? 'revoked credential' : 'no usable credential');
+    expect(auth.resolveDynamicHeaders).not.toHaveBeenCalled();
+    expect(jwt.bindingAuth).not.toHaveBeenCalled();
+  });
+
+  it('accepts explicit saved custom Authorization without inventing a connected-account credential', async () => {
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
+      { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never,
+      { resolveDynamicHeaders: jest.fn().mockResolvedValue({}) } as never,
+      { get: jest.fn((_key, fallback) => fallback) } as never);
+    const bindings = await service.buildConnectorBindings(new Map([['connector-1', {
+      id: 'connector-1', name: 'Saved', authSourceType: 'none', mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.test/mcp', mcpServerConfig: { headers: { Authorization: 'Bearer saved-custom' } },
+      actions: [{ key: 'search', isEnabled: true }],
+    } as never]]), ['connector-1'], 'acting-user');
+    expect(bindings[0].mcp_server_config).toEqual({ headers: { Authorization: 'Bearer saved-custom' } });
   });
   it('defers configured workspace headers to the execution runtime', async () => {
     const service = new AgentConnectorRuntimeService(

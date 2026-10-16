@@ -171,18 +171,30 @@ describe('McpDestinationPolicy destination checks (WP05.2/WP05.3)', () => {
     const exact = ['http://localhost:8027/mcp', 'https://mcp.internal.example/mcp'];
 
     it('allows an exact configured internal endpoint despite loopback, plain http and a non-allowlisted port', async () => {
-      const resolver = fakeResolver(['8.8.8.8']);
+      const resolver = fakeResolver(['127.0.0.1']);
 
       await expect(assertMcpDestinationAllowed('http://localhost:8027/mcp', { allowExactEndpoints: exact, resolver }))
-        .resolves.toEqual([]);
-      expect(resolver.resolve4).not.toHaveBeenCalled();
+        .resolves.toEqual(['127.0.0.1']);
+      expect(resolver.resolve4).toHaveBeenCalledWith('localhost');
     });
 
     it('canonicalizes spellings so case, trailing slash and explicit default port still match', async () => {
-      await expect(assertMcpDestinationAllowed('HTTP://LOCALHOST:8027/mcp/', { allowExactEndpoints: exact }))
-        .resolves.toEqual([]);
-      await expect(assertMcpDestinationAllowed('https://mcp.internal.example:443/mcp', { allowExactEndpoints: exact }))
-        .resolves.toEqual([]);
+      const resolver = fakeResolver(['10.0.0.10']);
+      await expect(assertMcpDestinationAllowed('HTTP://LOCALHOST:8027/mcp/', { allowExactEndpoints: exact, resolver }))
+        .resolves.toEqual(['10.0.0.10']);
+      await expect(assertMcpDestinationAllowed('https://mcp.internal.example:443/mcp', { allowExactEndpoints: exact, resolver }))
+        .resolves.toEqual(['10.0.0.10']);
+    });
+
+    it.each(['169.254.169.254', '168.63.129.16', '0.0.0.0', '224.0.0.1', 'fd00:ec2::254', 'fe80::1'])('never grants metadata/link-local/reserved access to %s', async address => {
+      const resolver = fakeResolver(address.includes(':') ? [] : [address], address.includes(':') ? [address] : []);
+      await expect(assertMcpDestinationAllowed(exact[1], { allowExactEndpoints: exact, resolver }))
+        .rejects.toMatchObject({ reason: 'forbidden_address' });
+    });
+
+    it('requires TLS in production even for an exact private endpoint', async () => {
+      await expect(assertMcpDestinationAllowed(exact[0], { allowExactEndpoints: exact, requireTls: true }))
+        .rejects.toMatchObject({ reason: 'insecure_http' });
     });
 
     it.each([

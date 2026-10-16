@@ -22,6 +22,7 @@ import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
 import { ManageCategoriesDialog } from './ManageCategoriesDialog';
 import { IconDisplay } from './IconDisplay';
 import type { ConnectorFormValues } from './connector-form-schema';
+import { serializeConnectorSecretFields } from './connector-form-schema';
 import { CatalogTransferDialog } from '../../components/CatalogTransferDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -138,6 +139,8 @@ export function ConnectorsPage() {
         parsedActions = JSON.parse(data.actionsJson);
       }
       const payload = {
+        ...(data.mcpSecurityPolicy ? { mcpSecurityPolicy: data.mcpSecurityPolicy } : {}),
+        ...(editingConnector ? { expectedSecurityRevision: data.expectedSecurityRevision } : {}),
         slug: data.slug,
         name: data.name,
         description: data.description,
@@ -145,14 +148,12 @@ export function ConnectorsPage() {
         color: data.color || undefined,
         iconColor: data.iconColor || undefined,
         categoryId: data.categoryId ? data.categoryId : null,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'none' ? 'none' : 'token',
+        authType: data.authType,
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
-        runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
-        clearRuntimeAuthConfig: data.clearCredentials || undefined,
+        ...serializeConnectorSecretFields(data),
         mcpTransportType: data.mcpTransportType || undefined,
         mcpServerUrl: data.mcpServerUrl || undefined,
-        mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),
         dynamicHeaders: data.dynamicHeaders
           .map((row) => ({
             headerName: row.headerName.trim(),
@@ -365,7 +366,7 @@ export function ConnectorsPage() {
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              const updated = await updateConnector(conn.id, { isActive: !conn.isActive });
+                               const updated = await updateConnector(conn.id, { isActive: !conn.isActive, expectedSecurityRevision: conn.securityRevision });
                               setConnectors((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
                             } catch (err) {
                               toast.error('Failed to update connector status', { description: err instanceof Error ? err.message : 'Unknown error' });

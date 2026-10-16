@@ -17,9 +17,10 @@ import { timingSafeEqual } from 'crypto';
  * End-user authorization continues to flow through the WP-06 actor
  * assertion; the principal only proves WHICH service is calling.
  */
-export type InternalServicePrincipal = 'semantic-model-mcp' | 'app-runtime';
+export type InternalServicePrincipal = 'semantic-model-mcp' | 'app-runtime' | 'adk-runtime';
 
 const PRINCIPAL_TOKEN_ENV: Record<InternalServicePrincipal, string> = {
+  'adk-runtime': 'ADK_RUNTIME_MCP_RENEWAL_TOKEN',
   'semantic-model-mcp': 'SEMANTIC_MODEL_MCP_SERVICE_TOKEN',
   'app-runtime': 'APP_RUNTIME_BIND_TOKEN',
 };
@@ -60,7 +61,7 @@ abstract class PrincipalGuardBase implements CanActivate {
   }
 
   private safeCompare(a: string, b: string): boolean {
-    if (a.length !== b.length) {
+    if (typeof a !== 'string' || Buffer.byteLength(a) !== Buffer.byteLength(b)) {
       return false;
     }
     return timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -88,3 +89,4 @@ export const SemanticMcpServiceGuard = internalServicePrincipalGuardFor('semanti
 
 /** The app runtime's principal: bind and tool-invoke only (WP07.3). */
 export const AppRuntimeServiceGuard = internalServicePrincipalGuardFor('app-runtime');
+export const AdkRuntimeMcpRenewalGuard = internalServicePrincipalGuardFor('adk-runtime');

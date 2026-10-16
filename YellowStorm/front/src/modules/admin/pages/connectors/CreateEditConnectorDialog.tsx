@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectorWorkerSettings } from './ConnectorWorkerSettings';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,6 +40,8 @@ import { buildMcpServerConfig } from './mcp-server-config';
 import { ExternalLink, Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { IconPickerPreview } from './IconDisplay';
 import { ColorPicker } from './ColorPicker';
+import { usePermissions } from '../../hooks/usePermissions';
+import { securityPolicyChanged } from './connector-form-schema';
 import { ManageCategoriesDialog } from './ManageCategoriesDialog';
 import { toast } from 'sonner';
 import {
@@ -56,10 +59,11 @@ import type { ConnectedAppAdminResponse } from '@/modules/connected-app/types';
 const ADD_CATEGORY_VALUE = '__add_category__';
 
 const AUTH_SOURCE_TYPES = [
-  { value: 'credential', label: 'Credential' },
-  { value: 'connected_app', label: 'Connected App' },
-  { value: 'none', label: 'None' },
-];
+  { value: 'credential', labelKey: 'connectors.form.auth.savedCredential' },
+  { value: 'connected_app', labelKey: 'connectors.form.auth.connectedAccount' },
+  { value: 'internal_jwt', labelKey: 'connectors.form.auth.userDelegation' },
+  { value: 'none', labelKey: 'connectors.form.auth.publicAccess' },
+ ] as const;
 
 // Remote transports only: local stdio connectors are not supported over HTTP
 // inspection or configuration (SEC-01 / WP-01).
@@ -164,6 +168,12 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
     return undefined;
   }
 
+  if (form.authSourceType === 'credential' && form.accessToken?.trim()) {
+    // Literal mapping deliberately has no {token} interpolation: an existing
+    // per-user credential must never be appended to this explicitly entered token.
+    return { strategy: 'custom_headers', headerMappings: { Authorization: `Bearer ${form.accessToken.trim()}` } };
+  }
+
   if (form.authSourceType === 'server_config') {
     try {
       const config = JSON.parse(form.runtimeAuthConfig) as unknown;
@@ -252,6 +262,13 @@ export function CreateEditConnectorDialog({
   onSave: (data: ConnectorFormValues) => void;
 }) {
   const { t } = useModuleTranslation('admin');
+  const opener = useRef<HTMLElement | null>(null);
+  const { hasPermission } = usePermissions();
+  const canManageSecurity = hasPermission('connectors.security.manage');
+  const savedSecurity = connector;
+  const legacyAuth = !!connector && !['credential', 'connected_app', 'none'].includes(connector.authSourceType || 'credential');
+  const destinationLocked = !canManageSecurity && (legacyAuth || (!!savedSecurity?.mcpSecurityPolicy &&
+    (savedSecurity.mcpSecurityPolicy.profile === 'internal_jwt' || savedSecurity.mcpSecurityPolicy.allowPrivateNetwork || savedSecurity.mcpSecurityPolicy.actorDelegation === 'verified_user' || savedSecurity.mcpSecurityPolicy.requiredPermissions.length > 0)));
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
@@ -315,6 +332,8 @@ export function CreateEditConnectorDialog({
         // explicitly opts in.
         setForm({
           ...defaultConnectorFormValues,
+          mcpSecurityPolicy: savedSecurity?.mcpSecurityPolicy,
+          expectedSecurityRevision: savedSecurity?.securityRevision,
           slug: connector.slug,
           name: connector.name,
           description: connector.description,
@@ -341,7 +360,7 @@ export function CreateEditConnectorDialog({
           void refreshConnectionStatus(connector.connectedAppKey);
         }
       } else {
-        setForm({ ...defaultConnectorFormValues });
+        setForm({ ...defaultConnectorFormValues, authSourceType: canManageSecurity ? 'none' : 'credential', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] } : undefined });
       }
     }
   }, [open, connector, refreshConnectionStatus]);
@@ -393,20 +412,34 @@ export function CreateEditConnectorDialog({
       return;
     }
 
-    const runtimeAuthConfig = !connector || form.replaceCredentials ? buildRuntimeAuthConfig(form) : undefined;
+    const runtimeAuthConfig = form.authSourceType !== 'none' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && (!connector || form.replaceCredentials) ? buildRuntimeAuthConfig(form) : undefined;
+    const leavingConfiguredAuth = !!connector && form.authSourceType === 'none' && (connector.authSourceType !== 'none' || savedSecurity?.mcpSecurityPolicy?.profile !== form.mcpSecurityPolicy?.profile);
 
+    const policyChanged = securityPolicyChanged(form.mcpSecurityPolicy, savedSecurity?.mcpSecurityPolicy);
+    if (canManageSecurity && policyChanged && form.mcpSecurityPolicy?.profile === 'internal_jwt' && !form.mcpSecurityPolicy.audience?.trim()) {
+      toast.error(t('connectors.form.security.audienceRequired'));
+      return;
+    }
     onSave({
       ...form,
+      mcpSecurityPolicy: canManageSecurity && (!connector || policyChanged) ? form.mcpSecurityPolicy : undefined,
+      expectedSecurityRevision: savedSecurity?.securityRevision,
       actions: actions ?? [],
-      mcpServerConfig: mcpServerConfig ? JSON.stringify(mcpServerConfig) : '',
-      authType: form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'none' ? 'none' : 'token',
+      // A deliberate switch must clear stored headers/env rather than omit the
+      // field (omission intentionally preserves secrets on metadata-only saves).
+      mcpServerConfig: leavingConfiguredAuth ? '{}' : mcpServerConfig ? JSON.stringify(mcpServerConfig) : '',
+      authType: legacyAuth ? connector.authType : form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'none' ? 'none' : 'token',
       connectedAppKey: form.authSourceType === 'connected_app' ? form.connectedAppKey : '',
       runtimeAuthConfig: runtimeAuthConfig ? JSON.stringify(runtimeAuthConfig) : '',
-      clearCredentials: connector ? form.clearCredentials : false,
+      clearCredentials: connector ? form.clearCredentials || leavingConfiguredAuth : false,
     });
   };
 
   const handleInspect = async () => {
+    if (!connector || securityPolicyChanged(form.mcpSecurityPolicy, savedSecurity?.mcpSecurityPolicy) || form.mcpServerUrl !== connector.mcpServerUrl || form.mcpTransportType !== connector.mcpTransportType || form.authSourceType !== (connector.authSourceType || 'credential') || form.connectedAppKey !== (connector.connectedAppKey || '') || form.replaceCredentials || form.clearCredentials || form.mcpServerConfig.trim()) {
+      toast.error(t('connectors.form.inspect.saveFirst'));
+      return;
+    }
     if (!form.mcpServerUrl.trim()) {
       toast.error(t('connectors.form.errors.serverRequired'));
       return;
@@ -663,14 +696,73 @@ export function CreateEditConnectorDialog({
     return t('connectors.form.actions.safety.read');
   };
 
+  const connectionFields = (
+    <div className='grid gap-4 rounded-md border p-4 sm:grid-cols-2'>
+      <div>
+        <Label htmlFor='connector-url'>{t('connectors.form.fields.serverUrl.label')}</Label>
+        <Input id='connector-url' placeholder={t('connectors.form.fields.serverUrl.placeholder')} value={form.mcpServerUrl} disabled={destinationLocked} onChange={(e) => setForm({ ...form, mcpServerUrl: e.target.value })} />
+      </div>
+      <div>
+        <Label htmlFor='connector-transport'>{t('connectors.form.fields.transportType.label')}</Label>
+        <Select disabled={destinationLocked} value={form.mcpTransportType} onValueChange={(value) => setForm({ ...form, mcpTransportType: value })}>
+          <SelectTrigger id='connector-transport'><SelectValue placeholder={t('connectors.form.fields.transportType.placeholder')} /></SelectTrigger>
+          <SelectContent>{TRANSPORT_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className='sm:col-span-2'>
+        {connector?.inspectionStatus === 'unsupported_for_http_inspection' ? <p className='text-xs text-muted-foreground'>{t('connectors.form.fields.transportType.unsupportedInspection')}</p> : null}
+        <Button type='button' variant='outline' size='sm' onClick={handleInspect} disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}>
+          {inspecting ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <TestTube2 className='me-2 h-4 w-4' />}{t('connectors.form.inspect.action')}
+        </Button>
+        <p className='mt-2 text-xs text-muted-foreground'>{t('connectors.form.inspect.saveFirst')}</p>
+      </div>
+    </div>
+  );
+
+  const brandingFields = (
+    <details className='rounded-md border p-4'>
+      <summary className='cursor-pointer font-medium'>{t('connectors.form.sections.branding')}</summary>
+      <div className='mt-4 grid gap-4'>
+        <div><Label>{t('connectors.form.fields.description.label')}</Label><Textarea placeholder={t('connectors.form.fields.description.placeholder')} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+        <div>
+          <Label>Category</Label>
+          <Select value={form.categoryId || '__none__'} onValueChange={(value) => { if (value === ADD_CATEGORY_VALUE) { setShowCategoriesDialog(true); return; } setForm({ ...form, categoryId: value === '__none__' ? '' : value }); }}>
+            <SelectTrigger><SelectValue placeholder='Select a category' /></SelectTrigger>
+            <SelectContent><SelectItem value={ADD_CATEGORY_VALUE}><Plus className='me-2 inline h-3.5 w-3.5' />Add category</SelectItem><SelectItem value='__none__'>No category</SelectItem>{availableCategories.map((cat) => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <div>
+            <Label>{t('connectors.form.fields.icon.label')}</Label>
+            <div className='flex gap-2'>
+              <IconPickerPreview icon={form.icon} color={form.color} iconColor={form.iconColor} onClear={() => setForm({ ...form, icon: '' })} onToggleColorMode={() => setForm({ ...form, iconColor: form.iconColor === 'light' ? 'dark' : 'light' })} />
+              <div className='min-w-0 flex-1 space-y-1'><Input placeholder='FaGithub' value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} /><a href='https://react-icons.github.io/react-icons/search/#q=' target='_blank' rel='noopener noreferrer' className='flex items-center gap-1 text-xs text-primary hover:underline'><ExternalLink className='h-3 w-3' />Browse icons</a></div>
+            </div>
+          </div>
+          <div><Label>{t('connectors.form.fields.color.label')}</Label><ColorPicker value={form.color} onChange={(value) => setForm({ ...form, color: value })} placeholder='#24292e' /></div>
+        </div>
+      </div>
+    </details>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='w-[calc(100vw-2rem)] max-w-2xl max-h-[85vh] overflow-y-auto'>
+      <DialogContent className='w-[calc(100vw-2rem)] max-w-2xl max-h-[85vh] overflow-y-auto'
+        onOpenAutoFocus={() => {
+          opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }}
+        onCloseAutoFocus={(event) => {
+          if (opener.current?.isConnected) {
+            event.preventDefault();
+            opener.current.focus({ preventScroll: true });
+          }
+        }}>
         <DialogHeader>
           <DialogTitle>{connector ? t('connectors.form.dialog.editTitle') : t('connectors.form.dialog.addTitle')}</DialogTitle>
+          <DialogDescription>{t('connectors.form.inspect.saveFirst')}</DialogDescription>
         </DialogHeader>
         <div className='grid min-w-0 gap-4 py-4'>
-          <div className='grid grid-cols-2 gap-4'>
+          <div className='grid gap-4 sm:grid-cols-2'>
             <div>
               <Label>{t('connectors.form.fields.slug.label')}</Label>
               <Input placeholder={t('connectors.form.fields.slug.placeholder')} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
@@ -681,84 +773,7 @@ export function CreateEditConnectorDialog({
             </div>
           </div>
 
-          <div>
-            <Label>{t('connectors.form.fields.description.label')}</Label>
-            <Textarea placeholder={t('connectors.form.fields.description.placeholder')} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
-          </div>
-
-          <div>
-            <Label>Category</Label>
-            <Select
-              value={form.categoryId || '__none__'}
-              onValueChange={(value) => {
-                if (value === ADD_CATEGORY_VALUE) {
-                  setShowCategoriesDialog(true);
-                  return;
-                }
-                setForm({ ...form, categoryId: value === '__none__' ? '' : value });
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder='Select a category' />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ADD_CATEGORY_VALUE} className='text-primary'>
-                  <span className='flex items-center gap-2'>
-                    <Plus className='h-3.5 w-3.5' />
-                    Add category
-                  </span>
-                </SelectItem>
-                <SelectItem value='__none__'>No category</SelectItem>
-                {availableCategories.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className='grid grid-cols-2 gap-4'>
-            <div>
-              <Label>{t('connectors.form.fields.icon.label')}</Label>
-              <div className='flex gap-2'>
-                <IconPickerPreview
-                  icon={form.icon}
-                  color={form.color}
-                  iconColor={form.iconColor}
-                  onClear={() => setForm({ ...form, icon: '' })}
-                  onToggleColorMode={() =>
-                    setForm({ ...form, iconColor: form.iconColor === 'light' ? 'dark' : 'light' })
-                  }
-                />
-                <div className='flex-1 space-y-1'>
-                  <Input
-                    placeholder='FaGithub'
-                    value={form.icon}
-                    onChange={(e) => setForm({ ...form, icon: e.target.value })}
-                  />
-                  <a
-                    href='https://react-icons.github.io/react-icons/search/#q='
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='text-xs text-primary hover:underline flex items-center gap-1'
-                  >
-                    <ExternalLink className='h-3 w-3' />
-                    Browse icons
-                  </a>
-                </div>
-              </div>
-            </div>
-            <div>
-              <Label>{t('connectors.form.fields.color.label')}</Label>
-              <ColorPicker
-                value={form.color}
-                onChange={(value) => setForm({ ...form, color: value })}
-                placeholder='#24292e'
-              />
-            </div>
-          </div>
-
+          {connectionFields}
           <div className='grid gap-4 rounded-md border p-4'>
             <div>
               <Label>{t('connectors.form.auth.sectionLabel')}</Label>
@@ -767,21 +782,21 @@ export function CreateEditConnectorDialog({
             <div className='grid grid-cols-2 gap-4'>
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '' })} disabled={form.authSourceType === 'server_config'}>
+                <Select value={form.mcpSecurityPolicy?.profile === 'internal_jwt' ? 'internal_jwt' : form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value === 'internal_jwt' ? 'none' : value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: value === 'internal_jwt' ? 'internal_jwt' : value === 'none' ? 'public' : 'configured', actorDelegation: value === 'internal_jwt' ? 'verified_user' : 'none', allowPrivateNetwork: form.mcpSecurityPolicy?.allowPrivateNetwork ?? false, requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [], ...(value === 'internal_jwt' && form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}) } : form.mcpSecurityPolicy })} disabled={legacyAuth || destinationLocked || (!canManageSecurity && form.authSourceType === 'none')}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    {form.authSourceType === 'server_config' ? (
-                      <SelectItem value='server_config'>{t('connectors.form.auth.serverConfigOption')}</SelectItem>
+                    {legacyAuth ? (
+                      <SelectItem value={form.authSourceType}>{t('connectors.form.auth.serverConfigOption')}</SelectItem>
                     ) : null}
-                    {AUTH_SOURCE_TYPES.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    {AUTH_SOURCE_TYPES.filter((option) => (option.value !== 'internal_jwt' || canManageSecurity || form.mcpSecurityPolicy?.profile === 'internal_jwt') && (option.value !== 'none' || canManageSecurity || form.authSourceType === 'none')).map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              {form.authSourceType === 'connected_app' ? <div>
                 <Label>{t('connectors.form.auth.connectedAppLabel')}</Label>
                 <Select value={form.connectedAppKey || '__none__'} onValueChange={(value) => setForm({ ...form, connectedAppKey: value === '__none__' ? '' : value })} disabled={form.authSourceType !== 'connected_app'}>
                   <SelectTrigger>
@@ -794,12 +809,30 @@ export function CreateEditConnectorDialog({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </div> : null}
             </div>
 
-            {form.authSourceType === 'server_config' ? (
-              <p className='text-sm text-muted-foreground'>{t('connectors.form.auth.serverConfigHelper')}</p>
+            {legacyAuth ? (
+              <details><summary className='cursor-pointer'>{t('connectors.form.sections.advanced')}</summary><p className='text-sm text-muted-foreground'>{t('connectors.form.auth.serverConfigHelper')}</p></details>
             ) : null}
+            {form.mcpSecurityPolicy?.profile === 'internal_jwt' ? <p className='text-sm text-muted-foreground'>{t('connectors.form.auth.delegationHelper')}</p> : null}
+            {canManageSecurity ? <details className='rounded-md border p-3'>
+              <summary className='cursor-pointer font-medium'>{t('connectors.form.security.details')}</summary>
+              <div className='mt-3 grid gap-3'>
+                {form.mcpSecurityPolicy?.profile === 'internal_jwt' ? <div>
+                  <Label htmlFor='connector-audience'>{t('connectors.form.security.audience')}</Label>
+                  <Input id='connector-audience' maxLength={256} value={form.mcpSecurityPolicy.audience ?? ''} onChange={(event) => setForm({ ...form, mcpSecurityPolicy: { ...form.mcpSecurityPolicy!, audience: event.target.value } })} />
+                </div> : null}
+                <div className='flex items-center gap-2'>
+                  <Switch id='connector-private-network' checked={form.mcpSecurityPolicy?.allowPrivateNetwork ?? false} onCheckedChange={(checked) => setForm({ ...form, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', requiredPermissions: [], ...form.mcpSecurityPolicy, allowPrivateNetwork: checked } })} />
+                  <Label htmlFor='connector-private-network'>{t('connectors.form.security.allowPrivateNetwork')}</Label>
+                </div>
+                <div>
+                  <Label htmlFor='connector-permissions'>{t('connectors.form.security.requiredPermissions')}</Label>
+                  <Input id='connector-permissions' maxLength={4096} value={form.requiredPermissionsInput ?? form.mcpSecurityPolicy?.requiredPermissions.join(', ') ?? ''} onChange={(event) => setForm({ ...form, requiredPermissionsInput: event.target.value, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', allowPrivateNetwork: false, ...form.mcpSecurityPolicy, requiredPermissions: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) } })} />
+                </div>
+              </div>
+            </details> : null}
 
             {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
               const app = getCurrentConnectedApp();
@@ -840,7 +873,7 @@ export function CreateEditConnectorDialog({
               );
             })()}
 
-            {connector && form.authSourceType !== 'none' && form.authSourceType !== 'server_config' ? (
+            {connector && form.authSourceType === 'credential' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' ? (
               <div className='grid gap-3 rounded-md bg-muted/40 p-3'>
                 <span className={`text-sm font-medium ${connector.credentialConfigured ? 'text-green-600' : 'text-amber-600'}`}>
                   {connector.credentialConfigured
@@ -849,30 +882,26 @@ export function CreateEditConnectorDialog({
                 </span>
                 <div className='grid gap-1'>
                   <div className='flex items-center gap-2'>
-                    <Switch
-                      checked={form.replaceCredentials}
-                      onCheckedChange={(value) => setForm({ ...form, replaceCredentials: value, clearCredentials: value ? false : form.clearCredentials })}
-                      id='connector-replace-credentials'
-                    />
-                    <Label htmlFor='connector-replace-credentials'>{t('connectors.form.auth.replaceCredentials')}</Label>
+                     <Button type='button' variant={form.replaceCredentials ? 'secondary' : 'outline'} aria-pressed={form.replaceCredentials} onClick={() => setForm({ ...form, replaceCredentials: !form.replaceCredentials, clearCredentials: false })}>{t('connectors.form.auth.replaceCredentials')}</Button>
                   </div>
                   <p className='text-xs text-muted-foreground'>{t('connectors.form.auth.replaceCredentialsHelper')}</p>
                 </div>
                 {connector.credentialConfigured ? (
                   <div className='flex items-center gap-2'>
-                    <Switch
-                      checked={form.clearCredentials}
-                      onCheckedChange={(value) => setForm({ ...form, clearCredentials: value, replaceCredentials: value ? false : form.replaceCredentials })}
-                      id='connector-clear-credentials'
-                    />
-                    <Label htmlFor='connector-clear-credentials'>{t('connectors.form.auth.clearCredentials')}</Label>
+                     <Button type='button' variant={form.clearCredentials ? 'destructive' : 'outline'} aria-pressed={form.clearCredentials} onClick={() => setForm({ ...form, clearCredentials: !form.clearCredentials, replaceCredentials: false })}>{t('connectors.form.auth.clearCredentials')}</Button>
                   </div>
                 ) : null}
               </div>
             ) : null}
 
-            {form.authSourceType !== 'none' && form.authSourceType !== 'server_config' && (!connector || form.replaceCredentials) && (
-              <div className='grid gap-4'>
+            {form.authSourceType === 'credential' && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && (!connector || form.replaceCredentials) ? <div>
+              <Label htmlFor='connector-access-token'>{t('connectors.form.auth.accessToken')}</Label>
+              <Input id='connector-access-token' type='password' autoComplete='new-password' value={form.accessToken ?? ''} onChange={(event) => setForm({ ...form, accessToken: event.target.value })} />
+            </div> : null}
+            {!legacyAuth && form.mcpSecurityPolicy?.profile !== 'internal_jwt' && form.authSourceType !== 'none' && (!connector || form.replaceCredentials) && (
+              <details className='rounded-md border p-3'>
+                <summary className='cursor-pointer'>{t('connectors.form.sections.runtimeInjection')}</summary>
+              <div className='mt-3 grid gap-4'>
                 <div>
                   <Label>{t('connectors.form.auth.strategyLabel')}</Label>
                   <Select value={form.runtimeAuthStrategy} onValueChange={(value) => setForm({ ...form, runtimeAuthStrategy: value })}>
@@ -949,49 +978,14 @@ export function CreateEditConnectorDialog({
                   </div>
                 )}
               </div>
+              </details>
             )}
           </div>
 
-          <div className='grid grid-cols-2 gap-4'>
-            <div>
-              <Label>{t('connectors.form.fields.transportType.label')}</Label>
-              <Select value={form.mcpTransportType} onValueChange={(value) => setForm({ ...form, mcpTransportType: value })}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('connectors.form.fields.transportType.placeholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {TRANSPORT_TYPES.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>{t('connectors.form.fields.serverUrl.label')}</Label>
-              <Input
-                placeholder={t('connectors.form.fields.serverUrl.placeholder')}
-                value={form.mcpServerUrl}
-                onChange={(e) => setForm({ ...form, mcpServerUrl: e.target.value })}
-              />
-              {connector?.inspectionStatus === 'unsupported_for_http_inspection' ? (
-                <p className='mt-1 text-xs text-amber-600'>
-                  {t('connectors.form.fields.transportType.unsupportedInspection')}
-                </p>
-              ) : null}
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                onClick={handleInspect}
-                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}
-                className='mt-2'
-              >
-                {inspecting ? <Loader2 className='me-2 h-4 w-4 animate-spin' /> : <TestTube2 className='me-2 h-4 w-4' />}
-                {t('connectors.form.inspect.action')}
-              </Button>
-            </div>
-          </div>
-
+          {brandingFields}
+          <details className='rounded-md border p-4'>
+          <summary className='cursor-pointer font-medium'>{t('connectors.form.sections.advanced')}</summary>
+          <fieldset disabled={destinationLocked || legacyAuth} className='mt-4 grid gap-4'>
           <div>
             <Label>{t('connectors.form.fields.serverConfig.label')}</Label>
             {connector ? (
@@ -1059,6 +1053,11 @@ export function CreateEditConnectorDialog({
             )}
           </div>
 
+          </fieldset>
+          </details>
+          <details className='min-w-0 rounded-md border p-4'>
+          <summary className='cursor-pointer font-medium'>{t('connectors.form.actions.title')}</summary>
+          <div className='mt-4 grid min-w-0 gap-4'>
           <ConnectorWorkerSettings policy={form.workerPolicy} actions={form.actions ?? []} onPolicyChange={(workerPolicy) => setForm({ ...form, workerPolicy })} onActionsChange={(actions) => setForm({ ...form, actions, actionsJson: JSON.stringify(actions, null, 2) })} />
 
           <div className='min-w-0 space-y-3'>
@@ -1201,6 +1200,8 @@ export function CreateEditConnectorDialog({
             <Switch id='connector-system' checked={form.isSystem} onCheckedChange={(checked) => setForm({ ...form, isSystem: checked })} />
             <Label htmlFor='connector-system'>{t('connectors.form.fields.system.label')}</Label>
           </div>
+          </div>
+          </details>
         </div>
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>{t('connectors.form.dialog.cancel')}</Button>

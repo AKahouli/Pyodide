@@ -40,7 +40,7 @@ travels with implementation in the same branch and PR.
 
 ## One-click installer
 
-Finish/checkpoint active work and close OpenCode hosts, then double-click
+Finish/checkpoint active work, then double-click
 [`Install-Harness.cmd`](../Install-Harness.cmd) in `tools/opencode-harness/`.
 Run it from a reviewed checkout/release; the launcher uses a process-only execution
 policy, subject to your organization's restrictions. It keeps the window open so
@@ -58,6 +58,10 @@ WinGet, installs the pinned SDK and OpenCode if absent, merges missing config
 defaults, installs the harness, enables background tasks, and prepares Chrome/graph.
 It backs up existing personal settings, preserves JSON/JSONC/provider configuration
 and serializes installers per Windows user. It never stops an active OpenCode host.
+Detected OpenCode processes produce an advisory warning with their PIDs; they do
+not block setup, including Desktop processes left running after closing a window.
+Fully exit/restart OpenCode after setup to load the installed changes. If a file
+is in use, exit the listed hosts and rerun the installer.
 An existing Node older than 24 needs an upgrade before rerunning.
 
 Hindsight **Y** reuses a reachable configured service. A fresh local setup may need
