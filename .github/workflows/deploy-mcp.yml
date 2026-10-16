@@ -1,4 +1,4 @@
-name: CI/CD MCP (playbook agent semantic)
+name: CI/CD MCP (playbook agent semantic pyodide)
 
 on:
   pull_request:
@@ -65,7 +65,7 @@ jobs:
       - name: Build and push Docker images
         run: |
           docker buildx create --name yellowstorm-mcp-builder --use 2>/dev/null || docker buildx use yellowstorm-mcp-builder
-          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model mcp-pyodide; do
             IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
             docker buildx build \
               --network=host \
@@ -87,7 +87,7 @@ jobs:
         run: |
           export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
           
-          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model mcp-pyodide; do
             IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
             COMPOSE_FILE=~/yellowstorm/${ENV_NAME}/${mcp}/docker-compose.yaml
             
