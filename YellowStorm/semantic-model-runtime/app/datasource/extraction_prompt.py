@@ -7,7 +7,7 @@ import re
 import unicodedata
 from typing import Any
 
-PROMPT_VERSION = "semantic-attributes-v1"
+PROMPT_VERSION = "semantic-attributes-v2"
 _FILE_EXTENSION_RE = re.compile(
     r"\.(pdf|docx?|xlsx?|pptx?|txt|md|html?|json|xml|csv|odt|ods|rtf|eml|msg|zip|tar|gz)$", re.IGNORECASE)
 _PLACEHOLDER_VALUES = {
@@ -40,7 +40,8 @@ def meaningful_value(value: Any) -> bool:
     return True
 
 
-def extraction_prompt(concept: dict[str, Any], evidence: list[dict[str, str]], file_name: str) -> str:
+def extraction_prompt(concept: dict[str, Any], evidence: list[dict[str, str]], file_name: str,
+                      *, allow_generated_values: bool = False) -> str:
     """Bump PROMPT_VERSION whenever these instructions change."""
     source_note = (f'Source file: "{file_name}" — NEVER use this filename as a label or attribute value.\n'
                    if file_name else "")
@@ -58,7 +59,7 @@ def extraction_prompt(concept: dict[str, Any], evidence: list[dict[str, str]], f
         '        {\n'
         '          "label": "<proper name identifying this specific instance>",\n'
         '          "attributes": [\n'
-        '            {"key": "<attribute key>", "value": "<value verbatim from evidence>", "evidenceReferences": ["<ref>"]}\n'
+        '            {"key": "<attribute key>", "value": "<requested typed value>", "evidenceReferences": ["<ref>"]}\n'
         '          ],\n'
         '          "evidenceReferences": ["<ref>"],\n'
         '          "confidence": 0.0\n'
@@ -73,8 +74,10 @@ def extraction_prompt(concept: dict[str, Any], evidence: list[dict[str, str]], f
         "- label: the proper name or title that identifies this specific instance.\n"
         "  * Person → full name. Company → registered name. Contract → title or reference. Never a role, category, or email.\n"
         "  * NEVER a filename (ending in .pdf, .docx, etc).\n"
-        "- Attribute values must appear verbatim (or lightly normalized) in the evidence. No fabrication, no 'N/A', no 'unknown'.\n"
-        "- Omit attributes with no value found — do not send empty strings.\n"
+        + ("- Return values according to each field's definition and type. You may summarize, combine passages or normalize formatting; cite the supplied passages used. No fabrication, no 'N/A', no 'unknown'.\n"
+           if allow_generated_values else
+           "- Attribute values must appear verbatim (or lightly normalized) in the evidence. No fabrication, no 'N/A', no 'unknown'.\n")
+        + "- Omit attributes with no value found — do not send empty strings.\n"
         "- evidenceReferences must be exact 'reference' strings copied from the evidence entries used.\n"
         "- Split comma/semicolon/bullet lists into separate instances when they describe distinct items.\n\n"
         "EVIDENCE:\n" + json.dumps(evidence, ensure_ascii=False)

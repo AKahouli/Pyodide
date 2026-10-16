@@ -57,6 +57,12 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       timeout.mockRestore();
     });
 
+    it('accepts the generated-value prompt identity and preserves it for fingerprints', async () => {
+      const generated = { ...identity, promptVersion: 'semantic-attributes-v2' };
+      fetchMock.mockResolvedValueOnce(jsonResponse(generated));
+      await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity()).resolves.toEqual(generated);
+    });
+
     it.each([503, 404, 401])('fails closed when the profile endpoint returns %s', async (status) => {
       fetchMock.mockResolvedValueOnce(new Response('{}', { status }));
       await expect(new SemanticRuntimeClientService(config() as never).getAiExtractionIdentity())

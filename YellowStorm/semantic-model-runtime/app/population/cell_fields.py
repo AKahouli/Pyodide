@@ -310,7 +310,7 @@ class CellReader:
             by_section = {index: column for index, column in enumerate(columns, start=1)}
             answer = {"failure": failure, "values": values, "quotes": quotes,
                       "evidence": {key: {"column": by_section.get(item.get("sectionPk"), pending[0]["column"]),
-                                         **{name: item[name] for name in ("extractorVersion", "model", "requestedAgentId", "rephrased")
+                                         **{name: item[name] for name in ("extractorVersion", "model", "requestedAgentId", "rephrased", "evidenceReferences")
                                             if name in item}}
                                    for key, item in evidence.items()}}
             if failure is None and cache_key is not None:
@@ -332,7 +332,7 @@ class CellReader:
             quote = answer["quotes"].get(attribute) or text
             evidence = _evidence(self.context, number, column, text, value=value, raw=None, quote=quote,
                                  origin="ai", extractor_version=str(found.get("extractorVersion") or "ai-attribute-v1"))
-            evidence.update({name: found[name] for name in ("model", "requestedAgentId", "rephrased") if name in found})
+            evidence.update({name: found[name] for name in ("model", "requestedAgentId", "rephrased", "evidenceReferences") if name in found})
             result["values"][attribute] = value
             result["evidence"][attribute] = evidence
             result["fields"][attribute] = {"method": "ai", "reason": "found", "value": value, "column": column,

@@ -61,8 +61,12 @@ support OpenAI-compatible chat completions and JSON-object responses.
 - `POST /v1/semantic-model-population/ai-extraction/extract` accepts bounded supplied
   evidence and concept attributes for standalone inference, including multiple
   records. It needs no backend assets or database. It returns extraction candidates
-  with only supplied evidence references; population readers perform the stronger
-  value-to-text grounding before storing records.
+  with only supplied evidence references. Preview and population accept the generated
+  values after field/type/choice and supplied-citation checks, without requiring literal
+  text matches. A citation indicates model-attributed evidence, not independent fact
+  verification. Existing cleanup/date settings still apply. Document v3 / prompt v2
+  partition old cached results; restart the backend and runtime API/population workers
+  together so the new prompt profile is accepted and matches worker execution.
 - Both routes use the existing `X-Semantic-Service-Key` authentication and command
   body limit. Missing/invalid extraction configuration returns 503; incompatible
   or changed bound identities return 409 with a rebuild-required code.

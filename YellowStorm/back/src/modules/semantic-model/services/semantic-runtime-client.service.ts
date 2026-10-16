@@ -332,7 +332,7 @@ export interface AiExtractionIdentity {
   profileId: 'semantic-runtime';
   model: string;
   contractVersion: 'ai-attribute-v2';
-  promptVersion: 'semantic-attributes-v1';
+  promptVersion: 'semantic-attributes-v1' | 'semantic-attributes-v2';
   maxTokens: number;
 }
 
@@ -971,7 +971,8 @@ export class SemanticRuntimeClientService {
       identity = null;
     }
     if (!identity || identity.profileId !== 'semantic-runtime' || typeof identity.model !== 'string' || !identity.model.trim()
-      || identity.contractVersion !== 'ai-attribute-v2' || identity.promptVersion !== 'semantic-attributes-v1'
+      || identity.contractVersion !== 'ai-attribute-v2'
+      || (identity.promptVersion !== 'semantic-attributes-v1' && identity.promptVersion !== 'semantic-attributes-v2')
       || !Number.isSafeInteger(identity.maxTokens) || (identity.maxTokens ?? 0) <= 0) {
       throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
         'The semantic runtime AI extraction profile is invalid');

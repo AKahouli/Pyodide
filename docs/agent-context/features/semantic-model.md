@@ -158,6 +158,27 @@ Reuse existing revision, lease, authorization and idempotency checks instead of 
 
 ## Constraints and limitations
 
+Document/cell/derived AI preview and population accept generated values directly
+under the user's 2026-10-16 approval, including summaries and combined passages.
+The shared reader validates requested fields, JSON value types, enum choices and
+at least one citation to supplied evidence; it no longer requires a literal text
+match or a quoted sibling field. Citations are model-attributed source locators,
+not independent factual verification. The first remains the page/column anchor;
+the full valid reference list survives document and cached cell/derived provenance.
+Existing explicit cleanup/date normalization remains. Document extraction v3 and
+prompt v2 invalidate old filtered answers; stored revisions need a new run to change.
+Restart backend plus runtime API/population workers together; unknown profiles and
+queued jobs with mismatched identities still fail closed. This updates extraction
+behavior within ADR-0015's existing ownership; no new architecture or index entry.
+Executable checks: `tests/test_document_population.py`, `tests/test_cell_fields.py`,
+`tests/test_semantic_ai_runtime.py`, and backend `semantic-runtime-client.service.spec.ts`.
+Verification on 2026-10-16: runtime 103 tests, backend 45 tests and backend build
+passed; scoped source/documentation review passed. Signed-in Chrome QA on owned
+model `7f99f4fe-b699-4273-89ed-c9fe87ad1249` displayed synthesized steps in preview,
+then populated two records. The run completed with three gaps in existing Rules
+fields; all three AI fields were persisted. The records table and stored assertions
+confirmed generated steps plus retained supplied citations; search indexing finished.
+
 - A job request being accepted is not completion; the editor follows terminal states including `completed_with_gaps`, `failed`, `cancelled` and `superseded`.
 - Runtime record/graph reads use scoped POST read contracts; legacy unscoped GET record/graph routes return HTTP 410. Preserve caller scope when extending reads.
 - Full graph search needs configured embedding support and database extensions; the runtime guide documents exact-key-only behavior without an embedding profile.

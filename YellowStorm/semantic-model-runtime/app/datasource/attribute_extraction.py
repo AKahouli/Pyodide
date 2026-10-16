@@ -221,7 +221,7 @@ async def extract_attributes(
     *, model_id: str, concept_id: str, concept_label: str, document_id: str, file_name: str,
     attributes: list[dict[str, Any]], sections: list[dict[str, Any]],
     ai_extraction: dict[str, Any] | None = None, multiple: bool = False,
-    client: httpx.AsyncClient | None = None,
+    client: httpx.AsyncClient | None = None, allow_generated_values: bool = False,
 ) -> dict[str, Any]:
     """Infer locally; document/cell readers still enforce grounding and typed values."""
     if not attributes or not sections:
@@ -240,7 +240,7 @@ async def extract_attributes(
         raise AttributeExtractionError("no_evidence")
     concept = {"conceptKey": concept_id, "label": concept_label or concept_id,
                "description": "", "aliases": [], "attributes": specs}
-    prompt = extraction_prompt(concept, evidence, file_name)
+    prompt = extraction_prompt(concept, evidence, file_name, allow_generated_values=allow_generated_values)
     loop = asyncio.get_running_loop()
     semaphores = getattr(loop, "_semantic_extraction_capacity", None)
     if semaphores is None:

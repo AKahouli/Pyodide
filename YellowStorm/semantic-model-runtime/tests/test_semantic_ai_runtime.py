@@ -77,7 +77,8 @@ async def test_worker_rejects_legacy_queued_identity_before_fetch(configured):
         pytest.fail("legacy job fetched an asset")
 
     result = await run_population_for_task(command, fetch=forbidden)
-    assert result == {"ok": False, "errorCode": "ai_extraction_identity_incompatible_rebuild_required"}
+    assert result["ok"] is False
+    assert result["errorCode"] == "ai_extraction_identity_incompatible_rebuild_required"
 
 
 def test_admission_pins_runtime_identity_and_rejects_legacy_identity(configured):
@@ -129,7 +130,8 @@ async def test_worker_rejects_invalid_identity_before_cache_fetch_or_metadata(co
 
     result = await run_population_for_task(command, fetch=forbidden, metadata_fetch=forbidden,
                                            extraction_cache=ForbiddenCache())
-    assert result == {"ok": False, "errorCode": code}
+    assert result["ok"] is False
+    assert result["errorCode"] == code
 
 
 def test_answer_profile_changes_invalidate_revision_and_extraction_cache(configured):
@@ -157,7 +159,7 @@ def test_ai_free_admission_does_not_require_litellm_configuration(configured):
 
 
 @pytest.mark.asyncio
-async def test_cell_reader_grounds_direct_litellm_values_and_rejects_invented_values(configured):
+async def test_cell_reader_accepts_generated_litellm_values_with_supplied_citations(configured):
     from app.population.cell_fields import CellReader, normalize_field_extractions
 
     requested = []
@@ -176,7 +178,7 @@ async def test_cell_reader_grounds_direct_litellm_values_and_rejects_invented_va
                "assetRef": {"assetId": "a"}, "modelId": "m", "mappingVersion": "v",
                "aiExtraction": extraction.profile_from_env().identity}
     [read] = await CellReader(specs, context).read_rows([(2, {"notes": "Pays: France"})])
-    assert read["values"] == {"country": "France"}
+    assert read["values"] == {"country": "France", "city": "Invented city"}
     assert read["evidence"]["country"]["extractorVersion"] == "ai-attribute-v2"
     assert read["evidence"]["country"]["column"] == "notes"
     assert read["evidence"]["country"]["rowNumber"] == 2
