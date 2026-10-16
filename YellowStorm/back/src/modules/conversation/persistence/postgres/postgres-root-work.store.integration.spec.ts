@@ -231,7 +231,7 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
       executionId, producerAgentId: null, producerRole: 'root', status: 'completed',
       text: 'done', citationRefs: [], artifactRefs: [], safeError: null,
     });
-    expect(complete?.resultPayload?.nativeState).toEqual(state);
+    expect(complete?.resultPayload?.nativeState).toEqual({ ...state, clarifications: [] });
     expect(await store.listWaitingRoots(conversationId, 0)).toEqual([]);
     expect(await store.recordNativeState(executionId, nativeState, 'running')).toBeNull();
   });
