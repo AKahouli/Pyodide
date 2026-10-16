@@ -130,7 +130,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
       inject: [PgTtlSweeper],
     },
   ],
-  exports: [WorkspaceService, WorkspaceSettingService, WorkspaceDocumentService, WorkspaceDocumentRead, WorkspaceInitializerService, WorkspaceShareService, WorkspaceAccessGuard, WritePermissionGuard, RunCodeSourceScopeService, WORKSPACE_READ_PORT, WORKSPACE_SETTING_READ_PORT, // Concrete stores are exported so modules that instantiate the workspace
+  exports: [WorkspaceService, WorkspaceSettingService, WorkspaceDocumentService, WorkspaceDocumentRead, WorkspaceInitializerService, WorkspaceShareService, WorkspaceAccessGuard, WritePermissionGuard, RunCodeSourceScopeService, GuardedUrlDownloaderService, WORKSPACE_READ_PORT, WORKSPACE_SETTING_READ_PORT, // Concrete stores are exported so modules that instantiate the workspace
     // guards directly (e.g. IndexingModule provides WorkspaceOwnerGuard) can
     // resolve the guards' dependencies.
     PgWorkspaceStore, PgShareStore,
