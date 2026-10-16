@@ -25,9 +25,11 @@ function Install-SetupPrerequisite([string]$Command, [string]$Package) {
     if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) { throw "$Command is not on PATH yet. Open a new terminal and rerun." }
 }
 function Get-SetupConfigDirectory { Join-Path $env:USERPROFILE '.config\opencode' }
-function Assert-SetupHostsClosed {
-    if (Get-Process -Name opencode -ErrorAction SilentlyContinue) {
-        throw 'OpenCode is running. Save checkpoints, finish/park background tasks and close its hosts before rerunning setup. No process was stopped.'
+function Show-SetupHostWarning {
+    $hosts = @(Get-Process -Name opencode -ErrorAction SilentlyContinue)
+    if ($hosts.Count) {
+        $hostIds = ($hosts | Select-Object -ExpandProperty Id | Sort-Object) -join ', '
+        Write-Warning "OpenCode processes detected (PIDs: $hostIds). Setup will continue without stopping them. Finish/checkpoint active work and fully exit/restart OpenCode after setup to load the updated harness. If installation reports a file in use, exit these hosts and rerun."
     }
 }
 function Enable-SetupBackground {
@@ -94,7 +96,7 @@ function Start-HarnessSetup([string]$Root, [string]$MemoryChoice, [string]$Distr
         if (-not $MemoryChoice) {
             do { $MemoryChoice = (Read-Host 'Install Hindsight local experience memory? (Y/N)').Trim().ToUpperInvariant() } while ($MemoryChoice -notin @('Y','N'))
         }
-        Assert-SetupHostsClosed
+        Show-SetupHostWarning
         Install-SetupPrerequisite git.exe Git.Git
         Install-SetupPrerequisite node.exe OpenJS.NodeJS.LTS
         Install-SetupPrerequisite uvx.exe astral-sh.uv
