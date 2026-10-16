@@ -50,7 +50,7 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build --build-arg VITE_OPENUI_RENDER_ENABLED=true -t $IMAGE_NAME:${VERSION} YellowStorm/front
+          docker build --build-arg VITE_OPENUI_RENDER_ENABLED=true --build-arg VITE_PYODIDE_RUNTIME_ENABLED=true -t $IMAGE_NAME:${VERSION} YellowStorm/front
           docker push $IMAGE_NAME:${VERSION}
 
   deploy:
