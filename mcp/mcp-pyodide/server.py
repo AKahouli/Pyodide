@@ -68,9 +68,16 @@ def _safe_file_name(value: Any) -> str:
 
 
 def _workspace_file_names(raw: Any, label: str) -> list[str]:
-    """Logical references only: exact workspace file names, never a path/URL."""
+    """Logical references only: exact workspace file names, never a path/URL.
+
+    A single name is accepted as a convenience because models frequently pass one
+    file as a bare string; it is normalized to a one-element list so the strict
+    list contract still governs paths and counts.
+    """
     if raw is None:
         return []
+    if isinstance(raw, str):
+        raw = [raw] if raw.strip() else []
     if not isinstance(raw, list):
         raise ValueError(f"{label} must be a list of file names")
     return [_safe_file_name(item) for item in raw]
@@ -95,8 +102,8 @@ async def execute_python(
     code: str,
     input: Any = None,
     timeout_seconds: int = 30,
-    inputs: list[str] | None = None,
-    outputs: list[str] | None = None,
+    inputs: list[str] | str | None = None,
+    outputs: list[str] | str | None = None,
 ) -> dict[str, Any]:
     """Execute bounded Python code in the user's connected browser and return its result and logs.
 
