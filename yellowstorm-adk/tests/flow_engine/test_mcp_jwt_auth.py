@@ -14,7 +14,8 @@ from src.flow_engine.mcp import call_mcp_tool
 
 @pytest.fixture
 def backend(monkeypatch):
-    settings = SimpleNamespace(API_URL="http://backend/api", INTERNAL_SERVICE_SECRET="internal-secret")
+    settings = SimpleNamespace(API_URL="http://backend/api", INTERNAL_SERVICE_SECRET="internal-secret",
+        SEMANTIC_MODEL_MCP_SERVICE_TOKEN="service-secret")
     module = ModuleType("src.config.settings")
     module.get_settings = lambda: settings
     monkeypatch.setitem(sys.modules, "src.config.settings", module)
@@ -52,7 +53,10 @@ async def test_renews_for_the_bound_user_and_overrides_static_headers(monkeypatc
         assert expires_at == expiry
     assert len(seen) == 2
     assert str(seen[0].url) == "http://backend/api/v1/connectors/internal/mcp-token"
-    assert seen[0].headers["X-Internal-Token"] == "internal-secret"
+    # WP07.2: renewal authenticates the scoped semantic-model-mcp principal.
+    assert seen[0].headers["X-Yellowstorm-Service-Principal"] == "semantic-model-mcp"
+    assert seen[0].headers["X-Yellowstorm-Service-Token"] == "service-secret"
+    assert "x-internal-token" not in seen[0].headers
     assert json.loads(seen[0].content) == {"connectorId": "connector-1", "userId": "user-1"}
 
 
@@ -91,8 +95,8 @@ async def test_fails_closed_on_backend_errors_and_redirects(monkeypatch, backend
 
 @pytest.mark.asyncio
 async def test_requires_internal_credentials(backend, renewal):
-    backend.INTERNAL_SERVICE_SECRET = ""
-    with pytest.raises(RuntimeError, match="INTERNAL_SERVICE_SECRET"):
+    backend.SEMANTIC_MODEL_MCP_SERVICE_TOKEN = ""
+    with pytest.raises(RuntimeError, match="SEMANTIC_MODEL_MCP_SERVICE_TOKEN"):
         await renew_mcp_jwt("http://mcp:8027/mcp", renewal, {})
 
 
