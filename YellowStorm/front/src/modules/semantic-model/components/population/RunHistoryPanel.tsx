@@ -6,6 +6,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { usePopulationFreshness } from '../../query/hooks';
 import type { PopulationJob } from '../../types';
+import { RuntimeFailureDetails } from './RuntimeFailureDetails';
 
 const RUNNING = new Set(['queued', 'waiting_dependencies', 'running', 'cancel_requested']);
 
@@ -85,6 +86,7 @@ function RunRow({ job, translate, expanded, onToggle, onOpenRun }: Readonly<{
       <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
     </button>
     {expanded && <div className='space-y-2 px-3 pb-3 ps-9 text-xs'>
+      {job.state === 'failed' && <RuntimeFailureDetails details={job.errorDetails} code={job.errorCode} jobId={job.jobId} />}
       {changes && <p>{translate('runHistory.changes', { added: changes.added ?? 0, changed: changes.changed ?? 0, removed: changes.removed ?? 0 })}</p>}
       {(job.progress?.recent ?? []).length > 0 && <ul className='space-y-0.5'>{job.progress!.recent!.map((source, index) => <li key={`${source.name}-${index}`} className='flex gap-2'>
         <span className='min-w-0 flex-1 truncate' title={source.name}>{source.name}</span>

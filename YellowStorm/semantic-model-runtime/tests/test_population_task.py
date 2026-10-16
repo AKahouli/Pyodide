@@ -326,7 +326,10 @@ async def test_task_reports_capped_enumeration_and_fetch_failures(monkeypatch: p
 
     failed = await run_population_for_task(command(), fetch=denied,
                                            prepare=fake_prepare, query=fake_query)
-    assert failed == {"ok": False, "errorCode": "workspace_forbidden"}
+    assert failed["ok"] is False and failed["errorCode"] == "workspace_forbidden"
+    assert failed["errorDetails"]["code"] == "workspace_forbidden"
+    assert failed["errorDetails"]["errorType"] == "AssetFetchError"
+    assert failed["errorDetails"]["frames"]
 
 
 @pytest.mark.asyncio

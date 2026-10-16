@@ -30,6 +30,7 @@ SUITES = [
     "test_graph_search_build.py", "test_graph_search_fencing.py", "test_cutover_serialization.py",
     "test_population_commands.py", "test_graph_search_incremental.py",
     "test_p0_gate.py",
+    "test_error_details.py", "test_runtime_error_status.py", "test_attribute_extraction_client.py",
 ]
 
 

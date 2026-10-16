@@ -47,6 +47,13 @@ const versionGraph = {
 };
 
 describe('SemanticGraphSearchService', () => {
+  it('forwards retry expectations without weakening editor admission or changing search settings', async () => {
+    const { service, runtime, models } = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+    await service.ensureIndex('user-1', 'model-1', 'draft', { expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1' });
+    expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft',
+      expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1', settings: { index: {} } });
+  });
   it('searches the published data with the workspaces the person may read', async () => {
     const { service, database, models, workspaceShares, runtime } = setup();
     await service.search('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: 5 });

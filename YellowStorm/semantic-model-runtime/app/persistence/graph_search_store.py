@@ -160,7 +160,10 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
         return {"indexId": None, "state": "missing", "embeddingFingerprint": None}
     completed = generation.get("completed_at")
     progressed = generation.get("last_progress_at")
-    return {"indexId": generation["index_id"], "state": generation["state"],
+    from app.jobs.error_details import public_details
+    details = public_details(generation.get("errorDetails"))
+    return {**({"errorDetails": details} if details and generation.get("last_error_code") != "cancelled" else {}),
+            "indexId": generation["index_id"], "state": generation["state"],
             "embeddingFingerprint": generation["embedding_fingerprint"],
             "expectedCount": generation["expected_count"], "indexedCount": generation["indexed_count"],
             "exactOnlyCount": generation["exact_only_count"], "failedCount": generation["failed_count"],
@@ -184,19 +187,69 @@ def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
 
 
 async def get_generation(pool: Any, data_revision_id: str, fingerprint: str) -> dict[str, Any] | None:
-    return _generation(await pool.fetchrow(
+    return await hydrate_generation_error(pool, _generation(await pool.fetchrow(
         f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
         "WHERE data_revision_id = $1 AND embedding_fingerprint = $2",
-        data_revision_id, fingerprint))
+        data_revision_id, fingerprint)))
 
 
 async def latest_generation(pool: Any, data_revision_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:
     """The revision's most recently requested generation for this embedding profile, whatever
     its index settings."""
-    return _generation(await pool.fetchrow(
+    return await hydrate_generation_error(pool, _generation(await pool.fetchrow(
         f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
         "WHERE data_revision_id = $1 AND (embedding_fingerprint = $2 OR embedding_fingerprint LIKE $2 || ':ix:%') "
-        "ORDER BY created_at DESC LIMIT 1", data_revision_id, embedding_fingerprint))
+        "ORDER BY created_at DESC LIMIT 1", data_revision_id, embedding_fingerprint)))
+
+
+async def hydrate_generation_error(pool: Any, generation: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Only hydrate the selected model/revision generation, never a job supplied by a caller.
+
+    Model authorization remains at the existing trusted backend/status boundary.
+    This read reveals no command, result, actor, or other job's progress.
+    """
+    from app.jobs.error_details import public_details, _token
+    if not generation or not generation.get("job_id") or generation.get("last_error_code") == "cancelled":
+        return generation
+    row = await pool.fetchrow(
+        """SELECT j.progress->'errorDetails' AS job_details,
+                  t.checkpoint->'errorDetails' AS task_details,
+                  t.id::text AS task_id, o.last_error_code AS preceding_code,
+                  COALESCE(j.completed_at, j.updated_at) AS occurred_at
+           FROM semantic_graph_search.index_generations g
+           JOIN semantic_jobs.jobs j ON j.id = g.job_id AND j.model_id = g.model_id
+           LEFT JOIN LATERAL (
+             SELECT id, checkpoint FROM semantic_jobs.tasks WHERE job_id = j.id ORDER BY id LIMIT 1
+           ) t ON true
+           LEFT JOIN LATERAL (
+             SELECT last_error_code FROM semantic_jobs.outbox
+             WHERE task_id = t.id AND event_type = 'task.dispatch'
+             ORDER BY id DESC LIMIT 1
+           ) o ON true
+           WHERE g.index_id = $1::uuid AND g.job_id = $2::uuid
+             AND g.data_revision_id = $3 AND g.model_id = $4""",
+        generation["index_id"], generation["job_id"], generation["data_revision_id"], generation["model_id"])
+    if row is None:
+        return generation
+    def decoded(value: Any) -> Any:
+        try:
+            return json.loads(value) if isinstance(value, str) else value
+        except (ValueError, TypeError):
+            return None
+    details = public_details(decoded(row["job_details"])) or public_details(decoded(row["task_details"]))
+    if details is None and generation.get("state") == "failed" and generation.get("last_error_code") == "attempts_exhausted":
+        code = _token(row["preceding_code"], "attempts_exhausted")
+        timestamp = row["occurred_at"]
+        details = {"code": code, "errorType": code if code.endswith("Error") else "LegacyFailure",
+                   "message": "Legacy failure: exception details were not recorded; only a stored error identifier is available.",
+                   "occurredAt": timestamp.isoformat() if hasattr(timestamp, "isoformat") else timestamp,
+                   "legacy": True, "jobId": str(generation["job_id"]), "indexId": str(generation["index_id"])}
+        if row["task_id"] is not None:
+            details["taskId"] = str(row["task_id"])
+        details = public_details(details)
+    if details:
+        generation = {**generation, "errorDetails": details}
+    return generation
 
 
 async def latest_index_settings(pool: Any, model_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:

@@ -271,7 +271,10 @@ export class SemanticModelController {
   @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   ensureSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
-    return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment);
+    return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment, {
+      ...(dto.expectedDataRevisionId ? { expectedDataRevisionId: dto.expectedDataRevisionId } : {}),
+      ...(dto.expectedIndexId ? { expectedIndexId: dto.expectedIndexId } : {}),
+    });
   }
 
   @Post(':modelId/search-index/stop')

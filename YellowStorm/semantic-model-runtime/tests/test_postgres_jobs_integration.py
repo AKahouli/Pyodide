@@ -71,6 +71,42 @@ async def admit(repository: PostgresJobRepository, key: str = "idem-1", purpose:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["failed", "completed"])
+async def test_first_error_details_survive_requeue_checkpoint_and_terminal_with_actor_scope(pool, terminal):
+    from uuid import uuid4
+    from app.jobs.error_details import capture_error
+    repository = PostgresJobRepository(pool)
+    job = await admit(repository, f"diagnostics-{uuid4()}")
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", job.job_id)
+    queue = "semantic-model-population.batch"
+    first = await repository.claim_task(task_id=task_id, queue_name=queue, lease_owner="first", lease_seconds=60)
+    details = capture_error(asyncpg.DataError("invalid input for query argument $3: SECRET (expected str, got dict)"),
+                            job_id=job.job_id, task_id=task_id, attempt=1)
+    assert await repository.checkpoint(task_id=task_id, lease_owner="first", lease_epoch=first.lease_epoch,
+                                       progress={"stage": "read", "loaded": 2}, lease_seconds=60)
+    assert await repository.requeue_task(task_id=task_id, lease_owner="first", lease_epoch=first.lease_epoch,
+                                         error_code="DataError", retry_seconds=1, error_details=details)
+    second = await repository.claim_task(task_id=task_id, queue_name=queue, lease_owner="second", lease_seconds=60)
+    assert not await repository.requeue_task(task_id=task_id, lease_owner="first", lease_epoch=first.lease_epoch,
+                                             error_code="wrong", retry_seconds=1,
+                                             error_details=capture_error(RuntimeError()))
+    assert await repository.checkpoint(task_id=task_id, lease_owner="second", lease_epoch=second.lease_epoch,
+                                       progress={"stage": "save"}, lease_seconds=60)
+    await repository.complete_task(task_id=task_id, lease_owner="second", lease_epoch=second.lease_epoch,
+                                   job_state=terminal, result=None,
+                                   error_code="attempts_exhausted" if terminal == "failed" else None,
+                                   error_details=capture_error(RuntimeError(), code="attempts_exhausted"))
+    saved = await repository.get_job(job.job_id, "user-1")
+    assert saved["errorDetails"] == details
+    assert saved["progress"]["stage"] == "save" and saved["progress"]["loaded"] == 2
+    assert await repository.get_job(job.job_id, "user-2") is None
+    checkpoint = await pool.fetchval("SELECT checkpoint FROM semantic_jobs.tasks WHERE id=$1", task_id)
+    checkpoint = json.loads(checkpoint) if isinstance(checkpoint, str) else checkpoint
+    assert checkpoint["errorDetails"] == details and checkpoint["loaded"] == 2
+    assert "SECRET" not in json.dumps(saved, default=str)
+
+
+@pytest.mark.asyncio
 async def test_my_jobs_filters_actor_models_and_keeps_bulk_cancelled_history(pool: asyncpg.Pool):
     repository = PostgresJobRepository(pool)
     own = await admit(repository, "mine")
@@ -970,6 +1006,42 @@ async def _admit_index(repository: PostgresJobRepository, key: str = "gsi:1"):
             "        now() + interval '5 minutes', $1::uuid) RETURNING index_id::text",
             admitted.job_id, key)
     return admitted, index_id
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_survive_recovery_exhaustion_and_scoped_join(pool):
+    from uuid import uuid4
+    from app.jobs.error_details import capture_error
+    repository = PostgresJobRepository(pool)
+    admitted, index_id = await _admit_index(repository, f"diagnostics-{uuid4()}")
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", admitted.job_id)
+    lease = await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="first", lease_seconds=60)
+    details = capture_error(asyncpg.DataError("SECRET"), job_id=admitted.job_id, task_id=task_id, index_id=index_id)
+    assert await repository.requeue_task(task_id=task_id, lease_owner="first", lease_epoch=lease.lease_epoch,
+                                         error_code="DataError", retry_seconds=1, error_details=details)
+    second = await repository.claim_task(task_id=task_id, queue_name=INDEX_QUEUE, lease_owner="second", lease_seconds=60)
+    assert second is not None and second.attempt_count == 2
+    await pool.execute("UPDATE semantic_jobs.tasks SET lease_expires_at=now()-interval '1 second' WHERE id=$1", task_id)
+    await repository.recover_stalled_tasks(max_attempts=1, retry_seconds=1, grace_seconds=1)
+    job = await repository.get_job(admitted.job_id, "system")
+    assert job["errorCode"] == "attempts_exhausted" and job["errorDetails"] == details
+    assert await repository.get_job(admitted.job_id, "another-actor") is None
+    generation = await search_store.get_generation_by_id(pool, index_id)
+    hydrated = await search_store.hydrate_generation_error(pool, generation)
+    assert search_store.public_generation(hydrated)["errorDetails"] == details
+    # A caller cannot substitute another model/revision/job into diagnostic hydration.
+    assert "errorDetails" not in await search_store.hydrate_generation_error(pool, {**generation, "model_id": "other"})
+    other, _ = await _admit_index(repository, f"other-diagnostics-{uuid4()}")
+    assert "errorDetails" not in await search_store.hydrate_generation_error(pool, {**generation, "job_id": other.job_id})
+    assert "errorDetails" not in await search_store.hydrate_generation_error(pool, {**generation, "data_revision_id": "other-revision"})
+    # Old rows expose the actual stored identifier, not a reconstructed traceback.
+    await pool.execute("UPDATE semantic_jobs.jobs SET progress='{}'::jsonb WHERE id=$1::uuid", admitted.job_id)
+    await pool.execute("UPDATE semantic_jobs.tasks SET checkpoint='{}'::jsonb WHERE id=$1", task_id)
+    await pool.execute("UPDATE semantic_graph_search.index_generations SET state='failed', last_error_code='attempts_exhausted' WHERE index_id=$1::uuid", index_id)
+    await pool.execute("UPDATE semantic_jobs.outbox SET last_error_code='DataError' WHERE task_id=$1", task_id)
+    generation = await search_store.get_generation_by_id(pool, index_id)
+    legacy = (await search_store.hydrate_generation_error(pool, generation))["errorDetails"]
+    assert legacy["legacy"] and legacy["code"] == "DataError" and "frames" not in legacy
 
 
 async def _generation(pool: asyncpg.Pool, index_id: str):

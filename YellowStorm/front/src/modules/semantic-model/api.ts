@@ -259,8 +259,8 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { params: { environment } }));
   },
   /** Build (or build again, after a stop) the search index of the model's data, in the background. */
-  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
-    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment }));
+  async ensureSearchIndex(id: string, environment: 'draft' | 'production' = 'draft', expectation: import('./types').SearchIndexRetryExpectation = {}): Promise<SearchIndexStatus> {
+    return unwrap(await apiClient.post<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { environment, ...expectation }));
   },
   /** Stop the build of the search index. A running build ends at its next batch; what it embedded is kept. */
   async stopSearchIndex(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus & { stopped: boolean }> {

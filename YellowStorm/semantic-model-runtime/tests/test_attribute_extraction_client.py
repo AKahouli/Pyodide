@@ -133,6 +133,10 @@ async def test_retry_transient_failures_and_do_not_retry_auth_refusal():
         with pytest.raises(AttributeExtractionError) as error:
             await extract_attributes(**REQUEST, ai_extraction=profile_from_env().identity, client=client)
     assert seen == [401] and str(error.value) == "attribute_extraction_unavailable"
+    from app.jobs.error_details import capture_error
+    details = capture_error(error.value)
+    assert details["httpStatus"] == 401
+    assert "private upstream detail" not in json.dumps(details)
 
 
 @pytest.mark.asyncio

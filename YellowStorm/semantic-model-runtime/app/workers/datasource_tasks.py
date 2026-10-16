@@ -15,6 +15,7 @@ import json
 
 from app.datasource.email_archive import resolve_column
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.jobs.error_details import capture_error, failure_outcome, outcome_details
 from app.jobs.worker_identity import worker_identity
 
 from .celery_app import DATASOURCE_QUEUES, celery_app
@@ -261,15 +262,15 @@ def run_discovery_for_payload(command_dump: dict, *, authorize=None,
             try:
                 allowed = bool(verifier(actor_user_id=actor, home_workspace_id=home_ws,
                                         source_workspace_id=source.get("workspaceId", "")))
-            except Exception:
+            except Exception as exc:
                 # An unverifiable authorization decision fails closed.
-                return {"ok": False, "errorCode": "workspace_forbidden"}
+                return failure_outcome(exc, "workspace_forbidden", phase="datasource.authorization")
             if not allowed:
                 return {"ok": False, "errorCode": "workspace_forbidden"}
 
         preview = preview_source(source, options if isinstance(options, dict) else None, data)
     except ValueError as exc:
-        return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+        return failure_outcome(exc, str(exc) or "invalid_source", phase="datasource.validation")
     profile = preview["profile"]
     gaps = profile.get("status") in ("partial", "indexing_required")
     return with_mapping_preview(
@@ -320,7 +321,7 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None,
                 async with asyncio.timeout(asset_fetch_wall_seconds(source)):
                     data = await (fetch or fetch_workspace_asset)(source, actor, **to_file)
             except AssetFetchError as exc:
-                return {"ok": False, "errorCode": exc.code}
+                return failure_outcome(exc, exc.code, phase="datasource.fetch")
             if to_file:
                 # Discovery of an archive previews its first e-mails; the full read happens at population.
                 preview = await asyncio.to_thread(
@@ -340,9 +341,9 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None,
             async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
                 await uploader(source, actor, preview["dataset"], artifact)
     except ValueError as exc:
-        return {"ok": False, "errorCode": str(exc) or "parser_failed"}
+        return failure_outcome(exc, str(exc) or "parser_failed", phase="datasource.parse")
     except AssetFetchError as exc:
-        return {"ok": False, "errorCode": exc.code}
+        return failure_outcome(exc, exc.code, phase="datasource.fetch")
     profile = preview["profile"]
     gaps = profile.get("status") in ("partial", "indexing_required")
     return with_mapping_preview(
@@ -433,7 +434,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                                lease_epoch=lease.lease_epoch, job_state="failed",
-                                               result=None, error_code=outcome["errorCode"])
+                                               result=None, error_code=outcome["errorCode"],
+                                               error_details=outcome_details(outcome, phase="datasource", jobId=lease.job_id,
+                                                                             taskId=str(task_id), attempt=lease.attempt_count))
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return outcome
@@ -461,7 +464,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             try:
                 await PostgresJobRepository(pool).requeue_task(
                     task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
-                    error_code=type(exc).__name__, retry_seconds=retry_seconds)
+                    error_code=type(exc).__name__, retry_seconds=retry_seconds,
+                    error_details=capture_error(exc, phase="datasource", attempt=lease.attempt_count,
+                                                job_id=lease.job_id, task_id=task_id))
             except Exception as requeue_exc:
                 logger.warning("Semantic discovery requeue failed; lease recovery will retry",
                                extra={"error_code": type(requeue_exc).__name__[:100]})

@@ -20,6 +20,7 @@ from functools import partial
 import structlog
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.jobs.error_details import capture_error, failure_outcome, outcome_details
 from app.jobs.worker_identity import worker_identity
 from app.population.payload_rules import analyze_payload
 from app.population.derived import derivation_items, derive_concept, field_plan, merge_derived, read_derived_fields
@@ -324,8 +325,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "relationBindings": normalized_bindings, "derivations": derivations,
                 "purpose": payload.get("purpose"),
                 "specHash": expected_hash, "executionFingerprint": execution_fingerprint}
-    except Exception:
-        return {"ok": False, "errorCode": "invalid_command"}
+    except Exception as exc:
+        return failure_outcome(exc, "invalid_command", phase="population.validation")
 
 
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
@@ -365,7 +366,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         try:
             validate_identity(ai_payload.get("aiExtraction"))
         except AttributeExtractionError as exc:
-            return {"ok": False, "errorCode": exc.code}
+            return failure_outcome(exc, exc.code, phase="population.ai_validation")
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
     ai_extraction = (command_dump.get("payload") or {}).get("aiExtraction")
     compiled = validated["compiled"]
@@ -626,7 +627,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             try:
                 asset_ref = resolve_asset_ref(source)
             except ValueError as exc:
-                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+                return failure_outcome(exc, str(exc) or "invalid_source", phase="population.source")
             # A sheet whose file, mapping and concept are unchanged yields what it yielded last time.
             cache_key = None
             cached = None
@@ -640,7 +641,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
                             await (metadata_fetch or fetch_workspace_asset_metadata)(source, actor)
                     except AssetFetchError as exc:
-                        return {"ok": False, "errorCode": exc.code}
+                        return failure_outcome(exc, exc.code, phase="population.fetch")
                     if await reuse_reading(entry, cached):
                         continue
             try:
@@ -650,7 +651,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
                         data = await (fetch or fetch_workspace_asset)(source, actor)
             except AssetFetchError as exc:
-                return {"ok": False, "errorCode": exc.code}
+                return failure_outcome(exc, exc.code, phase="population.fetch")
             if extraction_cache is not None and cache_key is None:
                 # No version to trust: the fetched bytes name the file.
                 if isinstance(data, Path):
@@ -818,9 +819,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         if capped or page["returnedRows"] < QUERY_ROW_LIMIT:
                             break
             except ValueError as exc:
-                return {"ok": False, "errorCode": str(exc) or "parser_failed"}
+                return failure_outcome(exc, str(exc) or "parser_failed", phase="population.parse")
             except AssetFetchError as exc:
-                return {"ok": False, "errorCode": exc.code}
+                return failure_outcome(exc, exc.code, phase="population.fetch")
             if cells is not None:
                 sheet_health.set_ai(pacing["aiRows"], cells.stats, extractions)
             health_of(entry["conceptId"]).absorb(sheet_health)
@@ -1664,7 +1665,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                                lease_epoch=lease.lease_epoch, job_state="failed",
-                                               result=None, error_code=outcome["errorCode"])
+                                               result=None, error_code=outcome["errorCode"],
+                                               error_details=outcome_details(outcome, phase="population", jobId=lease.job_id,
+                                                                             taskId=str(task_id), attempt=lease.attempt_count))
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return outcome
@@ -1766,7 +1769,10 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             try:
                 await PostgresJobRepository(pool).requeue_task(
                     task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
-                    error_code=type(exc).__name__, retry_seconds=retry_seconds)
+                    error_code=type(exc).__name__, retry_seconds=retry_seconds,
+                    error_details=capture_error(
+                        exc, phase="population", attempt=lease.attempt_count,
+                        job_id=lease.job_id, task_id=task_id))
             except Exception as requeue_exc:
                 logger.warning("Semantic population requeue failed; lease recovery will retry",
                                extra={"error_code": type(requeue_exc).__name__[:100]})

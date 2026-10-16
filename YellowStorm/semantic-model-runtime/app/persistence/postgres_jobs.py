@@ -20,6 +20,7 @@ from app.jobs.models import (
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
+from app.jobs.error_details import public_details
 from app.jobs.worker_liveness import ONLINE_WINDOW_SECONDS
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
@@ -433,6 +434,12 @@ class PostgresJobRepository:
             "updatedAt": row["updated_at"],
         }
         payload = _object(_object(row["command"]).get("payload"))
+        details = public_details(job["progress"].get("errorDetails"))
+        if details and row["state"] != "cancelled":
+            job["errorDetails"] = details
+            job["progress"]["errorDetails"] = details
+        else:
+            job["progress"].pop("errorDetails", None)
         scope = _object(payload.get("scope"))
         job["scope"] = ({"kind": "concept", "conceptId": scope["conceptId"]}
                         if scope.get("kind") == "concept" and isinstance(scope.get("conceptId"), str)
@@ -894,7 +901,8 @@ class PostgresJobRepository:
                 row = await connection.fetchrow(
                     """
                     UPDATE semantic_jobs.tasks t
-                    SET checkpoint = $4::jsonb,
+                    SET checkpoint = checkpoint || $4::jsonb ||
+                          CASE WHEN checkpoint ? 'errorDetails' THEN jsonb_build_object('errorDetails', checkpoint->'errorDetails') ELSE '{}'::jsonb END,
                         lease_expires_at = CASE WHEN $6::boolean
                             THEN now() + make_interval(secs => $5) ELSE t.lease_expires_at END,
                         updated_at = now()
@@ -912,7 +920,7 @@ class PostgresJobRepository:
                 if row is None:
                     return False
                 await connection.execute(
-                    "UPDATE semantic_jobs.jobs SET progress = $2::jsonb, updated_at = now() WHERE id = $1::uuid",
+                    "UPDATE semantic_jobs.jobs SET progress = progress || $2::jsonb || CASE WHEN progress ? 'errorDetails' THEN jsonb_build_object('errorDetails', progress->'errorDetails') ELSE '{}'::jsonb END, updated_at = now() WHERE id = $1::uuid",
                     row["job_id"],
                     _json(progress),
                 )
@@ -927,6 +935,7 @@ class PostgresJobRepository:
         job_state: str,
         result: dict[str, Any] | None,
         error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if job_state not in ("completed", "completed_with_gaps", "failed"):
             raise ValueError("unsupported terminal job state")
@@ -937,11 +946,12 @@ class PostgresJobRepository:
                     """
                     UPDATE semantic_jobs.tasks
                     SET state = $4, result = $5::jsonb, error_code = $6,
+                        checkpoint = checkpoint || CASE WHEN checkpoint ? 'errorDetails' THEN '{}'::jsonb ELSE $7::jsonb END,
                         completed_at = now(), lease_owner = NULL,
                         lease_expires_at = NULL, updated_at = now()
                     WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3
                       AND state = 'running' AND lease_expires_at > now()
-                    RETURNING job_id::text
+                    RETURNING job_id::text, checkpoint
                     """,
                     task_id,
                     lease_owner,
@@ -949,6 +959,7 @@ class PostgresJobRepository:
                     task_state,
                     _json(result) if result is not None else None,
                     error_code,
+                    _json({"errorDetails": public_details(error_details)} if public_details(error_details) else {}),
                 )
                 if row is None:
                     raise StaleLease("task lease is stale or expired")
@@ -959,6 +970,7 @@ class PostgresJobRepository:
                     """
                     UPDATE semantic_jobs.jobs
                     SET state = $2, result = $3::jsonb, error_code = $4,
+                        progress = progress || CASE WHEN progress ? 'errorDetails' THEN '{}'::jsonb ELSE $5::jsonb END,
                         completed_at = now(), updated_at = now()
                     WHERE id = $1::uuid
                       AND state IN ('queued', 'waiting_dependencies', 'running', 'cancel_requested')
@@ -968,6 +980,8 @@ class PostgresJobRepository:
                     job_state,
                     _json(result) if result is not None else None,
                     error_code,
+                    _json({"errorDetails": _object(row["checkpoint"])["errorDetails"]}
+                          if "errorDetails" in _object(row["checkpoint"]) else {}),
                 )
                 if ended is None:
                     raise StaleLease("the job already ended")
@@ -1388,6 +1402,7 @@ class PostgresJobRepository:
         lease_epoch: int,
         error_code: str,
         retry_seconds: int,
+        error_details: dict[str, Any] | None = None,
     ) -> bool:
         """Release a live lease so the next delivery can reclaim immediately.
 
@@ -1406,18 +1421,26 @@ class PostgresJobRepository:
                     UPDATE semantic_jobs.tasks
                     SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
                         error_code = $4, updated_at = now()
+                        , checkpoint = checkpoint || CASE WHEN checkpoint ? 'errorDetails' THEN '{}'::jsonb ELSE $5::jsonb END
                     WHERE id = $1 AND state = 'running'
                       AND lease_owner = $2 AND lease_epoch = $3
                       AND lease_expires_at > now()
-                    RETURNING id
+                    RETURNING id, job_id::text, checkpoint
                     """,
                     task_id,
                     lease_owner,
                     lease_epoch,
                     error_code[:100],
+                    _json({"errorDetails": public_details(error_details)} if public_details(error_details) else {}),
                 )
                 if row is None:
                     return False
+                await connection.execute(
+                    "UPDATE semantic_jobs.jobs SET progress = progress || CASE WHEN progress ? 'errorDetails' THEN '{}'::jsonb ELSE $2::jsonb END WHERE id = $1::uuid",
+                    row["job_id"],
+                    _json({"errorDetails": _object(row["checkpoint"])["errorDetails"]}
+                          if "errorDetails" in _object(row["checkpoint"]) else {}),
+                )
                 await connection.execute(
                     """
                     UPDATE semantic_jobs.outbox

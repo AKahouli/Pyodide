@@ -263,6 +263,8 @@ class IndexCommand(BaseModel):
     model_id: str = Field(alias="modelId", min_length=1, max_length=200)
     environment: Environment = "draft"
     settings: RequestSettings | None = None
+    expected_data_revision_id: str | None = Field(default=None, alias="expectedDataRevisionId", min_length=1, max_length=200)
+    expected_index_id: str | None = Field(default=None, alias="expectedIndexId", min_length=1, max_length=200)
 
 
 def _pool(request: Request):  # type: ignore[no-untyped-def]
@@ -627,13 +629,14 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
     admit = _admit(request)
     if admit is None:
         raise HTTPException(status_code=503, detail="runtime_writes_disabled")
-    binding = await _pin(pool, command.model_id, command.environment, None)
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
     try:
         requested = await request_index(pool, admit, revision_id=binding["data_revision_id"],
                                         settings=command.settings.index if command.settings else None,
-                                        build=command.settings.build if command.settings else None)
+                                        build=command.settings.build if command.settings else None,
+                                        **({"expected_index_id": command.expected_index_id} if command.expected_index_id else {}))
     except IndexUnavailable as exc:
-        raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
+        raise HTTPException(status_code=409 if exc.code.startswith(("revision_", "index_identity_")) else 503,
                             detail=exc.code) from exc
     return {"modelId": command.model_id, "environment": command.environment,
             "dataRevisionId": binding["data_revision_id"],

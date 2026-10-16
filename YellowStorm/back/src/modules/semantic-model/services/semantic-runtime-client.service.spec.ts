@@ -29,6 +29,18 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
+  it('preserves safe diagnostic details through authenticated job and index status reads', async () => {
+    const errorDetails = { code: 'DataError', errorType: 'DataError', message: 'Database argument has an incompatible type.',
+      occurredAt: '2026-10-15T09:02:15Z', jobId: 'job-1', sqlState: '22000',
+      frames: [{ file: 'app/graph_search/indexer.py', function: 'build_index', line: 203 }] };
+    const client = new SemanticRuntimeClientService(config() as never);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'job-1', state: 'failed', errorCode: 'attempts_exhausted', errorDetails }));
+    await expect(client.getJob('job-1', 'u1')).resolves.toMatchObject({ errorDetails });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ modelId: 'm1', index: { state: 'failed', lastErrorCode: 'attempts_exhausted', errorDetails } }));
+    await expect(client.getGraphSearchIndex('m1', 'draft', 'u1')).resolves.toMatchObject({ index: { errorDetails } });
+    expect(fetchMock.mock.calls.every(([, options]) => options.headers['X-Actor-User-Id'] === 'u1')).toBe(true);
+  });
+
   describe('runtime-owned AI extraction profile', () => {
     const identity = { profileId: 'semantic-runtime', model: 'openai/extractor', contractVersion: 'ai-attribute-v2',
       promptVersion: 'semantic-attributes-v1', maxTokens: 4096 };
@@ -252,6 +264,18 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       await expect(client.ensureGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'production' }))
         .resolves.toMatchObject({ jobId: 'j1' });
       expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/indexes');
+    });
+
+    it('sends retry identity and preserves explicit stale conflicts from the runtime', async () => {
+      const client = new SemanticRuntimeClientService(config() as any);
+      const body = { actorUserId: 'u1', modelId: 'm1', environment: 'draft' as const, expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1' };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ index: { state: 'queued' } }));
+      await client.ensureGraphSearchIndex(body);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(body);
+      for (const detail of ['revision_changed', 'index_identity_changed']) {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 409 }));
+        await expect(client.ensureGraphSearchIndex(body)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT });
+      }
     });
 
     it('stops an index build through the runtime, which needs writes on', async () => {

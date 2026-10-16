@@ -298,8 +298,16 @@ describe("SemanticModelEditorPage", () => {
     expect(await screen.findByText('health.noData.title')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /health.button/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('semantic-model-canvas')).toBeInTheDocument();
+    const canvasLayer = screen.getByText('semantic-model-canvas').closest('[aria-hidden]');
+    expect(canvasLayer).toHaveAttribute('aria-hidden', 'true');
+    expect(canvasLayer).toHaveAttribute('inert');
+    expect(canvasLayer).toHaveClass('opacity-0', 'pointer-events-none');
     fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
     expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
+    expect(screen.getByText('semantic-model-canvas').closest('[aria-hidden]')).toBe(canvasLayer);
+    expect(canvasLayer).toHaveAttribute('aria-hidden', 'false');
+    expect(canvasLayer).not.toHaveAttribute('inert');
+    expect(canvasLayer).not.toHaveClass('opacity-0');
   });
 
   it('keeps records and sources inside Trust center and removes them from the Data menu', async () => {
@@ -460,7 +468,7 @@ describe("SemanticModelEditorPage", () => {
   it('keeps the last result one click away after the update ended and its panel was closed', async () => {
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'dialog-job', state: 'completed' });
     renderPage();
-    expect(screen.queryByRole('button', { name: /runStatus\./ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'runStatus.showIndex' })).toBeInTheDocument();
     fireEvent.click(await screen.findByText('start-dialog-population'));
     expect(await screen.findByText('population.done')).toBeInTheDocument();
 
@@ -482,6 +490,28 @@ describe("SemanticModelEditorPage", () => {
     // Stop is in the panel too, and asks first.
     fireEvent.click(stopButtons()[stopButtons().length - 1]);
     expect(await screen.findByText('runStop.indexConfirmTitle')).toBeInTheDocument();
+  });
+
+  it('reopens failed search-index diagnostics after a reload without starting another build', async () => {
+    indexMock.state = 'failed';
+    renderPage();
+    const failedIndexEntry = await screen.findByRole('button', { name: 'runStatus.showIndex' });
+    expect(failedIndexEntry).toHaveTextContent('searchIndexRetry.open');
+    expect(failedIndexEntry).toHaveAttribute('title', 'searchIndexRetry.openHint');
+    expect(failedIndexEntry).toHaveClass('text-destructive');
+    fireEvent.click(failedIndexEntry);
+    expect(await screen.findByText('index-progress')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'runStop.stop' })).not.toBeInTheDocument();
+    expect(apiMocks.restartSearchIndex).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'missing', 'unavailable', 'ready'])('keeps search-index status reachable when its state is %s', async (state) => {
+    indexMock.state = state;
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'runStatus.showIndex' }));
+    expect(await screen.findByText('index-progress')).toBeInTheDocument();
+    expect(apiMocks.restartSearchIndex).not.toHaveBeenCalled();
+    expect(apiMocks.getPopulationJob).not.toHaveBeenCalled();
   });
 
   describe('model check', () => {

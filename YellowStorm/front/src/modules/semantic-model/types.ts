@@ -857,6 +857,24 @@ export interface PopulationJobQueue {
   workersOnline: number | null;
 }
 
+/** Bounded, sanitized diagnostics captured by the runtime (never raw inputs). */
+export interface RuntimeErrorDetails {
+  code: string;
+  errorType: string;
+  message: string;
+  occurredAt: string;
+  phase?: string;
+  attempt?: number;
+  jobId?: string;
+  taskId?: string;
+  indexId?: string;
+  sqlState?: string;
+  httpStatus?: number;
+  frames?: Array<{ file: string; function: string; line: number }>;
+  causes?: Array<{ errorType: string; message: string; sqlState?: string; httpStatus?: number }>;
+  legacy?: boolean;
+}
+
 export interface PopulationJob {
   jobId: string;
   jobType: string;
@@ -866,6 +884,7 @@ export interface PopulationJob {
   progress?: Partial<PopulationProgress>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -920,11 +939,18 @@ export interface PopulationProgress {
 }
 
 /** The search index of a model's data: built in the background after each run. */
+export interface SearchIndexRetryExpectation {
+  expectedDataRevisionId?: string;
+  expectedIndexId?: string;
+}
+
 export interface SearchIndexStatus {
   modelId: string;
   environment: 'draft' | 'production';
   dataRevisionId: string | null;
   index: {
+    indexId?: string | null;
+    embeddingFingerprint?: string | null;
     state: 'missing' | 'queued' | 'indexing' | 'ready' | 'failed' | 'unavailable' | string;
     expectedCount?: number;
     indexedCount?: number;
@@ -949,6 +975,7 @@ export interface SearchIndexStatus {
     /** ISO time of the build's last real progress. */
     lastProgressAt?: string | null;
     lastErrorCode?: string | null;
+    errorDetails?: RuntimeErrorDetails | null;
   };
 }
 

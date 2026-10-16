@@ -84,6 +84,27 @@ RabbitMQ carries task references; PostgreSQL remains the durable job authority.
 Workers claim leased tasks and recover stalled deliveries through the existing dispatcher/recovery path.
 NestJS calls the runtime through its service client; workers obtain workspace assets through trusted backend adapters, rather than browser credentials.
 
+Runtime failure details are captured before exception codes are collapsed and
+retained in existing task checkpoint/job progress JSON across retries, recovery
+exhaustion and terminal completion. Job status has optional `errorDetails`; index
+status hydrates the same sanitized projection through its exact generation,
+job/model/revision join. Existing authorization, public error codes and schema
+remain unchanged. [Diagnostic shaping](../../../YellowStorm/semantic-model-runtime/app/jobs/error_details.py)
+allowlists bounded type/message, timestamp, available phase/attempt/correlation
+IDs, SQLSTATE/HTTP status, source locations and cause summaries; raw exception
+payloads, SQL parameters, credentials and document content are excluded.
+Failed run/index panels, expanded history and My jobs expose **Failure details**
+with expandable technical context. The header's **Search index** status entry
+remains reachable after failure/reload. Older exhausted runs show retained error
+identifiers with an explicit missing-diagnostics notice, never invented traces.
+See [runtime diagnostics and rollout](../../../YellowStorm/semantic-model-runtime/README.md#failure-diagnostics-in-status-panels).
+
+Failed search indexing can be retried independently with **Retry search indexing**. Recovery uses stored population records and compatible committed indexing batches/vector caches, without rereading sources or rerunning population. The existing owner/editor command carries expected data-revision and index identities; changed data or effective embedding/index settings reject recovery instead of silently changing its target. The panel suppresses duplicate submissions and follows the new attempt, keeping the previous failure visible while mounted (not across reload). See [index retry UI regressions](../../../YellowStorm/front/src/modules/semantic-model/components/population/SearchIndexProgress.test.tsx) and [runtime retry regressions](../../../YellowStorm/semantic-model-runtime/tests/test_graph_search_resume.py). Deploy or restart the Nest backend as well as the runtime API/workers when rolling out guarded index commands; an older loaded `GraphSearchIndexDto` rejects `expectedDataRevisionId` before the runtime is called. Ensure API and search workers load matching embedding-profile, serializer/field-policy and index-settings versions: profile drift fails closed with `embedding_profile_changed` before claim, record reads or provider calls; never bypass the fence by rewriting stored fingerprints.
+
+The header labels a failed index **Search index failed**, opening its failure details and retry action. Trust center keeps the canvas mounted to preserve its viewport, but hides its full subtree with opacity and disables interaction/focus with native inert until returning to the canvas.
+
+The search-index status entry also remains reachable when no current index exists or its status is loading/unavailable. A populated current revision with a `missing` index offers **Build search index**, explicitly creating an index for the current configuration from stored records, without rereading sources or rerunning population. This is distinct from retrying an existing failed generation: it carries the expected data revision but no nonexistent index identity. An older failed generation under another embedding profile remains stored and is not silently retried. No populated revision means no build action; status errors display a refresh action and block writes while retaining cached failure details.
+
 P0 concurrency hardening uses independent task guards for datasource, population
 and search, with one serialized renewal-loop connection per guard. Search retains
 its progress-only generation lease/watchdog; task heartbeats cannot conceal a

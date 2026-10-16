@@ -270,8 +270,10 @@ export function SemanticModelEditorPage() {
     const finalProgress = populationJob.data.progress;
     const finalServing = populationServing(populationJob.data.result);
     const finalError = populationJob.data.errorCode;
+    const finalErrorDetails = populationJob.data.errorDetails;
     const finished = (current: PopulationOutcome | null) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current;
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving,
+        errorCode: finalError ?? current.errorCode, errorDetails: finalErrorDetails ?? current.errorDetails } : current;
     setPopulation(finished);
     setLastRun(finished);
     setPopulationJobId(undefined);
@@ -431,7 +433,10 @@ export function SemanticModelEditorPage() {
   const stopPending = populationJobId ? runStopRequested : stoppingIndex;
   const stopSlow = useAfterDelay(Boolean(stopPending), STOP_SLOW_MS);
   // What the status button opens: the update being followed, else the index being built, else the last update seen.
-  const statusTarget: 'run' | 'index' | 'last' | null = populationJobId ? 'run' : indexBuilding ? 'index' : lastRun || population || indexPanelOpen ? 'last' : null;
+  const indexFailed = indexStatus.data?.index.state === 'failed' && indexStatus.data.index.lastErrorCode !== 'cancelled';
+  const indexNeedsAttention = indexFailed || indexStatus.data?.index.state === 'missing' || indexStatus.data?.index.state === 'unavailable' || indexStatus.isError;
+  // A missing/unreadable index still needs a reachable status and recovery panel.
+  const statusTarget: 'run' | 'index' | 'last' = populationJobId ? 'run' : indexBuilding || indexNeedsAttention || indexPanelOpen ? 'index' : lastRun || population ? 'last' : 'index';
   const busy = Boolean(populationJobId) || indexBuilding;
   // The worker building the index stopped answering: Restart sits next to Stop.
   const indexStalled = !populationJobId && indexBuilding && Boolean(indexStatus.data?.index.stalled);
@@ -439,7 +444,7 @@ export function SemanticModelEditorPage() {
     setSuggestionsOpen(false); setVersionsOpen(false); setRunHistoryOpen(false); setMappingTarget(null);
     if (populationJobId) {
       setPopulation((current) => current ?? { jobId: populationJobId, status: populationJob.data?.state ?? 'running', skipped: [], reused: false, progress: populationJob.data?.progress });
-    } else if (indexBuilding || !lastRun) {
+    } else if (statusTarget === 'index') {
       setIndexPanelOpen(true);
     } else {
       setPopulation(lastRun);
@@ -1017,12 +1022,12 @@ export function SemanticModelEditorPage() {
           {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
           {/* Always the way back to the run's side panel: while an update or the search index build runs, and after the last update ended. */}
           {canEdit && statusTarget && <Button variant='outline' size='sm' aria-pressed={runPanelOpen}
-            className={cn(runPanelOpen && 'bg-muted', busy && 'border-primary/50 text-primary')}
+            className={cn(runPanelOpen && 'bg-muted', busy && 'border-primary/50 text-primary', statusTarget === 'index' && indexFailed && 'border-destructive/50 text-destructive')}
             aria-label={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
-            title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
+            title={t(runPanelOpen ? 'runStatus.hide' : statusTarget === 'index' && indexFailed ? 'searchIndexRetry.openHint' : statusTarget === 'run' ? 'runStatus.showRun' : statusTarget === 'index' ? 'runStatus.showIndex' : 'runStatus.showLast')}
             onClick={() => (runPanelOpen ? closeRunPanel() : openRunStatus())}>
-            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:me-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:me-1.5' />}
-            <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? 'runStatus.index' : 'runStatus.last')}</span>
+            {busy ? <Loader2 className='h-4 w-4 animate-spin lg:me-1.5' /> : statusTarget === 'index' && indexFailed ? <AlertTriangle className='h-4 w-4 lg:me-1.5' /> : <PanelRightOpen className='h-4 w-4 lg:me-1.5' />}
+            <span className='hidden lg:inline'>{t(statusTarget === 'run' ? 'runStatus.run' : statusTarget === 'index' ? indexFailed ? 'searchIndexRetry.open' : 'runStatus.index' : 'runStatus.last')}</span>
           </Button>}
           {/* While the model is busy (a data update in any phase, or its search index being built) the button is Stop, not Run. */}
           {canEdit && (populationJobId || indexBuilding) && <div className='flex items-center gap-1'>
@@ -1068,7 +1073,8 @@ export function SemanticModelEditorPage() {
       <main className="relative flex min-h-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
           {reviewFocus && mode !== 'health' && <ReviewFocusBar item={reviewFocus} items={modelHealth.data?.setup ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
-          {(onCanvas || mode === 'health') && <div aria-hidden={!onCanvas} className={cn('relative min-h-0 flex-1', mode === 'health' && 'pointer-events-none absolute inset-0 invisible')}>
+          {/* Preserve the canvas viewport while hiding the entire subtree: ReactFlow nodes override inherited visibility. */}
+          {(onCanvas || mode === 'health') && <div aria-hidden={!onCanvas} {...(!onCanvas ? { inert: '' } : {})} className={cn('relative min-h-0 flex-1', mode === 'health' && 'pointer-events-none absolute inset-0 opacity-0')}>
             {onCanvas && canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
             <SemanticModelCanvas
               sourceMappings={sourceMappings.data}

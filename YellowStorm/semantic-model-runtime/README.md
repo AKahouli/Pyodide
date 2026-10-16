@@ -150,7 +150,59 @@ Feature switches default off:
   Leave this off until the datasource/population task implementations replace
   the Phase 2A stubs.
 
+## Failure diagnostics in status panels
+
+Datasource, population and search workers capture bounded, sanitized diagnostics
+at exception boundaries before reducing an error to a stable code. Existing
+task checkpoint/job progress JSON preserves the **first failure** through later
+progress updates, retries, recovery exhaustion and terminal completion. No schema
+migration is required. Job status exposes optional `errorDetails`; search status
+exposes it inside `index`, joined through the selected generation's exact
+job/model/revision. Existing actor/model authorization and public codes remain
+unchanged.
+
+The error projection contains exception type, safe summary, time, available
+phase/attempt and job/task/index IDs, database SQLSTATE or upstream HTTP status,
+up to eight source locations and three cause summaries. These are authenticated
+diagnostic metadata, not raw HTTP stack traces: no source lines, local variables,
+SQL/parameters, credentials, response bodies, prompts or document text are
+returned. Public reads revalidate the allowlisted shape after JSON round-trip.
+The owning implementation is `app/jobs/error_details.py`.
+
+The editor's **Search index** status button remains available after an index
+fails, including after reload. Failed population, index, expanded run-history and
+My jobs entries expose **Failure details → Technical details** in EN/FR/AR.
+Cancelled runs retain their stopped treatment. Deploy/restart the runtime API
+and all worker roles together to enable capture and readback; updating only the
+frontend cannot restore information discarded by an older worker.
+
+Historical exhausted search generations fall back to their saved outbox error
+identifier and correlation IDs, explicitly marked as legacy. Missing exception
+messages/source locations are not reconstructed or invented. Regression coverage
+is in `test_error_details.py`, `test_runtime_error_status.py` and the repository
+retry/exhaustion integration cases, all included by `scripts/run_p0_gate.py`.
+
 ## Retry and lease recovery
+
+The failed search-index panel offers **Retry search indexing** independently of
+population. It uses the existing `/v1/semantic-model-search/indexes` command with
+optional `expectedDataRevisionId` and `expectedIndexId` expectations. A changed
+active revision or effective embedding/index identity rejects the request before
+retry admission; the editor explains the conflict and offers a status refresh.
+Existing callers without expectations keep their normal index-admission behavior.
+Owner/editor authorization remains at the backend boundary.
+
+Recovery keeps the populated revision and reuses compatible committed index
+batches and cached vectors. It never rereads population sources. The panel guards
+duplicate submissions, follows the admitted attempt's progress, and retains the
+previous failure details while mounted; this panel-local view does not survive
+reload. Historical job diagnostics remain stored independently. A changed profile
+that yields a missing index is not silently treated as a retry of the old index.
+Instead, the status panel offers **Build search index** for a populated current
+revision. This explicit command carries the expected data revision, without an
+index ID, and creates the index for the current configuration from stored records.
+Loading, unavailable and missing states keep the status entry reachable; unreadable
+status exposes refresh and blocks build/retry commands until status recovers.
 
 All three worker families renew task ownership independently through
 `TaskLeaseGuard`. Its private renewal loop serializes PostgreSQL queries,

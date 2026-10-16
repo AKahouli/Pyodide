@@ -3,11 +3,12 @@ import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Hourglass, Loader2,
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ConceptSourceMapping, PopulationJobQueue, PopulationProgress } from '../../types';
+import type { ConceptSourceMapping, PopulationJobQueue, PopulationProgress, RuntimeErrorDetails } from '../../types';
 import { QueuedRunNotice } from './QueuedRunNotice';
 import { RunProgress } from './RunProgress';
 import { SearchIndexProgress } from './SearchIndexProgress';
 import { errorText } from './RunHistoryPanel';
+import { RuntimeFailureDetails } from './RuntimeFailureDetails';
 
 export interface PopulationOutcome {
   jobId: string;
@@ -25,6 +26,7 @@ export interface PopulationOutcome {
   serving?: PopulationServing;
   /** Why the run failed, from the runtime, kept once the run ends. */
   errorCode?: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
 }
 
 type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';
@@ -161,6 +163,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
         </Tooltip></TooltipProvider>)}
       {tone === 'running' && queue && <QueuedRunNotice queue={queue} queuedSince={queuedSince} />}
       {jobsAction}
+      {tone === 'failed' && <RuntimeFailureDetails details={outcome.errorDetails} code={outcome.errorCode} jobId={outcome.jobId} />}
       {/* A refresh of a concept made from another one reads no file, yet reports its steps, AI calls and records. */}
       {!queued && shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
       {/* The new data becomes searchable once its index is built, after the run. */}

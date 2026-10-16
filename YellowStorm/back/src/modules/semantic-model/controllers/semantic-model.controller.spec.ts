@@ -59,14 +59,14 @@ describe('SemanticModelController graph search', () => {
     await controller.search(user, 'model-id', { environment: 'production', query: 'acme' } as never);
     await controller.expandSearch(user, 'model-id', { environment: 'draft', seedEntityIds: ['e-1'], steps: [{}] } as never);
     await controller.searchIndex(user, 'model-id', { environment: 'production' } as never);
-    await controller.ensureSearchIndex(user, 'model-id', { environment: 'draft' } as never);
+    await controller.ensureSearchIndex(user, 'model-id', { environment: 'draft', expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1' } as never);
     await controller.stopSearchIndex(user, 'model-id', { environment: 'draft' } as never);
     await controller.restartSearchIndex(user, 'model-id', { environment: 'draft' } as never);
 
     expect(graphSearch.search).toHaveBeenCalledWith('user-id', 'model-id', { environment: 'production', query: 'acme' });
     expect(graphSearch.expand).toHaveBeenCalledWith('user-id', 'model-id', { environment: 'draft', seedEntityIds: ['e-1'], steps: [{}] });
     expect(graphSearch.indexStatus).toHaveBeenCalledWith('user-id', 'model-id', 'production');
-    expect(graphSearch.ensureIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
+    expect(graphSearch.ensureIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft', { expectedDataRevisionId: 'dr-1', expectedIndexId: 'ix-1' });
     expect(graphSearch.stopIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
     expect(graphSearch.restartIndex).toHaveBeenCalledWith('user-id', 'model-id', 'draft');
   });

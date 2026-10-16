@@ -48,6 +48,24 @@ export interface RuntimeJobQueue {
   workersOnline: number | null;
 }
 
+/** Sanitized runtime diagnostic projection; never an exception body or raw input. */
+export interface RuntimeErrorDetails {
+  code: string;
+  errorType: string;
+  message: string;
+  occurredAt: string;
+  phase?: string;
+  attempt?: number;
+  jobId?: string;
+  taskId?: string;
+  indexId?: string;
+  sqlState?: string;
+  httpStatus?: number;
+  frames?: Array<{ file: string; function: string; line: number }>;
+  causes?: Array<{ errorType: string; message: string; sqlState?: string; httpStatus?: number }>;
+  legacy?: boolean;
+}
+
 export interface RuntimeJob {
   jobId: string;
   jobType: string;
@@ -57,6 +75,7 @@ export interface RuntimeJob {
   progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
   createdAt?: string;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -669,6 +688,7 @@ export interface RuntimeGraphSearchIndex {
   /** When the build last made progress (ISO); null before its first step. */
   lastProgressAt?: string | null;
   lastErrorCode: string | null;
+  errorDetails?: RuntimeErrorDetails | null;
   completedAt: string | null;
   embeddingFingerprint: string | null;
 }
@@ -1621,7 +1641,8 @@ export class SemanticRuntimeClientService {
   }
 
   /** Builds (or reuses) the search index of the data bound to one environment, in the background. */
-  async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
+  async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment;
+    expectedDataRevisionId?: string; expectedIndexId?: string }):
     Promise<RuntimeGraphSearchIndexStatus & { jobId: string | null }> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes', body.actorUserId, body, undefined, true);
   }

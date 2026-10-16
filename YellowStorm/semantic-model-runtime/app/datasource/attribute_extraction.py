@@ -32,9 +32,10 @@ MAX_DELAY_SECONDS = 60.0
 class AttributeExtractionError(Exception):
     """Stable failure code; gateway response bodies and credentials stay private."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, status_code: int | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -141,7 +142,7 @@ async def _completion(profile: ExtractionProfile, prompt: str, http: httpx.Async
         break
     if response is None or response.status_code >= 400:
         code = "attribute_extraction_throttled" if response is not None and response.status_code == 429 else "attribute_extraction_unavailable"
-        raise AttributeExtractionError(code)
+        raise AttributeExtractionError(code, status_code=response.status_code if response is not None else None)
     try:
         choice = response.json()["choices"][0]
         if choice.get("finish_reason") not in (None, "stop") or choice["message"].get("refusal"):

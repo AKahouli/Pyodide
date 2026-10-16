@@ -14,6 +14,108 @@ from app.persistence import graph_search_store as search_store
 PROFILE = EmbeddingProfile(base_url="http://embed.test", api_key="k", model="m", dimension=4, batch_size=2)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", ["mismatched", "missing", "matching"])
+@pytest.mark.parametrize("stored", [None, {"cardValueChars": 600}], ids=["default-settings", "stored-nondefault-settings"])
+async def test_build_profile_fence_precedes_claim_records_and_provider(
+    monkeypatch: pytest.MonkeyPatch, configured: str, stored: dict[str, Any] | None,
+) -> None:
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from app.graph_search.settings import IndexSettings, index_fingerprint
+
+    settings = IndexSettings.model_validate(stored or {})
+    fingerprint = index_fingerprint(PROFILE.fingerprint, settings)
+    if stored:
+        # A matching worker must include the saved card/passage settings, not
+        # compare only its embedding profile (or substitute default settings).
+        assert fingerprint != index_fingerprint(PROFILE.fingerprint, IndexSettings())
+    generation = {"index_id": "ix-profile-fence", "state": "queued",
+                  "embedding_fingerprint": fingerprint, "index_settings": stored}
+    profile = None if configured == "missing" else replace(PROFILE, model="different-model") if configured == "mismatched" else PROFILE
+    monkeypatch.setattr(indexer, "profile_from_env", lambda: profile)
+    lookup = AsyncMock(return_value=generation)
+    fail = AsyncMock()
+    claim = AsyncMock(return_value=False)
+    monkeypatch.setattr(indexer.search_store, "get_generation_by_id", lookup)
+    monkeypatch.setattr(indexer.search_store, "fail_generation", fail)
+    monkeypatch.setattr(indexer.search_store, "claim_generation", claim)
+    # No usable database connection or provider is present. Unexpected work
+    # fails immediately as well as being checked explicitly below.
+    forbidden = []
+    for target, name in [(indexer.population_store, "get_revision_specification"),
+                         (indexer.population_store, "count_revision_rows"),
+                         (indexer, "_write_cards"), (indexer, "embed")]:
+        operation = AsyncMock(side_effect=AssertionError(f"profile fence reached {name}"))
+        monkeypatch.setattr(target, name, operation)
+        forbidden.append(operation)
+    embedder = AsyncMock(side_effect=AssertionError("profile fence reached provider"))
+    report = AsyncMock()
+    pool = object()
+
+    result = await indexer.build_index(pool, index_id="ix-profile-fence", owner="worker-profile-fence",
+                                       report=report, embedder=embedder)
+
+    if configured == "matching":
+        assert result == {"state": "queued", "busy": True}
+        fail.assert_not_awaited()
+        claim.assert_awaited_once()
+        assert claim.await_args.args[:3] == (pool, "ix-profile-fence", "worker-profile-fence")
+        assert claim.await_args.args[3] > 0
+        assert lookup.await_count == 2
+    else:
+        assert result == {"state": "failed", "errorCode": "embedding_profile_changed"}
+        fail.assert_awaited_once_with(pool, "ix-profile-fence", "embedding_profile_changed")
+        claim.assert_not_awaited()
+        lookup.assert_awaited_once_with(pool, "ix-profile-fence")
+    for operation in [*forbidden, embedder, report]:
+        operation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation", [None, {"index_id": "different-index"}])
+async def test_retry_rejects_changed_profile_settings_or_identity_before_mutation(monkeypatch: pytest.MonkeyPatch, generation: Any) -> None:
+    from unittest.mock import AsyncMock
+    from app.graph_search.settings import IndexSettings, index_fingerprint
+
+    monkeypatch.setattr(indexer, "profile_from_env", lambda: PROFILE)
+    lookup = AsyncMock(return_value=generation)
+    mutate = AsyncMock()
+    monkeypatch.setattr(indexer.search_store, "get_generation", lookup)
+    monkeypatch.setattr(indexer, "_request", mutate)
+    settings = IndexSettings()
+    with pytest.raises(indexer.IndexUnavailable, match="index_identity_changed"):
+        await indexer.request_index(object(), AsyncMock(), revision_id="dr-1", settings=settings, expected_index_id="ix-1")
+    assert lookup.await_args.args[1:] == ("dr-1", index_fingerprint(PROFILE.fingerprint, settings))
+    mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_exhausted_retry_reuses_generation_and_durable_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+    from app.graph_search.settings import IndexSettings
+
+    monkeypatch.setattr(indexer, "profile_from_env", lambda: PROFILE)
+    failed = {"index_id": "ix-1", "model_id": "m", "state": "failed", "last_error_code": "attempts_exhausted",
+              "attempt": 2, "job_id": "old-job", "indexed_count": 17, "errorDetails": {"message": "original failure"}}
+    queued = {**failed, "state": "queued", "attempt": 3, "job_id": "new-job"}
+    lookup = AsyncMock(return_value=failed)
+    retry = AsyncMock(return_value=queued)
+    create = AsyncMock()
+    admit = AsyncMock(return_value=SimpleNamespace(reused=False, state="queued", job_id="new-job"))
+    monkeypatch.setattr(indexer.search_store, "get_generation", lookup)
+    monkeypatch.setattr(indexer.search_store, "retry_generation", retry)
+    monkeypatch.setattr(indexer.search_store, "get_generation_by_id", AsyncMock(return_value=queued))
+    monkeypatch.setattr(indexer.search_store, "set_generation_job", AsyncMock())
+    monkeypatch.setattr(indexer.search_store, "create_generation", create)
+    result = await indexer.request_index(object(), admit, revision_id="dr-1", settings=IndexSettings(), expected_index_id="ix-1")
+    assert result["generation"]["index_id"] == "ix-1" and result["generation"]["indexed_count"] == 17
+    assert result["jobId"] == "new-job"
+    assert admit.await_args.kwargs["idempotency_key"] == "gsi:ix-1:3"
+    retry.assert_awaited_once()
+    create.assert_not_awaited()
+
+
 class _Pool:
     """Answers the chunk statement of ``fill_from_cache`` from a list of record ids and cached ones."""
 

@@ -95,7 +95,8 @@ async def settings_for_revision(pool: Any, revision_id: str, profile: EmbeddingP
 
 async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, *,
                         revision_id: str, settings: IndexSettings | None = None,
-                        build: IndexBuildSettings | None = None, explicit: bool = True) -> dict[str, Any]:
+                        build: IndexBuildSettings | None = None, explicit: bool = True,
+                        expected_index_id: str | None = None) -> dict[str, Any]:
     """Make sure the revision has (or is getting) a search index for the current profile and
     index settings (None: the model's latest ones).
 
@@ -109,6 +110,11 @@ async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, 
         raise IndexUnavailable("embedding_not_configured")
     settings = await settings_for_revision(pool, revision_id, profile, settings)
     fingerprint = index_fingerprint(profile.fingerprint, settings)
+    if expected_index_id is not None:
+        # Validate effective profile/settings and revision before any generation/job mutation.
+        generation = await search_store.get_generation(pool, revision_id, fingerprint)
+        if generation is None or generation["index_id"] != expected_index_id:
+            raise IndexUnavailable("index_identity_changed")
     requested = await _request(pool, admit, revision_id, settings, fingerprint, profile.vector_fingerprint,
                                build, explicit)
     return {**requested, "fingerprint": fingerprint}

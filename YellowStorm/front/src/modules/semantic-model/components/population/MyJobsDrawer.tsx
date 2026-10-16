@@ -13,6 +13,7 @@ import { semanticModelApi } from '../../api';
 import type { MyJobsQuery, MySemanticJob } from '../../types';
 import { runCanStop } from './PopulationStartedPanel';
 import { errorText } from './RunHistoryPanel';
+import { RuntimeFailureDetails } from './RuntimeFailureDetails';
 
 const JOBS_KEY = ['semantic-models', 'my-jobs'] as const;
 const ACTIVE = new Set(['queued', 'waiting_dependencies', 'running', 'cancel_requested']);
@@ -158,7 +159,10 @@ function MyJobRow({ job, busy, onRemove, onStop, onOpenModel }: Readonly<{
         <p className='mt-1 text-xs tabular-nums text-muted-foreground'>{t(queued ? 'myJobs.waitingMinutes' : 'myJobs.elapsedMinutes', { count: elapsed })}</p>
         {queued && <p className='mt-1 text-xs text-muted-foreground'>{t(job.state === 'waiting_dependencies' ? 'myJobs.waitingDependencies' : 'myJobs.waitingWorker')}</p>}
         {saving && <p className='mt-1 text-xs text-muted-foreground'>{t('myJobs.savingHint')}</p>}
-        {job.state === 'failed' && <p className='mt-2 break-words text-xs text-destructive'>{errorText(job.errorCode, t as Parameters<typeof errorText>[1])}</p>}
+        {job.state === 'failed' && <div className='mt-2 space-y-2'>
+          <p className='break-words text-xs text-destructive'>{errorText(job.errorCode, t as Parameters<typeof errorText>[1])}</p>
+          <RuntimeFailureDetails details={job.errorDetails} code={job.errorCode} jobId={job.jobId} />
+        </div>}
       </div>
       {job.canManage && active && job.state !== 'cancel_requested' && <Button variant='outline' size='sm' className='shrink-0' disabled={busy || saving} onClick={queued ? onRemove : onStop}>
         {queued ? <Trash2 aria-hidden className='me-1.5 h-4 w-4' /> : <StopCircle aria-hidden className='me-1.5 h-4 w-4' />}{t(queued ? 'myJobs.removeQueued' : 'runStop.stop')}

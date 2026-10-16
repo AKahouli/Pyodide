@@ -15,6 +15,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.jobs.error_details import capture_error, outcome_details
 from app.jobs.worker_identity import worker_identity
 
 from .celery_app import SEARCH_QUEUES, celery_app
@@ -85,11 +86,22 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     lease_seconds, renew_seconds = lease_windows_from_env()
     repository = PostgresJobRepository(pool)
 
-    async def finish(job_state: str, result: dict | None, error_code: str | None = None) -> dict:
+    async def finish(job_state: str, result: dict | None, error_code: str | None = None,
+                     exception: BaseException | None = None) -> dict:
         try:
+            details = None
+            if job_state == "failed" and error_code != "cancelled":
+                context = {"jobId": lease.job_id, "taskId": str(task_id), "attempt": lease.attempt_count,
+                           "indexId": str(lease.payload.get("payload", {}).get("indexId") or "")}
+                if exception is not None:
+                    details = capture_error(exception, code=getattr(exception, "code", error_code), phase="search", attempt=lease.attempt_count,
+                                            job_id=lease.job_id, task_id=task_id,
+                                            index_id=str(lease.payload.get("payload", {}).get("indexId") or ""))
+                else:
+                    details = outcome_details({"errorCode": error_code}, phase="search", **context)
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
-                                           lease_epoch=lease.lease_epoch, job_state=job_state,
-                                           result=result, error_code=error_code)
+                                            lease_epoch=lease.lease_epoch, job_state=job_state,
+                                            result=result, error_code=error_code, error_details=details)
         except StaleLease:
             return {"ok": False, "errorCode": "stale_lease"}
         return {"ok": job_state != "failed", **(result or {}), "jobState": job_state}
@@ -149,7 +161,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 build_index(pool, index_id=index_id, owner=lease_owner, report=report, build=build,
                             should_stop=should_stop),
                 progressed_at, stall_seconds, guard=guard)
-        except BuildStalled:
+        except BuildStalled as exc:
             logger.warning("Search index build stalled; its worker is released",
                            extra={"attempt": lease.attempt_count, "stall_seconds": stall_seconds})
             if lease.attempt_count < max_attempts:
@@ -157,12 +169,12 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             state = await search_store._fail_abandoned_generation(pool, index_id, "index_interrupted")
             if state == "ready":
                 return await finish("completed", {"indexId": index_id, "state": "ready", "reused": True})
-            return await finish("failed", {"indexId": index_id}, "index_interrupted")
+            return await finish("failed", {"indexId": index_id}, "index_interrupted", exc)
         except EmbeddingError as exc:
             if exc.retryable and lease.attempt_count < max_attempts:
                 raise
             await search_store.fail_generation(pool, index_id, exc.code, lease_owner)
-            return await finish("failed", {"indexId": index_id}, exc.code)
+            return await finish("failed", {"indexId": index_id}, exc.code, exc)
         result = {"indexId": index_id, **outcome}
         if outcome.get("state") == "cancelled":
             try:
@@ -181,7 +193,9 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 await repository.requeue_task(task_id=task_id, lease_owner=lease_owner,
                                               lease_epoch=lease.lease_epoch,
                                               error_code=getattr(exc, "code", type(exc).__name__),
-                                              retry_seconds=retry_seconds)
+                                               retry_seconds=retry_seconds,
+                                               error_details=capture_error(exc, phase="search", attempt=lease.attempt_count,
+                                                                           job_id=lease.job_id, task_id=task_id))
             except Exception as requeue_exc:
                 logger.warning("Search index requeue failed; lease recovery will retry",
                                extra={"error_code": type(requeue_exc).__name__[:100]})
