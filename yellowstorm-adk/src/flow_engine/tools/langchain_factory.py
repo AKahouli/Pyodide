@@ -8,12 +8,12 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Type, Union, Annotated
 
 from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args as _last_mcp_actual_args
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, BeforeValidator, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
@@ -38,11 +38,6 @@ from src.smart_rag.tools.utilities.run_code import (
     RUN_CODE_CODE_DESCRIPTION,
     RUN_CODE_TOOL_DESCRIPTION,
     run_code_globally_enabled,
-)
-from src.smart_rag.tools.utilities.code_interpreter_payload import (
-    _extract_workspace_name_from_filepath,
-    _extract_workspace_name_hint,
-    build_code_interpreter_payload_context,
 )
 from src.smart_rag.tools.utilities.connector_tools import (
     apply_dynamic_workspace_headers,
@@ -317,6 +312,7 @@ def _collect_connector_response_components(
     response: Any,
     tool_name: str = "",
     trusted_citations: bool = False,
+    log_payload: bool = True,
 ) -> Any:
     if not isinstance(response, dict):
         return response
@@ -342,8 +338,8 @@ def _collect_connector_response_components(
             if signature in collector._connector_source_links_seen:
                 logger.info(
                     "playbook_connector_source_reused title=%s url=%s",
-                    title,
-                    url,
+                    title if log_payload else "[suppressed]",
+                    url if log_payload else "[suppressed]",
                 )
                 continue
             collector._connector_source_links_seen.add(signature)
@@ -353,7 +349,7 @@ def _collect_connector_response_components(
             logger.info(
                 "playbook_connector_sources_component_emitted count=%s sources=%s",
                 len(new_sources),
-                _log_payload(new_sources),
+                _log_payload(new_sources) if log_payload else "[suppressed]",
             )
 
     citation_sources = normalized_response.get("citation_sources")
@@ -479,7 +475,7 @@ def _collect_connector_response_components(
         logger.warning(
             "PLAYBOOK_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s citation_sources=%s",
             assigned_references,
-            _log_payload(normalized_citation_sources),
+            _log_payload(normalized_citation_sources) if log_payload else "[suppressed]",
         )
 
     return normalized_response
@@ -514,13 +510,6 @@ class CalculatorInput(BaseModel):
 
 class WebSearchInput(BaseModel):
     query: str = Field(description="The web search query.")
-
-
-class CodeInterpreterInput(BaseModel):
-    code: str = Field(description="Python 3 code to execute in an isolated sandbox.")
-    timeout_seconds: int = Field(
-        default=60, description="Maximum execution time in seconds (max 300)."
-    )
 
 
 class PlanGeneratorInput(BaseModel):
@@ -700,22 +689,8 @@ def create_langchain_tools(
             tools.append(web_tool)
 
     # --- Code interpreter ---
-    if "code interpreter" in tool_names:
-        if not output_workspace_id:
-            raise ValueError("Code interpreter requires a default playbook workspace")
-        code_tool = _create_code_interpreter_tool(
-            agent_config,
-            workspace_names,
-            code_interpreter_files or brain_documents,
-            collector,
-            output_ports=output_ports,
-            documents_by_port=documents_by_port,
-            output_workspace_id=output_workspace_id,
-            workspace_context_mode=workspace_context_mode,
-            execution_id=execution_id,
-        )
-        if code_tool:
-            tools.append(code_tool)
+    # (removed: the CODE_INTERPRETER_BACKEND_URL tool was retired; the
+    # connector-based code-interpreter sandbox is unaffected)
 
     if "run_code" in tool_names and run_code_globally_enabled():
         run_id = runtime_id
@@ -780,23 +755,101 @@ def create_langchain_tools(
 # ---------------------------------------------------------------------------
 
 
+def _json_schema_python_types(schema: Dict[str, Any]) -> List[Any]:
+    """Resolve the Python type(s) declared by a JSON schema property.
+
+    MCP servers built with Pydantic expose optional parameters as ``anyOf``
+    unions without a top-level ``type`` (for example ``string | null``). Ignoring
+    those branches produced an untyped ``Any`` field, so the tool schema sent to
+    the model declared no type at all and the model called the tool with empty
+    arguments. Keep every non-null branch so a parameter that accepts a string
+    or a list of strings is not narrowed to a single type.
+    """
+    names: List[str] = []
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list):
+            names.extend(
+                str(branch.get("type"))
+                for branch in branches
+                if isinstance(branch, dict)
+                and branch.get("type") not in (None, "null")
+            )
+            if names:
+                break
+    if not names:
+        declared = schema.get("type")
+        if isinstance(declared, str):
+            names = [declared]
+        elif isinstance(declared, list):
+            names = [item for item in declared if item != "null"]
+    if not names:
+        # Match the ADK/UI converter, which treats a missing type as a string
+        # rather than emitting an untyped parameter.
+        return [str]
+
+    mapping = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+        "array": List[Any],
+        "object": Dict[str, Any],
+    }
+    resolved: List[Any] = []
+    for name in names:
+        python_type = mapping.get(name, str)
+        if python_type not in resolved:
+            resolved.append(python_type)
+    return resolved
+
+
 def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
-    schema_type = schema.get("type")
-    if isinstance(schema_type, list):
-        schema_type = next((item for item in schema_type if item != "null"), "string")
-    if schema_type == "string":
-        return str
-    if schema_type == "integer":
-        return int
-    if schema_type == "number":
-        return float
-    if schema_type == "boolean":
-        return bool
-    if schema_type == "array":
-        return List[Any]
-    if schema_type == "object":
-        return Dict[str, Any]
-    return Any
+    types = _json_schema_python_types(schema)
+    if len(types) == 1:
+        return types[0]
+    return Union[tuple(types)]
+
+
+def _schema_declares_array(schema: Dict[str, Any]) -> bool:
+    """True when the property is (or can be) a JSON array."""
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list) and any(
+            isinstance(branch, dict) and branch.get("type") == "array"
+            for branch in branches
+        ):
+            return True
+    declared = schema.get("type")
+    if declared == "array":
+        return True
+    return isinstance(declared, list) and "array" in declared
+
+
+def _coerce_json_string_array(value: Any) -> Any:
+    """Decode an array that a model serialized as a JSON string.
+
+    GLM 5.2 sends connector array arguments (for example
+    ``locate_answer_citations.citations``) as an escaped JSON string, which then
+    fails Pydantic validation with "Input should be a valid list". Decode it
+    before validation so the connector receives a real list.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    for _ in range(2):
+        if not text.startswith("["):
+            return value
+        try:
+            decoded = json.loads(text)
+        except (ValueError, TypeError):
+            return value
+        if isinstance(decoded, list):
+            return decoded
+        if not isinstance(decoded, str):
+            return value
+        text = decoded.strip()
+    return value
 
 
 def _sanitize_mcp_params_for_send(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -848,6 +901,8 @@ def _build_args_schema_for_connector_tool(
     for prop_name, prop_schema in properties.items():
         prop_schema = prop_schema if isinstance(prop_schema, dict) else {}
         py_type = _json_schema_type_to_python(prop_schema)
+        if _schema_declares_array(prop_schema):
+            py_type = Annotated[py_type, BeforeValidator(_coerce_json_string_array)]
         description = prop_schema.get("description") or ""
         if prop_name in required:
             field_defs[prop_name] = (py_type, Field(..., description=description))
@@ -859,6 +914,25 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _connector_parameters_schema(
+    tool_name: str,
+    description: str,
+    parameter_schema: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the connector parameters schema with the ADK/UI converter.
+
+    The chat UI serializes connector tool parameters through
+    ``connector_tools._build_function_schema``. The evaluation runner must send
+    the exact same schema to the model, otherwise a model like GLM 5.2 sees a
+    different (or untyped) parameter set and can emit calls without arguments.
+    """
+    from src.smart_rag.tools.utilities.connector_tools import _build_function_schema
+
+    return _build_function_schema(tool_name, description, parameter_schema)[
+        "function"
+    ]["parameters"]
 
 
 _WORKSPACE_PARAMETER_NAMES = {
@@ -878,6 +952,50 @@ _WORKSPACE_PARAMETER_NAMES = {
 def _schema_accepts_workspace_parameter(parameter_schema: Dict[str, Any]) -> bool:
     properties = parameter_schema.get("properties") if isinstance(parameter_schema, dict) else None
     return isinstance(properties, dict) and bool(_WORKSPACE_PARAMETER_NAMES.intersection(properties))
+
+
+def _normalize_path(filepath: str) -> str:
+    return str(filepath or "").strip().replace("\\", "/")
+
+
+def _split_segments(path: str) -> List[str]:
+    normalized = _normalize_path(path).strip("/")
+    if not normalized or "://" in normalized:
+        return []
+    return [segment for segment in normalized.split("/") if segment]
+
+
+def _extract_workspace_name_hint(path: str) -> str:
+    segments = _split_segments(path)
+    if not segments:
+        return ""
+    return segments[-1]
+
+
+def _extract_workspace_name_from_filepath(
+    filepath: str,
+    workspace_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+) -> str:
+    normalized = _normalize_path(filepath)
+    if "://" in normalized or "/" not in normalized:
+        return ""
+    directory, _ = normalized.rsplit("/", 1)
+    segments = [segment for segment in directory.strip("/").split("/") if segment]
+    if not segments:
+        return ""
+
+    normalized_owner_user_id = str(owner_user_id or "").strip().strip("/")
+    normalized_workspace_id = str(workspace_id or "").strip()
+    if (
+        normalized_owner_user_id
+        and len(segments) >= 2
+        and segments[0] == normalized_owner_user_id
+    ):
+        return segments[1]
+    if normalized_workspace_id and segments[0] == normalized_workspace_id:
+        return segments[0]
+    return segments[0]
 
 
 def _collect_workspace_paths(
@@ -1006,136 +1124,6 @@ def _create_activate_skill_tool(
         description="Load the full instructions for a configured skill by name before completing a matching task.",
         args_schema=ActivateSkillInput,
     )
-
-
-def _format_available_filenames(brain_documents: list, max_files: int = 12) -> str:
-    """Return a short human-readable list of available filenames."""
-    filenames = []
-    seen = set()
-    for doc in brain_documents or []:
-        filename = str(doc.get("filename", "")).strip()
-        if filename and filename not in seen:
-            filenames.append(filename)
-            seen.add(filename)
-
-    if not filenames:
-        return ""
-
-    visible = filenames[:max_files]
-    suffix = ""
-    if len(filenames) > max_files:
-        suffix = f" (+{len(filenames) - max_files} more)"
-    return ", ".join(visible) + suffix
-
-
-def _is_sandbox_local_path(path: str) -> bool:
-    normalized = str(path or "").strip().lower()
-    return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
-
-
-def _select_generated_artifact_output_port(
-    output_ports: Optional[List[Dict[str, Any]]],
-    filename: str,
-    inferred_kind: str = "",
-) -> Optional[Dict[str, Any]]:
-    """Select the declared file-capable output port for a generated file.
-
-    When only one non-text/code port exists, that port wins even if the file
-    extension suggests a different kind. This keeps tool-generated files routed
-    to the task's only file output instead of failing on filename inference.
-    """
-    ports = [
-        port
-        for port in (output_ports or [])
-        if str(port.get("artifact_kind") or "").strip() not in {"text", "code"}
-    ]
-    if len(ports) == 1:
-        return ports[0]
-    selected_port = semantic_match_output_port(
-        ports,
-        preferred_kind=inferred_kind,
-        filename=filename,
-        label=f"generated artifact '{filename}'",
-        allow_single_compatible=True,
-    )
-    if selected_port is not None:
-        return selected_port
-
-    # Keep a deterministic fallback for tool-generated files when multiple
-    # file-capable ports exist but semantic cues are weak.
-    return next(
-        (port for port in ports if str(port.get("id") or "").strip() == "default"),
-        None,
-    )
-
-
-def _build_code_interpreter_file_list(
-    code_interpreter_files: Optional[List[Dict[str, str]]],
-) -> List[Dict[str, str]]:
-    deduped_by_filename: Dict[str, Dict[str, str]] = {}
-
-    for doc in code_interpreter_files or []:
-        filepath = str(doc.get("filepath", "")).strip()
-        filename = str(doc.get("filename", "")).strip()
-        workspace_id = str(doc.get("workspace_id", "")).strip()
-        workspace_name = str(doc.get("workspace_name", "")).strip()
-        if not filepath or not filename:
-            continue
-
-        existing = deduped_by_filename.get(filename)
-        current_is_local = _is_sandbox_local_path(filepath)
-        existing_is_local = (
-            _is_sandbox_local_path(existing.get("filepath", "")) if existing else False
-        )
-
-        if existing is None or (existing_is_local and not current_is_local):
-            deduped_by_filename[filename] = {
-                "filepath": filepath,
-                "filename": filename,
-                "workspace_id": workspace_id,
-                "workspace_name": workspace_name,
-            }
-
-    return [
-        entry
-        for entry in deduped_by_filename.values()
-        if not _is_sandbox_local_path(entry.get("filepath", ""))
-    ]
-
-
-def _resolve_code_interpreter_workspace_name(
-    files: List[Dict[str, str]],
-    user_id: Optional[str],
-) -> str:
-    workspace_names = {
-        _extract_workspace_name_hint(str(doc.get("workspace_name", "")).strip())
-        or _extract_workspace_name_from_filepath(
-            str(doc.get("filepath", "")),
-            workspace_id=str(doc.get("workspace_id", "")).strip(),
-            owner_user_id=user_id,
-        )
-        for doc in files
-        if (
-            str(doc.get("workspace_name", "")).strip()
-            or str(doc.get("filepath", "")).strip()
-        )
-    }
-    workspace_names.discard("")
-    if len(workspace_names) == 1:
-        return next(iter(workspace_names))
-    return ""
-
-
-def _normalize_code_interpreter_file_names(file_names: List[str]) -> List[str]:
-    normalized_file_names: List[str] = []
-    seen_file_names = set()
-    for file_name in file_names:
-        normalized_file_name = str(file_name or "").replace(" ", "_")
-        if not normalized_file_name or normalized_file_name in seen_file_names:
-            continue
-        normalized_file_names.append(normalized_file_name)
-        seen_file_names.add(normalized_file_name)
-    return normalized_file_names
 
 
 def _format_documents_by_port(
@@ -1433,241 +1421,6 @@ def _create_web_search_tool(
     )
 
 
-def _create_code_interpreter_tool(
-    agent_config: dict,
-    workspace_names: list,
-    code_interpreter_files: list,
-    collector: ToolResultCollector,
-    output_ports: Optional[List[Dict[str, Any]]] = None,
-    documents_by_port: Optional[Dict[str, List[str]]] = None,
-    output_workspace_id: str = "",
-    workspace_context_mode: str = "resolved_inputs_only",
-    execution_id: str = "",
-) -> Optional[StructuredTool]:
-    """Create a code interpreter LangChain tool.
-
-    Wraps the backend sandbox call directly, bypassing Google ADK ToolContext
-    by injecting session params from the agent config.
-    """
-    import asyncio
-    import base64
-    import json
-    import requests
-    from src.config.settings import get_settings
-
-    settings = get_settings()
-    backend_url = getattr(settings, "CODE_INTERPRETER_BACKEND_URL", None)
-    normalized_code_interpreter_files = _build_code_interpreter_file_list(
-        code_interpreter_files
-    )
-    port_scope_note = _format_documents_by_port(documents_by_port)
-
-    if not backend_url:
-        logger.warning("Code interpreter backend URL not configured, skipping tool")
-        return None
-
-    if not output_workspace_id:
-        logger.warning(
-            "Code interpreter output workspace not configured, skipping tool"
-        )
-        return None
-
-    # Extract session params from agent_params if available
-    agent_params = agent_config.get("agent_params") or {}
-    session_id = execution_id or agent_params.get("session_id")
-    user_id = agent_params.get("user_id")
-    file_workspace_ids = {
-        str(doc.get("workspace_id", "")).strip()
-        for doc in normalized_code_interpreter_files
-        if str(doc.get("workspace_id", "")).strip()
-    }
-    selected_input_workspace_id = None
-    if len(file_workspace_ids) == 1:
-        selected_input_workspace_id = next(iter(file_workspace_ids))
-    resolved_workspace_name = _resolve_code_interpreter_workspace_name(
-        normalized_code_interpreter_files,
-        user_id,
-    )
-    workspace_name, file_names, skipped_file_names, mixed_workspace_file_names = (
-        build_code_interpreter_payload_context(
-            normalized_code_interpreter_files,
-            fallback_workspace_name=(
-                resolved_workspace_name
-                if normalized_code_interpreter_files
-                else output_workspace_id
-            ),
-            selected_workspace_id=selected_input_workspace_id,
-            owner_user_id=user_id,
-        )
-    )
-    file_names = _normalize_code_interpreter_file_names(file_names)
-    available_filenames = _format_available_filenames(
-        [{"filename": filename} for filename in file_names]
-    )
-    if mixed_workspace_file_names:
-        logger.warning(
-            "Rejecting code interpreter call with mixed-workspace files",
-            mixed_workspace_file_names=mixed_workspace_file_names,
-            selected_input_workspace_id=selected_input_workspace_id,
-        )
-    if skipped_file_names:
-        logger.warning(
-            "Dropping code interpreter files without enough workspace context",
-            skipped_file_names=skipped_file_names,
-            selected_workspace_name=workspace_name,
-        )
-
-    async def _run_code(code: str, timeout_seconds: int = 60) -> str:
-        timeout_seconds = min(timeout_seconds, 300)
-
-        if mixed_workspace_file_names and not file_names:
-            joined = ", ".join(mixed_workspace_file_names)
-            return (
-                "Error: Code interpreter cannot run with files from multiple workspaces. "
-                f"Conflicting files: {joined}"
-            )
-
-        if not workspace_name:
-            return (
-                "Error: Code interpreter requires at least one workspace/brain context"
-            )
-        if not user_id:
-            return "Error: Code interpreter requires a user_id in agent_params"
-        if not session_id:
-            return "Error: Code interpreter requires a session_id in agent_params"
-
-        try:
-
-            logger.info(
-                "playbook_code_interpreter_v2_request",
-                workspace_name=workspace_name,
-                filetype=type(file_names),
-                file_names=file_names,
-                input_file_count=len(normalized_code_interpreter_files),
-            )
-            response = await asyncio.to_thread(
-                requests.post,
-                f"{backend_url}/tool/python_interpreter_v2",
-                json={
-                    "user_id": user_id,
-                    "workspace_name": workspace_name,
-                    "session_id": session_id,
-                    "code": code,
-                    "timeout_seconds": timeout_seconds,
-                    "file_names": file_names,
-                },
-                timeout=timeout_seconds + 15,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "")
-
-            # Collect sandbox component
-            collector.add_component(
-                "sandbox",
-                {
-                    "code": code,
-                    "output": stdout,
-                    "error": stderr,
-                    "output_available": True,
-                },
-            )
-
-            # Collect artifact components for generated files
-            for gf in result.get("generated_files", []):
-                generated_filename = gf.get("filename", gf.get("name", ""))
-                generated_object_key = str(gf.get("object_key") or "").strip()
-                inferred_kind = (
-                    infer_artifact_kind(generated_filename) or "document"
-                )
-                selected_port = _select_generated_artifact_output_port(
-                    output_ports,
-                    generated_filename,
-                    inferred_kind,
-                )
-                artifact_data = {
-                    "file_path": generated_object_key
-                    or gf.get("azure_path")
-                    or gf.get("file_path")
-                    or "",
-                    "filename": generated_filename,
-                    "artifact_kind": str(
-                        (selected_port or {}).get("artifact_kind") or inferred_kind
-                    ).strip()
-                    or inferred_kind,
-                    "output_port_id": str(
-                        (selected_port or {}).get("id") or ""
-                    ).strip(),
-                }
-                if generated_object_key:
-                    artifact_data["object_key"] = generated_object_key
-                collector.add_component(
-                    "artifact",
-                    artifact_data,
-                )
-
-            # Build text response for the LLM
-            output = []
-            status = result.get("status", {})
-            if status.get("id") == 3:
-                output.append("Execution successful\n")
-            else:
-                output.append(f"Error: {status.get('description', 'Unknown')}\n")
-
-            if stdout:
-                output.append(f"```\n{stdout}\n```\n")
-            if stderr:
-                output.append(f"Errors:\n```\n{stderr}\n```\n")
-            if result.get("time"):
-                output.append(f"\nExecution time: {result['time']}s")
-
-            return "\n".join(output)
-
-        except requests.exceptions.Timeout:
-            return f"Error: Code execution timed out after {timeout_seconds} seconds"
-        except requests.exceptions.RequestException as e:
-            response = getattr(e, "response", None)
-            details = (
-                f" | backend body: {response.text[:500]}"
-                if response is not None and response.text
-                else ""
-            )
-            return f"Error: Failed to connect to sandbox backend: {e}{details}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    return StructuredTool(
-        name="python_interpreter",
-        description=(
-            "Execute Python 3 code in an isolated sandbox. "
-            "Use for data analysis, calculations, file processing, and visualization. "
-            "Workspace documents are mounted into the execution workspace, and generated files "
-            "(CSV, images, reports, PDFs) are automatically saved. "
-            "Do not ask the user to upload workspace documents again; use the files already available in the sandbox."
-            + (
-                f" Bound input-port document groups: {port_scope_note}."
-                if port_scope_note
-                else ""
-            )
-            + (
-                " Fallback workspace context is available."
-                if workspace_context_mode == "fallback_playbook"
-                else ""
-            )
-            + (
-                f" Available workspace files: {available_filenames}."
-                if available_filenames
-                else ""
-            )
-        ),
-        func=None,
-        coroutine=_run_code,
-        args_schema=CodeInterpreterInput,
-    )
-
-
 def _create_plan_tool() -> StructuredTool:
     """Create a plan generator LangChain tool."""
     from src.smart_rag.tools.utilities.plan_generator import generate_execution_plan
@@ -1751,6 +1504,7 @@ def _create_connector_mcp_tools(
 
     tools: List[StructuredTool] = []
     sandbox_call_budget = SandboxCallBudget(max_sandbox_calls_per_step)
+    log_payload = not execution_id.startswith("eval-")
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1812,7 +1566,7 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             connector_name=connector_name,
             transport_type=transport_type,
-            server_url=server_url[:80] if server_url else "(empty)",
+            server_url=(server_url[:80] if server_url else "(empty)") if log_payload else "[suppressed]",
             action_count=len(actions),
         )
 
@@ -1845,6 +1599,12 @@ def _create_connector_mcp_tools(
                 tool_name,
                 action_parameter_schema,
             )
+            # Reuse the ADK/UI converter so the schema sent to the model is the
+            # same on both runtimes. Pydantic's ``model_json_schema()`` would
+            # otherwise rewrap optional fields as ``anyOf`` with titles/defaults.
+            parameters_schema = _connector_parameters_schema(
+                tool_name, action_description, action_parameter_schema
+            )
 
             def _make_mcp_tool(
                 cid: str = connector_id,
@@ -1854,6 +1614,7 @@ def _create_connector_mcp_tools(
                 ad: str = action_description,
                 safety: str = action_safety,
                 arg_schema: Any = args_schema,
+                params_schema: Dict[str, Any] = parameters_schema,
                 tt: str = transport_type,
                 su: str = server_url,
                 sc: Dict[str, Any] = server_config,
@@ -1921,6 +1682,13 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers["x-conversation-id"] = eid or sid
                             if eid:
                                 effective_auth_headers["x-execution-id"] = eid
+                            if eid.startswith("eval-") and _wi:
+                                effective_auth_headers = {key: value for key, value in effective_auth_headers.items()
+                                                          if key.lower() not in {"workspace_id", "workspace-id", "workspace_name"}}
+                                effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
+                                if accepts_workspace:
+                                    merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                merged_params.pop("workspace_name", None)
                         if tt == "streamable_http":
                             # Filenames are model-visible context, not runtime scope.
                             # Let each MCP action's schema, instructions, and docstring
@@ -1963,7 +1731,7 @@ def _create_connector_mcp_tools(
                                 action_params,
                                 auth_headers=effective_auth_headers,
                                 auth_env=ae,
-                                log_payload=action != "send_file_to_user",
+                                log_payload=log_payload and action != "send_file_to_user",
                             )
 
                         if guard is not None and ak != "sandbox_create":
@@ -2030,7 +1798,7 @@ def _create_connector_mcp_tools(
                                     "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s",
                                     cid,
                                     ak,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     artifact_kind,
                                 )
                                 collector.add_component("artifact", {
@@ -2044,7 +1812,7 @@ def _create_connector_mcp_tools(
                                 logger.info(
                                     "mcp_file_artifact_emitted connector_id=%s filename=%s total_components=%d",
                                     cid,
-                                    filename,
+                                    filename if log_payload else "[suppressed]",
                                     len(collector.components),
                                 )
                                 response = {
@@ -2060,6 +1828,7 @@ def _create_connector_mcp_tools(
                                 response,
                                 tool_name=ak,
                                 trusted_citations=result_kind in {"web_search", "web_fetch"},
+                                log_payload=log_payload,
                             )
                         return response
                     except SandboxMountValidationError as e:
@@ -2069,7 +1838,7 @@ def _create_connector_mcp_tools(
                         )
                         return f"Error: {e}"
                     except Exception as e:
-                        logger.error("MCP tool execution failed", tool=tn, error=str(e))
+                        logger.error("MCP tool execution failed", tool=tn, error=str(e) if log_payload else type(e).__name__)
                         return f"Connector action '{ak}' failed: {str(e)}"
 
                 _execute_mcp.__name__ = tn
@@ -2088,8 +1857,10 @@ def _create_connector_mcp_tools(
                         "source": "connector",
                         "connector_id": cid,
                         "connector_name": cn,
+                        "connector_slug": connector_slug_value,
                         "action_key": ak,
                         "safety": safety,
+                        "parameters_schema": params_schema,
                     },
                 )
 
@@ -2101,7 +1872,7 @@ def _create_connector_mcp_tools(
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
             workspace_ids=workspace_ids,
-            file_names=file_names,
+            file_names=file_names if log_payload else "[suppressed]",
         )
 
     return tools

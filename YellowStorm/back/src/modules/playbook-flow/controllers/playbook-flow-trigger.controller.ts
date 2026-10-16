@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Patch, Put, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { randomBytes } from 'crypto';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowMailGraphClientService } from '../services/playbook-flow-mail-graph-client.service';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
@@ -140,7 +141,9 @@ export class PlaybookFlowTriggerController {
     const flow = await this.flowService.findOneForWrite(flowId, userId);
     const params = (flow.triggerConfig?.params ?? {});
     const mailboxAppKey = (params.mailboxAppKey as string) || '';
-    const clientState = flowId;
+    // clientState is the notification's only proof of authenticity, so it is a
+    // fresh random secret per subscription — never a guessable id.
+    const clientState = randomBytes(24).toString('base64url');
 
     const { subscription, resolvedAppKey } = await this.graphClient.createInboxSubscription(
       userId,
@@ -161,6 +164,9 @@ export class PlaybookFlowTriggerController {
           subscriptionId: subscription.id,
           subscriptionClientState: clientState,
           subscriptionExpiresAt: subscription.expirationDateTime,
+          // Kept so the renewal job can re-create (and rotate) the
+          // subscription, which Graph's PATCH cannot do.
+          subscriptionNotificationUrl: body.notificationUrl,
         },
       },
     });

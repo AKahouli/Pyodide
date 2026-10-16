@@ -50,6 +50,7 @@ from src.grpc_server.conversation_session_seed import (
     ConversationSessionSeedService,
     SessionSeedConflictError,
 )
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import begin_toolset_turn
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
     get_current_conversation_latency_trace,
     reset_conversation_latency_trace,
@@ -58,6 +59,9 @@ from src.smart_rag.infrastructure.monitoring.conversation_latency import (
 
 logger = get_logger(__name__)
 app_settings = get_settings()
+
+# Headroom for reasoning models' hidden reasoning tokens on top of the 3-6 word name.
+CONVERSATION_NAME_MAX_COMPLETION_TOKENS = 1024
 
 STREAM_HEARTBEAT_INTERVAL_SECONDS = 2.0
 
@@ -490,8 +494,11 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            root_ids = [node.agent_id for node in request.team_definition.nodes if not node.parent_agent_id]
+            producer = next(agent for agent in request.agents if
+                            (root_ids and agent.id == root_ids[0]) or
+                            (not root_ids and agent.agent_type == "manager"))
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, producer.id, producer.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -504,9 +511,11 @@ class ChatbotServicer(
                 index_task.add_done_callback(self._background_tasks.discard)
 
             # Start background processing task
+            toolset_turn = begin_toolset_turn(request.conversation_id)
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
+            bg_task.add_done_callback(lambda _task: toolset_turn.release())
 
             # Stream chunks from queue
             while True:
@@ -724,8 +733,7 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, request.agent.id, request.agent.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -751,9 +759,11 @@ class ChatbotServicer(
                 root_handle = registry.register(request.conversation_id, root_scope)
                 internal_request.abort_signal = root_handle.abort_event
 
+            toolset_turn = begin_toolset_turn(request.conversation_id)
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
+            bg_task.add_done_callback(lambda _task: toolset_turn.release())
 
             if root_handle is not None:
 
@@ -816,7 +826,7 @@ class ChatbotServicer(
                 yield chunk_pb
 
             self._log_temporary_child_summary(
-                request.conversation_id,
+                internal_request.session_id,
                 "RunSingleAgent",
             )
             logger.info(
@@ -859,16 +869,16 @@ class ChatbotServicer(
 
     # ========== CONVERSION HELPERS ==========
 
-    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+    def _build_initial_agent_activity_chunk(self, message_id: str, agent_id: str = "", agent_name: str = "") -> "chatbot_pb2.StreamChunk":
         """Emit the initial progress row before model reasoning is available."""
         return self._dict_to_stream_chunk({
             "action": "add",
             "component": {
                 "id": f"activity-{uuid.uuid4()}",
                 "type": "agent_activity",
-                "data": {"summary": "", "status": "completed"},
+                "data": {"summary": "", "status": "completed", "actor_id": agent_id, "actor_name": agent_name},
             },
-            "metadata": {"message_id": message_id},
+            "metadata": {"message_id": message_id, "agent_id": agent_id},
         })
 
     @staticmethod
@@ -1386,7 +1396,11 @@ class ChatbotServicer(
 
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,
-            session_id=pb_request.conversation_id,
+            # Isolate workflow locks and component caches as well as the ADK
+            # runner. The protobuf conversation ID remains the external identity.
+            session_id=(execution_scope.native_session_id
+                        if execution_scope and execution_scope.native_session_id
+                        else pb_request.conversation_id),
             message=pb_request.query,
             execution_scope=execution_scope,
             root_context=root_context,
@@ -2336,7 +2350,27 @@ class ChatbotServicer(
             # Build CitationComponent with TextSourceData or ImageSourceData
             parent_id = component_data.get("parent_id", "")
 
-            if "web_source" in component_data:
+            if "record_source" in component_data:
+                record = component_data.get("record_source", {})
+                key_fields = record.get("key_fields") if isinstance(record.get("key_fields"), dict) else {}
+                component_kwargs["citation"] = chatbot_pb2.CitationComponent(
+                    parent_id=str(parent_id) if parent_id else "",
+                    record_source=chatbot_pb2.RecordSourceData(
+                        type="record",
+                        reference=str(record.get("reference", "")),
+                        model_id=str(record.get("model_id", "")),
+                        model_name=str(record.get("model_name", "")),
+                        data=str(record.get("data", "")),
+                        data_revision_id=str(record.get("data_revision_id", "")),
+                        entity_id=str(record.get("entity_id", "")),
+                        concept=str(record.get("concept", "")),
+                        name=str(record.get("name", "")),
+                        key_fields={str(key): str(value) for key, value in key_fields.items()},
+                        field=str(record.get("field", "")),
+                        quote=str(record.get("quote", "")),
+                    ),
+                )
+            elif "web_source" in component_data:
                 web_source_data = component_data.get("web_source", {})
                 component_kwargs["citation"] = chatbot_pb2.CitationComponent(
                     parent_id=str(component_data.get("parent_id", "")),
@@ -2490,12 +2524,19 @@ class ChatbotServicer(
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 temperature=1,
-                max_tokens=50,
+                # Reasoning models spend completion tokens on hidden reasoning;
+                # a tight cap (was 50) leaves the visible content empty
+                # (finish_reason=length). The prompt keeps the name short.
+                max_tokens=CONVERSATION_NAME_MAX_COMPLETION_TOKENS,
             )
 
             # Extract the generated name
             raw_content = response.choices[0].message.content if response.choices else None
             conversation_name = (raw_content or "").strip().strip('"').strip("'")
+            if not conversation_name:
+                # Fail instead of returning "" so the caller keeps the default
+                # title rather than persisting an empty/placeholder name.
+                raise ValueError("model returned an empty conversation name")
 
             logger.info(
                 f"[gRPC] Generated conversation name: '{conversation_name}' for query: '{request.query[:100]}...'"

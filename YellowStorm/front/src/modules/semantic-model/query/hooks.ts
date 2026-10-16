@@ -27,6 +27,9 @@ export function useCreateSemanticModel() {
 export function useSourceAssets(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourceAssets(id ?? 'none'), queryFn: () => semanticModelApi.listSourceAssets(id ?? ''), enabled: Boolean(id) });
 }
+export function useDataConnections(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.dataConnections(id ?? 'none'), queryFn: () => semanticModelApi.listDataConnections(id ?? ''), enabled: Boolean(id) });
+}
 export function useSourceMappings(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourceMappings(id ?? 'none'), queryFn: () => semanticModelApi.listSourceMappings(id ?? ''), enabled: Boolean(id) });
 }
@@ -71,6 +74,11 @@ export function useVersionComparison(id: string | undefined, left: string | unde
     retry: false,
   });
 }
+/** How the last run turned rows into records, concept by concept (the model health screen). */
+export function useModelHealth(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.health(id ?? 'none'), queryFn: () => semanticModelApi.modelHealth(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
+}
+
 export function useReviewQueue(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.reviewQueue(id ?? 'none'), queryFn: () => semanticModelApi.reviewQueue(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
 }
@@ -78,6 +86,25 @@ export function useReviewQueue(id: string | undefined, enabled = true) {
 /** Whether the data in use matches the model as it is now; re-asked whenever the model's queries are refreshed. */
 export function usePopulationFreshness(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.freshness(id ?? 'none'), queryFn: () => semanticModelApi.populationFreshness(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
+}
+/** The model's inconsistencies; a refetch keeps the last answer on screen (no flicker). */
+export function useModelCheck(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.modelCheck(id ?? 'none'), queryFn: () => semanticModelApi.check(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 3_000, retry: false });
+}
+export function useGraphStatus(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.graphStatus(id ?? 'none'), queryFn: () => semanticModelApi.graphStatus(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
+}
+const INDEX_BUILDING = new Set(['queued', 'indexing']);
+/** Whether a search index state is a build under way (queued or indexing). */
+export const isIndexBuilding = (state: string | undefined): boolean => INDEX_BUILDING.has(state ?? '');
+/** The search index of the model's draft data, followed every few seconds while it builds (and slowly otherwise, to notice a build that starts). */
+export function useSearchIndexStatus(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: semanticModelQueryKeys.searchIndex(id ?? 'none'),
+    queryFn: () => semanticModelApi.searchIndexStatus(id ?? ''),
+    enabled: Boolean(id) && enabled,
+    refetchInterval: (query) => isIndexBuilding(query.state.data?.index.state) ? 3000 : 15000,
+  });
 }
 export function useCanvasPositions(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.canvasPositions(id ?? 'none'), queryFn: () => semanticModelApi.canvasPositions(id ?? ''), enabled: Boolean(id) });

@@ -35,9 +35,12 @@ MAX_SCAN_CHARS = 20000
 
 # How long a document may be, and how much of it is sent to the AI, unless an admin or the mapping says otherwise.
 DEFAULT_AI_SETTINGS = {"maxBlocks": 400, "maxCharacters": 60000,
-                       "longDocumentCharacters": 30000, "blocksPerField": 8}
+                       "longDocumentCharacters": 30000, "blocksPerField": 8, "parallelCalls": 4}
 AI_SETTING_BOUNDS = {"maxBlocks": (10, 500), "maxCharacters": (2000, 400000),
-                     "longDocumentCharacters": (1000, 2000000), "blocksPerField": (1, 50)}
+                     "longDocumentCharacters": (1000, 2000000), "blocksPerField": (1, 50),
+                     "parallelCalls": (1, 32)}
+# Settings that change how fast the AI is called, not what it answers: never part of a cache key.
+PACING_SETTINGS = ("parallelCalls",)
 
 
 class RuleError(ValueError):
@@ -124,6 +127,20 @@ def normalize_ai_settings(raw: Any) -> dict[str, int]:
             raise RuleError(f"{key} must be a whole number from {low} to {high}")
         settings[key] = value
     return settings
+
+
+def answer_settings(settings: Any) -> Any:
+    """``settings`` without the pacing ones, so changing them reuses every earlier answer."""
+    if not isinstance(settings, dict):
+        return settings
+    return {key: value for key, value in settings.items() if key not in PACING_SETTINGS}
+
+
+def answer_options(options: Any) -> Any:
+    """Mapping ``options`` whose ``aiSettings`` leave out the pacing ones (see :func:`answer_settings`)."""
+    if not isinstance(options, dict) or not isinstance(options.get("aiSettings"), dict):
+        return options
+    return {**options, "aiSettings": answer_settings(options["aiSettings"])}
 
 
 def compile_pattern(pattern: str) -> Any:

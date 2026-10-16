@@ -207,6 +207,18 @@
   "ERR_4020": "Cette invitation a expiré.",
   "ERR_4021": "Cette invitation a déjà été utilisée.",
   "ERR_4022": "Cette invitation ne correspond pas à votre compte.",
+  "ERR_3800": "Catégorie de modèles introuvable.",
+  "ERR_3801": "Une catégorie de modèles avec ce nom ou ce slug existe déjà.",
+  "ERR_3802": "Modèle introuvable.",
+  "ERR_3803": "Un modèle avec ce titre existe déjà dans cette catégorie.",
+  "ERR_3804": "Le fichier ZIP source du modèle est invalide ou vide.",
+  "ERR_3805": "Ce modèle n'est pas encore publié.",
+  "ERR_3806": "L'image de couverture du modèle est invalide.",
+  "ERR_3807": "Ce modèle n'est pas compatible avec l'exécution de la plateforme et ne peut pas être publié.",
   "ERR_1130": "L'authentification est temporairement indisponible. Votre session n'a pas été affectée ; nouvelle tentative en cours.",
-  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer."
+  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer.",
+  "ERR_1132": "Ce lien d'invitation est invalide ou a déjà été utilisé.",
+  "ERR_1133": "Ce lien d'invitation a expiré. Demandez à un administrateur d'en envoyer un nouveau.",
+  "ERR_1134": "Cette invitation a été émise pour une autre adresse email.",
+  "ERR_1203": "L'email d'invitation n'a pas pu être envoyé. Veuillez réessayer."
 }

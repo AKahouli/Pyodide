@@ -25,6 +25,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
+import { SemanticModelMcpJwtService } from './services/semantic-model-mcp-jwt.service';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
 import { SKILL_STORE } from '../skill/persistence/skill.store';
@@ -69,6 +70,7 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     ConnectorTransferService,
     ConnectorPlaybookBindingSyncService,
     ConnectorMcpRuntimeService,
+    SemanticModelMcpJwtService,
     CatalogTransferService,
     M365TransferAdapter,
     ConnectorUserService,
@@ -81,6 +83,6 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     { provide: SKILL_STORE, useClass: PgSkillStore },
     PgSkillCategoryStore,
   ],
-  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService],
+  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService, SemanticModelMcpJwtService],
 })
 export class ConnectorModule {}

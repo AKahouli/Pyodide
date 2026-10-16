@@ -68,7 +68,7 @@ async def resolve_temporary_definition(scope: Any, call_id: str, branch: str, ta
 async def settle_delegate(scope: Any, child_id: str, status: str, text: str | None = None, evidence=None) -> dict:
     if text is not None and len(text.encode('utf-8')) > 262144:
         raise ValueError('Child output exceeds the durable result limit')
-    return await _post(scope, f"children/{child_id}/lifecycle", {"status": status,
-        **({'evidence': [{key: item[key] for key in ('nativeIdentity', 'outputOrdinal', 'kind', 'payload')}
-                        for item in evidence]} if evidence else {}),
+    from src.root_runtime.evidence_submission import prepare_evidence_submission
+    submitted = await prepare_evidence_submission(scope, child_id, evidence, f'children/{child_id}/evidence-page') if status == 'completed' else {}
+    return await _post(scope, f"children/{child_id}/lifecycle", {"status": status, **submitted,
         **({"text": text[:8000], "fullText": text} if text is not None else {})})

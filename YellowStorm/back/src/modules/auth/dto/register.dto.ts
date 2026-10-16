@@ -1,10 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsString,
   MinLength,
   MaxLength,
   Matches,
+  IsOptional,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -28,4 +29,15 @@ export class RegisterDto {
     message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number',
   })
   password!: string;
+
+  /**
+   * Super-admin invitation token from the invite link. Optional: registration
+   * without an invitation stays exactly as before. When present it must be
+   * unused, unexpired, and issued for the same email.
+   */
+  @ApiPropertyOptional({ description: 'Super-admin invitation token' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  inviteToken?: string;
 }

@@ -20,8 +20,12 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     graphExpand: jest.fn().mockResolvedValue({ status: 'found', nodes: [], edges: [] }),
     getGraphSearchIndex: jest.fn().mockResolvedValue({ index: { state: 'ready' } }),
     ensureGraphSearchIndex: jest.fn().mockResolvedValue({ jobId: 'job-1', index: { state: 'queued' } }),
+    stopGraphSearchIndex: jest.fn().mockResolvedValue({ stopped: true, index: { state: 'indexing' } }),
+    restartGraphSearchIndex: jest.fn().mockResolvedValue({ restarted: true, jobId: 'job-2', index: { state: 'queued' } }),
     recordsQuery: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
     recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
+    traverseRecords: jest.fn().mockResolvedValue({ status: 'ok', modelVersionId: 'published-1', total: 0, records: [] }),
+    connectRecords: jest.fn().mockResolvedValue({ status: 'not_connected', paths: [], records: [], truncated: false }),
   };
   const graphs = { getGraph: jest.fn().mockResolvedValue(versionGraph) };
   const searchSettings = { runtimePayload: jest.fn().mockResolvedValue({ index: {}, search: {} }) };
@@ -105,14 +109,20 @@ describe('SemanticGraphSearchService', () => {
     expect(runtime.graphSearch).not.toHaveBeenCalled();
   });
 
-  it('expands with the steps given and the allow-list', async () => {
-    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+  it('expands with the steps given, the allow-list, the fields asked for and the model labels', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2' });
     await service.expand('user-1', 'model-1', {
-      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, expectedDataRevisionId: 'dr-1',
+      environment: 'draft', seedEntityIds: ['e-1'], steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20,
+      fields: ['Amount'], expectedDataRevisionId: 'dr-1',
     });
     expect(runtime.graphExpand).toHaveBeenCalledWith({
       actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', seedEntityIds: ['e-1'],
-      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, allowedWorkspaceIds: ['ws-1'], expectedDataRevisionId: 'dr-1',
+      steps: [{ relations: ['signs'], direction: 'outgoing' }], maxNodes: 20, fields: ['Amount'], allowedWorkspaceIds: ['ws-1'],
+      expectedDataRevisionId: 'dr-1',
+      catalog: {
+        concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+        relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+      },
     });
   });
 
@@ -131,6 +141,30 @@ describe('SemanticGraphSearchService', () => {
       },
     });
     expect(result.definitionsVersionId).toBe('published-1');
+  });
+
+  it('walks and connects records with the bound definitions and the allow-list', async () => {
+    const { service, runtime } = setup({ id: 'model-1', role: 'viewer', status: 'published', currentDraftVersionId: 'draft-2', currentPublishedVersionId: 'published-1' });
+    const catalog = {
+      concepts: [{ key: 'invoice', label: 'Invoice', aliases: ['Bill'], fields: [{ key: 'amount', label: 'Amount', type: 'number', aliases: ['Total'] }] }],
+      relations: [{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives' }],
+    };
+    const walked = await service.traverseRecords('user-1', 'model-1', {
+      environment: 'production', start: { concept: 'Customer', recordIds: ['c-1'] }, steps: [{ relation: 'receives' }], limit: 0,
+    });
+    expect(runtime.traverseRecords).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'], catalog,
+      start: { concept: 'Customer', recordIds: ['c-1'] }, steps: [{ relation: 'receives' }], limit: 0,
+    });
+    expect(walked.definitionsVersionId).toBe('published-1');
+    await service.connectRecords('user-1', 'model-1', { environment: 'production', fromEntityId: 'a', toEntityId: 'b', maxLinks: 3 });
+    expect(runtime.connectRecords).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'production', allowedWorkspaceIds: ['ws-1'], catalog,
+      fromEntityId: 'a', toEntityId: 'b', maxLinks: 3,
+    });
+    const viewer = setup({ id: 'model-1', role: 'viewer', status: 'draft', currentDraftVersionId: 'draft-2' });
+    await expect(viewer.service.connectRecords('user-1', 'model-1', { environment: 'draft', fromEntityId: 'a', toEntityId: 'b' }))
+      .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
   });
 
   it('reads the draft definitions for draft data, which only editors may query', async () => {
@@ -169,5 +203,37 @@ describe('SemanticGraphSearchService', () => {
     await expect(editor.service.ensureIndex('user-1', 'model-1', 'production')).resolves.toMatchObject({ jobId: 'job-1' });
     expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
     expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production', settings: { index: {} } });
+  });
+
+  it('sends the index build limits with an index request, apart from the index settings', async () => {
+    const { service, runtime, searchSettings } = setup({ id: 'model-1', role: 'editor', status: 'published' });
+    searchSettings.runtimePayload.mockResolvedValue({ index: {}, search: {}, build: { embeddingParallelCalls: 8 } });
+    await service.ensureIndex('user-1', 'model-1', 'production');
+    expect(runtime.ensureGraphSearchIndex).toHaveBeenCalledWith(expect.objectContaining({ settings: { index: {}, build: { embeddingParallelCalls: 8 } } }));
+  });
+
+  it('stops an index build only for the people who edit the model', async () => {
+    const viewer = setup();
+    await expect(viewer.service.stopIndex('user-1', 'model-1', 'draft')).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
+    expect(viewer.runtime.stopGraphSearchIndex).not.toHaveBeenCalled();
+
+    const editor = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+    await expect(editor.service.stopIndex('user-1', 'model-1', 'draft')).resolves.toMatchObject({ stopped: true });
+    expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(editor.runtime.stopGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft' });
+  });
+
+  it('restarts an index build only for the people who edit the model, with the same settings as a build', async () => {
+    const viewer = setup();
+    await expect(viewer.service.restartIndex('user-1', 'model-1', 'draft')).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED });
+    expect(viewer.runtime.restartGraphSearchIndex).not.toHaveBeenCalled();
+
+    const editor = setup({ id: 'model-1', role: 'editor', status: 'draft' });
+    editor.searchSettings.runtimePayload.mockResolvedValue({ index: {}, search: {}, build: { embeddingParallelCalls: 8 } });
+    await expect(editor.service.restartIndex('user-1', 'model-1', 'draft')).resolves.toMatchObject({ restarted: true, jobId: 'job-2' });
+    expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(editor.runtime.restartGraphSearchIndex).toHaveBeenCalledWith({
+      actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', settings: { index: {}, build: { embeddingParallelCalls: 8 } },
+    });
   });
 });

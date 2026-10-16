@@ -22,6 +22,7 @@ vi.mock('../hooks/useWorkspaceStoreTranslator', () => ({
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({ pathname: '/workspace' }),
 }));
 
 vi.mock('../store', () => ({

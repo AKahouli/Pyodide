@@ -1,0 +1,322 @@
+{
+  "page": {
+    "eyebrow": "App Builder Studio",
+    "title": "Build apps with your Agent",
+    "newChat": "New project",
+    "emptyState": "Describe what you want to build. Studio opens a live preview beside the chat so you can iterate until it’s ready to deploy.",
+    "backToMarket": "Back to App Market",
+    "highlights": {
+      "agent": "Guided by Agent",
+      "preview": "Live preview",
+      "deploy": "One-click deploy"
+    }
+  },
+  "session": {
+    "loading": "Loading Studio…",
+    "notFound": "Project not found.",
+    "notFoundHint": "This project may have been deleted, or you may not have access to it.",
+    "back": "Go back",
+    "conversationError": "Studio hit an unexpected error.",
+    "previewError": "The preview panel hit an unexpected error.",
+    "errorTitle": "Connection error",
+    "waitingForPreview": {
+      "title": "Waiting for live preview",
+      "body": "The agent starts once the preview finishes installing dependencies and Vite is ready."
+    },
+    "templateClone": {
+      "waitingTitle": "Preparing your app preview",
+      "waitingBody": "Please wait while we set up a live preview of the cloned template. Send is disabled until the preview is ready.",
+      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens Studio with this template.",
+      "readyTitle": "Preview ready",
+      "readyBody": "Your template is loaded in the live preview. Send a message when you are ready to start editing and customizing it.",
+      "dismiss": "Got it"
+    },
+    "previewBootFailed": "The live preview could not start. Reload the page, then send your message again.",
+    "previewBootTimeout": "The live preview took too long to become ready. Reload the page, then try again.",
+    "fromAppBuilder": {
+      "title": "Welcome to Studio",
+      "body": "Your brief was sent to the Agent. Keep refining here — the live preview opens in the side panel when a version is ready. Return to App Market anytime from the header.",
+      "dismiss": "Got it"
+    }
+  },
+  "composer": {
+    "placeholder": "Describe a change — e.g. “Add a dark mode toggle to the settings page”…",
+    "send": "Send",
+    "connectors": "Connectors",
+    "noConnectors": "No connectors available",
+    "modelSelector": {
+      "unset": "Default model",
+      "search": "Search models…",
+      "empty": "No models found."
+    }
+  },
+  "agentComposer": {
+    "placeholder": "Describe the app you want to build…"
+  },
+  "questionChoices": {
+    "fallbackTitle": "Choose an option to continue"
+  },
+  "conversation": {
+    "emptyTitle": "Tell Studio what to build",
+    "emptyDescription": "Ask for screens, flows, or fixes. The Agent edits your app and the live preview updates beside you.",
+    "thinking": "Thinking",
+    "assistantName": "YellowStorm",
+    "fileOpenFailed": "Failed to open file"
+  },
+  "tool": {
+    "running": "Running",
+    "success": "Completed",
+    "pending": "Pending",
+    "error": "Failed",
+    "openDetails": "Open tool details"
+  },
+  "rightPanel": {
+    "title": "Studio workspace",
+    "subtitle": "Agent is using",
+    "close": "Close panel",
+    "empty": "Select a tool to inspect.",
+    "jumpToLive": "Jump to live",
+    "tabCode": "Code",
+    "tabPreview": "Preview",
+    "tabData": "Data",
+    "resizeHandle": "Drag to resize preview"
+  },
+  "appData": {
+    "loading": "Loading app data…",
+    "disabled": "App Data is not enabled for this workspace.",
+    "loadError": "Failed to load app data.",
+    "refresh": "Refresh data",
+    "schemaVersion": "Schema version",
+    "noTables": "No tables yet.",
+    "envDev": "DEV",
+    "envProd": "PROD",
+    "seed": "Seed",
+    "seedApply": "Seed rows",
+    "seeding": "Seeding…",
+    "seedPlaceholder": "Paste a JSON manifest, e.g. { \"<table>\": [ { \"col\": \"value\" } ] }",
+    "seedInvalidJson": "Invalid JSON — use { \"<table>\": [ { \"col\": \"value\" } ] }.",
+    "seedDone": "Seeded: {{inserted}} inserted, {{skipped}} skipped.",
+    "seedError": "Seed failed."
+  },
+  "nodepod": {
+    "inBrowser": "Live preview",
+    "previewTitle": "App preview",
+    "toolbarLabel": "Preview toolbar",
+    "addressLocal": "localhost · preview",
+    "addressDeployed": "Published app",
+    "fileCount": "{{count}} files",
+    "files": "Files",
+    "noFiles": "No files yet — they will appear as the app is generated.",
+    "selectFile": "Choose a file to inspect",
+    "binaryFile": "This file can’t be previewed ({{size}})",
+    "readOnly": "Read-only",
+    "tabPreview": "Preview",
+    "tabSource": "Code",
+    "layoutPreviewOnly": "Preview",
+    "layoutPreviewOnlyHint": "Show the live app full width",
+    "layoutSplit": "Files",
+    "layoutSplitHint": "Browse project files beside the preview",
+    "explorer": "Files",
+    "explorerHint": "Browse generated files. Ask the Agent in chat to edit them.",
+    "searchFiles": "Search files…",
+    "clearSearch": "Clear search",
+    "expandAll": "Expand all folders",
+    "collapseAll": "Collapse all folders",
+    "noSearchResults": "No files match your search.",
+    "lines": "lines",
+    "showFiles": "Show file tree",
+    "hideFiles": "Hide file tree",
+    "statusReady": "Live",
+    "statusLoading": "Preparing",
+    "statusInstalling": "Installing",
+    "statusStarting": "Starting",
+    "statusError": "Unavailable",
+    "statusWaiting": "Waiting",
+    "phase": {
+      "connecting": "Starting your workspace",
+      "registering": "Preparing the runtime",
+      "hydrating": "Restoring your app files",
+      "installing": "Installing dependencies",
+      "starting": "Launching your app"
+    },
+    "hint": {
+      "connecting": "Opening a secure runtime for this session.",
+      "registering": "Handing over the session to the runtime.",
+      "hydrating": "Pulling the project files back from storage.",
+      "installing": "This can take a moment on the first run.",
+      "starting": "Your preview will appear in a moment."
+    },
+    "bootHint": "YellowMind is preparing a live preview of your app. This usually takes a few moments.",
+    "waitingHint": "Describe what you want in the conversation — your preview will appear here.",
+    "loading": "Preparing your app preview…",
+    "installing": "Setting up the preview environment…",
+    "starting": "Almost ready…",
+    "waitingSources": "Waiting for your app to be generated…",
+    "error": "The preview couldn’t start",
+    "errorDetail": "Something went wrong while starting the preview. You can try again.",
+    "retry": "Try again",
+    "openInNewTab": "Open preview in a new tab",
+    "buildPhase": {
+      "generation_started": "Starting generation",
+      "creating_files": "Creating files",
+      "coding_complete": "Code ready",
+      "installing_dependencies": "Installing packages",
+      "building_project": "Building the app",
+      "waiting_for_build": "Finishing the build",
+      "validating_preview": "Checking the preview",
+      "fetching_app_code": "Loading your app",
+      "fetching_app_preview": "Opening the preview",
+      "ready": "Ready"
+    }
+  },
+  "vnc": {
+    "unavailable": "No VM attached to this session",
+    "connecting": "Connecting…",
+    "connected": "Connected",
+    "error": "Connection failed",
+    "takeOver": "Take Over",
+    "release": "Release control"
+  },
+  "tools": {
+    "browser": { "title": "Browser", "openInNewTab": "Open in new tab" },
+    "shell": { "title": "Shell", "copy": "Copy output", "exitCode": "exit {{code}}" },
+    "file": { "title": "File", "operation": "Operation" },
+    "search": { "title": "Search", "noResults": "No results" },
+    "mcp": { "title": "MCP" },
+    "generic": { "title": "Tool" }
+  },
+  "plan": {
+    "title": "Task progress",
+    "completed": "Task completed",
+    "collapse": "Collapse plan"
+  },
+  "controls": { "stop": "Stop", "pause": "Pause", "resume": "Resume" },
+  "files": {
+    "title": "Project files",
+    "button": "Files",
+    "unavailable": "No workspace attached to this project.",
+    "loading": "Loading files…",
+    "empty": "No files yet.",
+    "view": {
+      "list": "List view",
+      "grid": "Grid view"
+    }
+  },
+  "header": {
+    "back": "Back to App Market",
+    "backToMarket": "App Market",
+    "readOnly": "Read-only",
+    "streaming": "Building",
+    "streamError": "Connection issue",
+    "tooltips": {
+      "workspaces": "Manage workspaces",
+      "files": "Project files"
+    },
+    "actions": {
+      "rename": "Rename project",
+      "delete": "Delete project",
+      "more": "More actions"
+    }
+  },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Pick a finalized version to preview or deploy",
+    "open": "Finalized versions",
+    "version": "Version {{number}}",
+    "draft": "Draft",
+    "building": "Version being built…",
+    "finalized": "Finalized",
+    "latest": "Latest",
+    "preview": "Preview this version",
+    "deploy": "Deploy this version",
+    "active": "Active",
+    "empty": "No finalized versions yet",
+    "loading": "Loading versions…"
+  },
+  "deploy": {
+    "publish": "Deploy",
+    "error": "Deploy failed — try again.",
+    "publishing": "Deploying…",
+    "update": "Update",
+    "liveUrl": "Live URL",
+    "liveBadge": "Live",
+    "publishedApp": "Your published app",
+    "copy": "Copy link",
+    "open": "Open in new tab",
+    "viewUrl": "View deployed URL",
+    "menu": "Deployment options",
+    "modeSwitch": "Preview or Deployed view",
+    "modePreview": "Preview",
+    "modeDeploy": "Deployed",
+    "embedUnavailable": "This app can’t be shown here",
+    "embedUnavailableHint": "Open it in a new tab to continue."
+  },
+  "share": {
+    "title": "Share app",
+    "searchPlaceholder": "Search or enter an email address…",
+    "searching": "Searching…",
+    "noResults": "Enter a valid email address",
+    "addEmail": "Add",
+    "remove": "Remove",
+    "cancel": "Cancel",
+    "send": "Send"
+  },
+  "dialogs": {
+    "rename": {
+      "title": "Rename project",
+      "placeholder": "Project title",
+      "saving": "Saving..."
+    },
+    "delete": {
+      "title": "Delete project?",
+      "description": "This will permanently delete this Studio project.",
+      "descriptionWithName": {
+        "before": "This will permanently delete ",
+        "after": "."
+      },
+      "warning": "This action cannot be undone.",
+      "deleting": "Deleting..."
+    }
+  },
+  "workspace": {
+    "sheet": {
+      "title": "Workspaces",
+      "description": "Workspaces attached to this project.",
+      "loadingWorkspaces": "Loading workspaces...",
+      "noSelection": "No workspaces attached to this project.",
+      "noDocuments": "No documents found in the attached workspaces.",
+      "documentsLabel": "Documents",
+      "selectedCount": "{{count}} workspace attached",
+      "selectedCount_plural": "{{count}} workspaces attached",
+      "table": {
+        "name": "Name",
+        "size": "Size",
+        "type": "Type",
+        "workspace": "Workspace"
+      },
+      "paginationLabel": "Page {{page}} of {{total}}"
+    }
+  },
+  "toasts": {
+    "rename": {
+      "error": "Failed to rename project"
+    },
+    "delete": {
+      "error": "Failed to delete project"
+    },
+    "workspaces": {
+      "loadListError": "Failed to load workspaces",
+      "loadDocumentsError": "Failed to load documents"
+    },
+    "deploy": {
+      "success": "App deployed",
+      "error": "Deployment failed",
+      "copied": "Link copied",
+      "copyError": "Failed to copy link"
+    },
+    "share": {
+      "success": "App shared by email",
+      "error": "Failed to share the app"
+    }
+  }
+}

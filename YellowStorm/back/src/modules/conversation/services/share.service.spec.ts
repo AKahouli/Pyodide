@@ -57,6 +57,7 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
       workspaceIds: ['workspace-1'],
       memberIds: [],
     }),
+    searchAudienceUsers: jest.fn().mockResolvedValue([{ id: 'recipient-1', email: 'person@example.com' }]),
     listSnapshotMessages: jest.fn().mockResolvedValue([]),
     createPublic: jest.fn(),
     forkConversation: jest.fn(),
@@ -67,12 +68,14 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
     listForConversation: jest.fn(),
     findById: jest.fn(),
     markRevoked: jest.fn(),
+    removePrivateRecipient: jest.fn().mockResolvedValue(undefined),
     findPublicByToken: jest.fn(),
     incrementViewCount: jest.fn(),
     ...overrides,
   };
   const userService = {
     findByEmail: jest.fn().mockResolvedValue({ _id: { toString: () => 'recipient-1' } }),
+    searchUsers: jest.fn().mockResolvedValue([]),
   };
   const emailService = { sendBulk: jest.fn().mockResolvedValue({ failed: 0 }) };
   const workspaceService = {
@@ -87,6 +90,10 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
     hasAccess: jest.fn().mockResolvedValue(false),
     share: jest.fn().mockResolvedValue({ shared: [{ id: 'workspace-share-1' }] }),
   };
+  const audienceAuthorization = {
+    isUserAuthorized: jest.fn().mockResolvedValue(true),
+    assertUserAuthorized: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new ShareService(
     store as never,
     {
@@ -99,8 +106,9 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
     emailService as never,
     workspaceService as never,
     workspaceShareService as never,
+    audienceAuthorization as never,
   );
-  return { service, store, userService, emailService, workspaceShareService };
+  return { service, store, userService, emailService, workspaceShareService, audienceAuthorization };
 }
 
 describe('ShareService', () => {
@@ -167,6 +175,34 @@ describe('ShareService', () => {
       }),
     );
     expect(result).toMatchObject({ sharedWorkspaceCount: 1, notFound: [], invalid: [] });
+  });
+
+  it('shares governed conversations only with current scope audience members', async () => {
+    const { service, store, audienceAuthorization, workspaceShareService } = createService({
+      findSourceConversation: jest.fn().mockResolvedValue({
+        id: 'conversation-1', title: 'Governed', createdBy: 'user-1', workspaceIds: ['workspace-1'],
+        memberIds: [], runtimeMode: 'governed', governanceScopeId: 'scope-1',
+      }),
+      createPrivate: jest.fn().mockResolvedValue(share({ shareType: 'private', recipientEmails: ['person@example.com'] })),
+    });
+    await expect(service.createShare('user-1', { conversationId: 'conversation-1', shareType: 'public' })).rejects.toMatchObject({ status: 403 });
+    await expect(service.createShare('user-1', { conversationId: 'conversation-1', shareType: 'private', recipientEmails: ['person@example.com'], shareWorkspaces: true })).rejects.toMatchObject({ status: 403 });
+    audienceAuthorization.isUserAuthorized.mockResolvedValueOnce(false);
+    await expect(service.createShare('user-1', { conversationId: 'conversation-1', shareType: 'private', recipientEmails: ['person@example.com'] })).rejects.toMatchObject({ status: 400 });
+    expect(store.addConversationMembers).not.toHaveBeenCalled();
+    await service.createShare('user-1', { conversationId: 'conversation-1', shareType: 'private', recipientEmails: ['person@example.com'] });
+    expect(store.addConversationMembers).toHaveBeenCalledWith('conversation-1', ['recipient-1'], expect.any(Date));
+    expect(workspaceShareService.share).not.toHaveBeenCalled();
+  });
+
+  it('searches governed recipients within the scope audience before limiting results', async () => {
+    const { service, store, userService } = createService({ findSourceConversation: jest.fn().mockResolvedValue({
+      id: 'conversation-1', title: 'Governed', createdBy: 'user-1', workspaceIds: [], memberIds: [],
+      runtimeMode: 'governed', governanceScopeId: 'scope-1',
+    }) });
+    await expect(service.searchRecipients('conversation-1', 'user-1', 'person')).resolves.toEqual([{ id: 'recipient-1', email: 'person@example.com' }]);
+    expect(store.searchAudienceUsers).toHaveBeenCalledWith('person', 'user-1', 'scope-1');
+    expect(userService.searchUsers).not.toHaveBeenCalled();
   });
 
   it('adds a recipient only once when the same account is selected twice', async () => {
@@ -285,6 +321,18 @@ describe('ShareService', () => {
     await service.revokeShare('share-1', 'user-1');
 
     expect(store.removeConversationMembers).toHaveBeenCalledWith('conversation-1', ['recipient-1']);
+  });
+
+  it('revokes only the selected recipient from a multi-person share', async () => {
+    const { service, store } = createService({
+      findById: jest.fn().mockResolvedValue(share({ shareType: 'private',
+        recipientEmails: ['one@example.com', 'two@example.com'], recipientUserIds: ['one', 'two'],
+      })),
+    });
+    await service.revokeRecipient('share-1', 'one', 'user-1');
+    expect(store.removePrivateRecipient).toHaveBeenCalledWith('share-1', 'conversation-1', 'one', 'one@example.com');
+    expect(store.removeConversationMembers).not.toHaveBeenCalled();
+    expect(store.markRevoked).not.toHaveBeenCalled();
   });
 
   it('does not increment expired public shares', async () => {

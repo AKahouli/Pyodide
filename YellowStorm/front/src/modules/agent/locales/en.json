@@ -86,6 +86,8 @@
   "createEdit.fields.additionalInstruction": "Additional Instruction",
   "createEdit.fields.instructionPlaceholder": "Additional instructions (optional)",
   "createEdit.fields.ignorePrePrompt": "Ignore agent type pre-prompt",
+  "createEdit.fields.genUiEnabled": "Generative UI",
+  "createEdit.fields.genUiEnabledHint": "Adds the interactive answer format (cards, charts, tables, source chips) to this agent's instructions and shows its answers with it.",
   "createEdit.fields.model": "Model",
   "createEdit.fields.modelDefault": "Default (Admin Models)",
   "createEdit.fields.reasoningEffort": "Reasoning effort",
@@ -339,6 +341,7 @@
   "card.inactive": "Inactive",
   "card.unknownType": "Unknown",
   "card.default": "Default",
+  "createEdit.fields.typeChangeRemovesRoot": "Saving this type removes delegation, temporary-worker and background settings. Other agent settings are kept.",
   "card.viewSettings": "View settings",
   "card.duplicate": "Duplicate",
   "card.duplicatePrefix": "Copy of",
@@ -528,7 +531,7 @@
       },
       "background": {
         "enabled": "Background tasks",
-        "enabledHint": "Durable background work that outlives the browser session (currently disabled platform-wide until qualified).",
+        "enabledHint": "Runs substantial work in the background so you can keep chatting after the agent acknowledges it. Requires a ready background runtime.",
         "maxOutstanding": "Max outstanding per conversation",
         "timeout": "Task timeout (seconds)",
         "maxAttempts": "Max safe attempts"

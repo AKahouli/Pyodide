@@ -53,10 +53,22 @@ The browser never sees the `mcpToken`. A ticket is single use and short lived
 (`APP_RUNTIME_TICKET_TTL_MS`); redeeming it is an atomic `findOneAndUpdate`, so a
 replayed ticket is rejected even under a race. A reconnect needs a fresh ticket.
 
+### Bind auth (APImanus → YellowStorm)
+
+`POST /internal/app-runtime/bind` requires header `X-Internal-Token`.
+
+| Side | Env var |
+|---|---|
+| APImanus | `INTERNAL_SERVICE_SECRET` |
+| YellowStorm | `INTERNAL_SERVICE_SECRET` |
+
+Values must match. Both services share the single internal token `INTERNAL_SERVICE_SECRET`.
+
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `INTERNAL_SERVICE_SECRET` | — | Shared internal token for bind |
 | `APP_RUNTIME_MCP_ENABLED` | `true` | When false, MCP endpoint returns 503 |
 | `APP_RUNTIME_MCP_URL` | — | Explicit public MCP URL returned on bind |
 | `APP_RUNTIME_PUBLIC_BASE_URL` | — | Used to derive MCP URL if `MCP_URL` unset |

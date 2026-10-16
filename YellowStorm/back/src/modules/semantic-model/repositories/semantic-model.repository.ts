@@ -37,6 +37,7 @@ export class SemanticModelRepository {
       kind?: string;
       status?: string;
       workspace?: string;
+      scope?: 'mine' | 'shared';
       page: number;
       limit: number;
     },
@@ -59,6 +60,8 @@ export class SemanticModelRepository {
       params.push(filters.status);
       conditions.push(`m.status = $${params.length}`);
     }
+    if (filters.scope === 'mine') conditions.push('m.owner_user_id = $1');
+    if (filters.scope === 'shared') conditions.push('m.owner_user_id <> $1');
     if (filters.workspace) {
       params.push(filters.workspace);
       conditions.push(`EXISTS (SELECT 1 FROM semantic_model.workspace_links wl
@@ -73,6 +76,9 @@ export class SemanticModelRepository {
     params.push(filters.limit, offset);
     const rows = await this.database.query<SemanticModelRow & Record<string, unknown>>(
       `SELECT ${MODEL_COLUMNS},
+        CASE WHEN m.owner_user_id = $1 THEN 'owner' ELSE (
+          SELECT membership.role FROM semantic_model.memberships membership
+          WHERE membership.model_id = m.id AND membership.user_id = $1) END AS role,
         (SELECT COUNT(*)::int FROM semantic_model.workspace_links wl WHERE wl.model_id = m.id AND wl.enabled) AS "workspaceCount",
         (SELECT COUNT(*)::int FROM semantic_model.node_types nt WHERE nt.version_id = m.current_draft_version_id) AS "nodeCount",
         (SELECT COUNT(*)::int FROM semantic_model.relation_types rt WHERE rt.version_id = m.current_draft_version_id) AS "relationCount",

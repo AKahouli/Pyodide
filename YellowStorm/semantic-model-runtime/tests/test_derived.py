@@ -197,6 +197,20 @@ async def test_a_run_makes_the_derived_records_and_links_them():
     assert not [gap for gap in outcome["gaps"] if gap["kind"] != "missing_value"]
 
 
+@pytest.mark.asyncio
+async def test_the_derived_records_count_in_the_run_progress():
+    from app.workers.population_tasks import PopulationProgress
+
+    progress = PopulationProgress()
+    await run_population_for_task(
+        command([derivation()], [{"relationId": "r1", "referenceField": "customer_id", "targetField": "org_id"}]),
+        fetch=fake_fetch, prepare=fake_prepare, query=fake_query, progress=progress)
+    plain = PopulationProgress()
+    await run_population_for_task(command([]), fetch=fake_fetch, prepare=fake_prepare, query=fake_query, progress=plain)
+    # The two organizations made from the contracts add to the records the sheet gave.
+    assert progress.records == plain.records + 2
+
+
 def test_a_command_without_derivations_keeps_its_admission_shape():
     from app.jobs.models import PopulationPayload
 
@@ -205,3 +219,13 @@ def test_a_command_without_derivations_keeps_its_admission_shape():
     assert "derivations" not in PopulationPayload.model_validate(payload).model_dump(by_alias=True, mode="json")
     dumped = PopulationPayload.model_validate({**payload, "derivations": [derivation()]}).model_dump(by_alias=True, mode="json")
     assert dumped["derivations"] == [derivation()]
+
+
+
+def test_a_run_may_make_more_derived_records_than_the_built_in_bound():
+    concepts = compiled_concepts()
+    [normalized] = normalize_derivations([derivation()], concepts)
+    many = [contract(f"k{i}", f"C-{i}", f"Org {i}") for i in range(30)]
+    capped = derive_concept(concepts["org"], normalized, many, [], max_entities=10)
+    assert len(capped["entities"]) == 10 and any(gap["kind"] == "materialization_cap" for gap in capped["gaps"])
+    assert len(derive_concept(concepts["org"], normalized, many, [], max_entities=100)["entities"]) == 30

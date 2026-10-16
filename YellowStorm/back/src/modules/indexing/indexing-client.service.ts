@@ -147,7 +147,6 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       endpoint: `${this.apiUrl}/vectorstores/vectorIds/V2`,
       documentId: request.documentId,
       workspaceId: request.workspaceId,
-      workspaceName: request.workspaceName,
       filePath: request.filePath,
       fileName: request.fileName,
     });
@@ -157,7 +156,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
         method: 'DELETE',
         headers: this.buildHeaders(),
         body: JSON.stringify({
-          workspace_name: request.workspaceName,
+          workspace_id: request.workspaceId,
           file_path: request.filePath,
           file_name: request.fileName,
         }),

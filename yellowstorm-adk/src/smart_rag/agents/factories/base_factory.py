@@ -31,7 +31,6 @@ from src.smart_rag.tools import (
     in_memory_construct_json,
     render_chart,
 )
-from src.smart_rag.tools.utilities import python_interpreter
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
 from src.smart_rag.tools.native_tool_registry import resolve_native_tools
 from src.smart_rag.agents.tools.tool_configuration import (
@@ -485,7 +484,6 @@ class AgentFactory:
         html_design: Optional[bool] = False,
         generate_web_preview: bool = False,
         search_tool: bool = False,
-        code_interpreter_tool: bool = False,
         formviz_tool: bool = False,
         skills: Optional[List[Dict]] = None,
         doc_tree: Optional[List] = None,
@@ -603,43 +601,6 @@ class AgentFactory:
             except Exception as e:
                 logger.exception(f"Error adding connector tools: {e}")
 
-        # Add custom python_interpreter if code_interpreter requested
-        if code_interpreter_tool:
-            try:
-                tools.append(python_interpreter)
-                # Store code interpreter params to be injected into session state later
-                _code_interpreter_state = {}
-                if brain_documents:
-                    _code_interpreter_state["_code_interpreter_brain_docs"] = (
-                        MCPHelper.extract_minimal_fields(brain_documents)
-                    )
-                if session_id:
-                    _code_interpreter_state["_code_interpreter_session_id"] = session_id
-                if conversation_brain_id:
-                    _code_interpreter_state["_code_interpreter_brain_id"] = (
-                        conversation_brain_id
-                    )
-                if user_id:
-                    _code_interpreter_state["_code_interpreter_user_id"] = user_id
-                # Will be attached to the agent after creation
-                self._pending_code_interpreter_state = _code_interpreter_state
-
-                # Add available document names to prompt so code interpreter knows which files exist
-                if brain_documents:
-                    doc_names = [
-                        doc.get("filename")
-                        for doc in brain_documents
-                        if isinstance(doc, dict) and doc.get("filename")
-                    ]
-                    if doc_names:
-                        prompt += f"\n\n<available_documents>\n{json.dumps(doc_names, indent=4)}\n</available_documents>"
-
-                logger.info(
-                    "Added custom python_interpreter tool (params will be passed via session state)"
-                )
-            except Exception as e:
-                logger.exception(f"Error adding python_interpreter tool: {e}")
-
         if formviz_tool:
             self._append_formviz_tool(tools)
 
@@ -699,11 +660,6 @@ class AgentFactory:
             agent_kwargs["after_tool_callback"] = after_tool_callbacks
 
         agent = self._build_agent(agent_kwargs)
-
-        # Attach code interpreter state to agent for session injection
-        if hasattr(self, "_pending_code_interpreter_state"):
-            agent._code_interpreter_state = self._pending_code_interpreter_state
-            del self._pending_code_interpreter_state
 
         return agent
 
@@ -780,7 +736,7 @@ class AgentFactory:
         session_id: Optional[str] = None,
         brain_documents: Optional[list] = None,
     ) -> Agent:
-        """Create an operator agent with calculator and python_interpreter tools."""
+        """Create an operator agent with the calculator tool."""
         operator_agent_prompt, chatbot_name = (
             self.prompt_processor.extract_chatbot_name_and_clean_prompt(
                 prompt, chatbot_name
@@ -788,27 +744,6 @@ class AgentFactory:
         )
         model = self.llm_factory.create_parallel_tool_calls_llm(chatbot_name)
         tools = [calculator]
-
-        # Add custom python_interpreter (code interpreter tool)
-        _code_interpreter_state = {}
-        try:
-            if brain_documents:
-                _code_interpreter_state["_code_interpreter_brain_docs"] = (
-                    MCPHelper.extract_minimal_fields(brain_documents)
-                )
-            if session_id:
-                _code_interpreter_state["_code_interpreter_session_id"] = session_id
-            if brain_ids and len(brain_ids) > 0:
-                _code_interpreter_state["_code_interpreter_brain_id"] = brain_ids[0]
-
-            tools.append(python_interpreter)
-            logger.info(
-                "Added custom python_interpreter tool to operator agent (params will be passed via session state)"
-            )
-        except Exception as e:
-            logger.exception(
-                f"Error adding python_interpreter tool to operator agent: {e}"
-            )
 
         # Create agent
         agent_kwargs = {
@@ -821,10 +756,6 @@ class AgentFactory:
         }
 
         agent = self._build_agent(agent_kwargs)
-
-        # Attach code interpreter state to agent for session injection
-        if _code_interpreter_state:
-            agent._code_interpreter_state = _code_interpreter_state
 
         return agent
 
@@ -845,6 +776,7 @@ class AgentFactory:
         top_k: int = 1,
         citation_manager=None,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         vectorstore_mcp_tool: bool = False,
         logical_search_only: bool = False,
         deep_search: bool = False,
@@ -975,6 +907,7 @@ class AgentFactory:
                 vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
                     brain_ids=brain_ids,
                     deep_search=deep_search,
+                    cache_scope=MCPHelper.build_cache_scope(user_id, session_id),
                 )
                 if vectorstore_toolset:
                     tools.extend(vectorstore_toolset)
@@ -1160,7 +1093,7 @@ class ManagerAgentFactory:
 
         manager_config = self.agent_repository.get_agent_by_name("manager_agent") or self.agent_repository.get_agent_by_name("manager") or {}
         if (
-            (self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter())
+            self.agent_repository.has_search_agents()
             and DocumentHelpers.document_tree_injection_enabled(manager_config)
         ):
             # Add document tree info from all agents (without IDs) for manager context
@@ -1233,6 +1166,10 @@ class ManagerAgentFactory:
                 vectorstore_toolset = MCPHelper.create_vectorstore_toolsets_with_deep_search(
                     brain_ids=brain_ids,
                     deep_search=enable_deep_search,
+                    cache_scope=MCPHelper.build_cache_scope(
+                        getattr(self.config, 'user_id', None),
+                        getattr(self.config, 'session_id', None),
+                    ),
                 )
                 updated_tools.extend(vectorstore_toolset)
                 _manager_logger.info(

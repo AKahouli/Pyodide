@@ -22,7 +22,6 @@ import {
 interface AuthedSocket extends Socket {
   data: PyodideSocketData;
 }
-
 @WebSocketGateway({ namespace: PYODIDE_RUNTIME_NAMESPACE, cors: { origin: true, credentials: true } })
 @Injectable()
 export class PyodideRuntimeGateway implements OnGatewayConnection, OnGatewayDisconnect {

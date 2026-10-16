@@ -1,0 +1,103 @@
+name: CI/CD MCP (playbook agent semantic)
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+    paths:
+      - 'mcp/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Choose environment to deploy'
+        options:
+          - poc
+        required: true
+
+env:
+  ACR_LOGIN_SERVER: yscrmetachatbot001.azurecr.io
+  ENV_NAME: ${{ github.event.inputs.environment || 'poc'}}
+
+jobs:
+  build:
+    if: (github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch')
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="1.5.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Version is $VERSION"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # requirements.txt references the wheel as file:./.generated/observability/*.whl;
+      # without this step the image build fails at pip install and the container
+      # would crash on `import yellowmind_observability`.
+      - name: "Stage observability SDK wheel (required by requirements.txt file: dependency)"
+        run: node scripts/observability/build-sdks.mjs
+
+      - name: Build and push Docker images
+        run: |
+          docker buildx create --name yellowstorm-mcp-builder --use 2>/dev/null || docker buildx use yellowstorm-mcp-builder
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            docker buildx build \
+              --network=host \
+              --cache-from=type=registry,ref=${IMAGE}:buildcache \
+              --cache-to=type=registry,ref=${IMAGE}:buildcache,mode=max \
+              --tag "${IMAGE}:${VERSION}" \
+              --push \
+              "mcp/${mcp}"
+          done
+
+  deploy:
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    needs: build
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Pull latest Docker images and deploy
+        run: |
+          export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          
+          for mcp in mcp-agent mcp-playbook mcp-semantic-model; do
+            IMAGE="${ACR_LOGIN_SERVER}/${mcp}"
+            COMPOSE_FILE=~/yellowstorm/${ENV_NAME}/${mcp}/docker-compose.yaml
+            
+            # Pull the image explicitly
+            docker pull "${IMAGE}:${IMAGE_TAG}"
+            
+            # Update the image tag in docker-compose.yaml
+            sed -i "s|image: ${IMAGE}:.*$|image: ${IMAGE}:${IMAGE_TAG}|" $COMPOSE_FILE
+            
+            # Restart the service
+            docker compose -f $COMPOSE_FILE down
+            docker compose -f $COMPOSE_FILE up -d
+          done

@@ -13,8 +13,8 @@ vi.mock('./api', () => ({
   },
 }));
 
-vi.mock('@/modules/conversation-v2/store', () => ({
-  useConversationV2PointersStore: {
+vi.mock('@/modules/app-builder-studio/store', () => ({
+  useAppBuilderStudioPointersStore: {
     getState: () => ({
       remove: pointersRemoveMock,
     }),

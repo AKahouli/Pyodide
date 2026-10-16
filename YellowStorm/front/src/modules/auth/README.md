@@ -5,13 +5,15 @@ Authentication module for YellowMind frontend. Handles user authentication, sess
 ## Overview
 
 The auth module implements a secure authentication flow with:
-- JWT access tokens (stored in localStorage, 15 min expiry)
+- JWT access tokens (held in memory only, never written to web storage; 15 min expiry)
 - HTTP-only refresh token cookies (7 day expiry, auto-rotation)
 - Email verification flow
 - Forgot password / reset password flow
+- Super-admin email invitation flow (the admin picks the plan and roles; an invite link resolves server-side, then opens the register modal with the invited address pre-filled and locked, and the invited account is created active + pre-approved)
 - Profile completion flow
-- Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval; a rejected request shows declined access instead of “upcoming”)
+- Pending Super Admin approval page (classic signups only — invited users skip it; inactive users can sign in, then a full-screen wait page blocks the app until approval; a rejected request shows declined access instead of “upcoming”)
 - Automatic token refresh on 401 responses
+- OAuth sign-in (public provider list + `/oauth-callback` exchange)
 
 ## Architecture
 
@@ -22,7 +24,9 @@ src/modules/auth/
 ├── useAuth.ts           # Public hook for accessing auth
 ├── useAuth.test.tsx     # useAuth hook unit tests
 ├── api.ts               # API functions for auth endpoints
+├── api.test.ts          # API function tests
 ├── types.ts             # TypeScript interfaces
+├── store.ts             # Zustand auth modal store (invite carrier)
 ├── store.test.ts        # auth modal store unit tests
 ├── test-utils/
 │   └── makeAuthState.ts # shared auth state factory for tests
@@ -31,7 +35,7 @@ src/modules/auth/
 │   ├── PendingApprovalPage.test.tsx
 │   ├── RootGuard.tsx           # Route guard for "/"
 │   ├── RootGuard.test.tsx      # Root guard routing tests
-│   ├── LandingPage.tsx         # Landing page for guests
+│   ├── LandingPage.tsx         # Landing page for guests (handles ?invite= links)
 │   ├── LandingPage.test.tsx    # Landing page modal entry tests
 │   ├── EmailVerificationPage.tsx   # Email verification handler
 │   ├── EmailVerificationPage.test.tsx # Verification flow tests
@@ -40,34 +44,54 @@ src/modules/auth/
 │   ├── ProfileCompletionPage.tsx   # Profile completion form
 │   ├── ProfileCompletionPage.test.tsx # Profile completion and logout tests
 │   ├── modals/
-│   │   ├── LoginModal.tsx          # Login form modal
+│   │   ├── LoginModal.tsx          # Login form modal (show/hide password)
 │   │   ├── LoginModal.test.tsx     # Login modal tests
-│   │   ├── RegisterModal.tsx       # Registration form modal
+│   │   ├── RegisterModal.tsx       # Registration form modal (invite prefill/lock, live password feedback)
 │   │   ├── RegisterModal.test.tsx  # Register modal tests
 │   │   ├── ForgotPasswordModal.tsx # Forgot password modal
 │   │   ├── ForgotPasswordModal.test.tsx # Forgot password modal tests
 │   │   ├── AuthModals.tsx          # Modal controller
 │   │   └── AuthModals.test.tsx     # Modal coordinator tests
+│   ├── OAuthCallbackPage.tsx       # /oauth-callback exchange handler
+│   ├── OAuthCallbackPage.test.tsx  # OAuth callback tests
+│   ├── StatusSection.tsx           # shared status/icon block
 │   ├── StatusSection.test.tsx      # shared status section tests
 │   └── index.ts                    # Component exports
 ├── utils/
 │   ├── isPendingAdminApproval.ts
 │   ├── isPendingAdminApproval.test.ts
+│   ├── password-policy.ts   # single source of truth for password rules + zod schema
+│   ├── password-policy.test.ts
+│   ├── errorHelpers.ts      # error-code → message helpers
 │   └── errorHelpers.test.ts # auth error helper tests
 ├── locales/
 │   ├── en.json          # English translations
 │   └── fr.json          # French translations
-├── AuthContext.test.tsx     # AuthProvider login/logout behavior
-├── store.test.ts            # Auth modal Zustand store
-├── useAuth.test.tsx         # useAuth hook contract
-├── components/
-│   ├── RootGuard.test.tsx
-│   ├── LandingPage.test.tsx
-│   ├── EmailVerificationPage.test.tsx
-│   ├── ResetPasswordPage.test.tsx
-│   └── ProfileCompletionPage.test.tsx
 └── index.ts             # Public exports
 ```
+
+## Password Field UX
+
+The login and register password fields share a live-validation UX built on three pieces:
+
+| Piece | Location | Role |
+|-------|----------|------|
+| `password-policy.ts` | `utils/` (this module) | Single source of truth for the backend password rules (`RegisterDto`: at least 8 characters, one uppercase, one lowercase, one digit). `createPasswordSchema(t)` builds the zod schema and reports the *first* unmet rule; `isPasswordValid` powers the success feedback. |
+| `PasswordInput` | `src/components/ui/password-input.tsx` (shared UI primitive) | Password field with a show/hide eye toggle (`common.actionShowPassword` / `actionHidePassword`). The browser's native reveal/clear controls are suppressed in `src/index.css` so only one eye renders. |
+| `FormSuccessMessage` | `src/components/ui/form.tsx` (shared UI primitive) | Green positive-feedback line placed where the error line would be; automatically hidden while the field carries an error. |
+
+On the **register** form nothing is shown until the user types; from the first keystroke the message updates on every change (`form.trigger('password')`), and the confirmation mismatch is reported live as well — both while typing the confirmation and when the password changes after a filled confirmation:
+
+| State | Message key |
+|-------|-------------|
+| A rule is unmet | `register.error.passwordMin` / `passwordUppercase` / `passwordLowercase` / `passwordNumber` (first unmet rule only) |
+| All rules met | `register.password.valid` |
+| Confirmation differs | `register.error.passwordMismatch` |
+| Confirmation matches | `register.confirmPassword.match` |
+
+The **login** form only has the show/hide toggle (no strength rules, no confirmation field).
+
+`ResetPasswordPage` still carries its own inline rules and has not been migrated to the shared policy yet.
 
 ## Testing
 
@@ -81,6 +105,8 @@ src/modules/auth/
 - `components/EmailVerificationPage.tsx`: token validation, success/error branches, resend flow
 - `components/ResetPasswordPage.tsx`: token validation, form validation, success/error submit states
 - `components/ProfileCompletionPage.tsx`: redirect logic, profile submit, logout behavior
+- `utils/password-policy.ts`: rule order, first-unmet-rule reporting, schema messages
+- `components/modals/RegisterModal.tsx` / `LoginModal.tsx`: live password feedback and show/hide toggle
 
 ### Test Location
 
@@ -154,6 +180,8 @@ Returns the auth context with state and methods.
 | `isLoading` | `boolean` | Whether auth state is being loaded/checked |
 | `requiresEmailVerification` | `boolean` | User needs to verify email |
 | `requiresProfileCompletion` | `boolean` | User needs to complete profile |
+| `registrationEnabled` | `boolean` | Whether self-service registration is open |
+| `isAuthTemporarilyUnavailable` | `boolean` | Bootstrap validation hit a transient failure; credentials preserved and protected data must not render |
 
 #### Methods
 
@@ -174,9 +202,11 @@ try {
 ```
 
 **Throws:**
-- `ERR_1102` - Invalid credentials
+- `ERR_1111` - Invalid credentials
 - `ERR_1104` - Email not verified
 - `ERR_1110` - Account suspended
+- `ERR_1202` - Account inactive pending Super Admin approval
+- `ERR_1130` - Auth dependency temporarily unavailable
 
 ---
 
@@ -198,10 +228,13 @@ try {
 ```
 
 **Throws:**
-- `ERR_1101` - Email already exists
-- Validation errors for weak password
+- `ERR_1132` - Invitation token invalid or already used
+- `ERR_1133` - Invitation token expired
+- `ERR_1134` - Invitation was issued for a different email
+- `ERR_1007` - Rate limited
+- Validation errors for invalid email or weak password (`ERR_1001`)
 
-**Note:** After registration, user must verify their email before logging in.
+**Note:** After registration, user must verify their email before logging in. When an optional `inviteToken` is present, registration is bound to the invited address; an invited account is created active and pre-approved with the roles and plan chosen by the inviter, so it skips the pending-approval page — it still verifies its email first, exactly like a classic signup. Registration is anti-enumeration: an email that already has an account returns the same success response, so `ERR_1201` is never surfaced here.
 
 ---
 
@@ -306,6 +339,27 @@ try {
 
 ---
 
+##### `getInviteDetails(token: string): Promise<InviteDetails>`
+
+Resolves a super-admin invitation token from an invite link (`/#/?invite=<token>`). A standalone API function imported from `api.ts`; called by `LandingPage`, not part of `useAuth`.
+
+```tsx
+import { getInviteDetails } from '@/modules/auth/api';
+
+try {
+  const { email, expiresAt } = await getInviteDetails(token);
+  // Open the register modal with `email` pre-filled and locked
+} catch (error) {
+  // ERR_1132 - Invalid or already used token
+  // ERR_1133 - Token has expired
+  // ERR_1007 - Rate limited
+}
+```
+
+**Rate limited:** 10 requests per minute. Only the invited email and expiry are returned — never the token.
+
+---
+
 ##### `completeProfile(data: CompleteProfileData): Promise<void>`
 
 Completes the user's profile (required after registration).
@@ -340,6 +394,18 @@ await refreshUser();
 // user state is now updated with latest data
 ```
 
+---
+
+##### `retryRecovery(): Promise<void>`
+
+Re-runs bootstrap validation after a transient unavailability episode (`isAuthTemporarilyUnavailable`). This is not a logout: credentials are preserved.
+
+```tsx
+const { retryRecovery } = useAuth();
+
+await retryRecovery();
+```
+
 ## Types
 
 ### `User`
@@ -354,9 +420,19 @@ interface User {
     firstName?: string;
     lastName?: string;
     company?: string;
+    role?: string;
+    description?: string;
+  };
+  appearance?: {
+    colorTheme: "default" | "yellow" | "orange" | "blue";
+    language: string;
+    logo?: "yellowmind" | "kpmg";
   };
   status: "active" | "inactive" | "suspended";
   registrationApproval?: "pending" | "approved" | "rejected";
+  plan: { id: string; slug: string; startedAt: string };
+  permissions?: string[];
+  roleNames?: string[];
 }
 ```
 
@@ -375,6 +451,7 @@ interface LoginCredentials {
 interface RegisterCredentials {
   email: string;
   password: string;
+  inviteToken?: string;  // Super-admin invitation token from the invite link
 }
 ```
 
@@ -387,6 +464,17 @@ interface CompleteProfileData {
   company: string;
   privacyPolicy: boolean;  // Must be true
   dataSharing: boolean;    // Optional
+  role?: string;
+  description?: string;
+}
+```
+
+### `InviteDetails`
+
+```typescript
+interface InviteDetails {
+  email: string;
+  expiresAt: string;
 }
 ```
 
@@ -399,6 +487,8 @@ interface AuthState {
   isLoading: boolean;
   requiresEmailVerification: boolean;
   requiresProfileCompletion: boolean;
+  registrationEnabled: boolean;
+  isAuthTemporarilyUnavailable: boolean;
 }
 ```
 
@@ -430,10 +520,28 @@ Email link ──▶ /#/reset-password?token=xxx ──▶ ResetPasswordPage
   ──▶ Page shows success + countdown redirect to login
 ```
 
+### Invitation Flow
+
+```text
+Admin (#/admin/users) ──▶ invite modal (plan + roles selects)
+  ──▶ POST /admin/users/invite ──▶ invitation email (unique link, 24h)
+
+Email link ──▶ /#/?invite=<token> ──▶ LandingPage effect
+  ──▶ strips ?invite from the URL immediately (history/referrer safety)
+  ──▶ getInviteDetails(token)
+        ├── ERR_1132 / ERR_1133 ──▶ toast with localized message (no modal)
+        └── valid ──▶ useAuthModalStore.setInvite(token, email)
+                      └── opens RegisterModal, email pre-filled + disabled
+  ──▶ user sets a password ──▶ register({ email, password, inviteToken })
+        └── ERR_1132 / ERR_1133 / ERR_1134 shown inline via error-code i18n
+```
+
+The invite state (`inviteToken`, `inviteEmail`) lives in `useAuthModalStore` and is cleared on modal close, switch-to-login, and successful registration. The token is never used for authorization on its own: the backend re-validates it and applies the grants. An invited account is created **active + approved** with the roles and plan chosen by the inviter, so it skips the pending-approval page (falling back to the default plan if the invited plan is no longer available). The invitee still verifies their email before the first login, exactly like a classic signup.
+
 ## Token Management
 
 ### Access Token
-- Stored in `localStorage` as `yellostorm_access_token`
+- Held in memory only (`lib/api/access-token-store.ts`); never written to web storage
 - 15 minute expiry
 - Sent in `Authorization: Bearer <token>` header
 - Automatically refreshed on 401 response
@@ -483,18 +591,26 @@ interface ApiError {
 
 | Code | Description |
 |------|-------------|
+| `ERR_1001` | Validation error (invalid field values) |
 | `ERR_1007` | Too many requests (rate limited) |
-| `ERR_1101` | Email already exists |
-| `ERR_1102` | Invalid credentials |
 | `ERR_1104` | Email not verified |
 | `ERR_1107` | Invalid refresh token |
 | `ERR_1108` | Refresh token expired |
 | `ERR_1110` | Account suspended |
+| `ERR_1111` | Invalid credentials |
 | `ERR_1112` | Invalid token |
 | `ERR_1114` | Verification token expired |
 | `ERR_1115` | Email already verified |
 | `ERR_1116` | Password reset token invalid or already used |
 | `ERR_1117` | Password reset token expired |
+| `ERR_1130` | Auth dependency temporarily unavailable |
+| `ERR_1131` | Concurrent refresh; retry |
+| `ERR_1132` | Invitation token invalid or already used |
+| `ERR_1133` | Invitation token expired |
+| `ERR_1134` | Invitation was issued for a different email |
+| `ERR_1201` | Email already registered (admin invite; not returned by `/auth/register`) |
+| `ERR_1202` | Account inactive pending Super Admin approval |
+| `ERR_1203` | Invitation email could not be sent |
 
 ### Example Error Handling
 
@@ -510,7 +626,7 @@ try {
     case "ERR_1104":
       setMessage("Please verify your email first");
       break;
-    case "ERR_1102":
+    case "ERR_1111":
       setMessage("Invalid email or password");
       break;
     default:
@@ -547,6 +663,8 @@ export {
 } from "./components";
 ```
 
+`api.ts` functions (`forgotPassword`, `resetPassword`, `getInviteDetails`, `getAuthProviders`, `exchangeOAuthLogin`, `getRegistrationStatus`, …) are imported directly and are not re-exported from the module index. `OAuthCallbackPage` is likewise imported directly by the router.
+
 ### AuthModalType
 
 ```typescript
@@ -557,17 +675,8 @@ type AuthModalType = 'login' | 'register' | 'forgotPassword' | null;
 
 | Path | Component | Description |
 |------|-----------|-------------|
-| `/` | `RootGuard` | Landing or app based on auth state |
+| `/` | `RootGuard` | Landing or app based on auth state; `?invite=<token>` opens the register modal via `LandingPage` |
 | `/verify-email` | `EmailVerificationPage` | Email verification from magic link |
+| `/oauth-callback` | `OAuthCallbackPage` | OAuth provider redirect handler (exchanges the login) |
 | `/reset-password` | `ResetPasswordPage` | Password reset from email link |
 | `/complete-profile` | `ProfileCompletionPage` | Profile completion form |
-
-## Testing
-
-- Auth tests are colocated with the module using `*.test.ts` and `*.test.tsx`.
-- Shared auth test helpers live in `src/modules/auth/test-utils`.
-- Run auth module tests from `front/`:
-
-```bash
-npm test -- src/modules/auth
-```

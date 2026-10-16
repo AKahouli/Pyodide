@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { newObjectId } from '@common/postgres/object-id';
 import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
 import { ProviderLinkService } from './provider-link.service';
-import { AuthService } from '@modules/auth/auth.service';
-import { UserService } from '@modules/user/user.service';
+import { SessionService } from '@modules/auth/services/session.service';
+import { getAuthCookiePath, getOAuthCallbackPath } from '@modules/auth/auth-cookie-path';
+import { UserService } from '@modules/user/services/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';
@@ -15,12 +15,36 @@ import { WorkspaceInitializerService } from '@modules/workspace/workspace-initia
 import { assertAccountAccessible } from '@modules/user/utils/assert-account-accessible';
 import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import type { UserDocLike } from '@modules/user/persistence/user-record.mapper';
 import { OAuthCallbackResult, OAuthUserInfo } from '../interfaces/auth-provider.interface';
 import { PgProviderLinkTokenStore } from '../persistence/pg-auth-provider.stores';
 import { PgOAuthStateStore } from '../persistence/pg-auth-provider.stores';
 
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const TEMP_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/** Lifetime of the OAuth state (and of the browser-binding cookie that must come back with it). */
+export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+/** Lifetime of the single-use login exchange code (and of the cookie carrying it). */
+export const OAUTH_EXCHANGE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+/**
+ * `oid` and `userPrincipalName` are the last fallbacks of their claim chains;
+ * they are typed as present because OAuthUserInfo requires a string, and
+ * handleCallback rejects a missing email downstream.
+ */
+interface ProviderUserInfoPayload {
+  sub?: string;
+  id?: string;
+  oid: string;
+  email?: string;
+  mail?: string;
+  userPrincipalName: string;
+  name?: string;
+  displayName?: string;
+  given_name?: string;
+  givenName?: string;
+  family_name?: string;
+  surname?: string;
+  email_verified?: boolean;
+}
+
 const LINK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 @Injectable()
@@ -34,7 +58,7 @@ export class OAuthFlowService {
     private readonly providerLinkTokenStore: PgProviderLinkTokenStore,
     private readonly authProviderService: AuthProviderService,
     private readonly providerLinkService: ProviderLinkService,
-    private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
     private readonly userService: UserService,
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
@@ -51,13 +75,16 @@ export class OAuthFlowService {
   }
 
   /**
-   * Build the OAuth authorization URL and redirect the user.
+   * Build the OAuth authorization URL. `bindingNonce` must be handed to the
+   * initiating browser (HttpOnly cookie) and presented again on the callback;
+   * only its hash is embedded in the state, so a leaked state does not reveal it.
    */
-  async buildAuthorizationUrl(providerKey: string): Promise<string> {
+  async buildAuthorizationUrl(providerKey: string): Promise<{ url: string; bindingNonce: string; providerKey: string }> {
     const provider = await this.authProviderService.findByKey(providerKey);
 
-    // Generate state (CSRF protection)
-    const state = crypto.randomBytes(32).toString('hex');
+    // Generate state (CSRF protection), bound to the initiating browser via the nonce hash.
+    const bindingNonce = crypto.randomBytes(32).toString('hex');
+    const state = `${crypto.randomBytes(32).toString('hex')}.${this.hashBindingNonce(bindingNonce)}`;
 
     // PKCE setup
     let codeVerifier: string | undefined;
@@ -77,8 +104,7 @@ export class OAuthFlowService {
     });
 
     // Build authorization URL
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/${provider.providerKey}/callback`;
+    const redirectUri = `${this.backendUrl}${getOAuthCallbackPath(this.configService, provider.providerKey)}`;
 
     const params = new URLSearchParams({
       client_id: provider.clientId,
@@ -99,20 +125,22 @@ export class OAuthFlowService {
       authUrl = authUrl.replace('{tenant}', provider.tenantId);
     }
 
-    return `${authUrl}?${params.toString()}`;
+    return { url: `${authUrl}?${params.toString()}`, bindingNonce, providerKey: provider.providerKey };
   }
 
   /**
    * Handle the OAuth callback — exchange code, fetch user info, run decision tree.
+   * `bindingNonce` is the cookie value issued when the flow started in this browser.
    */
   async handleCallback(
     providerKey: string,
     code: string,
     state: string,
+    bindingNonce: string | undefined,
     ipAddress: string,
     userAgent: string,
   ): Promise<OAuthCallbackResult> {
-    // 1. Validate state (find, check, delete)
+    // 1. Validate state (find, check, delete). Consumed first so a rejected attempt burns it.
     const oauthState = await this.oauthStateStore.consumeByState(state);
     if (!oauthState) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'Invalid or expired OAuth state');
@@ -123,11 +151,17 @@ export class OAuthFlowService {
     if (oauthState.expiresAt < new Date()) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'OAuth state has expired');
     }
+    if (!this.isStateBoundToBrowser(state, bindingNonce)) {
+      this.logger.warn('OAuth callback rejected: state not bound to this browser', {
+        providerKey,
+        hasBindingCookie: Boolean(bindingNonce),
+      });
+      throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'OAuth state does not match this browser');
+    }
 
     // 2. Load + decrypt provider config
     const provider = await this.authProviderService.findByKey(providerKey);
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/${providerKey}/callback`;
+    const redirectUri = `${this.backendUrl}${getOAuthCallbackPath(this.configService, provider.providerKey)}`;
 
     // 3. Exchange code for tokens
     const tokenResponse = await this.exchangeCodeForTokens(
@@ -181,7 +215,7 @@ export class OAuthFlowService {
       throw new UnauthorizedException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_EXPIRED, 'Temp token has expired');
     }
 
-    const user = await this.userService.findById(linkToken.userId.toString());
+    const user = await this.userService.findById(linkToken.userId);
     if (!user) {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
@@ -189,15 +223,15 @@ export class OAuthFlowService {
     assertAccountAccessible(user);
 
     // Generate real tokens
-    const userRoles = user.roles || [];
+    const userRoles = user.roles;
     const [permissions, roleNames] = await Promise.all([
       this.authorizationService.getUserPermissions(userRoles),
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
-    const tokens = await this.authService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
+    const tokens = await this.sessionService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
-    await this.userService.updateLastLogin(user._id.toString());
+    await this.userService.updateLastLogin(user._id);
 
     return {
       accessToken: tokens.accessToken,
@@ -239,7 +273,7 @@ export class OAuthFlowService {
     });
 
     return {
-      userId: linkToken.userId.toString(),
+      userId: linkToken.userId,
       providerKey: linkToken.providerKey,
     };
   }
@@ -262,7 +296,7 @@ export class OAuthFlowService {
 
     if (existingLink) {
       // Provider already linked — log the user in
-      const user = await this.userService.findById(existingLink.userId.toString());
+      const user = await this.userService.findById(existingLink.userId);
       if (!user) {
         throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'Linked user not found');
       }
@@ -270,11 +304,11 @@ export class OAuthFlowService {
       assertAccountAccessible(user);
 
       // Create temp token for frontend exchange
-      const tempToken = await this.createTempLoginToken(user._id);
+      const exchangeCode = await this.createTempLoginToken(user._id);
 
       return {
         type: 'login',
-        accessToken: tempToken,
+        exchangeCode,
       };
     }
 
@@ -295,8 +329,8 @@ export class OAuthFlowService {
       });
 
       // Send linking verification email
-      this.sendLinkVerificationEmail(existingUser.email, linkToken, providerKey).catch((err) => {
-        this.logger.error('Failed to send link verification email', { error: err.message });
+      this.sendLinkVerificationEmail(existingUser.email, linkToken, providerKey).catch((err: unknown) => {
+        this.logger.error('Failed to send link verification email', { error: (err as Error).message });
       });
 
       const maskedEmail = this.maskEmail(email);
@@ -321,7 +355,7 @@ export class OAuthFlowService {
     try {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
-        newUser._id.toString(),
+        newUser._id,
         defaultPlan.id,
         defaultPlan.slug,
       );
@@ -336,7 +370,7 @@ export class OAuthFlowService {
     try {
       const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
       await this.workspaceInitializer.getOrCreatePersonalWorkspace(
-        newUser._id.toString(),
+        newUser._id,
         workspaceStorage,
       );
       this.logger.log('Personal workspace created for new OAuth user', {
@@ -353,7 +387,7 @@ export class OAuthFlowService {
     try {
       const defaultRole = await this.authorizationService.findRoleByName('user');
       if (defaultRole) {
-        await this.authorizationService.assignRoleToUser(newUser._id.toString(), defaultRole.id);
+        await this.authorizationService.assignRoleToUser(newUser._id, defaultRole.id);
       }
     } catch (error) {
       this.logger.warn('Failed to assign default role to OAuth user', {
@@ -371,17 +405,16 @@ export class OAuthFlowService {
     );
 
     // Create temp token for frontend exchange
-    const tempToken = await this.createTempLoginToken(newUser._id);
+    const exchangeCode = await this.createTempLoginToken(newUser._id);
 
     this.logger.log('New OAuth user created', {
       userId: newUser._id,
       providerKey,
-      email,
     });
 
     return {
       type: 'login',
-      accessToken: tempToken,
+      exchangeCode,
     };
   }
 
@@ -393,11 +426,11 @@ export class OAuthFlowService {
 
     await this.providerLinkTokenStore.create({
       token,
-      userId: String(userId),
+      userId,
       providerKey: '__temp_login__',
       providerUserId: '__temp__',
       providerEmail: '__temp__',
-      expiresAt: new Date(Date.now() + TEMP_TOKEN_TTL_MS),
+      expiresAt: new Date(Date.now() + OAUTH_EXCHANGE_TTL_MS),
     });
 
     return token;
@@ -414,8 +447,7 @@ export class OAuthFlowService {
     clientId: string,
     clientSecret: string,
     codeVerifier?: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Promise<any> {
+  ): Promise<{ access_token?: string }> {
     let url = tokenUrl;
     if (tenantId) {
       url = url.replace('{tenant}', tenantId);
@@ -448,7 +480,7 @@ export class OAuthFlowService {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_FAILED, 'OAuth token exchange failed');
     }
 
-    return response.json();
+    return (await response.json()) as { access_token?: string };
   }
 
   /**
@@ -468,17 +500,29 @@ export class OAuthFlowService {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_FAILED, 'Failed to fetch user info from OAuth provider');
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data: any = await response.json();
+    // OIDC claims (sub, email, ...) and Microsoft Graph fields (id, mail, ...) in one bag.
+    const data = (await response.json()) as ProviderUserInfoPayload;
 
     return {
-      sub: data.sub || data.id || data.oid,
-      email: data.email || data.mail || data.userPrincipalName,
-      name: data.name || data.displayName,
-      given_name: data.given_name || data.givenName,
-      family_name: data.family_name || data.surname,
+      sub: data.sub ?? data.id ?? data.oid,
+      email: data.email ?? data.mail ?? data.userPrincipalName,
+      name: data.name ?? data.displayName,
+      given_name: data.given_name ?? data.givenName,
+      family_name: data.family_name ?? data.surname,
       email_verified: data.email_verified,
     };
+  }
+
+  private hashBindingNonce(nonce: string): string {
+    return crypto.createHash('sha256').update(nonce).digest('hex');
+  }
+
+  /** Constant-time check that the nonce cookie matches the hash embedded in the state. */
+  private isStateBoundToBrowser(state: string, bindingNonce: string | undefined): boolean {
+    if (!bindingNonce) return false;
+    const expected = Buffer.from(state.slice(state.lastIndexOf('.') + 1));
+    const actual = Buffer.from(this.hashBindingNonce(bindingNonce));
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
   }
 
   /**
@@ -509,27 +553,26 @@ export class OAuthFlowService {
   /**
    * Build user response object for login.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private buildUserResponse(user: any, permissions: string[], roleNames: string[]): Record<string, unknown> {
+  private buildUserResponse(user: UserDocLike, permissions: string[], roleNames: string[]): Record<string, unknown> {
     return {
-      id: user._id.toString(),
+      id: user._id,
       email: user.email,
       emailVerified: user.emailVerified,
       profileComplete: user.profileComplete,
       profile: {
-        firstName: user.profile?.firstName,
-        lastName: user.profile?.lastName,
-        company: user.profile?.company,
+        firstName: user.profile.firstName,
+        lastName: user.profile.lastName,
+        company: user.profile.company,
       },
       consents: {
-        privacyPolicy: user.consents?.privacyPolicy,
-        privacyPolicyAcceptedAt: user.consents?.privacyPolicyAcceptedAt,
-        dataSharing: user.consents?.dataSharing,
-        dataSharingAcceptedAt: user.consents?.dataSharingAcceptedAt,
+        privacyPolicy: user.consents.privacyPolicy,
+        privacyPolicyAcceptedAt: user.consents.privacyPolicyAcceptedAt,
+        dataSharing: user.consents.dataSharing,
+        dataSharingAcceptedAt: user.consents.dataSharingAcceptedAt,
       },
       plan: user.planId
         ? {
-            id: user.planId.toString(),
+            id: user.planId,
             slug: user.planSlug,
             startedAt: user.planStartedAt,
           }
@@ -554,8 +597,7 @@ export class OAuthFlowService {
       return;
     }
 
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const linkUrl = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/link/verify?token=${token}`;
+    const linkUrl = `${this.backendUrl}${getAuthCookiePath(this.configService)}/providers/link/verify?token=${token}`;
 
     const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.LINK_OAUTH_ACCOUNT,
@@ -576,7 +618,7 @@ export class OAuthFlowService {
     });
 
     if (!result.success) {
-      this.logger.error('Failed to send link verification email', { email, error: result.error });
+      this.logger.error('Failed to send link verification email', { error: result.error });
     }
   }
 }

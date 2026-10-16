@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ArrowRight, Bot } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useModuleTranslation } from '@/modules/localization';
 import { useConversationStore } from '@/modules/conversation/store';
-import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
+import { useAppBuilderStudioPointersStore, useAppBuilderStudioStore } from '@/modules/app-builder-studio/store';
 // Leaf imports: avoid the project barrel (ProjectPage graph cycles back here).
 import { useProjectStore } from '@/modules/project/store';
 import { CreateProjectDialog } from '@/modules/project/components/CreateProjectDialog';
@@ -29,10 +29,12 @@ export const RecentChats = memo(function RecentChats({
   rows,
   loading,
   showAllChatsLink = false,
+  compact = false,
 }: {
   rows: HistoryRow[];
   loading?: boolean;
   showAllChatsLink?: boolean;
+  compact?: boolean;
 }) {
   const { t } = useModuleTranslation('sidebar');
   const navigate = useNavigate();
@@ -48,13 +50,13 @@ export const RecentChats = memo(function RecentChats({
   // Shallow-stable id arrays: the stores replace the cache Map on every background
   // stream chunk, so subscribing by Map reference would re-render the whole list at token rate.
   const v1BackgroundStreamingIds = useConversationStore(useShallow((s) => Array.from(s.streamingStateCache.keys())));
-  const v2BackgroundStreamingIds = useConversationV2Store(
+  const v2BackgroundStreamingIds = useAppBuilderStudioStore(
     useShallow((s) => Array.from(s.streamingStateCache).filter(([, slice]) => slice.streaming).map(([id]) => id)),
   );
-  const renameV2 = useConversationV2PointersStore((s) => s.rename);
-  const removeV2 = useConversationV2PointersStore((s) => s.remove);
-  const currentV2SessionId = useConversationV2Store((s) => s.sessionId);
-  const v2Streaming = useConversationV2Store((s) => s.streaming);
+  const renameV2 = useAppBuilderStudioPointersStore((s) => s.rename);
+  const removeV2 = useAppBuilderStudioPointersStore((s) => s.remove);
+  const currentV2SessionId = useAppBuilderStudioStore((s) => s.sessionId);
+  const v2Streaming = useAppBuilderStudioStore((s) => s.streaming);
 
   const createProject = useProjectStore((s) => s.createProject);
 
@@ -105,7 +107,7 @@ export const RecentChats = memo(function RecentChats({
     async (sessionId: string) => {
       const wasCurrent = currentV2SessionId === sessionId;
       await removeV2(sessionId);
-      if (wasCurrent) navigate('/conversation-v2');
+      if (wasCurrent) navigate('/studio');
     },
     [currentV2SessionId, removeV2, navigate],
   );
@@ -123,6 +125,7 @@ export const RecentChats = memo(function RecentChats({
   );
 
   const dayGroups = useMemo(() => groupByDay(disambiguateTitles(rows)), [rows]);
+  const displayedGroups = compact ? [{ bucket: 'today' as const, rows: disambiguateTitles(rows) }] : dayGroups;
   const dayLabels = useMemo(
     () => ({
       today: t('recentChats.today'),
@@ -160,17 +163,17 @@ export const RecentChats = memo(function RecentChats({
 
   return (
     <div
-      className={cn('min-h-full', isOver && 'rounded-md bg-primary/5 ring-1 ring-primary/40')}
+      className={cn(!compact && 'min-h-full', isOver && 'rounded-md bg-primary/5 ring-1 ring-primary/40')}
       onDragOver={onDragOver}
       onDragEnter={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {dayGroups.map(({ bucket, rows: groupRows }) => (
+      {displayedGroups.map(({ bucket, rows: groupRows }) => (
         <div key={bucket}>
-          <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
+          {!compact && <div className='sticky top-0 z-10 bg-sidebar px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
             {dayLabels[bucket]}
-          </div>
+          </div>}
           <SidebarMenu className='pr-1'>
             {groupRows.map((row) =>
               row.kind === 'v2' ? (
@@ -179,7 +182,7 @@ export const RecentChats = memo(function RecentChats({
                   id={row.id}
                   title={row.displayTitle}
                   to={row.to}
-                  icon={<Bot className='h-4 w-4' />}
+                  icon={<Sparkles className='h-4 w-4 text-primary' />}
                   isActive={currentV2SessionId === row.id}
                   streaming={(v2Streaming && currentV2SessionId === row.id) || v2BackgroundStreamingIds.includes(row.id)}
                   draggable={false}

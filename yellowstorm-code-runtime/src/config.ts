@@ -1,6 +1,11 @@
 import type { RuntimeLimits } from "./runtime/limits.js";
 import { DEFAULT_LIMITS } from "./runtime/limits.js";
+import type { AzureConfig } from "./workspace/azure-blob.js";
 import type { CephConfig } from "./workspace/ceph-s3.js";
+
+export type StorageConfig =
+  | { provider: "ceph"; ceph: CephConfig }
+  | { provider: "azure"; azure: AzureConfig };
 
 export interface ServiceConfig {
   port: number;
@@ -9,7 +14,7 @@ export interface ServiceConfig {
   maxConcurrentExecutions: number;
   maxQueueDepth: number;
   limits: RuntimeLimits;
-  ceph: CephConfig;
+  storage: StorageConfig;
 }
 
 function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -31,6 +36,36 @@ function boolean(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boole
   if (raw.toLowerCase() === "true") return true;
   if (raw.toLowerCase() === "false") return false;
   throw new Error(`${name} must be true or false.`);
+}
+
+function loadStorage(env: NodeJS.ProcessEnv): StorageConfig {
+  const provider = (env.STORAGE_PROVIDER?.trim() || "ceph").toLowerCase();
+
+  if (provider === "azure") {
+    return {
+      provider: "azure",
+      azure: {
+        connectionString: required(env, "AZURE_STORAGE_CONNECTION_STRING"),
+        container: required(env, "AZURE_STORAGE_CONTAINER_NAME")
+      }
+    };
+  }
+
+  if (provider !== "ceph") throw new Error('STORAGE_PROVIDER must be "ceph" or "azure".');
+
+  const endpoint = required(env, "CEPH_S3_ENDPOINT");
+  if (!/^https?:$/.test(new URL(endpoint).protocol)) throw new Error("CEPH_S3_ENDPOINT must use HTTP or HTTPS.");
+  return {
+    provider: "ceph",
+    ceph: {
+      endpoint,
+      region: required(env, "CEPH_S3_REGION"),
+      bucket: required(env, "CEPH_S3_BUCKET"),
+      accessKeyId: required(env, "CEPH_S3_ACCESS_KEY_ID"),
+      secretAccessKey: required(env, "CEPH_S3_SECRET_ACCESS_KEY"),
+      forcePathStyle: boolean(env, "CEPH_S3_FORCE_PATH_STYLE", true)
+    }
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
@@ -81,9 +116,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   if (maxHttpBodyBytes <= limits.maxCodeBytes + limits.maxInputBytes) {
     throw new Error("RUN_CODE_MAX_HTTP_BODY_BYTES is too small for configured code and input limits.");
   }
-  const endpoint = required(env, "CEPH_S3_ENDPOINT");
-  const parsedEndpoint = new URL(endpoint);
-  if (!/^https?:$/.test(parsedEndpoint.protocol)) throw new Error("CEPH_S3_ENDPOINT must use HTTP or HTTPS.");
   return {
     port: positiveInt(env, "PORT", 8080),
     apiKey: required(env, "CODE_RUNTIME_API_KEY"),
@@ -91,13 +123,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     maxConcurrentExecutions: positiveInt(env, "RUN_CODE_MAX_CONCURRENT_EXECUTIONS", 8),
     maxQueueDepth: positiveInt(env, "RUN_CODE_MAX_QUEUE_DEPTH", 32),
     limits,
-    ceph: {
-      endpoint,
-      region: required(env, "CEPH_S3_REGION"),
-      bucket: required(env, "CEPH_S3_BUCKET"),
-      accessKeyId: required(env, "CEPH_S3_ACCESS_KEY_ID"),
-      secretAccessKey: required(env, "CEPH_S3_SECRET_ACCESS_KEY"),
-      forcePathStyle: boolean(env, "CEPH_S3_FORCE_PATH_STYLE", true)
-    }
+    storage: loadStorage(env)
   };
 }

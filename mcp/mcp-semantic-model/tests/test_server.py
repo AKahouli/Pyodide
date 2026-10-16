@@ -50,8 +50,9 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "list_semantic_models", "create_semantic_model", "get_semantic_model", "check_semantic_model",
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
-        "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
+        "run_data_update", "get_run_status", "stop_data_update", "publish_semantic_model", "suggest_sources",
         "find_records", "get_related_records", "describe_model", "query_records", "delete_semantic_model", "clone_semantic_model",
+        "traverse_records", "connect_records",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -129,13 +130,11 @@ async def test_read_tools_pass_queries_and_undo_targets_the_latest_change(monkey
     monkeypatch.setattr(server, "backend", lambda: backend)
     async with Client(mcp) as client:
         await client.call_tool("list_workspace_files", {"source_workspace_id": "ws 1", "search": "invoice 2024"})
-        await client.call_tool("search_records", {"model_id": "m", "concept": "Invoice line", "query": "acme"})
         await client.call_tool("undo_model_change", {"model_id": "m"})
         await client.call_tool("undo_model_change", {"model_id": "m", "change_id": "c-1"})
     paths = [call[1] for call in backend.calls]
     assert paths == [
         "/api/v1/internal/semantic-model-assistant/workspaces/ws%201/files?search=invoice+2024",
-        "/api/v1/internal/semantic-model-assistant/models/m/concepts/Invoice%20line/records?q=acme&limit=20",
         "/api/v1/internal/semantic-model-assistant/models/m/changes/undo",
         "/api/v1/internal/semantic-model-assistant/models/m/changes/c-1/undo",
     ]
@@ -239,12 +238,15 @@ async def test_get_related_records_builds_one_or_two_steps(monkeypatch, actor):
             "model_id": "m", "record_ids": '["e-1", "e-2"]', "relations": ["signs"], "direction": "outgoing",
             "then_relations": ["is billed by"], "concepts": ["Invoice"], "data": "draft", "max_records": 20,
         })
+        await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"], "fields": '["*"]'})
     assert backend.calls == [
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
          {"recordIds": ["e-1"], "direction": "both", "data": "published", "maxRecords": 50}),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
          {"recordIds": ["e-1", "e-2"], "relations": ["signs"], "direction": "outgoing", "thenRelations": ["is billed by"],
           "concepts": ["Invoice"], "data": "draft", "maxRecords": 20}),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
+         {"recordIds": ["e-1"], "direction": "both", "data": "published", "maxRecords": 50, "fields": ["*"]}),
     ]
 
 
@@ -305,6 +307,8 @@ async def test_query_records_sends_one_structured_query(monkeypatch, actor):
             "order_by": [{"field": "count", "direction": "desc"}], "limit": 0, "match": "any",
         }))
         await client.call_tool("query_records", {"model_id": "Mail", "concept": "Message", "fields": '["Subject"]', "offset": 50, "data": "draft"})
+        await client.call_tool("query_records", {"model_id": "Mail", "concept": "Fait", "limit": 200,
+                                                 "linked_to": [{"relation": "énonce", "record_ids": ["e-1"]}]})
     assert result["ok"] is True
     assert backend.calls == [
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-query", "user-1", {
@@ -319,6 +323,9 @@ async def test_query_records_sends_one_structured_query(monkeypatch, actor):
         }),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-query", "user-1",
          {"concept": "Message", "match": "all", "fields": ["Subject"], "limit": 50, "offset": 50, "data": "draft"}),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-query", "user-1",
+         {"concept": "Fait", "match": "all", "linkedTo": [{"relation": "énonce", "recordIds": ["e-1"]}],
+          "limit": 200, "offset": 0, "data": "published"}),
     ]
 
 
@@ -336,9 +343,79 @@ async def test_query_records_refuses_bad_input_without_calling_the_backend(monke
             {"concept": "X", "offset": -1},
             {"concept": "X", "match": "some"},
             {"concept": "X", "data": "production"},
+            {"concept": "X", "linked_to": [{"relation": "énonce"}]},
+            {"concept": "X", "linked_to": [{"record_ids": ["e-1"]}]},
         )]
     assert all(outcome["ok"] is False and outcome["error"]["category"] == "validation" for outcome in outcomes)
     assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_traverse_records_sends_the_walk_step_by_step(monkeypatch, actor):
+    backend = Recorder({"status": "ok", "total": 4, "groups": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("traverse_records", {
+            "model_id": "Mail",
+            "start": '{"concept": "Correspondant", "filters": [{"field": "domaine", "op": "eq", "value": "acme.com"}]}',
+            "steps": ["désigné par", {"relation": "participe à"},
+                      {"relation": "énonce", "filters": [{"field": "texte", "op": "contains", "value": "pénalité"}]}],
+            "group_by": [{"field": "name", "step": 0}], "limit": 0,
+        }))
+        await client.call_tool("traverse_records", {
+            "model_id": "Mail", "start": {"concept": "Correspondant", "record_ids": ["corr:dan"]},
+            "steps": [{"relation": "rend compte à", "hops": "1..3", "direction": "outgoing"}], "data": "draft"})
+    assert result["ok"] is True
+    assert backend.calls == [
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-traverse", "user-1", {
+            "start": {"concept": "Correspondant", "filters": [{"field": "domaine", "op": "eq", "value": "acme.com"}], "match": "all"},
+            "steps": [{"relation": "désigné par"}, {"relation": "participe à"},
+                      {"relation": "énonce", "filters": [{"field": "texte", "op": "contains", "value": "pénalité"}], "match": "all"}],
+            "groupBy": [{"field": "name", "step": 0}], "limit": 0, "offset": 0, "data": "published",
+        }),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-traverse", "user-1", {
+            "start": {"concept": "Correspondant", "recordIds": ["corr:dan"]},
+            "steps": [{"relation": "rend compte à", "direction": "outgoing", "minHops": 1, "maxHops": 3}],
+            "limit": 50, "offset": 0, "data": "draft",
+        }),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_walk_tools_refuse_bad_input_without_calling_the_backend(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        walks = [result_dict(await client.call_tool("traverse_records", {"model_id": "m", **arguments})) for arguments in (
+            {"start": {"concept": " "}, "steps": ["a"]},
+            {"start": "not json", "steps": ["a"]},
+            {"start": {"concept": "X"}, "steps": []},
+            {"start": {"concept": "X"}, "steps": ["a", "b", "c", "d", "e", "f", "g"]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "hops": "3..1"}]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "hops": 5}]},
+            {"start": {"concept": "X"}, "steps": [{"relation": "a", "direction": "both"}]},
+            {"start": {"concept": "X"}, "steps": ["a"], "group_by": [{"field": "name", "step": -1}]},
+        )]
+        links = [result_dict(await client.call_tool("connect_records", {"model_id": "m", **arguments})) for arguments in (
+            {"from_record_id": " ", "to_record_id": "b"},
+            {"from_record_id": "a", "to_record_id": "b", "max_links": 7},
+            {"from_record_id": "a", "to_record_id": "b", "max_paths": 0},
+        )]
+    assert all(outcome["ok"] is False and outcome["error"]["category"] == "validation" for outcome in walks + links)
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_connect_records_asks_for_the_shortest_chains(monkeypatch, actor):
+    backend = Recorder({"status": "connected", "links": 2, "paths": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("connect_records", {
+            "model_id": "Mail", "from_record_id": "corr:alice", "to_record_id": "msg:3", "relations": '["désigne"]'}))
+    assert result["ok"] is True
+    assert backend.calls == [("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-connect", "user-1", {
+        "fromRecordId": "corr:alice", "toRecordId": "msg:3", "maxLinks": 4, "maxPaths": 5, "relations": ["désigne"],
+        "data": "published"})]
 
 
 @pytest.mark.asyncio
@@ -351,6 +428,10 @@ async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     assert "invalid_query" in query and "appliedQuery" in query and "unparsable" in query and "nextOffset" in query
     assert "first" in describe and "type" in describe and "inData" in describe
     assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
+    assert "traverse_records" in server.INSTRUCTIONS and "connect_records" in server.INSTRUCTIONS
+    walk = tools["traverse_records"].description
+    assert "step" in walk and "hops" in walk and "startRecords" in walk and "complete" in walk
+    assert "search_cut" in tools["connect_records"].description
     assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS
 
 

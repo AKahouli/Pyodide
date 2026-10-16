@@ -1,28 +1,67 @@
 """Revision-specific AGE projection (Phase 6C, P6.16-P6.19).
 
 Builds a separate immutable graph per accepted data revision and leaves the
-active graph untouched until activation swaps the serving tuple. R1 uses the
-plan's simple representation: ``Entity`` vertices carrying ``concept_id`` and
-``RELATED_TO`` edges carrying ``relation_id``; business labels render from the
-specification, never from mutable user labels in executable Cypher. Graph
-names are server-generated from the revision id and sanitized; values travel
-as escaped literals inside allowlisted query shapes (P6.19).
+active graph untouched until activation swaps the serving tuple.
+
+Typed graphs (``age:v2:``): one vertex label per concept and one edge label per
+relationship, named from the concept and relation ids (``concept_label`` /
+``relation_label``), so a query on one concept or relationship reads only its
+table. Every vertex label has a btree index on ``record_id``; AGE indexes the
+edges' ends itself. Vertices keep ``concept_id`` and edges ``relation_id``, and
+each vertex carries ``workspace_ids``, the workspaces its record was read from,
+so visibility can be checked inside a Cypher query. Graphs built before
+(``age:v1:``) hold ``Entity`` vertices and ``RELATED_TO`` edges; readers match
+without labels so both serve until ``reproject_revision`` rebuilds them.
+
+Which fields a vertex carries is a per-concept choice (``graph exposure``, see
+``normalize_graph_exposure``): a hidden field is not stored in the graph, a long text can be cut. The
+choice is no part of the data revision (records, search index and record tables read the runtime
+database and never change); it is stored with the revision and applied when its graph is built, so
+changing it rebuilds the graph only. Readers of a vertex's properties give a hidden field its value
+back from the stored records (``restore_hidden_values``).
+
+Business labels render from the specification, never from mutable user labels
+in executable SQL or Cypher. Graph and label names are server-generated and checked; values
+travel as bound parameters when loading and as escaped literals in allowlisted read queries (P6.19).
+
+Bulk load: records and links are inserted straight into AGE's label tables with
+``INSERT ... SELECT`` over arrays of agtype documents, in the shape ``CREATE`` /
+``SET n = row`` would give them (the column defaults allocate the graph ids, a
+property set to null is left out). A temporary table maps each record's
+``record_id`` to its graph id as the records go in, so links resolve their ends
+with a join instead of a ``MATCH`` per link. Reads still go through Cypher.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .compiler import PopulationError
+from .run_limits import DEFAULT_RUN_LIMITS, RUN_LIMIT_RANGES
 
-MAX_BATCH_VERTICES = 500
-MAX_BATCH_EDGES = 500
-LIVE_PROJECTION_PREFIX = "age:v1:"
+# Tells a watcher how far a long step is: (unit, done, total), total None while unknown.
+StepReport = Callable[[str, int, int | None], Awaitable[None]]
+
+DEFAULT_BATCH_ROWS = DEFAULT_RUN_LIMITS["projectionBatchRows"]
+MIN_BATCH_ROWS, MAX_BATCH_ROWS = RUN_LIMIT_RANGES["projectionBatchRows"]
+# Record id -> graph id of the records written so far, for resolving the ends of links.
+VERTEX_IDS_TABLE = "pg_temp.proj_vertex_ids"
+_INT64 = 2 ** 63
+MAX_PROJECTED_LINKS = 500_000
+# Records read to rebuild a graph from stored rows (the store's own default read stops at 50,000).
+MAX_PROJECTED_RECORDS = 500_000
+LIVE_PROJECTION_PREFIX = "age:v1:"  # Entity / RELATED_TO graphs, served until re-projected
+TYPED_PROJECTION_PREFIX = "age:v2:"  # a label per concept and per relationship
+_PROJECTION_PREFIXES = (TYPED_PROJECTION_PREFIX, LIVE_PROJECTION_PREFIX)
+WORKSPACES_PROPERTY = "workspace_ids"
 _CYPHER_TAG = "$agecypher$"
 _GRAPH_RE = re.compile(r"^pop_[a-z0-9_]{1,64}$")
+_LABEL_RE = re.compile(r"^[cr]_[a-z0-9_]{1,60}$")
 _KEY_RE = re.compile(r"[^a-zA-Z0-9_]")
 logger = logging.getLogger(__name__)
 
@@ -42,17 +81,53 @@ def projection_graph_name(revision_id: Any) -> str:
 
 
 def live_projection_ref(graph: str) -> str:
-    return LIVE_PROJECTION_PREFIX + _check_graph(graph)
+    """The reference of a typed graph built now."""
+    return TYPED_PROJECTION_PREFIX + _check_graph(graph)
 
 
 def is_live_projection_ref(value: Any) -> bool:
-    if not isinstance(value, str) or not value.startswith(LIVE_PROJECTION_PREFIX):
-        return False
     try:
-        _check_graph(value[len(LIVE_PROJECTION_PREFIX):])
+        projection_graph(value)
     except PopulationError:
         return False
     return True
+
+
+def projection_graph(projection_ref: Any) -> str:
+    """The graph name of a projection reference, typed or not."""
+    if isinstance(projection_ref, str):
+        for prefix in _PROJECTION_PREFIXES:
+            if projection_ref.startswith(prefix):
+                return _check_graph(projection_ref[len(prefix):])
+    raise PopulationError("revision_not_projected")
+
+
+def is_typed_projection(projection_ref: Any) -> bool:
+    """A graph with a label per concept and relationship, and workspaces on its vertices."""
+    return isinstance(projection_ref, str) and projection_ref.startswith(TYPED_PROJECTION_PREFIX)
+
+
+def _type_label(kind: str, ident: Any) -> str:
+    text = str(ident or "")
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40]
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+    return f"{kind}_{slug}_{digest}" if slug else f"{kind}_{digest}"
+
+
+def concept_label(concept_id: Any) -> str:
+    """The vertex label of a concept: readable, and distinct for distinct ids."""
+    return _type_label("c", concept_id)
+
+
+def relation_label(relation_id: Any) -> str:
+    """The edge label of a relationship."""
+    return _type_label("r", relation_id)
+
+
+def _check_label(label: str) -> str:
+    if not _LABEL_RE.match(label):
+        raise PopulationError("invalid_label")
+    return label
 
 
 def _check_graph(graph: str) -> str:
@@ -62,8 +137,13 @@ def _check_graph(graph: str) -> str:
 
 
 def _escape(value: Any) -> str:
+    """A Cypher literal for the read queries: scalars as themselves, a list of scalars as a list
+    (so a vertex's workspaces can be tested in a query), anything else as its text."""
     if value is None:
         return "null"
+    if isinstance(value, (list, tuple)) and all(item is None or isinstance(item, (str, int, float, bool))
+                                                for item in value):
+        return "[" + ", ".join(_escape(item) for item in value) + "]"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
@@ -86,53 +166,195 @@ def _cypher(graph: str, query: str, columns: str) -> str:
             f"{_CYPHER_TAG}{query}{_CYPHER_TAG}) AS ({columns})")
 
 
+def _workspaces(entity: dict[str, Any]) -> list[str]:
+    sources = (entity.get("provenance") or {}).get("sources") or []
+    return sorted({str(((source or {}).get("assetRef") or {}).get("workspaceId"))
+                   for source in sources if ((source or {}).get("assetRef") or {}).get("workspaceId")})
+
+
+MAX_EXPOSURE_CONCEPTS = 500
+MAX_EXPOSURE_FIELDS = 500
+MAX_FIELD_CHARS = 100_000
+# Names the vertex always carries, whatever the exposure: its id, concept, label and workspaces.
+PROTECTED_PROPERTIES = frozenset({"record_id", "concept_id", "label", WORKSPACES_PROPERTY})
+
+
+def normalize_graph_exposure(raw: Any) -> dict[str, dict[str, Any]]:
+    """The fields each concept shows in the graph, in the one shape stored with a revision.
+
+    ``{conceptId: {"hidden": [field, ...], "maxChars": {field: n}}}``: a concept absent from it, a
+    field not listed, shows as before. Empty entries are dropped, so "everything shown" is ``{}``.
+    Raises ``PopulationError("invalid_graph_exposure")`` for any other shape."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_EXPOSURE_CONCEPTS:
+        raise PopulationError("invalid_graph_exposure")
+    result: dict[str, dict[str, Any]] = {}
+    for concept_id, rule in raw.items():
+        if not isinstance(concept_id, str) or not concept_id or not isinstance(rule, dict):
+            raise PopulationError("invalid_graph_exposure")
+        hidden = rule.get("hidden", [])
+        limits = rule.get("maxChars", {})
+        if (not isinstance(hidden, list) or not isinstance(limits, dict)
+                or len(hidden) > MAX_EXPOSURE_FIELDS or len(limits) > MAX_EXPOSURE_FIELDS
+                or not all(isinstance(name, str) and name for name in hidden)
+                or not all(isinstance(name, str) and name and isinstance(value, int) and not isinstance(value, bool)
+                           and 1 <= value <= MAX_FIELD_CHARS for name, value in limits.items())):
+            raise PopulationError("invalid_graph_exposure")
+        entry: dict[str, Any] = {}
+        if hidden:
+            entry["hidden"] = sorted(set(hidden))
+        # A hidden field is not cut: it is not there.
+        kept = {name: value for name, value in limits.items() if name not in hidden}
+        if kept:
+            entry["maxChars"] = dict(sorted(kept.items()))
+        if entry:
+            result[concept_id] = entry
+    return result
+
+
+def stored_graph_exposure(coverage: Any) -> dict[str, dict[str, Any]]:
+    """The exposure a revision's graph was built with (from its coverage); ``{}`` when none was set."""
+    if isinstance(coverage, str):
+        try:
+            coverage = json.loads(coverage)
+        except ValueError:
+            return {}
+    value = coverage.get("graphExposure") if isinstance(coverage, dict) else None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
+    try:
+        return normalize_graph_exposure(value)
+    except PopulationError:
+        return {}
+
+
 def compile_projection(entities: list[dict[str, Any]],
-                       relationships: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compile canonical rows to a plan of vertices and edges (P6.17-P6.18)."""
-    vertices = []
+                       relationships: list[dict[str, Any]],
+                       exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Compile canonical rows to a plan of vertices and edges (P6.17-P6.18). A record or
+    a link given twice is projected once. ``exposure`` (normalized) leaves out the fields a concept
+    hides and cuts the long texts it limits; the vertex keeps its id, concept, label and workspaces."""
+    exposure = exposure or {}
+    vertices: dict[str, dict[str, Any]] = {}
     for entity in entities:
         properties: dict[str, Any] = {}
+        rule = exposure.get(entity.get("conceptId", "")) or {}
+        hidden = set(rule.get("hidden") or ())
+        limits = rule.get("maxChars") or {}
         # Key fields live in the identity, not the attributes; the graph shows them as
         # properties too, so a Customer node shows its customer number.
         for values in (entity.get("identity"), entity.get("attributes")):
             for key, value in (values or {}).items():
-                if isinstance(key, str) and key:
+                if isinstance(key, str) and key and key not in hidden:
+                    if key in limits and isinstance(value, str):
+                        value = value[:limits[key]]
                     properties[_safe_key(key)] = value
-        # Set last: a field named like these never replaces the node's own id or label.
+        # Set last: a field named like these never replaces the node's own id, label or workspaces.
         properties.update({"record_id": entity["entityId"], "concept_id": entity.get("conceptId", ""),
-                           "label": entity.get("label", "")})
-        vertices.append(properties)
-    edges = []
+                           "label": entity.get("label", ""), WORKSPACES_PROPERTY: _workspaces(entity)})
+        vertices[entity["entityId"]] = properties
+    edges: dict[tuple[str, str, str], dict[str, Any]] = {}
     for relationship in relationships:
-        edges.append({"source": relationship["sourceEntityId"],
-                      "target": relationship["targetEntityId"],
-                      "relation": relationship["relationId"]})
-    return {"vertices": vertices, "edges": edges}
+        source, target = relationship["sourceEntityId"], relationship["targetEntityId"]
+        edges[(relationship["relationId"], source, target)] = {
+            "source": source, "target": target, "relation": relationship["relationId"],
+            "sourceConcept": (vertices.get(source) or {}).get("concept_id", ""),
+            "targetConcept": (vertices.get(target) or {}).get("concept_id", "")}
+    return {"vertices": list(vertices.values()), "edges": list(edges.values())}
 
 
-def _map_literal(properties: dict[str, Any]) -> str:
-    return "{" + ", ".join(f"{name}: {_escape(value)}"
-                           for name, value in properties.items()) + "}"
+def _property_value(value: Any) -> Any:
+    """A property as agtype stores it: scalars as themselves (a number the type cannot hold is
+    left out, an integer beyond 64 bits becomes a float as a Cypher literal would), a list of
+    scalars as a list, anything else as its text."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        if -_INT64 <= value < _INT64:
+            return value
+        return float(value) if abs(value) < 10 ** 308 else str(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (list, tuple)) and all(item is None or isinstance(item, (str, int, float, bool))
+                                                for item in value):
+        return [_property_value(item) for item in value]
+    return str(value)
 
 
-def render_vertex_batch(graph: str, vertices: list[dict[str, Any]]) -> str:
-    if not vertices or len(vertices) > MAX_BATCH_VERTICES:
+def agtype_document(properties: dict[str, Any]) -> str:
+    """The agtype map of a record's or link's properties, as JSON text. A property set to null is
+    left out, as ``SET n = row`` does."""
+    stored = {name: converted for name, value in properties.items()
+              if (converted := _property_value(value)) is not None}
+    return json.dumps(stored, ensure_ascii=False, allow_nan=False, separators=(", ", ": "))
+
+
+def _check_batch_rows(batch_rows: Any) -> int:
+    if (isinstance(batch_rows, bool) or not isinstance(batch_rows, int)
+            or not MIN_BATCH_ROWS <= batch_rows <= MAX_BATCH_ROWS):
         raise PopulationError("invalid_batch")
-    rows = ", ".join(_map_literal(vertex) for vertex in vertices)
-    return _cypher(graph, f"UNWIND [{rows}] AS row "
-                          "MERGE (n:Entity {record_id: row.record_id}) "
-                          "SET n += row", "v ag_catalog.agtype")
+    return batch_rows
 
 
-def render_edge_batch(graph: str, edges: list[dict[str, Any]]) -> str:
-    if not edges or len(edges) > MAX_BATCH_EDGES:
-        raise PopulationError("invalid_batch")
-    rows = ", ".join(_map_literal(edge) for edge in edges)
-    return _cypher(graph, f"UNWIND [{rows}] AS row "
-                          "MATCH (s:Entity {record_id: row.source}), "
-                          "(t:Entity {record_id: row.target}) "
-                          "MERGE (s)-[r:RELATED_TO {relation_id: row.relation}]->(t)",
-                   "e ag_catalog.agtype")
+def _label_table(graph: str, label: str) -> str:
+    return f'"{_check_graph(graph)}"."{_check_label(label)}"'
+
+
+def vertex_ids_table_sql() -> list[str]:
+    """(Re)create the record id -> graph id map; temporary, so it needs no cleanup after a failure."""
+    return [f"DROP TABLE IF EXISTS {VERTEX_IDS_TABLE}",
+            f"CREATE TEMP TABLE {VERTEX_IDS_TABLE.removeprefix('pg_temp.')} "
+            "(record_id text NOT NULL, id ag_catalog.graphid NOT NULL)"]
+
+
+def vertex_ids_index_sql() -> list[str]:
+    """Built after the records are in (cheaper than keeping it up to date), then analysed so the
+    links' joins look the ends up through it."""
+    return [f"CREATE UNIQUE INDEX proj_vertex_ids_record_id ON {VERTEX_IDS_TABLE} (record_id)",
+            f"ANALYZE {VERTEX_IDS_TABLE}"]
+
+
+def insert_vertices_sql(graph: str, label: str, *, track_ids: bool) -> str:
+    """Insert the records of $1 (agtype documents as text) into a concept's label table. The
+    table's default allocates each graph id; with ``track_ids`` the ids are kept in the map."""
+    insert = (f"INSERT INTO {_label_table(graph, label)} (properties) "
+              "SELECT doc::ag_catalog.agtype FROM unnest($1::text[]) AS docs(doc)")
+    if not track_ids:
+        return insert
+    return (f"WITH inserted AS ({insert} RETURNING id, properties) "
+            f"INSERT INTO {VERTEX_IDS_TABLE} (record_id, id) "
+            "SELECT properties::json ->> 'record_id', id FROM inserted")
+
+
+def insert_edges_sql(graph: str, label: str) -> str:
+    """Insert the links of $1 (source record ids), $2 (target record ids) and $3 (agtype documents
+    as text) into a relationship's label table; each end is resolved through the map. A link whose
+    end is not in the map is not inserted (the caller compares the count)."""
+    return (f"INSERT INTO {_label_table(graph, label)} (start_id, end_id, properties) "
+            "SELECT s.id, t.id, e.doc::ag_catalog.agtype "
+            "FROM unnest($1::text[], $2::text[], $3::text[]) AS e(source, target, doc) "
+            f"JOIN {VERTEX_IDS_TABLE} s ON s.record_id = e.source "
+            f"JOIN {VERTEX_IDS_TABLE} t ON t.record_id = e.target")
+
+
+def analyze_label_sql(graph: str, label: str) -> str:
+    return f"ANALYZE {_label_table(graph, label)}"
+
+
+def create_label_sql(graph: str, label: str, kind: str) -> str:
+    function = {"vertex": "create_vlabel", "edge": "create_elabel"}[kind]
+    return f"SELECT ag_catalog.{function}('{_check_graph(graph)}', '{_check_label(label)}')"
+
+
+def record_index_sql(graph: str, label: str) -> str:
+    """The btree index Cypher uses for ``n.record_id = ...`` and ``n.record_id IN ...``."""
+    return (f'CREATE INDEX IF NOT EXISTS "{_check_label(label)}_record_id" ON "{_check_graph(graph)}"."{label}" '
+            "USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, "
+            "'\"record_id\"'::ag_catalog.agtype]))")
 
 
 def create_graph_sql(graph: str) -> str:
@@ -159,17 +381,68 @@ def _chunks(items: list[Any], size: int) -> list[list[Any]]:
     return [items[index:index + size] for index in range(0, len(items), size)]
 
 
-async def project_revision(connection: Any, *, graph: str,
-                           plan: dict[str, Any]) -> dict[str, Any]:
-    """Create the graph and stream inserts in bounded batches (P6.16, P6.29)."""
+def _inserted_rows(status: Any) -> int | None:
+    """Rows of an ``INSERT 0 n`` command tag (None for anything else, such as a test double's)."""
+    match = re.fullmatch(r"INSERT \d+ (\d+)", status) if isinstance(status, str) else None
+    return int(match.group(1)) if match else None
+
+
+async def project_revision(connection: Any, *, graph: str, plan: dict[str, Any],
+                           report: StepReport | None = None,
+                           batch_rows: int = DEFAULT_BATCH_ROWS) -> dict[str, Any]:
+    """Create the typed graph and bulk-load it in bounded batches (P6.16, P6.29): a label per
+    concept and the records of each (with ``batch_rows`` per statement), then the records' label
+    tables get their ``record_id`` index and are analysed, then a label per relationship and its
+    links, resolved against the ids of the records written, then the relationships' tables are
+    analysed.
+
+    ``report(unit, done, total)`` is told after each batch how many graph elements (records, then
+    links) are written of all of them; it runs on another connection than ``connection``."""
     _check_graph(graph)
+    batch_rows = _check_batch_rows(batch_rows)
     vertices = plan.get("vertices", [])
     edges = plan.get("edges", [])
+    total, written = len(vertices) + len(edges), 0
     await connection.execute(create_graph_sql(graph))
-    for batch in _chunks(list(vertices), MAX_BATCH_VERTICES):
-        await connection.execute(render_vertex_batch(graph, batch))
-    for batch in _chunks(list(edges), MAX_BATCH_EDGES):
-        await connection.execute(render_edge_batch(graph, batch))
+    by_concept: dict[str, list[dict[str, Any]]] = {}
+    for vertex in vertices:
+        by_concept.setdefault(concept_label(vertex.get("concept_id")), []).append(vertex)
+    if edges:
+        for statement in vertex_ids_table_sql():
+            await connection.execute(statement)
+    for label, members in by_concept.items():
+        await connection.execute(create_label_sql(graph, label, "vertex"))
+        sql = insert_vertices_sql(graph, label, track_ids=bool(edges))
+        for batch in _chunks(members, batch_rows):
+            await connection.execute(sql, [agtype_document(vertex) for vertex in batch])
+            written += len(batch)
+            if report is not None:
+                await report("elements", written, total)
+    # After the load: building an index over the rows is cheaper than updating it row by row.
+    for label in by_concept:
+        await connection.execute(record_index_sql(graph, label))
+        await connection.execute(analyze_label_sql(graph, label))
+    if edges:
+        for statement in vertex_ids_index_sql():
+            await connection.execute(statement)
+    by_relation: dict[str, list[dict[str, Any]]] = {}
+    for edge in edges:
+        by_relation.setdefault(relation_label(edge["relation"]), []).append(edge)
+    for label, members in by_relation.items():
+        await connection.execute(create_label_sql(graph, label, "edge"))
+        sql = insert_edges_sql(graph, label)
+        for batch in _chunks(members, batch_rows):
+            status = await connection.execute(
+                sql, [str(edge["source"]) for edge in batch], [str(edge["target"]) for edge in batch],
+                [agtype_document({"relation_id": edge["relation"]}) for edge in batch])
+            if _inserted_rows(status) not in (None, len(batch)):
+                raise PopulationError("projection_incoherent")
+            written += len(batch)
+            if report is not None:
+                await report("elements", written, total)
+        await connection.execute(analyze_label_sql(graph, label))
+    if edges:
+        await connection.execute(f"DROP TABLE IF EXISTS {VERTEX_IDS_TABLE}")
     return {"graph": graph, "vertices": len(vertices), "edges": len(edges)}
 
 
@@ -178,6 +451,22 @@ async def projection_exists(connection: Any, graph: str) -> bool:
         "SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)",
         _check_graph(graph),
     ))
+
+
+async def graph_counts(connection: Any, graph: str) -> dict[str, int] | None:
+    """Records, links and labels actually in a graph (None when it does not exist). The parent
+    label tables hold the rows of every concept and relationship table."""
+    graph = _check_graph(graph)
+    labels = await connection.fetchrow(
+        "SELECT count(*) FILTER (WHERE l.kind = 'v' AND l.name <> '_ag_label_vertex') AS concepts, "
+        "count(*) FILTER (WHERE l.kind = 'e' AND l.name <> '_ag_label_edge') AS relations "
+        "FROM ag_catalog.ag_graph g JOIN ag_catalog.ag_label l ON l.graph = g.graphid WHERE g.name = $1", graph)
+    if labels is None or not await projection_exists(connection, graph):
+        return None
+    vertices = await connection.fetchval(f'SELECT count(*) FROM "{graph}"._ag_label_vertex')
+    edges = await connection.fetchval(f'SELECT count(*) FROM "{graph}"._ag_label_edge')
+    return {"vertices": int(vertices), "edges": int(edges), "conceptLabels": int(labels["concepts"]),
+            "relationLabels": int(labels["relations"])}
 
 
 def _agtype_count(value: Any) -> int:
@@ -195,32 +484,24 @@ def _agtype_value(value: Any) -> Any:
 
 async def read_projection_graph(age_pool: Any, projection_ref: str) -> dict[str, Any]:
     """Read one immutable projection without rebuilding or indexing it."""
-    if not is_live_projection_ref(projection_ref):
-        raise PopulationError("revision_not_projected")
-    graph = projection_ref[len(LIVE_PROJECTION_PREFIX):]
+    graph = projection_graph(projection_ref)
     async with age_pool.acquire() as connection:
+        # Without labels: a typed graph and an older Entity / RELATED_TO one read alike.
         nodes = await connection.fetch(_cypher(
             graph,
-            "MATCH (n:Entity) RETURN n.record_id, n.concept_id, n.label, properties(n)",
+            "MATCH (n) RETURN n.record_id, n.concept_id, n.label, properties(n)",
             "record_id ag_catalog.agtype, concept_id ag_catalog.agtype, "
             "label ag_catalog.agtype, properties ag_catalog.agtype",
         ))
         edges = await connection.fetch(_cypher(
             graph,
-            "MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity) "
+            "MATCH (s)-[r]->(t) "
             "RETURN r.relation_id, s.record_id, t.record_id, properties(r)",
             "relation_id ag_catalog.agtype, source_id ag_catalog.agtype, "
             "target_id ag_catalog.agtype, properties ag_catalog.agtype",
         ))
     return {
-        "nodes": [{
-            "id": str(_agtype_value(row["record_id"])),
-            "label": str(_agtype_value(row["concept_id"])),
-            "properties": {
-                **(_agtype_value(row["properties"]) or {}),
-                "record_label": _agtype_value(row["label"]),
-            },
-        } for row in nodes],
+        "nodes": [_node(row) for row in nodes],
         "edges": [{
             "id": f"{_agtype_value(row['relation_id'])}:"
                   f"{_agtype_value(row['source_id'])}:{_agtype_value(row['target_id'])}",
@@ -229,6 +510,41 @@ async def read_projection_graph(age_pool: Any, projection_ref: str) -> dict[str,
             "targetId": str(_agtype_value(row["target_id"])),
             "properties": _agtype_value(row["properties"]) or {},
         } for row in edges],
+    }
+
+
+# Record ids per Cypher statement: the literal list is part of the query text.
+NODE_READ_CHUNK = 1000
+
+
+async def read_projection_nodes(age_pool: Any, projection_ref: str, record_ids: list[str]) -> list[dict[str, Any]]:
+    """The records of ``record_ids`` in one projection, shaped like :func:`read_projection_graph`'s
+    nodes. The ids are written as literals so the planner starts from each label's record_id index
+    (a bound parameter would make it scan every record); a missing id is simply absent."""
+    graph = projection_graph(projection_ref)
+    nodes: list[dict[str, Any]] = []
+    async with age_pool.acquire() as connection:
+        for start in range(0, len(record_ids), NODE_READ_CHUNK):
+            chunk = record_ids[start:start + NODE_READ_CHUNK]
+            rows = await connection.fetch(_cypher(
+                graph,
+                f"MATCH (n) WHERE n.record_id IN {_escape(chunk)} "
+                "RETURN n.record_id, n.concept_id, n.label, properties(n)",
+                "record_id ag_catalog.agtype, concept_id ag_catalog.agtype, "
+                "label ag_catalog.agtype, properties ag_catalog.agtype",
+            ))
+            nodes.extend(_node(row) for row in rows)
+    return nodes
+
+
+def _node(row: Any) -> dict[str, Any]:
+    return {
+        "id": str(_agtype_value(row["record_id"])),
+        "label": str(_agtype_value(row["concept_id"])),
+        "properties": {
+            **(_agtype_value(row["properties"]) or {}),
+            "record_label": _agtype_value(row["label"]),
+        },
     }
 
 
@@ -244,9 +560,14 @@ async def drop_projection(connection: Any, graph: str) -> None:
     await connection.execute(drop_graph_sql(_check_graph(graph)))
 
 
-async def ensure_revision_projection(pool: Any, age_pool: Any,
-                                     revision_id: str) -> dict[str, Any]:
-    """Build, validate and record one immutable revision projection."""
+async def ensure_revision_projection(pool: Any, age_pool: Any, revision_id: str,
+                                     report: StepReport | None = None,
+                                     batch_rows: int = DEFAULT_BATCH_ROWS,
+                                     exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build, validate and record one immutable revision projection.
+
+    ``exposure`` (normalized; ``None`` leaves it as stored, ``{}`` shows every field) is the fields each
+    concept shows. A graph already built with another exposure is rebuilt, from the stored records."""
     from app.persistence import population_store as store
 
     revision = await store.get_data_revision(pool, revision_id)
@@ -255,6 +576,8 @@ async def ensure_revision_projection(pool: Any, age_pool: Any,
     if revision["validation_state"] != "valid":
         raise PopulationError("revision_not_valid")
     if is_live_projection_ref(revision["projection_ref"]):
+        if exposure is not None and exposure != stored_graph_exposure(revision.get("coverage")):
+            return await reproject_revision(pool, age_pool, revision_id, force=True, exposure=exposure)
         return {"revisionId": revision_id, "projectionRef": revision["projection_ref"],
                 "reused": True}
     graph = projection_graph_name(revision_id)
@@ -268,18 +591,50 @@ async def ensure_revision_projection(pool: Any, age_pool: Any,
                 return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
                         "reused": True}
             return await _build_revision_projection(
-                pool, connection, revision_id, graph, current["projection_ref"])
+                pool, connection, revision_id, graph, current["projection_ref"], report, batch_rows,
+                exposure or {})
         finally:
             await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
 
 
-async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
-                                     graph: str, previous_ref: str | None) -> dict[str, Any]:
+# Records whose stored values are read back at once.
+RESTORE_CHUNK = 5000
+
+
+async def restore_hidden_values(pool: Any, revision_id: str, nodes: list[dict[str, Any]],
+                                exposure: dict[str, dict[str, Any]]) -> None:
+    """Give the nodes read from a graph the fields that graph does not hold: the hidden ones and the
+    cut texts, with the value stored with the record. ``nodes`` are shaped like :func:`_node`'s (``label``
+    is the concept id); nothing is read when no concept limits its fields."""
+    from app.persistence import graph_search_store as search_store
+
+    limited = [node for node in nodes if exposure.get(node["label"])]
+    for start in range(0, len(limited), RESTORE_CHUNK):
+        chunk = limited[start:start + RESTORE_CHUNK]
+        stored = await search_store.entity_attributes(pool, revision_id, [node["id"] for node in chunk])
+        for node in chunk:
+            rule = exposure[node["label"]]
+            values = stored.get(node["id"]) or {}
+            for name in [*(rule.get("hidden") or ()), *(rule.get("maxChars") or {})]:
+                key = _safe_key(name)
+                value = _property_value(values.get(name))
+                if value is not None and key not in PROTECTED_PROPERTIES:
+                    node["properties"][key] = value
+
+
+async def _project_stored_rows(pool: Any, connection: Any, revision_id: str, graph: str,
+                               report: StepReport | None = None,
+                               batch_rows: int = DEFAULT_BATCH_ROWS,
+                               exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, int]:
+    """Build ``graph`` from the revision's stored records and links, and check its counts."""
     from app.persistence import population_store as store
 
+    if report is not None:
+        # Reading a large revision back takes a while and has no count to show.
+        await report("loading", 0, None)
     stored = await store.count_revision_rows(pool, revision_id)
-    entities = await store.list_revision_entities(pool, revision_id)
-    relationships = await store.list_revision_relationships(pool, revision_id)
+    entities = await store.list_revision_entities(pool, revision_id, limit=MAX_PROJECTED_RECORDS)
+    relationships = await store.list_revision_relationships(pool, revision_id, limit=MAX_PROJECTED_LINKS)
     if stored["entities"] != len(entities) or stored["relationships"] != len(relationships):
         raise PopulationError("projection_too_large")
     known_ids = {entity["entityId"] for entity in entities}
@@ -287,13 +642,16 @@ async def _build_revision_projection(pool: Any, connection: Any, revision_id: st
            or relationship["targetEntityId"] not in known_ids
            for relationship in relationships):
         raise PopulationError("projection_incoherent")
-    plan = compile_projection(entities, relationships)
-    expected = {"vertices": len(entities), "edges": len(relationships)}
+    # Only accepted links are facts; a suppressed or retracted one is never followed.
+    plan = compile_projection(entities, [relationship for relationship in relationships
+                                         if relationship.get("state", "accepted") == "accepted"], exposure)
+    expected = {"vertices": len(plan["vertices"]), "edges": len(plan["edges"])}
     try:
         async with connection.transaction():
             if await projection_exists(connection, graph):
                 await drop_projection(connection, graph)
-            await project_revision(connection, graph=graph, plan=plan)
+            await project_revision(connection, graph=graph, plan=plan, report=report,
+                                   batch_rows=batch_rows)
             if validate_projection(expected, await projection_counts(connection, graph)):
                 raise PopulationError("projection_validation_failed")
     except PopulationError:
@@ -302,10 +660,21 @@ async def _build_revision_projection(pool: Any, connection: Any, revision_id: st
         logger.warning("AGE projection failed for revision %s: %s",
                        revision_id, type(exc).__name__)
         raise ProjectionUnavailable("age_projection_failed") from exc
+    return expected
+
+
+async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
+                                     graph: str, previous_ref: str | None,
+                                     report: StepReport | None = None,
+                                     batch_rows: int = DEFAULT_BATCH_ROWS,
+                                     exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    from app.persistence import population_store as store
+
+    expected = await _project_stored_rows(pool, connection, revision_id, graph, report, batch_rows, exposure)
     projection_ref = live_projection_ref(graph)
     try:
         recorded = await store.set_revision_projection(
-            pool, revision_id, projection_ref, previous_ref)
+            pool, revision_id, projection_ref, previous_ref, graph_exposure=exposure)
     except Exception as exc:
         logger.warning("Projection persistence failed for revision %s: %s",
                        revision_id, type(exc).__name__)
@@ -323,6 +692,42 @@ async def _build_revision_projection(pool: Any, connection: Any, revision_id: st
             raise PopulationError("projection_record_conflict")
     return {"revisionId": revision_id, "projectionRef": projection_ref,
             "graph": graph, **expected, "reused": not recorded}
+
+
+async def reproject_revision(pool: Any, age_pool: Any, revision_id: str, *,
+                             force: bool = False,
+                             exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Rebuild a revision's graph as a typed one from its stored records and links (no source
+    is read again), then move the revision, its bindings and its search index to it at once
+    and drop the old graph. A typed graph is left as it is unless ``force``. ``exposure`` is the
+    fields each concept shows (see :func:`normalize_graph_exposure`); ``None`` keeps the stored one."""
+    from app.persistence import population_store as store
+
+    revision = await store.get_data_revision(pool, revision_id)
+    if revision is None:
+        raise PopulationError("revision_not_found")
+    old_ref = revision["projection_ref"]
+    if exposure is None:
+        exposure = stored_graph_exposure(revision.get("coverage"))
+    if is_typed_projection(old_ref) and not force:
+        return {"revisionId": revision_id, "projectionRef": old_ref, "reprojected": False}
+    old_graph = projection_graph(old_ref)
+    # The new graph is built beside the one in use, so it needs another name.
+    name = projection_graph_name(revision_id)
+    graph = _check_graph(f"{name}_t2" if old_graph != f"{name}_t2" else f"{name}_t3")
+    async with age_pool.acquire() as connection:
+        await connection.fetchval("SELECT pg_advisory_lock(hashtextextended($1, 0))", graph)
+        try:
+            expected = await _project_stored_rows(pool, connection, revision_id, graph, exposure=exposure)
+            new_ref = live_projection_ref(graph)
+            if not await store.replace_revision_projection(pool, revision_id, old_ref, new_ref,
+                                                           graph_exposure=exposure):
+                await _discard_projection(connection, graph, revision_id)
+                raise PopulationError("projection_record_conflict")
+            await _discard_projection(connection, old_graph, revision_id)
+        finally:
+            await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
+    return {"revisionId": revision_id, "projectionRef": new_ref, "reprojected": True, **expected}
 
 
 async def _revision_after_persistence_error(pool: Any, revision_id: str):  # type: ignore[no-untyped-def]
@@ -345,12 +750,16 @@ async def _discard_projection(connection: Any, graph: str, revision_id: str) -> 
                      revision_id, type(exc).__name__)
 
 
-async def finalize_draft_revision(pool: Any, age_pool: Any,
-                                  revision_id: str) -> dict[str, Any]:
+async def finalize_draft_revision(pool: Any, age_pool: Any, revision_id: str,
+                                  report: StepReport | None = None,
+                                  batch_rows: int = DEFAULT_BATCH_ROWS,
+                                  exposure: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Project and atomically move only the draft serving binding."""
     from app.persistence import population_store as store
 
-    projected = await ensure_revision_projection(pool, age_pool, revision_id)
+    # Left out when unset, so the graph keeps the exposure it was built with.
+    projected = await ensure_revision_projection(
+        pool, age_pool, revision_id, report, batch_rows, **({} if exposure is None else {'exposure': exposure}))
     revision = await store.get_data_revision(pool, revision_id)
     if revision is None:
         raise PopulationError("revision_not_found")

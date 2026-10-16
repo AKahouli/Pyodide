@@ -439,6 +439,15 @@ export class SemanticModelService {
         `INSERT INTO semantic_model.workspace_links (model_id, workspace_id, role, enabled, created_by) VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (model_id, workspace_id) DO NOTHING`, [targetId, link.workspaceId, link.role, link.enabled, userId]);
     }
+    // The clone inherits the origin link, so models.origin_workspace_id has to follow.
+    // Left null, linking any workspace would be read as "this model has no origin yet"
+    // and assign role 'origin' again, colliding with semantic_workspace_origin_uidx.
+    const origin = links.rows.find((link) => link.role === 'origin' && link.enabled);
+    if (origin) {
+      await client.query(
+        'UPDATE semantic_model.models SET origin_workspace_id=$2, updated_at=now() WHERE id=$1 AND origin_workspace_id IS NULL',
+        [targetId, origin.workspaceId]);
+    }
     const bindings = await client.query<SemanticBindingRow>(
       `SELECT target_kind AS "targetKind", target_id AS "targetId", resource_kind AS "resourceKind",
               workspace_id AS "workspaceId", document_id AS "documentId", inclusion_mode AS "inclusionMode",

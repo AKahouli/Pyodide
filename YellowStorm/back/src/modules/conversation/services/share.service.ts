@@ -5,9 +5,10 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '../.
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { EmailService } from '../../email/email.service';
 import { LoggerService } from '../../logger';
-import { UserService } from '../../user/user.service';
+import { UserService } from '../../user/services/user.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
+import { GovernanceAudienceAuthorizationService } from '../../governance/services/governance-audience-authorization.service';
 import type {
   CreateShareData,
   EmbeddedMessage,
@@ -82,6 +83,7 @@ export class ShareService {
     private readonly emailService: EmailService,
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceShareService: WorkspaceShareService,
+    private readonly audienceAuthorization: GovernanceAudienceAuthorizationService,
   ) {
     this.logger.setContext('ShareService');
   }
@@ -97,11 +99,14 @@ export class ShareService {
         'Only the conversation owner can share it',
       );
     }
-    if (conversation.runtimeMode === 'governed') {
+    if (conversation.runtimeMode === 'governed' && (data.shareType !== 'private' || data.shareWorkspaces || !conversation.governanceScopeId)) {
       throw new ForbiddenException(
         ErrorCode.CHAT_FORBIDDEN,
-        'Governed conversations cannot be shared',
+        'Governed conversations can only be shared with their audience',
       );
+    }
+    if (conversation.runtimeMode === 'governed') {
+      await this.audienceAuthorization.assertUserAuthorized(userId, conversation.governanceScopeId!);
     }
     if (data.shareType === 'public') {
       const maxCloneMessages = this.configService.get<number>('conversation.maxCloneMessages', 2000);
@@ -119,6 +124,21 @@ export class ShareService {
     }
     const emailPreviewMessages = await this.shareStore.listSnapshotMessages(conversation.id, 40);
     return this.createPrivateShare(userId, conversation, data, emailPreviewMessages);
+  }
+
+  async searchRecipients(conversationId: string, userId: string, query: string): Promise<{ id: string; email: string; firstName?: string; lastName?: string }[]> {
+    const conversation = await this.shareStore.findSourceConversation(conversationId);
+    if (!conversation || conversation.createdBy !== userId) {
+      throw new ForbiddenException(ErrorCode.CHAT_SHARE_FORBIDDEN, 'Only the conversation owner can share it');
+    }
+    if (conversation.runtimeMode === 'governed') {
+      if (!conversation.governanceScopeId) throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Governed scope is unavailable');
+      await this.audienceAuthorization.assertUserAuthorized(userId, conversation.governanceScopeId);
+    }
+    if (conversation.runtimeMode === 'governed') {
+      return this.shareStore.searchAudienceUsers(query, userId, conversation.governanceScopeId!);
+    }
+    return this.userService.searchUsers({ query, excludeUserId: userId, limit: 10 });
   }
 
   private async createPublicShare(
@@ -173,6 +193,11 @@ export class ShareService {
         continue;
       }
       const recipientId = user._id.toString();
+      if (conversation.runtimeMode === 'governed' &&
+        !(await this.audienceAuthorization.isUserAuthorized(recipientId, conversation.governanceScopeId!))) {
+        invalid.push(email);
+        continue;
+      }
       if (
         recipientId === userId ||
         existingMemberIds.has(recipientId) ||
@@ -358,6 +383,21 @@ export class ShareService {
     this.logger.log('Share revoked', { shareId, userId });
   }
 
+  async revokeRecipient(shareId: string, recipientId: string, userId: string): Promise<void> {
+    const share = await this.shareStore.findById(shareId);
+    if (!share || share.isRevoked || share.shareType !== 'private') {
+      throw new NotFoundException(ErrorCode.CHAT_SHARE_NOT_FOUND, 'Share not found');
+    }
+    if (share.sharedBy !== userId) {
+      throw new ForbiddenException(ErrorCode.CHAT_SHARE_FORBIDDEN, 'You do not have access to this share');
+    }
+    const index = share.recipientUserIds?.indexOf(recipientId) ?? -1;
+    if (index < 0 || !share.recipientEmails?.[index]) {
+      throw new NotFoundException(ErrorCode.CHAT_SHARE_NOT_FOUND, 'Recipient not found');
+    }
+    await this.shareStore.removePrivateRecipient(shareId, share.originalConversationId, recipientId, share.recipientEmails[index]);
+  }
+
   async viewPublicShare(accessToken: string): Promise<PublicShareViewResponse> {
     const share = await this.shareStore.findPublicByToken(accessToken);
     if (!share) {
@@ -395,6 +435,7 @@ export class ShareService {
       title: share.title,
       accessToken: share.accessToken,
       recipientEmails: share.recipientEmails,
+      recipientUserIds: share.recipientUserIds,
       forkedConversationIds: share.forkedConversationIds,
       expiresAt: share.expiresAt?.toISOString(),
       viewCount: share.viewCount,

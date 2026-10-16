@@ -35,6 +35,12 @@ describe('designerFlow', () => {
     expect(feeds.filter((feed) => feed.sourceId === sheet.id).map((feed) => feed.conceptId)).toEqual(['supplier', 'contract']);
   });
 
+  it('shows a mail archive table as a mail source, one box per table', () => {
+    const mail = (id: string, sheetName: string) => mapping(id, 'supplier', { documentId: 'zip', documentName: 'mails.zip', mimeType: 'application/zip', sheetName });
+    const { sources } = designerFlow(graph, [mail('a', 'messages'), mail('b', 'participants')]);
+    expect(sources.filter((source) => source.kind !== 'typed').map((source) => [source.kind, source.detail])).toEqual([['mail', 'messages'], ['mail', 'participants']]);
+  });
+
   it('draws a concept made from another one as a line from that concept, with no source box', () => {
     const derived = { id: 'd1', conceptId: 'supplier', sourceConceptId: 'contract', conflictRule: 'most_frequent' as const, orderBy: null,
       updatedAt: '', fieldMappings: [{ sourceAttribute: 'number', targetAttribute: 'siret' }] };
@@ -54,7 +60,7 @@ describe('designerFlow', () => {
     expect(designerFlow(graph, [mapping('a', 'supplier')], [health('a', 'changed')]).sources[0].tone).toBe('warn');
   });
 
-  it('shows typed records as their own source, below the files feeding the same concept', () => {
+  it('shows the manual table as its own source, below the files feeding the same concept', () => {
     const { sources, feeds } = designerFlow(graph, [mapping('a', 'supplier', { assetKind: 'document', sheetName: '' })]);
     expect(sources.map((source) => source.kind)).toEqual(['documents', 'typed']);
     const typed = sources.find((source) => source.id === typedSourceId('supplier'))!;
@@ -62,6 +68,13 @@ describe('designerFlow', () => {
     expect(sources.every((source) => source.position.x === 400 - SOURCE_COLUMN_OFFSET)).toBe(true);
     expect(feeds.find((feed) => feed.sourceId === typed.id)).toMatchObject({ step: 'typed', conceptId: 'supplier' });
     expect(feeds[0].step).toBe('extract');
+  });
+
+  it('counts only active rows, and shows no manual table box without one', () => {
+    const row = (id: string, status: 'active' | 'inactive') => ({ id, nodeTypeId: 'supplier', label: id, values: {}, status, position: { x: 0, y: 0 } });
+    const rows = (...records: ReturnType<typeof row>[]) => designerFlow({ ...graph, records }).sources.filter((source) => source.kind === 'typed');
+    expect(rows(row('a', 'active'), row('b', 'inactive'), row('c', 'active'))[0].detail).toBe('2');
+    expect(rows(row('a', 'inactive'))).toEqual([]);
   });
 
   it('never puts a source on top of a concept, even between two concepts in a row', () => {

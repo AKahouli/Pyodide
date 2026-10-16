@@ -10,26 +10,34 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any
+import time
+from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Body, Header, HTTPException, Path, Request, Response, status
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
                              ManualBatchCommand, ManualCommitCommand,
                              MirrorSpecificationCommand, PopulationCommand, PublishModelDataCommand,
                              ReviewResolveCommand)
+from app.persistence import graph_window_store as window_store
 from app.persistence import manual_store
 from app.persistence import population_store as store
-from app.population.age_projection import (LIVE_PROJECTION_PREFIX, ProjectionUnavailable,
+from app.population.age_projection import (ProjectionUnavailable, projection_graph,
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
-                                             read_projection_graph)
+                                             graph_counts, is_typed_projection,
+                                             normalize_graph_exposure, read_projection_graph,
+                                             read_projection_nodes, reproject_revision,
+                                             restore_hidden_values, stored_graph_exposure)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
+from app.population.model_check import check_model
 from app.workers.celery_app import POPULATION_QUEUES
 
+events = structlog.get_logger(__name__)
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
 logger = logging.getLogger(__name__)
 
@@ -120,67 +128,203 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
-@router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_200_OK)
-async def search_concept_records(model_id: str, concept_id: str, request: Request,
-                                 environment: str = "draft", q: str | None = None,
-                                 limit: int = 50, offset: int = 0,
-                                 data_revision_id: str | None = Query(default=None,
-                                                                      alias="dataRevisionId"),
-                                 ) -> dict[str, object]:
-    """Browse one concept's records in the data in use: searchable, a page at a time."""
-    if (environment != "draft" or limit < 1 or limit > 200 or offset < 0 or offset > 1_000_000
-            or (q is not None and len(q) > 200)):
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
-    pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
+@router.post("/check", status_code=status.HTTP_200_OK)
+async def check_model_plan(body: dict) -> dict[str, object]:
+    """Every problem a preview or build of this plan would stop on, listed at once. Pure validation:
+    the same rules as a run, nothing read, stored or sent (the 256 KiB body limit bounds the work)."""
+    return check_model(body)
+
+
+class _WorkspaceScoped(BaseModel):
+    """Body of a workspace-scoped read. NestJS computes the scope from the actor's current
+    workspace access; a missing, null or oversized one is a validation failure — never
+    "all workspaces". An empty list is honest: only source-free (manual) records show."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    environment: Literal["draft"] = "draft"
+    data_revision_id: str | None = Field(default=None, alias="dataRevisionId", max_length=200)
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=2000)
+
+    @field_validator("allowed_workspace_ids")
+    @classmethod
+    def _bounded_ids(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 200 for item in value):
+            raise ValueError("workspace id must be 1..200 characters")
+        return value
+
+
+class ScopedGraphRead(_WorkspaceScoped):
+    pass
+
+
+MAX_GRAPH_WINDOW_NODES = 5000
+DEFAULT_GRAPH_WINDOW_NODES = 2000
+MAX_FOCUS_DEPTH = 8
+
+
+class ScopedGraphWindowRead(_WorkspaceScoped):
+    """A bounded part of the graph: at most ``nodeLimit`` records (shared among the concepts, or
+    all of one ``conceptId``), or the ``focusIds`` records with the records within ``depth`` links
+    of them (closest first, still at most ``nodeLimit`` in all)."""
+
+    node_limit: int = Field(DEFAULT_GRAPH_WINDOW_NODES, alias="nodeLimit", ge=1, le=MAX_GRAPH_WINDOW_NODES)
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
+    focus_ids: list[str] = Field(default_factory=list, alias="focusIds", max_length=50)
+    neighbours: bool = True
+    depth: int = Field(1, ge=1, le=MAX_FOCUS_DEPTH)
+
+    @field_validator("focus_ids")
+    @classmethod
+    def _bounded_focus(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 300 for item in value):
+            raise ValueError("record id must be 1..300 characters")
+        return value
+
+
+class ScopedRecordsRead(_WorkspaceScoped):
+    limit: int = Field(25, ge=1, le=50)
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
+
+
+class ScopedConceptRecordsRead(_WorkspaceScoped):
+    q: str | None = Field(default=None, max_length=200)
+    limit: int = Field(50, ge=1, le=200)
+    offset: int = Field(0, ge=0, le=1_000_000)
+    filters: dict[str, str] | None = None
+
+
+def _bounded_record_filters(filters: dict[str, str] | None) -> dict[str, str]:
+    """Per-field filters of the records table: at most 30 fields, each text at most 200 characters."""
+    filters = filters or {}
+    if (len(filters) > 30
+            or any(not isinstance(key, str) or not key or len(key) > 200
+                   or not isinstance(value, str) or len(value) > 200
+                   for key, value in filters.items())):
+        raise HTTPException(status_code=422, detail="invalid_record_filters")
+    return {key: value for key, value in filters.items() if value.strip()}
+
+
+async def _pinned_draft_revision(pool: Any, model_id: str, data_revision_id: str | None) -> dict[str, Any]:
+    """The draft binding, pinned to the asked revision when one is named (409 when it moved)."""
+    binding = await store.get_active_binding(pool, model_id, "draft")
     if binding is None:
         raise HTTPException(status_code=404, detail="active_binding_not_found")
-    revision_id = binding["data_revision_id"]
-    if data_revision_id is not None and data_revision_id != revision_id:
+    if data_revision_id is not None and data_revision_id != binding["data_revision_id"]:
         raise HTTPException(status_code=409, detail="active_binding_changed")
+    return binding
+
+
+async def _restore_graph_values(pool: Any, binding: dict[str, Any], nodes: list[dict[str, Any]]) -> None:
+    """A graph built with hidden or cut fields lacks their values: give them back to the nodes read
+    from it, from the records stored with the revision (the same values the records table shows).
+    ``binding`` is the draft binding read, which carries the exposure its graph was built with."""
+    exposure = stored_graph_exposure({"graphExposure": binding.get("graph_exposure")})
+    if exposure:
+        await restore_hidden_values(pool, binding["data_revision_id"], nodes, exposure)
+
+
+def _scoped_gaps(gaps: Any, allowed: list[str], hidden: set[str]) -> Any:
+    """Gaps narrowed to the records this scope may see. The stored groups count the whole
+    revision, so with anything hidden they would leak hidden record counts: the samples stay
+    (scoped), the counts go. With nothing hidden the stored groups are already this scope's."""
+    if not isinstance(gaps, dict):
+        gaps = None
+    gaps = gaps or {"missingValues": [], "unresolvedLinks": [], "other": []}
+    if not hidden:
+        return gaps
+    workspaces = set(allowed)
+
+    def sample_visible(sample: dict[str, Any]) -> bool:
+        workspace_id = (sample.get("asset") or {}).get("workspaceId")
+        return workspace_id is None or workspace_id in workspaces
+
+    return {
+        "missingValues": [], "unresolvedLinks": [], "other": [],
+        "rowSamples": [sample for sample in (gaps.get("rowSamples") or [])
+                       if isinstance(sample, dict) and sample_visible(sample)],
+        "linkSamples": [sample for sample in (gaps.get("linkSamples") or [])
+                        if isinstance(sample, dict) and sample.get("sourceEntityId") not in hidden],
+    }
+
+
+def _scoped_health(health: Any, allowed: list[str], hidden: set[str]) -> Any:
+    """The health report narrowed to this scope. A concept's figures count rows of its sources, so with
+    anything hidden only the concepts whose sources are all in the scope stay."""
+    if not isinstance(health, dict) or not hidden:
+        return health if isinstance(health, dict) else None
+    workspaces = set(allowed)
+    return {**health, "concepts": {
+        concept_id: report for concept_id, report in (health.get("concepts") or {}).items()
+        if isinstance(report, dict) and set(report.get("workspaceIds") or []) <= workspaces}}
+
+
+@router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_410_GONE)
+async def search_concept_records_gone(model_id: str, concept_id: str) -> dict[str, object]:
+    """Removed: it returned every record of the concept, whatever the caller may read.
+    The workspace-scoped read is POST .../records/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/concepts/{concept_id}/records/read", status_code=status.HTTP_200_OK)
+async def search_scoped_concept_records(model_id: str, concept_id: str, command: ScopedConceptRecordsRead,
+                                        request: Request) -> dict[str, object]:
+    """Browse one concept's records in the data in use, narrowed to the workspaces NestJS
+    authorized for this actor: searchable, filterable per field, a page at a time."""
+    field_filters = _bounded_record_filters(command.filters)
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     total, entities = await store.search_revision_entities(
-        pool, revision_id, concept_id, query=q, limit=limit, offset=offset)
+        pool, binding["data_revision_id"], concept_id, query=command.q, limit=command.limit,
+        offset=command.offset, filters=field_filters,
+        allowed_workspace_ids=command.allowed_workspace_ids)
+    origins = await store.list_entity_origins(pool, binding["data_revision_id"],
+                                              sorted(entity["entityId"] for entity in entities))
+    for entity in entities:
+        entity["origins"] = origins.get(entity["entityId"], {})
+    return {"modelId": model_id, "conceptId": concept_id, "dataRevisionId": binding["data_revision_id"],
+            "total": total, "offset": command.offset, "limit": command.limit, "entities": entities}
+
+
+@router.get("/models/{model_id}/records", status_code=status.HTTP_410_GONE)
+async def read_bound_records_gone(model_id: str) -> dict[str, object]:
+    """Removed: it returned every record, whatever the caller may read.
+    The workspace-scoped read is POST .../records/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/records/read", status_code=status.HTTP_200_OK)
+async def read_scoped_records(model_id: str, command: ScopedRecordsRead, request: Request) -> dict[str, object]:
+    """The data in use, narrowed to the workspaces NestJS authorized for this actor: the page's
+    records, the links whose two ends are visible, visible counts, and gaps of visible records."""
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
+    revision_id = binding["data_revision_id"]
+    allowed = command.allowed_workspace_ids
+    _visible, hidden = await store.split_entity_visibility(pool, revision_id, allowed)
+    # Records per concept over the visible records: the entity list below is only a page of it.
+    concept_counts = await store.count_revision_entities_by_concept_visible(pool, revision_id, allowed)
+    if command.concept_id is None:
+        # Ids sort by concept: the first records by id would all belong to the first concepts, so each
+        # concept gets its share of the page.
+        entities = await store.list_revision_entities_visible(
+            pool, revision_id, command.limit, None, allowed,
+            quotas=window_store.allocate_quotas(concept_counts, command.limit))
+    else:
+        entities = await store.list_revision_entities_visible(
+            pool, revision_id, command.limit, command.concept_id, allowed)
     origins = await store.list_entity_origins(pool, revision_id,
                                               sorted(entity["entityId"] for entity in entities))
     for entity in entities:
         entity["origins"] = origins.get(entity["entityId"], {})
-    return {"modelId": model_id, "conceptId": concept_id, "dataRevisionId": revision_id,
-            "total": total, "offset": offset, "limit": limit, "entities": entities}
-
-
-@router.get("/models/{model_id}/records", status_code=status.HTTP_200_OK)
-async def read_bound_records(model_id: str, request: Request, environment: str = "draft",
-                             limit: int = 25,
-                             concept_id: str | None = Query(default=None, alias="conceptId"),
-                             data_revision_id: str | None = Query(default=None,
-                                                                  alias="dataRevisionId"),
-                             ) -> dict[str, object]:
-    if environment != "draft" or limit < 1 or limit > 50:
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
-    pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
-    if binding is None:
-        raise HTTPException(status_code=404, detail="active_binding_not_found")
-    revision_id = binding["data_revision_id"]
-    if data_revision_id is not None and data_revision_id != revision_id:
-        raise HTTPException(status_code=409, detail="active_binding_changed")
-    counts = await store.count_revision_rows(pool, revision_id)
-    # Records per concept, over the whole revision: the entity list below is only a page of it.
-    concept_counts = await store.count_revision_entities_by_concept(pool, revision_id)
-    entities = await store.list_revision_entities(pool, revision_id, limit, concept_id)
-    entity_ids = {entity["entityId"] for entity in entities}
-    origins = await store.list_entity_origins(pool, revision_id, sorted(entity_ids))
-    for entity in entities:
-        entity["origins"] = origins.get(entity["entityId"], {})
+    counts = await store.count_revision_rows_visible(pool, revision_id, allowed)
+    relationships = await store.list_revision_relationships_visible(pool, revision_id, allowed)
     revision = await store.get_data_revision(pool, revision_id)
     coverage = (revision or {}).get("coverage") or {}
     if isinstance(coverage, str):
         coverage = json.loads(coverage)
-    gaps = coverage.get("gaps") if isinstance(coverage, dict) else None
-    relationships = [relationship for relationship in
-                     await store.list_revision_relationships(pool, revision_id)
-                     if relationship["sourceEntityId"] in entity_ids
-                     and relationship["targetEntityId"] in entity_ids]
+    gaps = _scoped_gaps(coverage.get("gaps") if isinstance(coverage, dict) else None, allowed, hidden)
     specification = await store.get_revision_specification(pool, revision_id)
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
@@ -189,34 +333,106 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
             "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
             # Lets the caller tell whether this data was built from the model as it is now.
             "executionFingerprint": (revision or {}).get("execution_fingerprint"),
-            "gaps": gaps or {"missingValues": [], "unresolvedLinks": [], "other": []},
+            "gaps": gaps,
+            # How each concept's rows became records (row journey and findings); absent for older data.
+            "health": _scoped_health(coverage.get("health") if isinstance(coverage, dict) else None, allowed, hidden),
             "specification": specification}
 
 
-@router.get("/models/{model_id}/graph", status_code=status.HTTP_200_OK)
-async def read_bound_graph(model_id: str, request: Request,
-                           environment: str = "draft",
-                           data_revision_id: str | None = Query(default=None,
-                                                                alias="dataRevisionId"),
-                           ) -> dict[str, object]:
-    if environment != "draft":
-        raise HTTPException(status_code=422, detail="invalid_read_scope")
+@router.get("/models/{model_id}/graph", status_code=status.HTTP_410_GONE)
+async def read_bound_graph_gone(model_id: str) -> dict[str, object]:
+    """Removed: it returned the whole graph, whatever the caller may read.
+    The workspace-scoped read is POST .../graph/read."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="endpoint_removed")
+
+
+@router.post("/models/{model_id}/graph/read", status_code=status.HTTP_200_OK)
+async def read_scoped_graph(model_id: str, command: ScopedGraphRead, request: Request) -> dict[str, object]:
+    """The draft graph, narrowed to the workspaces NestJS authorized for this actor: a node
+    shows only when every workspace its record was read from is in the scope, and a link only
+    when both of its ends do. Provenance is read from the canonical revision rows, never from
+    the graph copy, and a record the store cannot vouch for stays hidden."""
     pool = _population_read_pool(request)
-    binding = await store.get_active_binding(pool, model_id, environment)
-    if binding is None:
-        raise HTTPException(status_code=404, detail="active_binding_not_found")
-    if data_revision_id is not None and data_revision_id != binding["data_revision_id"]:
-        raise HTTPException(status_code=409, detail="active_binding_changed")
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
     try:
         graph = await read_projection_graph(_age_pool(request), binding["projection_ref"])
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
+    visible, _hidden = await store.split_entity_visibility(
+        pool, binding["data_revision_id"], command.allowed_workspace_ids)
+    if visible != {node["id"] for node in graph["nodes"]}:
+        graph = {
+            "nodes": [node for node in graph["nodes"] if node["id"] in visible],
+            "edges": [edge for edge in graph["edges"]
+                      if edge["sourceId"] in visible and edge["targetId"] in visible],
+        }
+    await _restore_graph_values(pool, binding, graph["nodes"])
     specification = await store.get_revision_specification(pool, binding["data_revision_id"])
     if specification is None:
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": binding["data_revision_id"],
             "specification": specification, **graph}
+
+
+@router.post("/models/{model_id}/graph/window", status_code=status.HTTP_200_OK)
+async def read_scoped_graph_window(model_id: str, command: ScopedGraphWindowRead,
+                                   request: Request) -> dict[str, object]:
+    """A bounded part of the draft graph under the same workspace rule as ``graph/read``: only
+    visible records are chosen (in SQL, over the canonical rows), only they are read from the
+    graph, and the counts are of visible records and links. Without ``focusIds`` the window is
+    the first records of the data, shared evenly among the concepts (or all from one concept)
+    plus the visible totals; with them it is those records and, unless ``neighbours`` is false,
+    the records within ``depth`` links of them (1 by default), at most ``nodeLimit`` in all and
+    the closest first. Unless ``neighbours`` is false, every node carries ``degree``: its visible
+    links in the whole revision, so a viewer can tell which records have relations not read."""
+    started = time.monotonic()
+    pool = _population_read_pool(request)
+    binding = await _pinned_draft_revision(pool, model_id, command.data_revision_id)
+    revision_id = binding["data_revision_id"]
+    allowed = command.allowed_workspace_ids
+    totals: dict[str, object] | None = None
+    if command.focus_ids:
+        records, truncated = await window_store.select_focus_records(
+            pool, revision_id, allowed, command.focus_ids, neighbours=command.neighbours,
+            limit=command.node_limit, depth=command.depth)
+    else:
+        overview = await window_store.count_visible_overview(pool, revision_id, allowed)
+        concept_counts = overview["concepts"]
+        if command.concept_id is not None:
+            concept_counts = {command.concept_id: concept_counts.get(command.concept_id, 0)}
+        quotas = window_store.allocate_quotas(concept_counts, command.node_limit)
+        records = await window_store.select_visible_records(pool, revision_id, allowed, quotas)
+        truncated = len(records) < sum(concept_counts.values())
+        totals = {"records": sum(overview["concepts"].values()), "links": sum(overview["relations"].values()),
+                  "concepts": overview["concepts"], "relations": overview["relations"]}
+    try:
+        nodes = await read_projection_nodes(_age_pool(request), binding["projection_ref"],
+                                            [record_id for record_id, _concept in records])
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    await _restore_graph_values(pool, binding, nodes)
+    shown = {node["id"] for node in nodes}
+    if command.neighbours:
+        degrees = await window_store.count_visible_degrees(pool, revision_id, allowed, sorted(shown))
+        for node in nodes:
+            node["degree"] = degrees.get(node["id"], 0)
+    edges = [{"id": f"{link['relationId']}:{link['sourceId']}:{link['targetId']}", "label": link["relationId"],
+              "sourceId": link["sourceId"], "targetId": link["targetId"],
+              "properties": {"relation_id": link["relationId"]}}
+             for link in await window_store.list_links_among(pool, revision_id, sorted(shown))]
+    specification = await store.get_revision_specification(pool, revision_id)
+    if specification is None:
+        raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    # Deep focus reads walk up to 8 links; failures surface through http.request.failed.
+    events.info("semantic.graph_window.read", scope="focus" if command.focus_ids else "overview",
+                count=len(nodes), outcome="truncated" if truncated else "complete",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                detail=f"depth={command.depth} links={len(edges)}")
+    return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
+            "dataRevisionId": revision_id, "specification": specification,
+            "nodes": nodes, "edges": edges, "truncated": truncated,
+            "nodeLimit": command.node_limit, "totals": totals}
 
 
 @router.post("/corrections", status_code=status.HTTP_200_OK)
@@ -283,6 +499,9 @@ class PurgeModelDataCommand(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     forget_document_reading: bool = Field(default=False, alias="forgetDocumentReading")
+    # The admin's purge time (Admin > Semantic models); absent means the built-in one.
+    timeout_seconds: int = Field(default=store.DEFAULT_PURGE_TIMEOUT_S, alias="timeoutSeconds",
+                                 ge=30, le=3600)
 
 
 @router.post("/models/{model_id}/purge", status_code=status.HTTP_200_OK)
@@ -295,6 +514,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     try:
         result = await store.purge_model_data(
             pool, model_id, forget_document_reading=command.forget_document_reading,
+            timeout_s=command.timeout_seconds,
             emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     except store.PopulationRunning as exc:
         raise HTTPException(status_code=409, detail="population_running") from exc
@@ -304,7 +524,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     for ref in result.pop("projections"):
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):
@@ -314,6 +534,101 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
             logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
                            type(exc).__name__)
     return {**result, "projectionsDropped": dropped}
+
+
+class ForgetReadingsCommand(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    concept_id: str | None = Field(default=None, alias="conceptId", min_length=1, max_length=200)
+
+
+@router.post("/models/{model_id}/forget-readings", status_code=status.HTTP_200_OK)
+async def forget_document_readings(model_id: str, request: Request,
+                                   command: ForgetReadingsCommand | None = None) -> dict[str, object]:
+    """Forget the model's earlier AI readings of documents (one concept's when ``conceptId`` is
+    given) so the next run reads them again. Records, links and the data in use stay as they are."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        forgotten = await store.forget_document_readings(_population_pool(request), model_id,
+                                                         command.concept_id if command else None)
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    return {"modelId": model_id, "documentReadings": forgotten}
+
+
+@router.get("/models/{model_id}/graph-status", status_code=status.HTTP_200_OK)
+async def read_graph_status(model_id: str, request: Request) -> dict[str, object]:
+    """Which graph each environment serves (schema, revision, layout), what it holds compared
+    with the stored records and links, and the state of its search index. Read only."""
+    from app.graph_search.embeddings import profile_from_env
+    from app.persistence import graph_search_store as search_store
+
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_read_pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    profile = profile_from_env()
+    environments: list[dict[str, Any]] = []
+    for served in await store.served_graphs(pool, model_id):
+        ref = served["projection_ref"]
+        graph = projection_graph(ref) if is_live_projection_ref(ref) else None
+        counts = None
+        if graph and age_pool is not None:
+            try:
+                async with age_pool.acquire() as connection:
+                    counts = await graph_counts(connection, graph)
+            except Exception as exc:  # noqa: BLE001 - the status says the graph could not be read
+                logger.warning("Could not count graph %s: %s", graph, type(exc).__name__)
+        stored = {"records": int(served["records"]), "links": int(served["links"])}
+        if counts is None:
+            state = "missing"
+        elif counts["vertices"] != stored["records"] or counts["edges"] != stored["links"]:
+            state = "mismatch"
+        else:
+            state = "ok"
+        generation = (await search_store.latest_generation(pool, served["data_revision_id"], profile.fingerprint)
+                      if profile else None)
+        index = search_store.public_generation(generation)
+        created = served["created_at"]
+        environments.append({
+            "environment": served["environment"], "dataRevisionId": served["data_revision_id"],
+            "modelVersionId": served["model_version_id"], "projectionRef": ref, "graphSchema": graph,
+            "layout": "typed" if is_typed_projection(ref) else "entity",
+            "builtAt": created.isoformat() if hasattr(created, "isoformat") else created,
+            "stored": stored, "graph": counts, "state": state,
+            "index": {key: index.get(key) for key in ("state", "expectedCount", "indexedCount", "completedAt")},
+        })
+    return {"modelId": model_id, "environments": environments}
+
+
+@router.post("/models/{model_id}/reproject", status_code=status.HTTP_200_OK)
+async def reproject_model_graphs(model_id: str, request: Request,
+                                 body: dict[str, Any] | None = Body(default=None)) -> dict[str, object]:
+    """Rebuild the graphs of the data a model serves from its stored records and links: no
+    source is read again and no record changes. Refused while a build runs. ``graphExposure`` in the
+    body (see :func:`normalize_graph_exposure`) is the fields each concept shows in the rebuilt
+    graphs; without it they keep the exposure they have."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        exposure = (normalize_graph_exposure(body["graphExposure"])
+                    if isinstance(body, dict) and body.get("graphExposure") is not None else None)
+    except PopulationError as exc:
+        raise HTTPException(status_code=422, detail=exc.code) from exc
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    if await store.population_running(pool, model_id):
+        raise HTTPException(status_code=409, detail="population_running")
+    rebuilt: list[dict[str, Any]] = []
+    for revision_id in await store.served_revisions(pool, model_id):
+        try:
+            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True, exposure=exposure))
+        except PopulationError as exc:
+            raise HTTPException(status_code=409, detail=exc.code) from exc
+        except ProjectionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Rebuilt the graphs of model %s: %s", model_id, rebuilt)
+    return {"modelId": model_id, "revisions": rebuilt}
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -335,7 +650,7 @@ async def delete_model(model_id: str, request: Request) -> Response:
     for ref in result["projections"]:
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):

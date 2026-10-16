@@ -1,6 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { newObjectId } from '@common/postgres';
-import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
+import { DocumentStatus, DocumentType } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
@@ -321,15 +321,13 @@ export class WorkspaceDocumentTree {
       });
     }
 
-    // Delete from indexing vectorstore (non-blocking), only if indexed
-    if (document.indexingStatus === IndexingStatus.READY) {
-      this.indexingService.deleteDocumentIndex(document.id, workspaceId).catch((err) => {
-        this.logger.warn('Failed to delete document index', {
-          documentId: document.id,
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
+    // Indexing may have persisted data before failing or reporting completion.
+    this.indexingService.deleteDocumentIndex(document.id, workspaceId).catch((err) => {
+      this.logger.warn('Failed to delete document index', {
+        documentId: document.id,
+        error: err instanceof Error ? err.message : 'Unknown error',
       });
-    }
+    });
 
     // Preserve the Governance source history before the document row disappears.
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
@@ -425,12 +423,10 @@ export class WorkspaceDocumentTree {
 
     await this.workspaceArtifacts.deleteAllByWorkspace(workspaceId);
 
-    // Delete indexes from vectorstore for indexed documents (non-blocking, parallel)
-    const indexedDocuments = documents.filter(
-      (doc) => doc.indexingStatus === IndexingStatus.READY,
-    );
-    if (indexedDocuments.length > 0) {
-      const indexDeletions = indexedDocuments.map((doc) =>
+    // Clean up every file regardless of its last reported indexing status.
+    const files = documents.filter((doc) => !doc.isFolder);
+    if (files.length > 0) {
+      const indexDeletions = files.map((doc) =>
         this.indexingService
           .deleteDocumentIndex(doc.id, workspaceId)
           .catch((err) => {
@@ -484,7 +480,7 @@ export class WorkspaceDocumentTree {
     this.logger.debug('All documents deleted from workspace', {
       workspaceId,
       count: documents.length,
-      indexedCount: indexedDocuments.length,
+      indexDeletionCount: files.length,
       storageReclaimed: totalSize,
     });
   }

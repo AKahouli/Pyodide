@@ -27,6 +27,15 @@ def _input_schema(raw, depth=0, budget=None):
     if not isinstance(kind, str) or kind not in {"object", "array", "string", "number", "integer", "boolean"}:
         return None
     result = {"type": kind}
+    from src.flow_engine.observability.redaction import redact_string
+    for key, limit in (("title", 100), ("description", 500)):
+        if isinstance(raw.get(key), str):
+            result[key] = redact_string(raw[key], limit)[:limit]
+    if isinstance(raw.get("examples"), list):
+        result["examples"] = [redact_string(item, 200)[:200] if isinstance(item, str) else item
+                              for item in raw["examples"]
+                              if isinstance(item, str) and len(item) <= 200 or type(item) is bool
+                              or type(item) in (int, float) and abs(item) <= 2**53 - 1 and math.isfinite(item)][:4]
     for key in ("minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum"):
         if key not in raw:
             continue
@@ -125,7 +134,7 @@ class NativeInvocationProjection:
         if session is None:
             raise ValueError("The native session to resume does not exist")
         for event in session.events:
-            if event.invocation_id != self.invocation_id:
+            if event.invocation_id != self.invocation_id or getattr(event, "partial", False):
                 continue
             for part in getattr(event.content, "parts", None) or []:
                 if part.function_call and part.function_call.name in INPUT_FUNCTIONS:
@@ -194,6 +203,10 @@ class NativeInvocationProjection:
         if not self.started:
             self.started = True
             await self.emit(queue, InvocationLifecycleState.STARTED, getattr(event, "id", None))
+        # Streaming deltas may share the final event ID but lack its input args.
+        # Only complete events may establish pending inputs and their versions.
+        if getattr(event, "partial", False):
+            return
         changed = False
         for part in getattr(getattr(event, "content", None), "parts", None) or []:
             call = part.function_call

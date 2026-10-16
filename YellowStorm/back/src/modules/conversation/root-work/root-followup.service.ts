@@ -44,6 +44,7 @@ export class RootFollowupService {
   }
 
   async reconcile() {
+    await this.store.releaseLegacyWriters();
     const candidates = await this.store.candidates(this.reservationCursor);
     this.reservationCursor = candidates.at(-1)?.id;
     for (const root of candidates) {

@@ -34,6 +34,14 @@ export default registerAs('appRuntime', () => ({
     process.env.APP_RUNTIME_MUTATION_WAIT_MS || '30000',
     10,
   ),
+  /**
+   * How long tool dispatch waits for `runtime.register` when the browser is
+   * still booting (npm install / Vite) before returning RUNTIME_OFFLINE.
+   */
+  browserWaitMs: parseInt(
+    process.env.APP_RUNTIME_BROWSER_WAIT_MS || '180000',
+    10,
+  ),
   starterRevisionId:
     process.env.APP_BUILDER_STARTER_REVISION_ID || DEFAULT_STARTER_REVISION_ID,
   starterManifestKey:

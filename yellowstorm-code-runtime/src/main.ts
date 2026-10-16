@@ -5,11 +5,17 @@ import { loadConfig, type ServiceConfig } from "./config.js";
 import { createExecuteHandler } from "./api/execute.js";
 import { QuickJsExecutor } from "./runtime/quickjs-executor.js";
 import { Metrics } from "./telemetry/metrics.js";
+import { AzureBlobStore } from "./workspace/azure-blob.js";
 import { CephS3Store } from "./workspace/ceph-s3.js";
-import type { Executor } from "./runtime/executor.js";
 import type { ObjectStore } from "./workspace/types.js";
 
-export function buildServer(config: ServiceConfig, executor: Executor, store: ObjectStore) {
+function createStore(storage: ServiceConfig["storage"]): ObjectStore {
+  return storage.provider === "azure"
+    ? new AzureBlobStore(storage.azure)
+    : new CephS3Store(storage.ceph);
+}
+
+export function buildServer(config: ServiceConfig, executor: QuickJsExecutor, store: ObjectStore) {
   const metrics = new Metrics();
   const execute = createExecuteHandler(config, executor, store, metrics);
   return createServer((request, response) => {
@@ -36,7 +42,7 @@ export function buildServer(config: ServiceConfig, executor: Executor, store: Ob
 if (process.env.NODE_ENV !== "test") {
   const logger = createLogger({ serviceName: process.env.OBS_SERVICE_NAME ?? "yellowstorm-code-runtime" });
   const config = loadConfig();
-  const server = buildServer(config, new QuickJsExecutor(), new CephS3Store(config.ceph));
+  const server = buildServer(config, new QuickJsExecutor(), createStore(config.storage));
   server.listen(config.port, "0.0.0.0");
   logger.info("service.started", { launcher: "node dist/src/main.js" });
   const shutdown = () => server.close(() => { void logger.shutdown().finally(() => process.exit(0)); });

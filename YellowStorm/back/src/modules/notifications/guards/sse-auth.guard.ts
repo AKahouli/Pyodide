@@ -5,7 +5,8 @@ import { Request } from 'express';
 import { UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
-import { AuthService } from '../../auth/auth.service';
+import { SessionService } from '../../auth/services/session.service';
+import { JWT_ALGORITHM } from '../../auth/constants/jwt.constants';
 
 interface RequestWithSseUser extends Request {
   sseUser?: JwtPayload;
@@ -20,7 +21,7 @@ export class SseAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -43,6 +44,7 @@ export class SseAuthGuard implements CanActivate {
         secret: this.configService.get<string>('jwt.secret'),
         issuer: this.configService.get<string>('jwt.issuer'),
         audience: this.configService.get<string>('jwt.audience'),
+        algorithms: [JWT_ALGORITHM],
       });
 
       if (payload.type !== 'access') {
@@ -63,7 +65,7 @@ export class SseAuthGuard implements CanActivate {
 
     // Validate session is still active
     if (payload.sessionId) {
-      const isSessionValid = await this.authService.isSessionValid(
+      const isSessionValid = await this.sessionService.isSessionValid(
         payload.sessionId,
       );
       if (!isSessionValid) {

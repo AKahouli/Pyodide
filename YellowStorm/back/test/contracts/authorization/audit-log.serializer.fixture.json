@@ -1,4 +1,5 @@
 {
+  "id": "64b000000000000000000020",
   "actorId": "64b000000000000000000001",
   "actorEmail": "jane.doe@example.com",
   "action": "auth.login",
@@ -10,6 +11,5 @@
   "ipAddress": "127.0.0.1",
   "userAgent": "jest",
   "status": "success",
-  "createdAt": "<volatile>",
-  "id": "64b000000000000000000020"
+  "createdAt": "<volatile>"
 }

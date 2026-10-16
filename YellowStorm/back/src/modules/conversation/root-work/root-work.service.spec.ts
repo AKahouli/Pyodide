@@ -8,6 +8,9 @@ class FakeRootWorkStore implements RootWorkStore {
   executions = new Map<string, RootExecutionRecord>();
   evidence = new Map<string, RootEvidenceRecord>();
   conversations = new Map<string, { epoch: number; lastStopRequestId: string | null }>();
+  async listWorkerExecutions(conversationId: string, epoch: number) {
+    return [...this.executions.values()].filter((row) => row.conversationId === conversationId && row.conversationEpoch === epoch);
+  }
 
   async listWaitingRoots(conversationId: string, epoch: number) {
     return [...this.executions.values()].filter((row) => row.conversationId === conversationId
@@ -175,7 +178,9 @@ describe('RootWorkService', () => {
       webSearchEnabled: false, deepSearchEnabled: false };
     const continuation = { executionId: EXECUTION_ID,
       inputResponses: [{ inputId: 'request', response: { answer: 'yes' } }] };
-    expect(await service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).toBe(state);
+    expect(await service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).toMatchObject({
+      ...state, clarifications: [expect.objectContaining({ inputId: 'request', response: { answer: 'yes' } })],
+    });
     await expect(service.validateContinuation(continuation, 'other-actor', CONVERSATION_ID, 2))
       .rejects.toThrow(BadRequestException);
     await expect(service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 3))

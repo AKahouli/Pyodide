@@ -1,4 +1,4 @@
-# Conversation V2 — Switch to Mongo `_id` as the Canonical Session Id
+# App Builder — Switch to Mongo `_id` as the Canonical Session Id
 
 **Date:** 2026-05-25
 **Branch:** `feature/conversation_artifacts`

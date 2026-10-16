@@ -21,6 +21,7 @@ class ThoughtActivityTracker:
         self._replay_id: str | None = None
         self._replay_detail = ""
         self._replay_started_at = ""
+        self._awaiting_snapshot = False
 
     def observe(self, text: str, partial: bool | None, observed_at: str) -> ThoughtActivityUpdate | None:
         if not text:
@@ -36,6 +37,7 @@ class ThoughtActivityTracker:
             return None
 
         if partial is not True:
+            self._awaiting_snapshot = False
             candidate_detail = self._active_detail or self._replay_detail
             if candidate_detail and text == candidate_detail:
                 return None
@@ -55,6 +57,7 @@ class ThoughtActivityTracker:
                     started_at=self._active_started_at,
                 )
 
+        self._awaiting_snapshot = partial is True
         if not self._active_id:
             return self._start(text, observed_at)
 
@@ -74,6 +77,9 @@ class ThoughtActivityTracker:
 
     def end_for_tool_boundary(self) -> None:
         self.end_for_visible_text()
+        # ADK can stream the tool call before replaying the full thought snapshot.
+        if self._awaiting_snapshot:
+            return
         self._replay_id = None
         self._replay_detail = ""
         self._replay_started_at = ""

@@ -6,13 +6,13 @@ No production transport starts this until the complete background gate passes.
 from __future__ import annotations
 
 import asyncio
-import logging
+from yellowmind_observability import get_logger
 from dataclasses import dataclass, field
 
 from src.root_runtime.background_actions import BackgroundActionUnknown
 from src.root_runtime.background_sessions import BackgroundOwnershipError, FencedBackgroundSessionService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -109,6 +109,7 @@ class BackgroundInvocationSupervisor:
         watcher = asyncio.create_task(watch_owner())
         result = None
         failure_status = None
+        unknown_reason = None
         try:
             done, _ = await asyncio.wait((worker, consumer, watcher), return_when=asyncio.FIRST_COMPLETED)
             if consumer in done:
@@ -126,7 +127,8 @@ class BackgroundInvocationSupervisor:
             acknowledged = await settle(result, 'cancelled' if handle.stop_requested else 'finished')
             handle.status = acknowledged if acknowledged in ('completed', 'waiting', 'failed', 'outcome_unknown', 'cancelled') else (
                 'cancelled' if handle.stop_requested else 'finished')
-        except (BackgroundOwnershipError, BackgroundActionUnknown):
+        except (BackgroundOwnershipError, BackgroundActionUnknown) as error:
+            unknown_reason = 'ownership_lost' if isinstance(error, BackgroundOwnershipError) else 'action_unknown'
             handle.status = 'cancelled' if handle.stop_requested else 'outcome_unknown'
             failure_status = handle.status
             handle.abort.set()
@@ -135,8 +137,9 @@ class BackgroundInvocationSupervisor:
                 'outcome_unknown' if isinstance(error, asyncio.CancelledError) else 'failed')
             failure_status = handle.status
             handle.abort.set()
-            logger.error('Background native task failed execution=%s error_type=%s',
-                handle.service.grant.execution_id, type(error).__name__)
+            unknown_reason = 'native_cancelled' if isinstance(error, asyncio.CancelledError) else None
+            logger.error('job.execution.failed', run_id=handle.service.grant.execution_id,
+                job_id=handle.service.grant.execution_id, job_kind='root_background', error=error)
         finally:
             for task in (worker, consumer, watcher):
                 if not task.done():
@@ -149,10 +152,17 @@ class BackgroundInvocationSupervisor:
                     await settle(None, failure_status)
                 except BackgroundOwnershipError:
                     handle.status = 'outcome_unknown'
+                    unknown_reason = 'ownership_lost'
                 except Exception as error:
                     handle.status = 'outcome_unknown'
-                    logger.error('Background settlement requires reconciliation execution=%s error_type=%s',
-                        handle.service.grant.execution_id, type(error).__name__)
+                    unknown_reason = 'settlement_unknown'
+                    logger.error('job.execution.failed', run_id=handle.service.grant.execution_id,
+                        job_id=handle.service.grant.execution_id, job_kind='root_background_settlement', error=error)
+            if handle.status == 'outcome_unknown':
+                grant = handle.service.grant
+                logger.warning('job.execution.outcome_unknown', run_id=grant.execution_id,
+                    job_id=grant.execution_id, conversation_id=grant.conversation_id,
+                    job_kind='root_background', reason_code=unknown_reason or 'native_outcome_unknown')
             async with self._lock:
                 if self.active.get(handle.service.grant.execution_id) is handle:
                     del self.active[handle.service.grant.execution_id]

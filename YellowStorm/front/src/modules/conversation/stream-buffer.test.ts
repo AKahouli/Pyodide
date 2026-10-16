@@ -4,6 +4,18 @@ import { applyChunksToComponents, StreamingBuffer } from './stream-buffer';
 describe('StreamingBuffer', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('merges replayed agent activity adds by identity across flushes', () => {
+    const activity = { id: 'activity-1', type: 'agentActivity' as const, data: { summary: 'Inspect the report', status: 'completed' } };
+    const first = applyChunksToComponents([], [{ action: 'add', component: activity }]);
+    const replay = applyChunksToComponents(first, [
+      { action: 'add', component: { ...activity, data: { detail: 'Full reasoning' } } },
+      { action: 'add', component: { ...activity, id: 'activity-2' } },
+    ]);
+    expect(replay).toHaveLength(2);
+    expect(replay[0].data).toEqual({ ...activity.data, detail: 'Full reasoning' });
+    expect(first[0].data).not.toHaveProperty('detail');
+  });
+
   it('coalesces chunks per frame without mixing concurrent conversation sessions', () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -66,5 +78,45 @@ describe('StreamingBuffer', () => {
     }
 
     expect(overflow).toHaveBeenCalledOnce();
+  });
+});
+
+describe('applyChunksToComponents agentActivity deltas', () => {
+  const base = [{ id: 'activity-1', type: 'agentActivity' as const, data: { summary: 'The', detail: 'The', status: 'completed' } }];
+  const update = (data: Record<string, unknown>) => ({ action: 'update' as const, component: { id: 'activity-1', type: 'agentActivity' as const, data } });
+
+  it('appends detailDelta to the current detail without leaking wire-only fields', () => {
+    const result = applyChunksToComponents(base, [
+      update({ summary: 'The user', detailDelta: ' user', detailOffset: 3 }),
+      update({ detailDelta: ' wants', detailOffset: 8 }),
+    ]);
+
+    expect(result[0].data).toEqual({ summary: 'The user', detail: 'The user wants', status: 'completed' });
+  });
+
+  it('still accepts full-replacement updates', () => {
+    const result = applyChunksToComponents(base, [update({ summary: 'Rewritten', detail: 'Rewritten', status: 'completed' })]);
+
+    expect(result[0].data).toEqual({ summary: 'Rewritten', detail: 'Rewritten', status: 'completed' });
+  });
+
+  it('applies a replayed delta idempotently', () => {
+    const delta = update({ detailDelta: ' user', detailOffset: 3 });
+    const result = applyChunksToComponents(base, [delta, delta]);
+
+    expect(result[0].data.detail).toBe('The user');
+  });
+
+  it('does not fabricate text across a missed delta', () => {
+    const result = applyChunksToComponents(base, [update({ detailDelta: ' wants', detailOffset: 8 })]);
+
+    expect(result[0].data).toEqual({ summary: 'The', detail: 'The', status: 'completed' });
+  });
+
+  it('reproduces a full snapshot plus newer deltas', () => {
+    const snapshot = [{ id: 'activity-1', type: 'agentActivity' as const, data: { summary: 'The user', detail: 'The user', status: 'completed' } }];
+    const result = applyChunksToComponents(snapshot, [update({ detailDelta: ' wants', detailOffset: 8 })]);
+
+    expect(result[0].data.detail).toBe('The user wants');
   });
 });

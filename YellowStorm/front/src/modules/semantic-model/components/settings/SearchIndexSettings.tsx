@@ -5,13 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
-import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   SEARCH_INDEX_DEFAULTS, SEARCH_INDEX_FIELDS, SEARCH_SETTINGS_QUERY_KEY, effectiveIndex, indexRange, outOfRange, searchIndexProblems,
   searchSettingsApi, type SearchIndexSettings as IndexSettings,
 } from '../../searchSettings';
-import { FORM_SECTION, FormField, SectionHeader } from '../form/FormParts';
+import { FormField } from '../form/FormParts';
+import { SettingsPane } from './SettingsPane';
 import { ResetFieldButton, SettingNumberField, withKey } from './SettingNumberField';
 
 /** Admin > Semantic models: how records are cut into a search card and passages, for every model. */
@@ -44,8 +44,7 @@ export function SearchIndexSettings() {
   };
 
   const headerLabel = t('searchSettings.index.passageHeader');
-  return <section className={cn(FORM_SECTION, 'space-y-4')}>
-    <SectionHeader title={t('searchSettings.index.title')} help={t('searchSettings.index.description')} icon={<Layers className='h-4 w-4 text-muted-foreground' aria-hidden />} />
+  return <SettingsPane id='search-index' title={t('searchSettings.index.title')} help={t('searchSettings.index.description')} icon={<Layers className='h-4 w-4 text-muted-foreground' aria-hidden />}>
     <div className='grid gap-x-6 gap-y-4 sm:grid-cols-2'>
       {SEARCH_INDEX_FIELDS.map(({ key }) => {
         const range = indexRange(key, effective);
@@ -72,5 +71,5 @@ export function SearchIndexSettings() {
       </Button>
       {Object.keys(configured).length > 0 && <Button variant='ghost' onClick={() => setConfigured({})}>{t('settings.reset')}</Button>}
     </div>
-  </section>;
+  </SettingsPane>;
 }

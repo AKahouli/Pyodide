@@ -2,6 +2,9 @@ import { ModelSpecificationService } from './model-specification.service';
 import { graphPropertyKey, SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { logDomainEvent } from '@modules/logger/logger.service';
+
+jest.mock('@modules/logger/logger.service', () => ({ logDomainEvent: jest.fn() }));
 
 const NODES = [
   {
@@ -12,6 +15,8 @@ const NODES = [
     id: 'c-contract', key: 'contract', label: 'Contract',
     attributes: [{ key: 'contract_id', label: 'Id', type: 'text' }, { key: 'customer_ref', label: 'Customer', type: 'text' }],
   },
+  { id: 'c-other', key: 'other', label: 'Other', attributes: [{ key: 'other_id', label: 'Id', type: 'text' }] },
+  { id: 'c-fact', key: 'fact', label: 'Fact', attributes: [{ key: 'fact_id', label: 'Id', type: 'text' }] },
 ];
 
 const MAPPING = (overrides: Record<string, unknown> = {}) => ({
@@ -41,6 +46,7 @@ const setup = (
   records: unknown[] = [],
   recordRelations: unknown[] = [],
   labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
+  archives: Array<string | { documentId: string; indexInWorkspace?: boolean; limits?: unknown }> = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -60,6 +66,7 @@ const setup = (
         }
         return { rows: mappings };
       }
+      if (sql.includes('FROM semantic_model.data_connections')) return { rows: archives.map((archive) => typeof archive === 'string' ? { documentId: archive, indexInWorkspace: true, limits: null } : archive) };
       if (sql.includes('FROM semantic_model.records')) return { rows: records };
       if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
@@ -82,7 +89,25 @@ const setup = (
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
     purgeModelData: jest.fn(async () => ({ modelId: 'model-1', revisions: 2, jobs: 1 })),
+    forgetDocumentReadings: jest.fn(async () => ({ modelId: 'model-1', documentReadings: 12 })),
+    getGraphStatus: jest.fn(async () => ({ modelId: 'model-1', environments: [] })),
+    reprojectModelGraphs: jest.fn(async () => ({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true }] })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
+    getBoundGraph: jest.fn(async () => ({
+      dataRevisionId: 'dr-1',
+      specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: [] }], relations: [] },
+      nodes: [{ id: 'n-1', label: 'c-customer', properties: { record_id: 'n-1', concept_id: 'c-customer', record_label: 'Acme' } }],
+      edges: [] as unknown[],
+    })),
+    getBoundGraphWindow: jest.fn(async (..._args: unknown[]) => ({
+      dataRevisionId: 'dr-1',
+      specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['name'] }], relations: [] },
+      nodes: [{ id: 'n-1', label: 'c-customer', properties: { record_id: 'n-1', concept_id: 'c-customer', record_label: 'Acme', name: 'Acme SA' } }],
+      edges: [] as unknown[],
+      truncated: true,
+      nodeLimit: 2000,
+      totals: { records: 125900, links: 225500, concepts: { 'c-customer': 125900 }, relations: {} } as unknown,
+    })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
       entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {} }],
@@ -97,11 +122,15 @@ const setup = (
   const aiExtractionAgent = {
     resolveAgent: jest.fn(async () => ({ slug: 'semantic-field-extraction', llmModel: 'gpt-5.4-nano' })),
   };
+  const graphSearch = {
+    allowedWorkspaceIds: jest.fn(async () => ['ws-1', 'ws-2']),
+  };
   const service = new SemanticPopulationRefreshService(
     database as any, models as any, documents as any,
     new ModelSpecificationService(), runtime as any, aiExtractionAgent as any,
+    undefined, undefined, graphSearch as any,
   );
-  return { database, models, documents, runtime, service, aiExtractionAgent };
+  return { database, models, documents, runtime, service, aiExtractionAgent, graphSearch };
 };
 
 describe('SemanticPopulationRefreshService', () => {
@@ -118,6 +147,15 @@ describe('SemanticPopulationRefreshService', () => {
     await expect(service.getJob('u-1', 'model-1', 'j-2')).rejects.toThrow('Population job not found');
   });
 
+  it('hands the queue position of a queued job to the caller as the runtime sent it, and none once it runs', async () => {
+    const { runtime, service } = setup();
+    const queue = { queueName: 'semantic-model-population.batch', position: 3, ahead: { running: 1, queued: 1 }, workersOnline: 0 };
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'queued', queue } as any);
+    await expect(service.getJob('u-1', 'model-1', 'j-1')).resolves.toMatchObject({ queue });
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'running' } as any);
+    expect(await service.getJob('u-1', 'model-1', 'j-1')).not.toHaveProperty('queue');
+  });
+
   it('names the files a run no longer read', async () => {
     const { runtime, documents, service } = setup();
     Object.assign(documents, { findByIds: jest.fn(async () => [{ id: 'doc-1', originalName: 'amendment-01.pdf' }]) });
@@ -127,6 +165,14 @@ describe('SemanticPopulationRefreshService', () => {
     expect(job.progress.changes.removedSources).toEqual([
       { assetId: 'doc-1', records: 1, name: 'amendment-01.pdf' }, { assetId: 'doc-gone', records: 2 }]);
     expect(job.progress.done).toBe(2);
+  });
+
+  it('hands the step of a saving or graph-building run to the caller as the runtime sent it', async () => {
+    const { runtime, service } = setup();
+    const progress = { phase: 'projecting', total: 3, done: 3, step: { unit: 'elements', done: 1200, total: 5000 } };
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'running', progress } as any);
+    const job = await service.getJob('u-1', 'model-1', 'j-1') as any;
+    expect(job.progress).toEqual(progress);
   });
 
   it('shapes bound runtime entities as the existing Records contract', async () => {
@@ -149,6 +195,28 @@ describe('SemanticPopulationRefreshService', () => {
     // Reading freshness never starts a run or touches the runtime specification.
     expect(runtime.requestPopulationRun).toHaveBeenCalledTimes(1);
     expect(models.requireRole).toHaveBeenCalled();
+  });
+
+  it('asks the runtime to index an archive in its workspace only when its data source says so', async () => {
+    const sent = async (indexed: string[]) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, indexed);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent([])).not.toHaveProperty('indexInWorkspace');
+    expect(await sent(['d-1'])).toMatchObject({ assetId: 'd-1', indexInWorkspace: true });
+  });
+
+  it("sends an archive's own reading limits, read time and memory lowered to the built-in ceiling", async () => {
+    const sent = async (archive: { documentId: string; limits?: unknown }) => {
+      const { runtime, service } = setup(undefined, undefined, undefined, undefined, undefined, undefined, undefined, [archive]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0].source;
+    };
+    expect(await sent({ documentId: 'd-1', limits: {} })).not.toHaveProperty('archiveLimits');
+    const source = await sent({ documentId: 'd-1', limits: { maxArchiveEmails: 200, maxArchiveMb: 5, archiveTimeoutSeconds: 5000, parserMemoryMb: 300 } });
+    expect(source).not.toHaveProperty('indexInWorkspace');
+    expect(source.archiveLimits).toEqual({ maxArchiveEmails: 200, archiveTimeoutSeconds: 900, parserMemoryMb: 300 });
   });
 
   it('sends business synonyms in the specification only when there are some', async () => {
@@ -210,6 +278,60 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.summary.unresolvedRelations).toBe(3);
   });
 
+  it('still reads a mapping that fills a field its concept no longer has, and the check still reports the field', async () => {
+    const stale = MAPPING({
+      fieldMappings: [...MAPPING().fieldMappings, { sourceField: 'old_column', targetAttribute: 'removed_attribute', mode: 'direct' }],
+    });
+    const { runtime, service } = setup([stale]);
+    const accepted = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    expect(accepted.skipped).toEqual([]);
+    const source = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0];
+    expect(source.columnMapping).toEqual({ customer_id: 'customer_id', legal_name: 'name' });
+    expect(logDomainEvent).not.toHaveBeenCalled();
+    const checked = await setup([stale]).service.checkPlan('u-1', 'model-1');
+    expect(checked.request?.sources).toHaveLength(1);
+    expect(checked.issues).toEqual([expect.objectContaining({ code: 'mapping_attribute_missing', fieldId: 'removed_attribute', mappingId: 'm-1' })]);
+  });
+
+  it('says why a refresh has no usable source: in the refusal, its details and a registered event', async () => {
+    const changed = MAPPING({ validatedSourceVersion: 'sha256:older' });
+    const { runtime, service } = setup([changed]);
+    const refusal = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } })
+      .then(() => null, (error: Error & { details?: { field: string; message: string }[] }) => error);
+    expect(refusal?.message).toBe('No usable source in the selected scope: Customer: The mapped source changed since this mapping was validated');
+    expect(refusal?.details).toEqual([{ field: 'no_usable_source', message: refusal?.message }]);
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(logDomainEvent).toHaveBeenCalledWith('error', 'semantic.population.sources_skipped', {
+      scope: 'concept', reason_code: 'refused', count: 1, detail: 'Customer: The mapped source changed since this mapping was validated' });
+  });
+
+  it("sends a sheet mapping's own record limit, never above the built-in records per source", async () => {
+    const sent = async (aiSettings: unknown) => {
+      const { runtime, service } = setup([MAPPING({ aiSettings })]);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      return (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.sources[0];
+    };
+    expect(await sent(null)).not.toHaveProperty('readLimits');
+    expect(await sent({ maxRecords: 50 })).toMatchObject({ readLimits: { maxRecords: 50 } });
+    expect((await sent({ maxRecords: 50 })).options).not.toHaveProperty('aiSettings');
+    expect(await sent({ maxRecords: 90000 })).toMatchObject({ readLimits: { maxRecords: 5000 } });
+  });
+
+  it('reads only as many files of a workspace mapping as it chose, always the same ones', async () => {
+    const file = (id: string) => ({ id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
+      contentHash: `sha256:${id}`, updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 10, createdBy: 'u-9', indexingStatus: 'ready' });
+    const workspace = MAPPING({
+      scope: 'workspace', folderId: 'folder-1', documentId: 'workspace:ws-1:folder-1', sheetName: '', assetKind: 'document',
+      validatedSourceVersion: null, aiSettings: { maxFiles: 2 },
+      fieldMappings: [{ sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' }, { sourceField: 'Customer Id', targetAttribute: 'customer_id', mode: 'extract' }],
+    });
+    const { documents, runtime, service } = setup([workspace]);
+    (documents as any).listAllInWorkspace = jest.fn(async () => [file('c'), file('a'), file('b'), { id: 'folder-1', isFolder: true, mimeType: '', parentId: null }]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as any)[0].payload;
+    expect(payload.sources.map((source: any) => source.source.assetId)).toEqual(['a', 'b']);
+  });
+
   it('reads every readable file of a workspace mapping, and sees a new file as a change', async () => {
     const file = (id: string, overrides: Record<string, unknown> = {}) => ({
       id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
@@ -240,6 +362,9 @@ describe('SemanticPopulationRefreshService', () => {
     expect(first.specification.sourceScope).toEqual([{ workspaceId: 'ws-1', assetId: 'workspace:ws-1:folder-1' }]);
     expect(accepted).toMatchObject({ sourceCount: 2, waitingFiles: 1 });
     expect(documents.findById).not.toHaveBeenCalled();
+    // Freshness says the data covers the indexed files only while one is still waiting.
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: first.populationExecutionFingerprint });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current', waitingFiles: 1 });
 
     listing.push(file('c'));
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
@@ -257,8 +382,8 @@ describe('SemanticPopulationRefreshService', () => {
     await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', { q: '  acme ', limit: 20, offset: 40 })).resolves.toMatchObject({
       dataRevisionId: 'dr-1', total: 120, offset: 40, records: [{ id: 'e-1', label: 'Acme', values: { name: 'Acme' } }],
     });
-    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1',
-      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined });
+    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1', ['ws-1', 'ws-2'],
+      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined, filters: undefined });
     (runtime as any).searchConceptRecords.mockRejectedValueOnce(Object.assign(new Error('HTTP 404'), { status: 404 }));
     await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', {})).resolves.toMatchObject({ total: 0, records: [] });
   });
@@ -291,14 +416,150 @@ describe('SemanticPopulationRefreshService', () => {
     expect(ruleQuery).not.toMatch(/source_concept_id|target_concept_id|cardinality/);
   });
 
+  it('reads the documents again with AI on request: forgets the readings, and the run is not taken for an earlier one', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledTimes(1);
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', undefined);
+    expect(runtime.purgeModelData).not.toHaveBeenCalled();
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    expect(keys[0]).not.toEqual(keys[1]);
+  });
+
+  it('forgets only the readings of the refreshed concept when its refresh calls the AI again', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1', 'c-customer');
+  });
+
+  it('keeps the readings when the run is refused', async () => {
+    const { runtime, service } = setup([MAPPING()], {});
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true })).rejects.toThrow();
+    expect(runtime.forgetDocumentReadings).not.toHaveBeenCalled();
+  });
+
   it('clears the built data, then builds again from scratch', async () => {
     const { runtime, service } = setup();
     const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
-    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true, timeoutSeconds: 300 });
     expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
     const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
     expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it("clears with the admin's purge time, which never travels with the run", async () => {
+    const built = setup();
+    const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured: { purgeTimeoutSeconds: 900, maxRunSources: 40 } })) };
+    const service = new SemanticPopulationRefreshService(
+      built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+      built.aiExtractionAgent as any, extractionSettings as any,
+    );
+    await service.rebuildFromScratch('u-1', 'model-1');
+    expect(built.runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: false, timeoutSeconds: 900 });
+    const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][];
+    expect(calls[0][0].payload.limits).toEqual({ maxRunSources: 40 });
+  });
+
+  it('sends the save limits with the run without changing its fingerprint or key', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({ maxRunSources: 40 });
+    const saved = await runWith({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120, projectionBatchRows: 8000 });
+    expect(saved.payload.limits).toEqual({ maxRunSources: 40, saveBatchRows: 5000, saveStatementSeconds: 120, projectionBatchRows: 8000 });
+    expect(saved.payload.populationExecutionFingerprint).toBe(plain.payload.populationExecutionFingerprint);
+    expect(saved.key).toBe(plain.key);
+    const onlySave = await runWith({ saveBatchRows: 5000 });
+    expect(onlySave.payload.limits).toEqual({ saveBatchRows: 5000 });
+    expect(onlySave.payload.populationExecutionFingerprint).toBe((await runWith({})).payload.populationExecutionFingerprint);
+  });
+
+  it('sends the e-mail reading limits with the run, and they change its fingerprint: they decide what a run builds', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({});
+    const reading = await runWith({ maxAttachmentChars: 20000, maxNesting: 0, maxPdfPages: 50 });
+    expect(reading.payload.limits).toEqual({ maxAttachmentChars: 20000, maxNesting: 0, maxPdfPages: 50 });
+    expect(reading.payload.populationExecutionFingerprint).not.toBe(plain.payload.populationExecutionFingerprint);
+    expect(reading.key).not.toBe(plain.key);
+  });
+
+  it('sends the fields a concept shows in the graph with the run and the rebuild, outside its specification and fingerprint', async () => {
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainCall = (plain.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0];
+    expect(plainCall[0].payload.graphExposure).toEqual({});
+    const [customer] = NODES;
+    const previous = customer.attributes;
+    customer.attributes = [{ ...previous[0], graph: { maxChars: 200 } }, { ...previous[1], graph: { expose: false } }] as never;
+    try {
+      const hiding = setup();
+      await hiding.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const [command, key] = (hiding.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0];
+      expect(command.payload.graphExposure).toEqual({ 'c-customer': { hidden: ['name'], maxChars: { customer_id: 200 } } });
+      // The graph is not the data: same specification hash, same fingerprint (stays current), a run of its own.
+      expect(command.payload.specHash).not.toBeUndefined();
+      expect(command.payload.populationExecutionFingerprint).toBe(plainCall[0].payload.populationExecutionFingerprint);
+      expect(key).not.toBe(plainCall[1]);
+      await hiding.service.reprojectGraphs('u-1', 'model-1');
+      expect(hiding.runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1', { 'c-customer': { hidden: ['name'], maxChars: { customer_id: 200 } } });
+    } finally {
+      customer.attributes = previous;
+    }
+  });
+
+  it('sends the index build limits with the run without changing its fingerprint or key', async () => {
+    const runWith = async (configured: Record<string, number>) => {
+      const built = setup();
+      const extractionSettings = { getRunLimits: jest.fn(async () => ({ configured })) };
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, extractionSettings as any,
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+      const calls = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return { payload: calls[0][0].payload, key: calls[0][1] };
+    };
+    const plain = await runWith({ maxRunSources: 40 });
+    const tuned = await runWith({ maxRunSources: 40, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 90, indexReadPageRows: 1000 });
+    expect(tuned.payload.limits).toEqual({ maxRunSources: 40, embeddingBatchSize: 64, embeddingParallelCalls: 8, embeddingTimeoutSeconds: 90, indexReadPageRows: 1000 });
+    expect(tuned.payload.populationExecutionFingerprint).toBe(plain.payload.populationExecutionFingerprint);
+    expect(tuned.key).toBe(plain.key);
+  });
+
+  it('rebuilds only the graph: no run is started and no source is read', async () => {
+    const { models, runtime, service } = setup();
+    const result = await service.reprojectGraphs('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor']);
+    expect(runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1', {});
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(result.revisions).toHaveLength(1);
+  });
+
+  it('shows the graph in use to anyone who can read the model', async () => {
+    const { models, runtime, service } = setup();
+    await service.graphStatus('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor', 'viewer']);
+    expect(runtime.getGraphStatus).toHaveBeenCalledWith('model-1', 'u-1');
   });
 
   it('clears nothing when the model cannot be built', async () => {
@@ -361,6 +622,33 @@ describe('SemanticPopulationRefreshService', () => {
     expect(command.payload.sources).toHaveLength(1);
     expect(command.payload.sources[0].conceptId).toBe('c-contract');
     expect(command.payload.specification.concepts.map((c: { conceptId: string }) => c.conceptId)).toEqual(['c-contract']);
+  });
+
+  it('refreshes one concept as a whole build that reads only that concept\'s sources', async () => {
+    const second = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const { runtime, service } = setup([MAPPING(), second], {
+      'c-customer': ['customer_id'],
+      'c-contract': ['contract_id'],
+    });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-contract' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    expect(command.payload.scope).toEqual({ kind: 'concept', conceptId: 'c-contract' });
+    expect(command.payload.sources.map((source: { conceptId: string }) => source.conceptId)).toEqual(['c-contract']);
+    // Every concept stays in the specification: the runtime keeps their data and matches every link again.
+    expect(command.payload.specification.concepts.map((c: { conceptId: string }) => c.conceptId).sort())
+      .toEqual(['c-contract', 'c-customer']);
+    const [, key] = calls[0];
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    expect(calls[1][1]).not.toBe(key);
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-missing' } }))
+      .rejects.toThrow('Concept not found');
   });
 
   it('admits document mappings with extraction recipes and current metadata', async () => {
@@ -673,6 +961,60 @@ describe('SemanticPopulationRefreshService', () => {
     expect(plainCommand.payload).not.toHaveProperty('derivations');
     expect(plainCommand.payload.relationBindings).toEqual([]);
     expect(plainCommand.payload.populationExecutionFingerprint).not.toBe(command.payload.populationExecutionFingerprint);
+    // Customers alone, made from contracts only: no source is read, the derivation makes them again.
+    const refresh = setup([contract], identity, [relation], [rule]);
+    await withDerivation(refresh).requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } });
+    const [[refreshCommand]] = refresh.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(refreshCommand.payload.sources).toEqual([]);
+    expect(refreshCommand.payload.derivations).toHaveLength(1);
+    expect(refreshCommand.payload.relationBindings).toEqual([{ relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id' }]);
+    // A concept with neither a source nor a derivation has nothing to refresh.
+    await expect(plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } }))
+      .rejects.toThrow('No usable source in the selected scope');
+  });
+
+  it('refreshes one concept with only the derivations it feeds, and keeps the others out of the run', async () => {
+    const contract = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const other = MAPPING({
+      id: 'm-3', conceptId: 'c-other', documentId: 'd-3', identityFields: ['other_id'],
+      fieldMappings: [{ sourceField: 'other_id', targetAttribute: 'other_id', mode: 'direct' }],
+    });
+    const identity = { 'c-customer': ['customer_id'], 'c-contract': ['contract_id'], 'c-other': ['other_id'], 'c-fact': ['fact_id'] };
+    const labels = { 'c-customer': 'name', 'c-contract': 'contract_id', 'c-other': 'other_id', 'c-fact': 'fact_id' };
+    const derived = [
+      { id: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
+        fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
+      { id: 'dv-2', conceptId: 'c-fact', sourceConceptId: 'c-other', conflictRule: 'latest', orderBy: 'other_id',
+        fieldMappings: [{ sourceAttribute: 'other_id', targetAttribute: 'fact_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z') },
+    ];
+    const run = async (conceptId: string) => {
+      const built = setup([contract, other], identity, [], [], [], [], labels);
+      const service = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+        built.aiExtractionAgent as any, undefined,
+        new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: derived })) } as any, {} as any),
+      );
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId } });
+      const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+      return command.payload;
+    };
+    // Contracts: only their own source, and the customers made from them; the facts made from other records stay as they are.
+    const contracts = await run('c-contract');
+    expect(contracts.sources.map((source: { conceptId: string }) => source.conceptId)).toEqual(['c-contract']);
+    expect(contracts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-1']);
+    // The kept concepts remain in the specification so the data in use is not dropped.
+    expect(contracts.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort())
+      .toEqual(['c-contract', 'c-customer', 'c-fact', 'c-other']);
+    // A concept made from another one: no source, only the derivation that makes it.
+    const facts = await run('c-fact');
+    expect(facts.sources).toEqual([]);
+    expect(facts.derivations.map((derivation: { derivationId: string }) => derivation.derivationId)).toEqual(['dv-2']);
   });
 
   it('binds one-to-many relations through one field of a composite target identity', async () => {
@@ -931,6 +1273,100 @@ describe('SemanticPopulationRefreshService', () => {
       expect(result.concepts[0].entities[0].provenance.name).toMatchObject({
         correction: { sequence: 4, correctedByYou: true, originalValue: 'Acme' },
       });
+    });
+  });
+  // The runtime hashes the same body (tests/test_population_fingerprint.py holds the same constant).
+  it('hashes the run with the admin limits as the runtime does', () => {
+    const body = {
+      specHash: 'h',
+      sources: [{ conceptId: 'c1', sourceKind: 'manual', source: { k: 1 }, mappingVersion: 'v1', columnMapping: null,
+        constantMapping: null, fieldMappings: null, options: {}, labelField: null }],
+      relationBindings: [], aiExtraction: null, populationEngineVersion: 'r1-mvp-8',
+      limits: { maxRunSources: 6000, maxRecordsPerRun: 20000 },
+    };
+    expect(new ModelSpecificationService().hashCanonical(body))
+      .toBe('sha256:ab3abd75d44f5015cbd71b617e7662c7f81db605e751cb0a2bf9575f0fdd1207');
+  });
+
+  describe('scoped graph reads', () => {
+    it('reads a bounded outline only through the workspaces the person may access', async () => {
+      const { runtime, service, graphSearch } = setup();
+      const outline = await service.graphOutline('u-1', 'model-1');
+      expect(graphSearch.allowedWorkspaceIds).toHaveBeenCalledWith('u-1', 'model-1');
+      expect(runtime.getBoundGraphWindow).toHaveBeenCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 2000, conceptId: undefined, focusIds: undefined });
+      expect(runtime.getBoundGraph).not.toHaveBeenCalled();
+      expect(outline).toMatchObject({ truncated: true, nodeLimit: 2000, totals: { records: 125900 } });
+      expect(outline.records).toEqual([{ id: 'n-1', c: 'c-customer', l: 'Acme' }]);
+    });
+
+    it('passes the limit, concept and focus on, keeping the limit within bounds', async () => {
+      const { runtime, service } = setup();
+      await service.graphOutline('u-1', 'model-1', { dataRevisionId: 'dr-1', limit: 99999, conceptId: 'c-customer', focus: 'n-1' });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: 'dr-1', nodeLimit: 5000, conceptId: 'c-customer', focusIds: ['n-1'] });
+      await service.graphOutline('u-1', 'model-1', { limit: 0.2 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        expect.objectContaining({ nodeLimit: 2000 }));
+    });
+
+    it('reads around a focus record as deep as asked, within bounds, and only then', async () => {
+      const { runtime, service } = setup();
+      await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 8, limit: 5000 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 5000, conceptId: undefined, focusIds: ['n-1'], depth: 8 });
+      await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 99 });
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'], expect.objectContaining({ depth: 8 }));
+      // Without a focus there is nothing to go deep from (the client leaves out a depth of 1).
+      await service.graphOutline('u-1', 'model-1', { depth: 8 });
+      expect(runtime.getBoundGraphWindow.mock.calls.at(-1)?.[3]).not.toHaveProperty('depth');
+    });
+
+    it('carries the runtime degree of a record into the outline as n', async () => {
+      const { runtime, service } = setup();
+      const base = await runtime.getBoundGraphWindow();
+      runtime.getBoundGraphWindow.mockResolvedValueOnce({ ...base, nodes: [Object.assign({}, base.nodes[0], { degree: 4 })] });
+      const outline = await service.graphOutline('u-1', 'model-1', { focus: 'n-1', depth: 8 });
+      expect(outline.records).toEqual([{ id: 'n-1', c: 'c-customer', l: 'Acme', n: 4 }]);
+    });
+
+    it('reads one record alone for its values, with the scope recomputed on every read', async () => {
+      const { runtime, service, graphSearch } = setup();
+      const record = await service.graphRecord('u-1', 'model-1', 'n-1');
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1', 'ws-2'],
+        { dataRevisionId: undefined, nodeLimit: 1, focusIds: ['n-1'], neighbours: false });
+      expect(record).toMatchObject({ id: 'n-1', values: { name: 'Acme SA' } });
+
+      // A workspace share was revoked: the next read runs with the new scope.
+      graphSearch.allowedWorkspaceIds.mockResolvedValueOnce(['ws-1']);
+      await service.graphRecord('u-1', 'model-1', 'n-1');
+      expect(runtime.getBoundGraphWindow).toHaveBeenLastCalledWith('model-1', 'u-1', ['ws-1'], expect.anything());
+    });
+
+    it('reuses the cached whole graph within its TTL for the same scope, and re-reads when the scope changes', async () => {
+      const { runtime, service, graphSearch } = setup();
+      await service.searchGraph('u-1', 'model-1', 'acme');
+      await service.searchGraph('u-1', 'model-1', 'acme');
+      expect(runtime.getBoundGraph).toHaveBeenCalledTimes(1);
+      expect(runtime.getBoundGraph).toHaveBeenCalledWith('model-1', 'u-1', undefined, ['ws-1', 'ws-2']);
+
+      // A workspace share was revoked: the next read recomputes the scope and runs again.
+      graphSearch.allowedWorkspaceIds.mockResolvedValueOnce(['ws-1']);
+      await service.searchGraph('u-1', 'model-1', 'acme');
+      expect(runtime.getBoundGraph).toHaveBeenLastCalledWith('model-1', 'u-1', undefined, ['ws-1']);
+      expect(runtime.getBoundGraph).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses every graph read without source authorization wired', async () => {
+      const built = setup();
+      const bare = new SemanticPopulationRefreshService(
+        built.database as any, built.models as any, built.documents as any,
+        new ModelSpecificationService(), built.runtime as any, built.aiExtractionAgent as any,
+      );
+      await expect(bare.graphOutline('u-1', 'model-1')).rejects.toThrow('Source authorization is not available');
+      await expect(bare.graphRecord('u-1', 'model-1', 'n-1')).rejects.toThrow('Source authorization is not available');
+      expect(built.runtime.getBoundGraph).not.toHaveBeenCalled();
+      expect(built.runtime.getBoundGraphWindow).not.toHaveBeenCalled();
     });
   });
 });

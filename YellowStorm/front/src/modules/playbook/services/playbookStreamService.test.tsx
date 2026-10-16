@@ -1,5 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { setAccessToken } from '@/lib/api/access-token-store';
 import { usePlaybookStreamGlobal } from './playbookStreamService';
 
 const store = vi.hoisted(() => ({
@@ -28,7 +29,6 @@ vi.mock('../api', () => ({
 
 vi.mock('@/lib/api/config', () => ({
   API_CONFIG: { baseURL: 'http://api.local' },
-  AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_ENDPOINTS: { playbooks: { stream: '/playbook/stream' } },
 }));
 
@@ -64,7 +64,7 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     BroadcastChannelMock.instances = [];
     vi.stubGlobal('EventSource', EventSourceMock as unknown as typeof EventSource);
     vi.stubGlobal('BroadcastChannel', BroadcastChannelMock as unknown as typeof BroadcastChannel);
-    localStorage.setItem('token-key', 'abc');
+    setAccessToken('abc');
   });
 
   afterEach(() => { vi.useRealTimers(); });

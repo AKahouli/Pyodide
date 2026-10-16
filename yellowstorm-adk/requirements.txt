@@ -5,7 +5,6 @@ aiosqlite==0.22.1
 google-re2>=1.1.20240702
 ddtrace>=2.5.2
 structlog==25.4.0
-elasticsearch==9.1.0
 pymupdf>=1.24.1
 python-docx>=1.1.0
 python-pptx>=0.6.23
@@ -14,10 +13,6 @@ xlrd>=2.0.1
 openai>=2.45,<3
 linkup-sdk== 0.2.8
 redis==5.0.8
-pytest==8.4.2
-pytest-cov==7.0.0
-pytest-asyncio==1.2.0
-pytest-mock==3.15.0
 pydantic>=2,<3
 pydantic-settings>=2,<3
 mem0ai==1.0.11
@@ -43,7 +38,6 @@ langgraph-checkpoint-sqlite==3.1.0
 psycopg[binary,pool]==3.3.4
 mcp>=1.24,<2.0.0
 a2a-sdk[http-server]==0.3.26
-semantica==0.6.5
 httpx==0.28.1
 markdown==3.10.3
 greenlet>=3.0.0

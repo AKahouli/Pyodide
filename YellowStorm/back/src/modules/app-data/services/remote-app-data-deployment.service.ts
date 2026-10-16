@@ -57,6 +57,39 @@ export class RemoteAppDataDeploymentService {
     };
   }
 
+  /** Same contract as local mode — mirrors the builder MCP `provision` tool. */
+  async ensureDevProvisioned(workspaceId: string, ownerUserId: string): Promise<void> {
+    await this.provisionDev(workspaceId, ownerUserId);
+  }
+
+  /** DEV runtime env for the preview, provisioning DEV first when missing. */
+  async ensureDevRuntimeEnv(
+    workspaceId: string,
+    ownerUserId: string,
+  ): Promise<AppDataRuntimeEnv | null> {
+    const existing = await this.getRuntimeEnvForWorkspace(workspaceId, 'dev');
+    if (existing || !this.config.get<boolean>('appData.enabled', false)) return existing;
+    try {
+      const appDataId = await this.provisionDev(workspaceId, ownerUserId);
+      return this.buildRuntimeEnv(appDataId, 'dev');
+    } catch (err) {
+      this.logger.warn(
+        `Remote DEV App Data provisioning failed for workspaceId=${workspaceId}; preview proceeds without appDataRuntimeEnv`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  private async provisionDev(workspaceId: string, ownerUserId: string): Promise<string> {
+    const ensured = await this.client.ensureApp(workspaceId, undefined, ownerUserId);
+    await this.client.provision(ensured.id, 'dev');
+    this.logger.log(
+      `Remote DEV App Data ensured workspaceId=${workspaceId} appDataId=${ensured.id}`,
+    );
+    return ensured.id;
+  }
+
   async getRuntimeEnvForWorkspace(
     workspaceId: string,
     environment: AppDataEnvironment = 'dev',

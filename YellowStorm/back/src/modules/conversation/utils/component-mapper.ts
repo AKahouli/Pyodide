@@ -81,7 +81,7 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
         (typeof payload.file_path === 'string' && payload.file_path.length > 0)
       );
     case 'citation':
-      return Boolean(payload.text_source || payload.image_source || payload.web_source);
+      return Boolean(payload.text_source || payload.image_source || payload.web_source || payload.record_source);
     case 'agentActivity':
       return typeof payload.summary === 'string' && payload.summary.length > 0;
     case 'toolActivity':
@@ -183,6 +183,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
           content: comp.text?.content || '',
           outputPortId: comp.text?.output_port_id || '',
           output_port_id: comp.text?.output_port_id || '',
+          ...(agentId ? { actorId: agentId } : {}),
         },
       };
     case 'code':
@@ -330,7 +331,24 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
       const citation = comp.citation;
       const sourceData: Record<string, unknown> = { parentId: citation?.parent_id || '' };
 
-      if (citation?.web_source) {
+      if (citation?.record_source?.entity_id) {
+        // A record of a semantic model: the chat opens it (values, origins) from these ids.
+        const record = citation.record_source;
+        sourceData.sourceKind = 'record';
+        sourceData.sourceType = 'record';
+        sourceData.reference = record.reference || '';
+        sourceData.modelId = record.model_id || '';
+        sourceData.modelName = record.model_name || '';
+        sourceData.data = record.data || 'published';
+        sourceData.dataRevisionId = record.data_revision_id || '';
+        sourceData.entityId = record.entity_id;
+        sourceData.concept = record.concept || '';
+        sourceData.name = record.name || '';
+        sourceData.keyFields = record.key_fields && typeof record.key_fields === 'object' ? { ...record.key_fields } : {};
+        sourceData.field = record.field || '';
+        sourceData.quote = record.quote || '';
+        sourceData.source = record.name || record.entity_id;
+      } else if (citation?.web_source) {
         sourceData.sourceKind = 'web';
         sourceData.sourceType = 'web';
         sourceData.source = citation.web_source.source || '';

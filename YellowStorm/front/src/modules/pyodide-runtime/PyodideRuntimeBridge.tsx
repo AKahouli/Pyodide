@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AUTH_STORAGE_KEYS } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/access-token-store';
 import { useAuth } from '@/modules/auth';
 import { PyodideRuntimeClient } from './PyodideRuntimeClient';
 
@@ -18,7 +18,7 @@ export function PyodideRuntimeBridge(): null {
     if (!enabled || !isAuthenticated) return undefined;
 
     const client = new PyodideRuntimeClient({
-      getToken: () => localStorage.getItem(AUTH_STORAGE_KEYS.accessToken),
+      getToken: getAccessToken,
       indexUrl: import.meta.env.VITE_PYODIDE_INDEX_URL || DEFAULT_PYODIDE_INDEX_URL,
     });
     client.connect();

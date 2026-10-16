@@ -1,0 +1,1 @@
+ALTER TABLE "logical_search_evaluations" ADD COLUMN "model_id" varchar(128);

@@ -44,7 +44,7 @@ vi.mock('../../query/hooks', () => ({
         }, { id: 'organization:c002', conceptId: 'organization', entityKey: 'c002', label: 'Contoso', values: { id: 'C002' }, provenance: { id: { mappingId: '', source: { kind: 'manual', documentName: '' } } }, conflicts: [] }],
       }],
       relations: [{ relationId: 'partner', relationLabel: 'works with', sourceEntityId: 'organization:c001', targetEntityIds: ['organization:c002'], status: 'resolved', sourceAttribute: 'id', sourceValue: 'C001', targetAttribute: 'id', targetValues: ['C002'] }], sourceIssues, gaps,
-      summary: { entities: 2, resolvedRelations: 1, unresolvedRelations: 0, ambiguousRelations: 0, conflicts: 0 },
+      summary: { entities: 2, resolvedRelations: 1, unresolvedRelations: 0, ambiguousRelations: 0 },
     },
   }),
 }));

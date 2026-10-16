@@ -2,6 +2,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from hmac import compare_digest
 import re
+import jwt
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 from structlog.contextvars import bind_contextvars, unbind_contextvars
@@ -43,9 +46,34 @@ def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: st
 
 
 class TrustedIdentityMiddleware:
-    def __init__(self, app: ASGIApp, ingress_token: str) -> None:
+    def __init__(self, app: ASGIApp, ingress_token: str, auth_mode: str = "Bearer", jwt_public_key: str = "", jwt_issuer: str = "", jwt_audience: str = "mcp-playbook") -> None:
+        if auth_mode not in ("JWT", "Bearer"):
+            raise ValueError("Auth mode must be JWT or Bearer")
+        if auth_mode == "JWT":
+            if not jwt_issuer or not jwt_audience or not isinstance(load_pem_public_key(jwt_public_key.encode()), RSAPublicKey):
+                raise ValueError("JWT mode requires an RSA public key, issuer and audience")
         self.app = app
         self.ingress_token = ingress_token
+        self.auth_mode = auth_mode
+        self.jwt_public_key = jwt_public_key
+        self.jwt_issuer = jwt_issuer
+        self.jwt_audience = jwt_audience
+
+    def _jwt_user_id(self, headers: list[tuple[bytes, bytes]]) -> str:
+        values = [value for name, value in headers if name.lower() == b"authorization"]
+        if len(values) != 1:
+            return ""
+        parts = values[0].decode("utf-8", errors="replace").split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return ""
+        try:
+            claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
+                issuer=self.jwt_issuer, audience=self.jwt_audience,
+                options={"require": ["sub", "iss", "aud", "iat", "exp"]})
+            user_id = claims["sub"]
+            return user_id if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ""
+        except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
+            return ""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -66,8 +94,9 @@ class TrustedIdentityMiddleware:
             await self.app(scope, receive, send)
             return
         headers = {key.lower(): value for key, value in raw_headers}
+        jwt_user_id = self._jwt_user_id(raw_headers) if self.auth_mode == "JWT" else ""
         values = {
-            "user_id": headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
+            "user_id": jwt_user_id if self.auth_mode == "JWT" else headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
             "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
             "correlation_id": headers.get(b"x-correlation-id", b"").decode("utf-8", errors="replace").strip(),
@@ -76,7 +105,8 @@ class TrustedIdentityMiddleware:
             value and not _IDENTIFIER.fullmatch(value)
             for value in values.values()
         )
-        if not _has_valid_bearer_auth(raw_headers, self.ingress_token) or invalid_identity:
+        authenticated = bool(jwt_user_id) if self.auth_mode == "JWT" else _has_valid_bearer_auth(raw_headers, self.ingress_token)
+        if not authenticated or invalid_identity:
             await send({
                 "type": "http.response.start",
                 "status": 401,
@@ -85,7 +115,7 @@ class TrustedIdentityMiddleware:
             await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
             return
 
-        complete_actor = all(values[key] for key in (
+        complete_actor = self.auth_mode == "JWT" and bool(values["user_id"]) or all(values[key] for key in (
             "user_id",
             "agent_id",
             "conversation_id",

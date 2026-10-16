@@ -1,6 +1,17 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
+
+/** See vite.config.ts: lucide-react no longer ships `dynamicIconImports.mjs`. */
+function resolveDynamicIconImports(): string {
+  const candidates = [
+    path.resolve(__dirname, 'node_modules/@openuidev/react-ui/node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dist/esm/dynamicIconImports.js'),
+    path.resolve(__dirname, 'node_modules/lucide-react/dynamicIconImports.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1];
+}
 
 export default defineConfig({
   plugins: [react()],
@@ -14,13 +25,15 @@ export default defineConfig({
     // Playwright e2e specs live under tests/e2e and must not run in Vitest.
     exclude: ['**/node_modules/**', '**/dist/**', '**/cypress/**', '**/tests/e2e/**'],
     // Cap concurrency to avoid vitest-worker RPC timeouts (fetch / resolveSnapshotPath)
-    // under heavy full-suite load on Windows.
+    // under heavy full-suite load on Windows. maxWorkers: 4 still flakes late in
+    // ~800s runs; keep this low enough that worker RPC stays responsive.
     pool: 'forks',
-    maxWorkers: 4,
+    maxWorkers: 2,
     minWorkers: 1,
     fileParallelism: true,
-    testTimeout: 15_000,
-    hookTimeout: 15_000,
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
+    teardownTimeout: 20_000,
     coverage: {
       provider: 'v8', // or 'istanbul'
       reporter: ['text', 'json', 'html', 'lcov'],
@@ -43,6 +56,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'lucide-react/dynamicIconImports.mjs': resolveDynamicIconImports(),
     },
   },
 });

@@ -1,6 +1,23 @@
 import { getQuickJS, type QuickJSContext, type QuickJSHandle } from "quickjs-emscripten";
 import { ERROR_CODES, RuntimeError, asRuntimeError, type ErrorCode } from "./errors.js";
-import type { ExecuteInput, ExecutionResult, Executor } from "./executor.js";
+import type { RuntimeLimits } from "./limits.js";
+import type { PublicFileRef, WorkspaceHost, WorkspaceMutation } from "../workspace/types.js";
+export interface ExecuteInput {
+  code: string;
+  input?: unknown;
+  host: WorkspaceHost;
+  limits: RuntimeLimits;
+}
+
+export interface ExecutionResult {
+  result: unknown;
+  logs: string[];
+  logsTruncated: boolean;
+  writtenFiles: PublicFileRef[];
+  mutations: WorkspaceMutation[];
+  durationMs: number;
+  runtime: "quickjs";
+}
 
 const encoder = new TextEncoder();
 
@@ -32,7 +49,7 @@ const WRAPPER_SUFFIX = `
   return JSON.stringify(value);
 })`;
 
-export class QuickJsExecutor implements Executor {
+export class QuickJsExecutor {
   async execute({ code, input, host, limits }: ExecuteInput): Promise<ExecutionResult> {
     const started = Date.now();
     if (typeof code !== "string" || !code.trim()) throw new RuntimeError("INVALID_CODE", "JavaScript code is required.");

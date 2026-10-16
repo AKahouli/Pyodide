@@ -164,6 +164,12 @@ export async function fetchRootWork(conversationId: string, signal?: AbortSignal
   return response.data.data;
 }
 
+export async function cancelRootBackgroundJob(conversationId: string, executionId: string, request: { expectedEpoch: number }) {
+  const response = await apiClient.post<ApiResponse<{ executionId: string; status: string; cancellationRequested: boolean }>>(
+    API_ENDPOINTS.conversations.rootWorkCancelJob(conversationId, executionId), request);
+  return response.data.data;
+}
+
 export async function fetchRootWorkEvents(conversationId: string, epoch: number, after: string, signal?: AbortSignal) {
   const response = await apiClient.get<ApiResponse<Array<{ sequence: string; eventId: string; payload: Record<string, unknown> }>>>(
     API_ENDPOINTS.conversations.rootWorkEvents(conversationId), { params: { epoch, after }, signal });
@@ -345,6 +351,13 @@ export async function createShare(conversationId: string, payload: CreateSharePa
   return response.data.data;
 }
 
+export async function searchShareRecipients(conversationId: string, query: string): Promise<{ id: string; email: string; firstName?: string; lastName?: string }[]> {
+  const response = await apiClient.get<ApiResponse<{ id: string; email: string; firstName?: string; lastName?: string }[]>>(
+    API_ENDPOINTS.conversations.shareUsers(conversationId), { params: { q: query } },
+  );
+  return response.data.data;
+}
+
 export async function getShares(conversationId: string): Promise<ShareResponse[]> {
   const response = await apiClient.get<ApiResponse<ShareResponse[]>>(API_ENDPOINTS.conversations.shares(conversationId));
   return response.data.data;
@@ -354,7 +367,16 @@ export async function revokeShare(conversationId: string, shareId: string): Prom
   await apiClient.delete(API_ENDPOINTS.conversations.revokeShare(conversationId, shareId));
 }
 
+export async function revokeShareRecipient(conversationId: string, shareId: string, recipientId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.conversations.revokeShareRecipient(conversationId, shareId, recipientId));
+}
+
 export async function viewPublicShare(accessToken: string): Promise<PublicShareViewResponse> {
   const response = await apiClient.get<ApiResponse<PublicShareViewResponse>>(API_ENDPOINTS.conversations.publicShare(accessToken));
+  return response.data.data;
+}
+
+export async function fetchActiveStreams(conversationId: string): Promise<ActiveStreamSnapshot[]> {
+  const response = await apiClient.get<ApiResponse<ActiveStreamSnapshot[]>>(API_ENDPOINTS.conversations.activeStreams(conversationId));
   return response.data.data;
 }

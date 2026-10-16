@@ -1,0 +1,4 @@
+/* The floating launcher must not cover controls in the modal work pane. */
+body:has(#conversation-context-panel[role='dialog']) [aria-describedby='platform-copilot-launcher-instructions'] {
+  visibility: hidden;
+}

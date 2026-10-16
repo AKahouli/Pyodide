@@ -1,15 +1,18 @@
-import { useState } from 'react';
-import { Copy, Link, Mail, Plus, X, Loader2, Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Copy, Link, Mail, X, Loader2, Check, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
-import { createShare } from '../api';
+import { useAuth } from '@/modules/auth';
+import { createShare, getShares, revokeShare, revokeShareRecipient, searchShareRecipients } from '../api';
 import { useConversationStore } from '../store';
 import type { ShareType, ShareResponse } from '../types';
 
@@ -18,6 +21,7 @@ interface ShareDialogProps {
   onOpenChange: (open: boolean) => void;
   conversationId: string;
   conversationTitle: string;
+  governed?: boolean;
 }
 
 const EXPIRY_OPTIONS = [
@@ -28,11 +32,17 @@ const EXPIRY_OPTIONS = [
   { value: '365', labelKey: 'dialogs.share.expiryOptions.365' as const },
 ];
 
-export function ShareDialog({ open, onOpenChange, conversationId, conversationTitle }: ShareDialogProps) {
-  const [activeTab, setActiveTab] = useState<ShareType>('public');
+type Recipient = { id: string; email: string; firstName?: string; lastName?: string };
+
+export function ShareDialog({ open, onOpenChange, conversationId, conversationTitle, governed = false }: ShareDialogProps) {
+  const [activeTab, setActiveTab] = useState<ShareType>('private');
   const [title, setTitle] = useState(conversationTitle);
   const [expiresInDays, setExpiresInDays] = useState('30');
-  const [emails, setEmails] = useState<string[]>(['']);
+  const [selected, setSelected] = useState<Recipient[]>([]);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Recipient[]>([]);
+  const [shares, setShares] = useState<ShareResponse[]>([]);
+  const [searching, setSearching] = useState(false);
   const [shareWorkspaces, setShareWorkspaces] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [shareResult, setShareResult] = useState<ShareResponse | null>(null);
@@ -41,11 +51,14 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const { t } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
+  const { user } = useAuth();
 
   const resetState = () => {
     setTitle(conversationTitle);
     setExpiresInDays('30');
-    setEmails(['']);
+    setSelected([]);
+    setQuery('');
+    setResults([]);
     setShareWorkspaces(false);
     setShareResult(null);
     setCopied(false);
@@ -58,21 +71,29 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
     onOpenChange(isOpen);
   };
 
-  const addEmailField = () => {
-    setEmails([...emails, '']);
-  };
+  useEffect(() => {
+    if (!open) return;
+    setActiveTab('private');
+    getShares(conversationId).then(setShares).catch(() => toast.error(t('toasts.share.error')));
+  }, [open, governed, conversationId]);
 
-  const removeEmailField = (index: number) => {
-    if (emails.length > 1) {
-      setEmails(emails.filter((_, i) => i !== index));
-    }
-  };
-
-  const updateEmail = (index: number, value: string) => {
-    const newEmails = [...emails];
-    newEmails[index] = value;
-    setEmails(newEmails);
-  };
+  useEffect(() => {
+    if (!open || query.trim().length < 3) { setResults([]); setSearching(false); return; }
+    let cancelled = false;
+    setResults([]);
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const users = await searchShareRecipients(conversationId, query.trim());
+        if (!cancelled) setResults(users);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [open, conversationId, query]);
 
   const handleShare = async () => {
     setIsLoading(true);
@@ -87,12 +108,14 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
           : {
               shareType: 'private' as const,
               title: title.trim() || undefined,
-              recipientEmails: emails.filter((e) => e.trim()),
-              shareWorkspaces,
+              recipientEmails: selected.map((user) => user.email),
+              ...(!governed ? { shareWorkspaces } : {}),
             };
 
       const result = await createShare(conversationId, payload);
       setShareResult(result);
+      void getShares(conversationId).then(setShares).catch(() => toast.error(t('toasts.share.error')));
+      setSelected([]);
 
       // Sharing changes membership/link state, so the derived "shared" flag and
       // member list must be refreshed or the header badge and manage action go stale.
@@ -102,12 +125,24 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
       if (activeTab === 'public') {
         toast.success(t('toasts.share.linkCreated'));
       } else {
-        toast.success(t('toasts.share.sharedWith', { count: payload.recipientEmails?.length ?? 0 }));
+        toast.success(t('toasts.share.sharedWith', { count: result.recipientEmails?.length ?? 0 }));
       }
     } catch {
       toast.error(t('toasts.share.error'));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRevoke = async (shareId: string, recipientId?: string) => {
+    try {
+      if (recipientId) await revokeShareRecipient(conversationId, shareId, recipientId);
+      else await revokeShare(conversationId, shareId);
+      setShares(await getShares(conversationId));
+      await refreshCurrentConversation(conversationId);
+      void fetchConversations({ reset: true });
+    } catch {
+      toast.error(t('toasts.share.error'));
     }
   };
 
@@ -124,16 +159,17 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const validEmails = emails.filter((e) => e.trim() && e.includes('@'));
-  const canSharePrivate = validEmails.length > 0;
+  const canSharePrivate = selected.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className='sm:max-w-md'>
-        <DialogHeader>
+      <DialogContent className='w-[95vw] max-w-2xl max-h-[80vh] flex flex-col p-0 gap-0'>
+        <DialogHeader className='p-4 pb-3 border-b'>
           <DialogTitle>{t('dialogs.share.title')}</DialogTitle>
-          <DialogDescription>{t('dialogs.share.description')}</DialogDescription>
+          <DialogDescription>{t(governed ? 'dialogs.share.governedDescription' : 'dialogs.share.description')}</DialogDescription>
         </DialogHeader>
+
+        <ScrollArea className='flex-1'><div className='p-4 space-y-4'>
 
         {shareResult && activeTab === 'public' ? (
           // Show share link result
@@ -175,7 +211,8 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
           </div>
         ) : (
           // Show share form
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ShareType)}>
+          <Tabs value={governed ? 'private' : activeTab} onValueChange={(v) => setActiveTab(v as ShareType)}>
+            {!governed &&
             <TabsList className='grid w-full grid-cols-2'>
               <TabsTrigger value='public' className='gap-2'>
                 <Link className='h-4 w-4' />
@@ -185,7 +222,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
                 <Mail className='h-4 w-4' />
                 {t('dialogs.share.tabs.private')}
               </TabsTrigger>
-            </TabsList>
+            </TabsList>}
 
             <div className='mt-4 space-y-4'>
               {/* Title field (both modes) */}
@@ -214,22 +251,21 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
 
               <TabsContent value='private' className='space-y-4 mt-0'>
                 <div className='space-y-2'>
-                  <Label>{t('dialogs.share.form.recipientLabel')}</Label>
-                  {emails.map((email, index) => (
-                    <div key={index} className='flex gap-2'>
-                      <Input type='email' value={email} onChange={(e) => updateEmail(index, e.target.value)} placeholder={t('dialogs.share.form.recipientPlaceholder')} />
-                      {emails.length > 1 && (
-                        <Button type='button' variant='ghost' size='icon' onClick={() => removeEmailField(index)}>
-                          <X className='h-4 w-4' />
-                        </Button>
-                      )}
+                  <Label htmlFor='conversation-share-search'>{t('dialogs.share.form.recipientLabel')}</Label>
+                  <div className='relative rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring'>
+                    <Search className='absolute left-3 top-3 h-4 w-4 text-muted-foreground' aria-hidden='true' />
+                    <div className='flex flex-wrap gap-2 pl-9 pr-3'>
+                      {selected.map((user) => <span key={user.id} className='my-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs'>{user.email}<button type='button' aria-label={`${t('dialogs.share.removeRecipient')} ${user.email}`} onClick={() => setSelected(selected.filter((item) => item.id !== user.id))}><X className='size-3' /></button></span>)}
+                      <input id='conversation-share-search' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('dialogs.share.form.searchPlaceholder')} className='min-w-36 flex-1 border-0 bg-transparent py-2 text-sm outline-none' />
                     </div>
-                  ))}
-                  <Button type='button' variant='outline' size='sm' onClick={addEmailField} className='w-full'>
-                    <Plus className='h-4 w-4 mr-2' />
-                    {t('dialogs.share.form.addEmail')}
-                  </Button>
+                    {searching && <Loader2 className='absolute right-3 top-3 size-4 animate-spin' />}
+                  </div>
+                  {query.trim().length >= 3 && !searching && <div className='max-h-48 overflow-y-auto rounded-md border'>
+                    {results.filter((user) => !selected.some((item) => item.id === user.id)).map((user) => <button key={user.id} type='button' className='flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted focus-visible:bg-muted' onClick={() => { setSelected([...selected, user]); setQuery(''); }}><span className='flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary'>{(user.firstName || user.email)[0]?.toUpperCase()}</span><span className='min-w-0'><span className='block truncate text-sm font-medium'>{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.email}</span><span className='block truncate text-xs text-muted-foreground'>{user.email}</span></span></button>)}
+                    {results.length === 0 && <p className='p-3 text-sm text-muted-foreground'>{t('dialogs.share.noResults')}</p>}
+                  </div>}
                 </div>
+                {!governed &&
                 <div className='flex items-start gap-2 rounded-md border p-3'>
                   <Checkbox
                     id='share-conversation-workspaces'
@@ -239,7 +275,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
                   <Label htmlFor='share-conversation-workspaces' className='cursor-pointer text-sm leading-5'>
                     {t('dialogs.share.form.shareWorkspaces')}
                   </Label>
-                </div>
+                </div>}
               </TabsContent>
             </div>
 
@@ -262,6 +298,18 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
             </DialogFooter>
           </Tabs>
         )}
+        <Separator />
+        <div className='space-y-2'>
+          <h3 className='text-sm font-medium'>{t('dialogs.share.peopleWithAccess')}</h3>
+          <div className='flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2'><div className='flex min-w-0 items-center gap-3'><span className='flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm text-primary'>{user?.email?.[0]?.toUpperCase() ?? 'Y'}</span><div className='min-w-0'><p className='text-sm font-medium'>{t('dialogs.share.you')}</p><p className='truncate text-xs text-muted-foreground'>{user?.email}</p></div></div><span className='rounded bg-muted px-2 py-1 text-xs text-muted-foreground'>{t('dialogs.share.owner')}</span></div>
+          {shares.filter((share) => !share.isRevoked && share.shareType === 'private').flatMap((share) =>
+            share.recipientUserIds?.length === share.recipientEmails?.length
+              ? (share.recipientEmails ?? []).map((email, index) => ({ share, email, recipientId: share.recipientUserIds?.[index] }))
+              : [{ share, email: (share.recipientEmails ?? []).join(', '), recipientId: undefined }],
+          ).map(({ share, email, recipientId }) => <div key={`${share.id}-${email}`} className='flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-muted/50'><div className='min-w-0'><p className='truncate text-sm'>{email}</p><p className='text-xs text-muted-foreground'>{t('dialogs.share.access')}</p></div><Button type='button' variant='ghost' size='icon' aria-label={`${t('dialogs.share.revoke')} ${email}`} onClick={() => void handleRevoke(share.id, recipientId)}><X className='size-4 text-destructive' /></Button></div>)}
+          {!shares.some((share) => !share.isRevoked && share.shareType === 'private') && <p className='py-3 text-center text-sm text-muted-foreground'>{t('dialogs.share.noAccess')}</p>}
+        </div>
+        </div></ScrollArea>
       </DialogContent>
     </Dialog>
   );

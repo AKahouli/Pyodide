@@ -46,7 +46,7 @@ describe('0025_cross_schema_fks stays in sync with fk-specs.ts', () => {
   });
 });
 
-/** The conversation-v2 / app-runtime group: drizzle/0037 is generated from FK_SPECS_IN_0037 and must not drift. */
+/** The app-builder / app-runtime group: drizzle/0037 is generated from FK_SPECS_IN_0037 and must not drift. */
 describe('0037_conversation_app_runtime_fks stays in sync with fk-specs.ts', () => {
   const sql = fs.readFileSync(
     path.resolve(__dirname, '..', '..', '..', 'drizzle', '0037_conversation_app_runtime_fks.sql'),

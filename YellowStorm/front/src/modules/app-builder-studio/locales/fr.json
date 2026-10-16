@@ -1,0 +1,322 @@
+{
+  "page": {
+    "eyebrow": "App Builder Studio",
+    "title": "Créez des apps avec votre Agent",
+    "newChat": "Nouveau projet",
+    "emptyState": "Décrivez ce que vous voulez construire. Studio ouvre un aperçu en direct à côté du chat pour itérer jusqu’au déploiement.",
+    "backToMarket": "Retour à l’App Market",
+    "highlights": {
+      "agent": "Guidé par l’Agent",
+      "preview": "Aperçu en direct",
+      "deploy": "Déploiement en un clic"
+    }
+  },
+  "session": {
+    "loading": "Chargement de Studio…",
+    "notFound": "Projet introuvable.",
+    "notFoundHint": "Ce projet a peut-être été supprimé, ou vous n’y avez pas accès.",
+    "back": "Retour",
+    "conversationError": "Studio a rencontré une erreur inattendue.",
+    "previewError": "Le panneau d’aperçu a rencontré une erreur inattendue.",
+    "errorTitle": "Erreur de connexion",
+    "waitingForPreview": {
+      "title": "En attente de l’aperçu en direct",
+      "body": "L’agent démarre une fois l’installation des dépendances terminée et Vite prêt."
+    },
+    "templateClone": {
+      "waitingTitle": "Préparation de l’aperçu de l’application",
+      "waitingBody": "Veuillez patienter pendant que nous préparons un aperçu en direct du modèle cloné. L’envoi est désactivé jusqu’à ce que l’aperçu soit prêt.",
+      "waitingBodyDraft": "L’aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s’active dès que l’aperçu est prêt, puis ouvre Studio avec ce modèle.",
+      "readyTitle": "Aperçu prêt",
+      "readyBody": "Votre modèle est chargé dans l’aperçu en direct. Envoyez un message lorsque vous êtes prêt à le modifier et le personnaliser.",
+      "dismiss": "Compris"
+    },
+    "previewBootFailed": "L’aperçu en direct n’a pas pu démarrer. Rechargez la page, puis renvoyez votre message.",
+    "previewBootTimeout": "L’aperçu en direct a mis trop de temps à démarrer. Rechargez la page, puis réessayez.",
+    "fromAppBuilder": {
+      "title": "Bienvenue dans Studio",
+      "body": "Votre brief a été envoyé à l’Agent. Affinez ici — l’aperçu en direct s’ouvre dans le panneau latéral dès qu’une version est prête. Revenez à l’App Market via l’en-tête.",
+      "dismiss": "Compris"
+    }
+  },
+  "composer": {
+    "placeholder": "Décrivez un changement — ex. « Ajoute un mode sombre dans les paramètres »…",
+    "send": "Envoyer",
+    "connectors": "Connecteurs",
+    "noConnectors": "Aucun connecteur disponible",
+    "modelSelector": {
+      "unset": "Modèle par défaut",
+      "search": "Rechercher des modèles…",
+      "empty": "Aucun modèle trouvé."
+    }
+  },
+  "agentComposer": {
+    "placeholder": "Décrivez l’application que vous voulez créer…"
+  },
+  "questionChoices": {
+    "fallbackTitle": "Choisissez une option pour continuer"
+  },
+  "conversation": {
+    "emptyTitle": "Dites à Studio quoi construire",
+    "emptyDescription": "Demandez des écrans, des parcours ou des corrections. L’Agent modifie votre app et l’aperçu se met à jour à côté.",
+    "thinking": "Réflexion",
+    "assistantName": "YellowStorm",
+    "fileOpenFailed": "Impossible d’ouvrir le fichier"
+  },
+  "tool": {
+    "running": "En cours",
+    "success": "Terminé",
+    "pending": "En attente",
+    "error": "Échec",
+    "openDetails": "Ouvrir les détails de l’outil"
+  },
+  "rightPanel": {
+    "title": "Espace Studio",
+    "subtitle": "L’agent utilise",
+    "close": "Fermer le panneau",
+    "empty": "Sélectionnez un outil pour l’inspecter.",
+    "jumpToLive": "Revenir au direct",
+    "tabCode": "Code",
+    "tabPreview": "Aperçu",
+    "tabData": "Données",
+    "resizeHandle": "Glisser pour redimensionner l’aperçu"
+  },
+  "appData": {
+    "loading": "Chargement des données…",
+    "disabled": "App Data n'est pas activé pour cet espace.",
+    "loadError": "Impossible de charger les données.",
+    "refresh": "Actualiser",
+    "schemaVersion": "Version du schéma",
+    "noTables": "Aucune table pour le moment.",
+    "envDev": "DEV",
+    "envProd": "PROD",
+    "seed": "Seed",
+    "seedApply": "Appliquer le seed",
+    "seeding": "Seed en cours…",
+    "seedPlaceholder": "Collez un manifeste JSON, ex. { \"<table>\": [ { \"col\": \"valeur\" } ] }",
+    "seedInvalidJson": "JSON invalide — utilisez { \"<table>\": [ { \"col\": \"valeur\" } ] }.",
+    "seedDone": "Seed appliqué : {{inserted}} inséré(s), {{skipped}} ignoré(s).",
+    "seedError": "Échec du seed."
+  },
+  "nodepod": {
+    "inBrowser": "Aperçu en direct",
+    "previewTitle": "Aperçu de l'application",
+    "toolbarLabel": "Barre d'outils de l'aperçu",
+    "addressLocal": "localhost · aperçu",
+    "addressDeployed": "Application publiée",
+    "fileCount": "{{count}} fichiers",
+    "files": "Fichiers",
+    "noFiles": "Aucun fichier pour le moment — ils apparaîtront au fur et à mesure de la génération.",
+    "selectFile": "Choisissez un fichier à inspecter",
+    "binaryFile": "Ce fichier ne peut pas être prévisualisé ({{size}})",
+    "readOnly": "Lecture seule",
+    "tabPreview": "Aperçu",
+    "tabSource": "Code",
+    "layoutPreviewOnly": "Aperçu",
+    "layoutPreviewOnlyHint": "Afficher l'application en pleine largeur",
+    "layoutSplit": "Fichiers",
+    "layoutSplitHint": "Parcourir les fichiers à côté de l'aperçu",
+    "explorer": "Fichiers",
+    "explorerHint": "Parcourez les fichiers générés. Demandez à l’Agent dans le chat pour les modifier.",
+    "searchFiles": "Rechercher un fichier…",
+    "clearSearch": "Effacer la recherche",
+    "expandAll": "Tout développer",
+    "collapseAll": "Tout réduire",
+    "noSearchResults": "Aucun fichier ne correspond à votre recherche.",
+    "lines": "lignes",
+    "showFiles": "Afficher l'arbre des fichiers",
+    "hideFiles": "Masquer l'arbre des fichiers",
+    "statusReady": "En ligne",
+    "statusLoading": "Préparation",
+    "statusInstalling": "Installation",
+    "statusStarting": "Démarrage",
+    "statusError": "Indisponible",
+    "statusWaiting": "En attente",
+    "phase": {
+      "connecting": "Démarrage de votre espace",
+      "registering": "Préparation du runtime",
+      "hydrating": "Restauration des fichiers",
+      "installing": "Installation des dépendances",
+      "starting": "Lancement de votre application"
+    },
+    "hint": {
+      "connecting": "Ouverture d'un runtime sécurisé pour cette session.",
+      "registering": "Transmission de la session au runtime.",
+      "hydrating": "Récupération des fichiers du projet depuis le stockage.",
+      "installing": "Cela peut prendre un moment au premier lancement.",
+      "starting": "Votre aperçu apparaîtra dans un instant."
+    },
+    "bootHint": "YellowMind prépare un aperçu en direct de votre application. Cela ne prend généralement que quelques instants.",
+    "waitingHint": "Décrivez ce que vous souhaitez dans la conversation — l'aperçu apparaîtra ici.",
+    "loading": "Préparation de l'aperçu…",
+    "installing": "Configuration de l'environnement d'aperçu…",
+    "starting": "Presque prêt…",
+    "waitingSources": "En attente de la génération de votre application…",
+    "error": "L'aperçu n'a pas pu démarrer",
+    "errorDetail": "Un problème est survenu au démarrage de l'aperçu. Vous pouvez réessayer.",
+    "retry": "Réessayer",
+    "openInNewTab": "Ouvrir l'aperçu dans un nouvel onglet",
+    "buildPhase": {
+      "generation_started": "Génération démarrée",
+      "creating_files": "Création des fichiers",
+      "coding_complete": "Code prêt",
+      "installing_dependencies": "Installation des paquets",
+      "building_project": "Construction de l'application",
+      "waiting_for_build": "Finalisation du build",
+      "validating_preview": "Vérification de l'aperçu",
+      "fetching_app_code": "Chargement de l'application",
+      "fetching_app_preview": "Ouverture de l'aperçu",
+      "ready": "Prêt"
+    }
+  },
+  "vnc": {
+    "unavailable": "Aucune VM attachée à cette session",
+    "connecting": "Connexion…",
+    "connected": "Connecté",
+    "error": "Échec de la connexion",
+    "takeOver": "Prendre le contrôle",
+    "release": "Relâcher le contrôle"
+  },
+  "tools": {
+    "browser": { "title": "Navigateur", "openInNewTab": "Ouvrir dans un nouvel onglet" },
+    "shell": { "title": "Shell", "copy": "Copier la sortie", "exitCode": "code {{code}}" },
+    "file": { "title": "Fichier", "operation": "Opération" },
+    "search": { "title": "Recherche", "noResults": "Aucun résultat" },
+    "mcp": { "title": "MCP" },
+    "generic": { "title": "Outil" }
+  },
+  "plan": {
+    "title": "Avancement",
+    "completed": "Tâche terminée",
+    "collapse": "Réduire le plan"
+  },
+  "controls": { "stop": "Arrêter", "pause": "Pause", "resume": "Reprendre" },
+  "files": {
+    "title": "Fichiers du projet",
+    "button": "Fichiers",
+    "unavailable": "Aucun espace de travail attaché à ce projet.",
+    "loading": "Chargement des fichiers…",
+    "empty": "Aucun fichier pour l'instant.",
+    "view": {
+      "list": "Vue liste",
+      "grid": "Vue grille"
+    }
+  },
+  "header": {
+    "back": "Retour à l’App Market",
+    "backToMarket": "App Market",
+    "readOnly": "Lecture seule",
+    "streaming": "Construction",
+    "streamError": "Problème de connexion",
+    "tooltips": {
+      "workspaces": "Gérer les workspaces",
+      "files": "Fichiers du projet"
+    },
+    "actions": {
+      "rename": "Renommer le projet",
+      "delete": "Supprimer le projet",
+      "more": "Autres actions"
+    }
+  },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Choisir une version finalisée à prévisualiser ou déployer",
+    "open": "Versions finalisées",
+    "version": "Version {{number}}",
+    "draft": "Brouillon",
+    "building": "Version en cours de construction…",
+    "finalized": "Finalisée",
+    "latest": "Dernière",
+    "preview": "Prévisualiser cette version",
+    "deploy": "Déployer cette version",
+    "active": "Active",
+    "empty": "Aucune version finalisée",
+    "loading": "Chargement des versions…"
+  },
+  "deploy": {
+    "publish": "Déployer",
+    "error": "Échec du déploiement — réessayez.",
+    "publishing": "Déploiement…",
+    "update": "Mettre à jour",
+    "liveUrl": "URL en ligne",
+    "liveBadge": "En ligne",
+    "publishedApp": "Votre application publiée",
+    "copy": "Copier le lien",
+    "open": "Ouvrir dans un nouvel onglet",
+    "viewUrl": "Voir l'URL déployée",
+    "menu": "Options de déploiement",
+    "modeSwitch": "Vue Aperçu ou Déployée",
+    "modePreview": "Aperçu",
+    "modeDeploy": "Déployé",
+    "embedUnavailable": "Cette application ne peut pas être affichée ici",
+    "embedUnavailableHint": "Ouvrez-la dans un nouvel onglet pour continuer."
+  },
+  "share": {
+    "title": "Partager l’application",
+    "searchPlaceholder": "Rechercher ou saisir une adresse email…",
+    "searching": "Recherche…",
+    "noResults": "Saisissez une adresse email valide",
+    "addEmail": "Ajouter",
+    "remove": "Retirer",
+    "cancel": "Annuler",
+    "send": "Envoyer"
+  },
+  "dialogs": {
+    "rename": {
+      "title": "Renommer le projet",
+      "placeholder": "Titre du projet",
+      "saving": "Enregistrement..."
+    },
+    "delete": {
+      "title": "Supprimer le projet ?",
+      "description": "Cela supprimera définitivement ce projet Studio.",
+      "descriptionWithName": {
+        "before": "Cela supprimera définitivement ",
+        "after": "."
+      },
+      "warning": "Cette action est irréversible.",
+      "deleting": "Suppression..."
+    }
+  },
+  "workspace": {
+    "sheet": {
+      "title": "Workspaces",
+      "description": "Workspaces attachés à ce projet.",
+      "loadingWorkspaces": "Chargement des workspaces...",
+      "noSelection": "Aucun workspace attaché à ce projet.",
+      "noDocuments": "Aucun document trouvé dans les workspaces attachés.",
+      "documentsLabel": "Documents",
+      "selectedCount": "{{count}} workspace attaché",
+      "selectedCount_plural": "{{count}} workspaces attachés",
+      "table": {
+        "name": "Nom",
+        "size": "Taille",
+        "type": "Type",
+        "workspace": "Workspace"
+      },
+      "paginationLabel": "Page {{page}} sur {{total}}"
+    }
+  },
+  "toasts": {
+    "rename": {
+      "error": "Impossible de renommer le projet"
+    },
+    "delete": {
+      "error": "Impossible de supprimer le projet"
+    },
+    "workspaces": {
+      "loadListError": "Impossible de charger les workspaces",
+      "loadDocumentsError": "Impossible de charger les documents"
+    },
+    "deploy": {
+      "success": "L'application a été déployée avec succès",
+      "error": "Échec du déploiement",
+      "copied": "Lien copié",
+      "copyError": "Impossible de copier le lien"
+    },
+    "share": {
+      "success": "Application partagée par email",
+      "error": "Impossible de partager l'application"
+    }
+  }
+}

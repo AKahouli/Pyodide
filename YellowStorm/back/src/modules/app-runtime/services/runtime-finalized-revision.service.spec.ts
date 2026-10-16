@@ -1,6 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
+import {
+  APPLICATION_COMPONENT_EVENT_SOURCE,
+  type ApplicationComponentEventSource,
+} from '../ports/application-component-events.port';
 import { type RuntimeFinalizedRevisionStore } from '../persistence/runtime-finalized-revision.store';
 import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
 import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
@@ -13,7 +16,7 @@ describe('RuntimeFinalizedRevisionService', () => {
   const resolveLatestFinalized = jest.fn();
   const existsByWorkspaceAndRevision = jest.fn();
   const summarizeByWorkspaces = jest.fn();
-  const listByType = jest.fn();
+  const listApplicationComponents = jest.fn();
 
   const store: RuntimeFinalizedRevisionStore = {
     upsert,
@@ -29,7 +32,7 @@ describe('RuntimeFinalizedRevisionService', () => {
     resolveLatestFinalized.mockResolvedValue(null);
     existsByWorkspaceAndRevision.mockResolvedValue(false);
     upsert.mockResolvedValue(undefined);
-    listByType.mockResolvedValue([]);
+    listApplicationComponents.mockResolvedValue([]);
     summarizeByWorkspaces.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
@@ -40,8 +43,10 @@ describe('RuntimeFinalizedRevisionService', () => {
           useValue: store,
         },
         {
-          provide: ConversationV2EventStoreService,
-          useValue: { listByType },
+          provide: APPLICATION_COMPONENT_EVENT_SOURCE,
+          useValue: {
+            listApplicationComponents,
+          } as unknown as ApplicationComponentEventSource,
         },
       ],
     }).compile();
@@ -123,7 +128,7 @@ describe('RuntimeFinalizedRevisionService', () => {
 
   it('backfills from application_component events when collection is empty', async () => {
     listByWorkspace.mockResolvedValueOnce([]);
-    listByType.mockResolvedValueOnce([
+    listApplicationComponents.mockResolvedValueOnce([
       {
         eventId: 'evt-a',
         emittedAt: 1_756_700_000,
@@ -138,7 +143,7 @@ describe('RuntimeFinalizedRevisionService', () => {
 
     await svc.backfillFromEvents('pointer-1', 'ws-1');
 
-    expect(listByType).toHaveBeenCalledWith('pointer-1', 'application_component');
+    expect(listApplicationComponents).toHaveBeenCalledWith('pointer-1');
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: 'ws-1',
@@ -184,6 +189,6 @@ describe('RuntimeFinalizedRevisionService', () => {
 
     await svc.backfillFromEvents('pointer-1', 'ws-1');
 
-    expect(listByType).not.toHaveBeenCalled();
+    expect(listApplicationComponents).not.toHaveBeenCalled();
   });
 });

@@ -36,6 +36,19 @@ describe('LoginModal', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
+  it('toggles password visibility with the eye button', async () => {
+    render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
+
+    const passwordInput = screen.getByLabelText('login.password.label');
+    expect(passwordInput).toHaveAttribute('type', 'password');
+
+    await userEvent.click(screen.getByRole('button', { name: 'actionShowPassword' }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+
+    await userEvent.click(screen.getByRole('button', { name: 'actionHidePassword' }));
+    expect(passwordInput).toHaveAttribute('type', 'password');
+  });
+
   it('opens forgot password flow from link', async () => {
     const onForgotPassword = vi.fn();
 
@@ -64,6 +77,20 @@ describe('LoginModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('login.error.suspended')).toBeInTheDocument();
+    });
+  });
+
+  it('shows a readable rate-limit message when login returns ERR_1007 / HTTP 429', async () => {
+    loginMock.mockRejectedValue({ code: 'ERR_1007', statusCode: 429, message: 'Rate limit exceeded. Try again in 42 seconds.' });
+
+    render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText('login.email.label'), 'user@example.com');
+    await userEvent.type(screen.getByLabelText('login.password.label'), testPassword);
+    await userEvent.click(screen.getByRole('button', { name: 'login.submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('login.error.rateLimit')).toBeInTheDocument();
     });
   });
 });

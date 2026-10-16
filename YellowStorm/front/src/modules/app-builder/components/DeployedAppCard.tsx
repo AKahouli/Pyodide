@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { ShareDeployDialog } from '@/modules/conversation-v2/components/RightPanel/ShareDeployDialog';
+import { ShareDeployDialog } from '@/modules/app-builder-studio/components/RightPanel/ShareDeployDialog';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DeployedApp } from '../types';
@@ -84,7 +84,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
   const versionCount = app.finalizedVersionCount ?? 0;
 
   const openApp = () => window.open(app.deployedUrl, '_blank', 'noreferrer');
-  const goToConversation = () => navigate(`/conversation-v2/${app.sessionId}`);
+  const goToConversation = () => navigate(`/studio/${app.sessionId}`);
 
   const statusBadge = (
     <Badge variant='outline' className={appCardBadgeClass(tone)}>

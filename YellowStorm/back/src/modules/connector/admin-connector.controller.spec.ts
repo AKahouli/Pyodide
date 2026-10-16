@@ -52,7 +52,7 @@ describe('AdminConnectorController MCP inspection', () => {
       'streamable_http',
       'http://localhost:8025/mcp',
       {},
-      undefined,
+      'user-1',
       undefined,
       undefined,
       undefined,

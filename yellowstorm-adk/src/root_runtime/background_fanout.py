@@ -111,7 +111,9 @@ class OwnedFanoutAdapter:
     async def settle(self, execution_id, status, text=None, evidence=None):
         if text is not None and len(text.encode()) > 262144:
             raise ValueError('Child output exceeds the durable result limit')
-        return await _post(self.scope, self.path(execution_id, 'lifecycle'), {**self.authority(), 'status': status,
+        from src.root_runtime.evidence_submission import prepare_evidence_submission
+        submitted = await prepare_evidence_submission(self.scope, execution_id, evidence,
+            self.path(execution_id, 'evidence-page'), self.authority()) if status == 'completed' else {}
+        return await _post(self.scope, self.path(execution_id, 'lifecycle'), {**self.authority(), 'status': status, **submitted,
             **({'text': text[:8000], 'fullText': text} if text is not None else {}),
-            **({'evidence': [{key: item[key] for key in ('nativeIdentity', 'outputOrdinal', 'kind', 'payload')}
-                for item in evidence]} if evidence else {})})
+        })

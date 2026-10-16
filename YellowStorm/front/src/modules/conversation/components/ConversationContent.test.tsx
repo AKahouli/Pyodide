@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAgentStore } from '@/modules/agent/store';
 import type { Message, MessageComponent } from '../types';
 import { useConversationUiStore } from '../uiStore';
 import { ConversationContent } from './ConversationContent';
@@ -33,6 +34,7 @@ vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</
 vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageReliabilityCard', () => ({ MessageReliabilityCard: () => <div>reliability-card</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
+vi.mock('./BackgroundResultNotice', () => ({ BackgroundResultNotice: () => null }));
 vi.mock('./outline/OutlineAnchorScroller', () => ({ OutlineAnchorScroller: () => null }));
 
 const storeState = {
@@ -51,6 +53,7 @@ const storeState = {
 };
 
 let isAwaitingFirstChunk = false;
+vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: 'owner' } }) }));
 let displayMessages: Message[] = [];
 
 vi.mock('../store', () => ({
@@ -80,6 +83,9 @@ describe('ConversationContent', () => {
     storeState.awaitingConversationId = null;
     storeState.messages = [];
     useConversationUiStore.setState({ autoReliabilityEnabled: false });
+    // Shared Zustand agent directory — reset so parallel bubble/identity suites cannot
+    // leave a stale directory that blanks the answer-producer header.
+    useAgentStore.setState({ agents: [], isInitialized: true, isLoading: false, error: null });
   });
 
   it('renders empty state when there are no messages', () => {
@@ -243,12 +249,18 @@ describe('ConversationContent', () => {
   it('animates only the dedicated live assistant bubble', () => {
     displayMessages = [{
       id: 'ai-complete', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
-      components: [{ id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
+      components: [
+        { id: 'activity-complete', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-complete', actorName: 'Completed Agent' } },
+        { id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorId: 'agent-complete', actorName: 'Completed Agent' } },
+      ],
     }];
     storeState.isStreaming = true;
     storeState.streamingConversationId = 'conv-1';
     storeState.streamingMessageId = 'ai-live';
-    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
+    storeState.streamingComponents = [
+      { id: 'activity-live', type: 'agentActivity', data: { summary: '', status: 'running', actorId: 'agent-live', actorName: 'Live Agent' } },
+      { id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorId: 'agent-live', actorName: 'Live Agent' } },
+    ];
 
     const { container } = render(<ConversationContent />);
 
@@ -256,5 +268,35 @@ describe('ConversationContent', () => {
     expect(screen.getAllByText('Live Agent')).not.toHaveLength(0);
     expect(container.querySelectorAll('[data-agent-activity][data-active="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(2);
+  });
+
+  it('shows the thinking label in the live bubble while the ADK placeholder awaits output', () => {
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-live';
+    storeState.streamingComponents = [
+      { id: 'activity-live', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-live', actorName: 'Smart Agent' } },
+    ];
+
+    const { container } = render(<ConversationContent />);
+
+    // The test i18n layer renders keys, so assert the key chosen by the real parent path.
+    expect(container).toHaveTextContent('stream.activity.thinking');
+    expect(container).not.toHaveTextContent('stream.activity.agentPlanning');
+  });
+
+  it('does not show the thinking counter for a completed persisted message', () => {
+    displayMessages = [{
+      id: 'ai-done', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [
+        { id: 'activity-done', type: 'agentActivity', data: { summary: '', status: 'completed', actorId: 'agent-done', actorName: 'Smart Agent' } },
+        { type: 'text', data: { content: 'Hello' } },
+      ],
+    }];
+
+    const { container } = render(<ConversationContent />);
+
+    expect(container).toHaveTextContent('stream.activity.agentPrepared');
+    expect(container).not.toHaveTextContent('stream.activity.thinking');
   });
 });

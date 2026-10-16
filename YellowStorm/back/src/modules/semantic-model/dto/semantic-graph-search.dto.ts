@@ -35,6 +35,20 @@ export class GraphSearchEnvironmentQueryDto {
 
 export class GraphSearchIndexDto extends GraphSearchEnvironmentQueryDto {}
 
+/** A record a chat answer cited: which data it was read from (published by default) and the revision then. */
+export class CitedRecordQueryDto {
+  @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' })
+  @IsOptional()
+  @IsIn(ASSISTANT_DATA)
+  data: AssistantData = 'published';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dataRevisionId?: string;
+}
+
 export class GraphSearchDto {
   @ApiPropertyOptional({ enum: SEARCH_ENVIRONMENTS, default: 'draft' })
   @IsOptional()
@@ -147,6 +161,8 @@ export class AssistantRelatedRecordsDto {
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true }) concepts?: string[];
   @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
   @ApiPropertyOptional({ default: 50, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) maxRecords?: number;
+  @ApiPropertyOptional({ type: [String], maxItems: 60, description: 'Field values to return with the linked records (key, label or alias; "*" for all)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
 }
 
 /** How query_records compares, groups and totals; checked in full (names, types, values) by the runtime. */
@@ -159,8 +175,8 @@ export const RECORD_MATCH = ['all', 'any'] as const;
 export const RECORD_DIRECTIONS = ['asc', 'desc'] as const;
 
 export class AssistantRecordFilterDto {
-  @ApiProperty({ description: 'Field key, label or alias; "name" for the record name; "<relation>.<field>" for a linked record' })
-  @IsString() @MinLength(1) @MaxLength(300) field!: string;
+  @ApiProperty({ description: 'Field key, label or alias; "name" for the record name; "<relation>.<field>" for a linked record, "<relation>.<relation>.<field>" further away' })
+  @IsString() @MinLength(1) @MaxLength(600) field!: string;
   @ApiProperty({ enum: RECORD_FILTER_OPS }) @IsIn(RECORD_FILTER_OPS) op!: (typeof RECORD_FILTER_OPS)[number];
   @ApiPropertyOptional({ description: 'A text, number or yes/no; a list for in and between; an ISO date or a relative period (last_3_months...) for dates' })
   @IsOptional() @Allow() value?: unknown;
@@ -168,9 +184,12 @@ export class AssistantRecordFilterDto {
 }
 
 export class AssistantRecordGroupByDto {
-  @ApiProperty() @IsString() @MinLength(1) @MaxLength(300) field!: string;
+  @ApiProperty({ description: 'A field, or "<relation>.<field>" to group on linked records (a record counts in each of their groups)' })
+  @IsString() @MinLength(1) @MaxLength(600) field!: string;
   @ApiPropertyOptional({ enum: RECORD_DATE_BUCKETS }) @IsOptional() @IsIn(RECORD_DATE_BUCKETS) bucket?: (typeof RECORD_DATE_BUCKETS)[number];
   @ApiPropertyOptional({ enum: RECORD_VALUE_TYPES }) @IsOptional() @IsIn(RECORD_VALUE_TYPES) as?: (typeof RECORD_VALUE_TYPES)[number];
+  @ApiPropertyOptional({ minimum: 0, maximum: 10, description: 'traverse_records only: group on the records of that point of the walk (0 is the start)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10) step?: number;
 }
 
 export class AssistantRecordAggregateDto {
@@ -186,6 +205,13 @@ export class AssistantRecordOrderByDto {
   @ApiPropertyOptional({ enum: RECORD_VALUE_TYPES }) @IsOptional() @IsIn(RECORD_VALUE_TYPES) as?: (typeof RECORD_VALUE_TYPES)[number];
 }
 
+export class AssistantRecordLinkedToDto {
+  @ApiProperty({ description: 'A relationship of the concept, by name (or its inverse name); several in a row as "<relation>.<relation>"' })
+  @IsString() @MinLength(1) @MaxLength(600) relation!: string;
+  @ApiProperty({ type: [String], maxItems: 200, description: 'entityId of the linked records (from find_records or query_records)' })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(300, { each: true }) recordIds!: string[];
+}
+
 export class AssistantQueryRecordsDto {
   @ApiProperty({ description: 'Concept key, label or alias' }) @IsString() @MinLength(1) @MaxLength(300) concept!: string;
   @ApiPropertyOptional({ type: [AssistantRecordFilterDto], maxItems: 20 })
@@ -198,9 +224,62 @@ export class AssistantQueryRecordsDto {
   @ApiPropertyOptional({ type: [AssistantRecordOrderByDto], maxItems: 3 })
   @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => AssistantRecordOrderByDto) orderBy?: AssistantRecordOrderByDto[];
   @ApiPropertyOptional({ type: [String], maxItems: 60 }) @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
+  @ApiPropertyOptional({ type: [AssistantRecordLinkedToDto], maxItems: 5, description: 'Only records linked through a relationship to these records; always applied on top of the filters' })
+  @IsOptional() @IsArray() @ArrayMaxSize(5) @ValidateNested({ each: true }) @Type(() => AssistantRecordLinkedToDto) linkedTo?: AssistantRecordLinkedToDto[];
   @ApiPropertyOptional({ default: 50, minimum: 0, maximum: 200, description: '0 returns only the total and aggregates' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(200) limit?: number;
   @ApiPropertyOptional({ default: 0, maximum: 100000 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset?: number;
+  @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
+}
+
+export const TRAVERSE_DIRECTIONS = ['outgoing', 'incoming'] as const;
+
+export class AssistantTraverseStartDto {
+  @ApiProperty({ description: 'The concept of the start records' }) @IsString() @MinLength(1) @MaxLength(300) concept!: string;
+  @ApiPropertyOptional({ type: [String], maxItems: 200, description: 'entityId of the start records; otherwise every record matching the filters' })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(300, { each: true }) recordIds?: string[];
+  @ApiPropertyOptional({ type: [AssistantRecordFilterDto], maxItems: 20 })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => AssistantRecordFilterDto) filters?: AssistantRecordFilterDto[];
+  @ApiPropertyOptional({ enum: RECORD_MATCH, default: 'all' }) @IsOptional() @IsIn(RECORD_MATCH) match?: (typeof RECORD_MATCH)[number];
+}
+
+export class AssistantTraverseStepDto {
+  @ApiProperty({ description: 'A relationship of the records reached so far, by name or inverse name' })
+  @IsString() @MinLength(1) @MaxLength(300) relation!: string;
+  @ApiPropertyOptional({ enum: TRAVERSE_DIRECTIONS, description: 'Only for a relationship between records of one concept: which way to read it' })
+  @IsOptional() @IsIn(TRAVERSE_DIRECTIONS) direction?: (typeof TRAVERSE_DIRECTIONS)[number];
+  @ApiPropertyOptional({ minimum: 1, maximum: 4, default: 1 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(4) minHops?: number;
+  @ApiPropertyOptional({ minimum: 1, maximum: 4, description: 'Repeat a relationship between records of one concept (reports to) up to this many times' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(4) maxHops?: number;
+  @ApiPropertyOptional({ type: [AssistantRecordFilterDto], maxItems: 20, description: 'Conditions on the records this step reaches' })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => AssistantRecordFilterDto) filters?: AssistantRecordFilterDto[];
+  @ApiPropertyOptional({ enum: RECORD_MATCH, default: 'all' }) @IsOptional() @IsIn(RECORD_MATCH) match?: (typeof RECORD_MATCH)[number];
+}
+
+export class AssistantTraverseRecordsDto {
+  @ApiProperty({ type: AssistantTraverseStartDto }) @ValidateNested() @Type(() => AssistantTraverseStartDto) start!: AssistantTraverseStartDto;
+  @ApiProperty({ type: [AssistantTraverseStepDto], minItems: 1, maxItems: 6 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(6) @ValidateNested({ each: true }) @Type(() => AssistantTraverseStepDto) steps!: AssistantTraverseStepDto[];
+  @ApiPropertyOptional({ type: [AssistantRecordGroupByDto], maxItems: 2 })
+  @IsOptional() @IsArray() @ArrayMaxSize(2) @ValidateNested({ each: true }) @Type(() => AssistantRecordGroupByDto) groupBy?: AssistantRecordGroupByDto[];
+  @ApiPropertyOptional({ type: [AssistantRecordAggregateDto], maxItems: 10 })
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => AssistantRecordAggregateDto) aggregates?: AssistantRecordAggregateDto[];
+  @ApiPropertyOptional({ type: [AssistantRecordOrderByDto], maxItems: 3 })
+  @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => AssistantRecordOrderByDto) orderBy?: AssistantRecordOrderByDto[];
+  @ApiPropertyOptional({ type: [String], maxItems: 60 }) @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
+  @ApiPropertyOptional({ default: 50, minimum: 0, maximum: 200, description: '0 returns only the total and aggregates' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(200) limit?: number;
+  @ApiPropertyOptional({ default: 0, maximum: 100000 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset?: number;
+  @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
+}
+
+export class AssistantConnectRecordsDto {
+  @ApiProperty({ description: 'entityId of the first record' }) @IsString() @MinLength(1) @MaxLength(300) fromRecordId!: string;
+  @ApiProperty({ description: 'entityId of the second record' }) @IsString() @MinLength(1) @MaxLength(300) toRecordId!: string;
+  @ApiPropertyOptional({ default: 4, minimum: 1, maximum: 6 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(6) maxLinks?: number;
+  @ApiPropertyOptional({ default: 5, minimum: 1, maximum: 10 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10) maxPaths?: number;
+  @ApiPropertyOptional({ type: [String], maxItems: 20, description: 'Follow only these relationships' })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(300, { each: true }) relations?: string[];
   @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
 }
 

@@ -38,7 +38,7 @@ The final state has one authoritative Conversation v1 store, no Conversation-own
    - `conversation_playbook_handoffs`
 5. Preserve Mongo `_id` values as lowercase 24-character hex strings. Generate new Conversation v1 entity IDs in the application as 24-character hex strings.
 6. Preserve the handoff contract's separate UUID `handoffId`; store both the Mongo document `_id` and the public handoff UUID.
-7. Do not migrate User, Workspace, Project, Skill, Governance, Telegram, WhatsApp, or Conversation v2 data.
+7. Do not migrate User, Workspace, Project, Skill, Governance, Telegram, WhatsApp, or App Builder data.
 8. Keep external-domain IDs as opaque 24-character references without cross-database foreign keys.
 9. Remove the redundant `Conversation.messages[]` relation. `messages.conversation_id` is the relational ownership source.
 10. Preserve `messageCount` and `lastMessageAt` as stored business aggregates. Do not silently recompute them from message rows during this migration.
@@ -130,7 +130,7 @@ The final state has one authoritative Conversation v1 store, no Conversation-own
 
 ### Out of scope
 
-- Conversation v2.
+- App Builder.
 - User, Workspace, Project, Governance, Skill, Telegram, or WhatsApp migration.
 - Frontend contract changes.
 - New REST, SSE, gRPC, or protobuf contracts.

@@ -1,8 +1,8 @@
-# Conversation V2 — ObjectId Migration Implementation Plan
+# App Builder — ObjectId Migration Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Switch Conversation V2's canonical session identifier from the AI service's UUID `session_id` to the Mongo document's `_id` (ObjectId). Demote the AI's id to optional `aiSessionId` metadata used only by the gRPC client.
+**Goal:** Switch App Builder's canonical session identifier from the AI service's UUID `session_id` to the Mongo document's `_id` (ObjectId). Demote the AI's id to optional `aiSessionId` metadata used only by the gRPC client.
 
 **Architecture:** Doc-first creation (insert empty pointer → get `_id` → create system workspace using `_id` → call gRPC.CreateSession → patch the doc with `aiSessionId`). Controllers look up pointers by `_id`, then resolve `aiSessionId` from the pointer when they need to call gRPC. Frontend is unchanged — wire-side field name `sessionId` stays, only the value format changes (24-char hex instead of 36-char UUID).
 

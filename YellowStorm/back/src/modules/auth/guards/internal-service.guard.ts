@@ -1,24 +1,18 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 
 /**
  * Guard for internal service-to-service authentication.
- * Validates the X-Internal-Token header against INTERNAL_SERVICE_SECRET.
- * Used for brain (gRPC service) -> NestJS calls where no user JWT is available.
+ * Validates the `X-Internal-Token` header against `INTERNAL_SERVICE_SECRET`.
  */
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
   private readonly secret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = this.configService.get<string>('INTERNAL_SERVICE_SECRET', '');
+    this.secret = this.configService.get<string>('INTERNAL_SERVICE_SECRET', '').trim();
   }
 
   canActivate(context: ExecutionContext): boolean {

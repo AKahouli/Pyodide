@@ -43,7 +43,7 @@ describe('AiProxyStreamService', () => {
     recordChatCompletionUsage: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiProxyUsageService;
   const body: ChatCompletionDto = {
-    model: 'gpt-4o',
+    model: 'catalog-chat-model',
     messages: [{ role: ChatMessageRole.USER, content: 'Hello' }],
     stream: true,
   };

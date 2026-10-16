@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SEARCH_INDEX_DEFAULTS } from '../../searchSettings';
 import { SearchIndexSettings } from './SearchIndexSettings';
+import { OPEN_KEY } from './SettingsPane';
 
 const api = vi.hoisted(() => ({ getAdminIndex: vi.fn(), updateAdminIndex: vi.fn() }));
 vi.mock('../../searchSettings', async (importOriginal) => ({ ...(await importOriginal<object>()), searchSettingsApi: api }));
@@ -15,6 +16,8 @@ const saveButton = () => screen.getByText('settings.save').closest('button')!;
 
 describe('SearchIndexSettings', () => {
   beforeEach(() => {
+    // Panes start folded; these tests read the fields inside.
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'search-index': true, 'search-query': true, 'run-size': true, 'ai-calls': true }));
     api.getAdminIndex.mockResolvedValue({ settings: SEARCH_INDEX_DEFAULTS, configured: { passageTargetChars: 900 }, defaults: SEARCH_INDEX_DEFAULTS });
     api.updateAdminIndex.mockImplementation(async (configured) => ({ settings: SEARCH_INDEX_DEFAULTS, configured, defaults: SEARCH_INDEX_DEFAULTS }));
   });

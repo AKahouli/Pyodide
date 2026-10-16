@@ -5,7 +5,7 @@ import {
   MUTATING_TOOLS,
   TOOL_REQUIRED_CAPABILITY,
 } from '../constants/app-runtime-capabilities';
-import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
+import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
 import {
   AppRuntimeEvents,
   RuntimeToolError,
@@ -110,17 +110,26 @@ export class RuntimeToolDispatcherService {
       );
     }
 
-    const connection = this.registry.get(workspaceId);
+    let connection = this.registry.get(workspaceId);
     if (!connection) {
       await this.bindings.markWaitingForBrowser(workspaceId);
-      return failure(
-        toolCallId,
-        runtimeError(
-          AppRuntimeErrorCodes.RUNTIME_OFFLINE,
-          'No browser runtime is connected for this workspace',
-          { bindingId: binding.bindingId },
-        ),
-      );
+      const waitMs = this.browserWaitMs();
+      if (waitMs > 0) {
+        this.logger.debug(
+          `Waiting up to ${waitMs}ms for browser register workspaceId=${workspaceId} tool=${tool}`,
+        );
+        connection = await this.registry.waitForConnection(workspaceId, waitMs);
+      }
+      if (!connection) {
+        return failure(
+          toolCallId,
+          runtimeError(
+            AppRuntimeErrorCodes.RUNTIME_OFFLINE,
+            'No browser runtime is connected for this workspace',
+            { bindingId: binding.bindingId },
+          ),
+        );
+      }
     }
 
     if (this.registry.isStale(connection)) {
@@ -474,5 +483,9 @@ export class RuntimeToolDispatcherService {
 
   private mutationWaitMs(): number {
     return this.config.get<number>('appRuntime.mutationWaitMs', 30_000);
+  }
+
+  private browserWaitMs(): number {
+    return this.config.get<number>('appRuntime.browserWaitMs', 180_000);
   }
 }

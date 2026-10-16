@@ -15,6 +15,7 @@ The user module manages user accounts, profiles, consents, and administrative us
 - [Microsoft Integration](#microsoft-integration)
 - [API Endpoints](#api-endpoints)
 - [Admin Operations](#admin-operations)
+- [User Invitations](#user-invitations)
 - [Security](#security)
 - [Usage](#usage)
 - [Error Handling](#error-handling)
@@ -32,7 +33,7 @@ The user module provides:
 - **Microsoft OAuth**: Link Microsoft accounts for SSO
 - **Plan Assignment**: Associate users with subscription plans
 - **Status Management**: Active, inactive, suspended account states
-- **Admin Operations**: List, filter, suspend, activate users; Super Admin registration approve/reject
+- **Admin Operations**: List, filter, suspend, activate users; Super Admin registration approve/reject and email invitations
 - **RBAC Integration**: Role-based access control via roles reference
 
 ---
@@ -51,6 +52,7 @@ The user module provides:
 │  │ PUT  /users/me     │           │ GET  /admin/users/:id│                  │
 │  │ POST /complete     │           │ POST /suspend       │                   │
 │  └─────────┬──────────┘           │ POST /activate      │                   │
+│            │                      │ POST /invite        │                   │
 │            │                      │ POST /approve-registration │            │
 │            │                      │ POST /reject-registration  │            │
 │            │                      │ POST /assign-plan   │                   │
@@ -109,18 +111,33 @@ The user module provides:
 user/
 ├── index.ts                     # Module exports
 ├── user.module.ts               # NestJS module definition
-├── user.controller.ts           # User-facing API endpoints
-├── admin-user.controller.ts     # Admin API endpoints
-├── user.service.ts              # Business logic
-├── registration-approval.service.ts  # Super Admin registration notice + approve/reject
+├── user.types.ts                # Domain enums (UserStatus, RegistrationApproval)
+├── controllers/
+│   ├── user.controller.ts       # User-facing API endpoints
+│   └── admin-user.controller.ts # Admin API endpoints
+├── services/
+│   ├── user.service.ts          # Identity / profile business logic
+│   ├── registration-approval.service.ts  # Super Admin notice + approve/reject
+│   └── user-invitation.service.ts        # Super-admin email invitations
 ├── persistence/
 │   ├── user.store.ts            # USER_STORE port + UserRecord types
 │   ├── pg-user.store.ts         # PgUserStore (Drizzle adapter)
-│   └── user-record.mapper.ts    # toUserWire() wire-shape mapper
+│   ├── user-record.mapper.ts    # toUserWire() wire-shape mapper
+│   ├── user-invitation.store.ts # USER_INVITATION_STORE port + record types
+│   └── pg-user-invitation.store.ts # PgUserInvitationStore (Drizzle adapter)
 ├── adapters/
 │   └── pg-user-lookup.adapter.ts # USER_LOOKUP_PORT implementation
 ├── interfaces/
-│   └── user.interface.ts        # TypeScript interfaces
+│   ├── user.interface.ts        # User/entity interfaces (incl. UserSummary, search params)
+│   ├── user-invitation.interface.ts      # Invitation details + grant shapes
+│   └── registration-approval.interface.ts # Registration notice/decision shapes
+├── utils/
+│   ├── assert-account-accessible.ts # Account-access denial helper
+│   ├── invitation-token.ts      # Invitation token issue/hash helpers
+│   ├── frontend-url.ts          # Hash-route frontend URL builder
+│   └── format-requested-at.ts   # Paris-time formatter for the admin notice
+├── guards/
+│   └── account-approval.guard.ts # Blocks non-approved accounts
 └── dto/
     ├── complete-profile.dto.ts  # Profile completion validation
     ├── update-profile.dto.ts    # Profile update validation
@@ -178,6 +195,24 @@ enum UserStatus {
 ### Full Name
 
 `fullNameOf()` (`persistence/user-record.mapper.ts`) computes `fullName` when the wire shape is built: "First Last" when both exist, otherwise whichever exists.
+
+### User Invitations Table
+
+Super-admin invitations live in `identity.user_invitations` (Drizzle: `postgres/schema/identity.schema.ts`), accessed through the `USER_INVITATION_STORE` port bound to `PgUserInvitationStore`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `char(24)` | Primary key |
+| `email` | `varchar(320)` | Invited address; CHECK `email = lower(btrim(email))` |
+| `token_hash` | `text` | SHA-256 of the raw token; unique (`uq_user_invitations_token_hash`) |
+| `invited_by` | `char(24)` | FK to `identity.users(id)`, nullable |
+| `role_ids` | `text[]` | Role ids granted at registration; `DEFAULT '{}'` (snapshot) |
+| `plan_id` | `char(24)` | Plan id granted at registration (snapshot, nullable) |
+| `expires_at` | `timestamptz` | Issue time + 24h |
+| `consumed_at` | `timestamptz` | Set on single-use claim; `NULL` while usable |
+| `created_at`, `updated_at` | `timestamptz` | `DEFAULT now()` |
+
+Indexes: `uq_user_invitations_token_hash` (unique), `idx_user_invitations_email`, `idx_user_invitations_expires_at`. Rows are kept after consume for audit.
 
 ---
 
@@ -504,6 +539,7 @@ All admin endpoints require `PermissionsGuard` with specific permissions.
 | `POST` | `/admin/users/:id/approve-registration` | `SUPER_ADMIN` (`*`) | Approve a pending classic registration |
 | `POST` | `/admin/users/:id/reject-registration` | `SUPER_ADMIN` (`*`) | Reject a pending classic registration |
 | `POST` | `/admin/users/:id/assign-plan` | `USERS_ASSIGN_PLAN` | Assign plan to user |
+| `POST` | `/admin/users/invite` | `SUPER_ADMIN` (`*`) | Send an email invitation to a new address |
 
 ### GET /admin/users
 
@@ -604,6 +640,70 @@ Assign a subscription plan to a user.
 ```
 
 **Response:** Updated `AdminUserResponse`
+
+### POST /admin/users/invite
+
+Super Admin only (`*`). Emails a new address a unique invitation link and records the roles (`roleIds`) and plan (`planId`) the invitee will receive at registration. Rejects an address that already has an account with `409 USER_ALREADY_EXISTS`, an unknown/inactive role with `400`, and an unknown plan with `404`. Re-inviting the same address supersedes any still-pending invitation, so only the newest link stays usable. A transport failure surfaces as `503 ERR_1203` and the just-created row is removed, so no undiscoverable pending invite is left behind. Audits `users.invite` (with `roleIds`/`planId`) on success.
+
+**Request:**
+```json
+{ "email": "invitee@example.com", "roleIds": ["64b000000000000000000001"], "planId": "64b000000000000000000002" }
+```
+(`roleIds` and `planId` are optional; an omitted plan falls back to the platform default at registration.)
+
+**Response:**
+```json
+{
+  "message": "Invitation sent successfully",
+  "email": "invitee@example.com",
+  "expiresAt": "2026-10-15T13:45:39.295Z"
+}
+```
+
+---
+
+## User Invitations
+
+A Super Admin invites a user by email from `/#/admin/users`. The invitee receives a professional HTML email whose unique link (`{APP_FRONTEND_URL}/#/?invite=<token>`) resolves server-side and opens the **existing** register modal with the invited address pre-filled and read-only.
+
+```text
+1. Super Admin → POST /admin/users/invite { email, roleIds?, planId? }
+   ├── address already has an account → 409 USER_ALREADY_EXISTS
+   ├── unknown / inactive role id → 400 ; unknown plan id → 404
+   ├── UserInvitationService.invite()
+   │   ├── supersede still-pending invites for the address (consumePendingForEmail)
+   │   ├── randomBytes(32) base64url  → raw token (email only)
+   │   ├── SHA-256 hash               → identity.user_invitations.token_hash
+   │   ├── role_ids + plan_id         → identity.user_invitations (snapshot)
+   │   ├── expires_at = now + 24h, invited_by = acting admin
+   │   └── render EmailTemplate.USER_INVITE + send (row deleted if the send fails)
+   └── audit users.invite (roleIds, planId)
+
+2. Invitee opens the link → frontend GET /auth/invite?token=<token>
+   ├── unknown / consumed → ERR_1132 ; expired → ERR_1133
+   └── valid → { email, expiresAt } → register modal, address locked
+
+3. Invitee submits POST /auth/register { email, password, inviteToken }
+   ├── assertUsableForEmail(token, email) → { roleIds, planId }  (before user creation)
+   │   └── token bound to another address → ERR_1134
+   ├── user created ACTIVE + registration_approval='approved', with the granted roles
+   ├── plan assigned = invited plan (falls back to the default plan if unavailable)
+   └── markConsumed(token)  (single-use claim, after the user exists)
+```
+
+### Token & single-use rules
+
+- The raw token exists **only** in the email link; only its SHA-256 hash is stored (same at-rest rule as the password-reset / app-share tokens).
+- Validity is **exactly 24 hours** (`USER_INVITATION_TTL_HOURS`), enforced server-side against `expires_at`.
+- Single use is enforced by an atomic conditional claim (`PgUserInvitationStore.consumeIfValid` — `UPDATE ... WHERE consumed_at IS NULL AND expires_at > now()`), so two concurrent registrations can never both win.
+- Re-inviting an address supersedes its still-pending invitations (`consumePendingForEmail` marks them consumed), so at most one invitation is usable at a time. If the invitation email cannot be sent, the just-created row is deleted (best-effort) so no undiscoverable pending invite lingers.
+- The invitation is claimed **after** the user row is created, so a failed or rejected registration never burns the link. A lost concurrent claim is a handled outcome — the account already exists, so it is neither thrown nor reported as an HTTP failure (the `201` registration response is the terminal outcome).
+- **Invited users skip the manual review**: they are created `active` with `registration_approval='approved'` and the granted roles, so neither the Super Admin approval (`POST /admin/users/:id/approve-registration`) nor the `PendingApprovalPage` is involved. They still verify their email before the first login, then complete their profile — both unchanged security steps. The invited plan is applied at registration; if it is no longer available, the default plan is used instead.
+- Classic (non-invited) registration is untouched: `inactive` + `pending`, with the Super Admin review and the pending page.
+
+### Refused-invite telemetry
+
+`GET /auth/invite` and the `inviteToken` branch of `POST /auth/register` emit `http.request.failed` (method, route, status) on refusal; a failed send emits `dependency.request.failed` (`dependency: 'smtp'`, `operation: 'user_invitation.send'`, `attempt`). A lost single-use claim after the user is created is not reported as an `http.request.failed`, since the registration request itself succeeded. No new event names are registered.
 
 ---
 
@@ -725,6 +825,10 @@ const users = await userService.getUsersWithoutPlan(100);
 |------|----------|
 | `USER_NOT_FOUND` | User ID does not exist |
 | `USER_ALREADY_EXISTS` | Email already registered |
+| `USER_INVITE_EMAIL_FAILED` (`ERR_1203`) | Invitation email could not be sent (503) |
+| `AUTH_INVITE_TOKEN_INVALID` (`ERR_1132`) | Invitation token invalid or already used |
+| `AUTH_INVITE_TOKEN_EXPIRED` (`ERR_1133`) | Invitation token expired |
+| `AUTH_INVITE_EMAIL_MISMATCH` (`ERR_1134`) | Invitation was issued for a different email |
 | `CONFLICT` | Microsoft account already linked |
 | `BadRequest` | Privacy policy not accepted |
 | `BadRequest` | Invalid/expired verification token |
@@ -784,5 +888,15 @@ interface AdminUserResponse {
   createdAt: Date;
   updatedAt: Date;
   lastLoginAt?: Date;
+}
+```
+
+### InviteUserResponse (Admin-facing)
+
+```typescript
+interface InviteUserResponse {
+  message: string;
+  email: string;
+  expiresAt: Date;
 }
 ```

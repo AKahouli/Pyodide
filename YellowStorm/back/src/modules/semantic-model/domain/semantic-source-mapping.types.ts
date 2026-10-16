@@ -114,9 +114,18 @@ export interface AiExtractionSettings {
   longDocumentCharacters: number;
   /** Blocks kept per field in a long document. */
   blocksPerField: number;
+  /** AI calls made at once for this mapping (one per record); bounded by the admin's ceiling. Absent: 4. */
+  parallelCalls?: number;
   /** One document gives several records (one per item the AI finds), e.g. each line of a table. Mapping only. */
   manyRecords?: boolean;
+  /** Most records this mapping's sheet gives; never above the admin's records per source. Mapping only. */
+  maxRecords?: number;
+  /** Most files a workspace mapping reads, always the same ones; never above the admin's files per run. Mapping only. */
+  maxFiles?: number;
 }
+
+/** A mapping's own reading limits, kept with its AI settings but never sent as AI settings. */
+export const MAPPING_READ_LIMIT_KEYS = ['maxRecords', 'maxFiles'] as const;
 
 /** How much one population run may read and keep. The runtime applies the same ranges. */
 export interface RunLimits {
@@ -128,20 +137,114 @@ export interface RunLimits {
   maxRecordsPerRun: number;
   /** Most field values one run keeps, all records together. */
   maxValuesPerRun: number;
+  /** Most records of one source read with AI in a run (the rest keep their other fields). */
+  maxAiRowsPerSource: number;
+  /** Most AI calls one run makes at once, whatever a mapping asks. */
+  maxAiParallelCalls: number;
+  /** Memory of the reader process for one source, in MB (enforced on Linux); the most a mail archive connection may choose. */
+  parserMemoryMb: number;
+  /** Time one full read of an e-mail archive may take, in seconds; the most a mail archive connection may choose. */
+  archiveTimeoutSeconds: number;
+  /** Largest single e-mail read, in MB; a bigger one is kept as an unread row. */
+  maxEmlMb: number;
+  /** Largest single attachment read, in MB; a bigger one is listed but its text is not read. */
+  maxAttachmentMb: number;
+  /** How deep attached e-mails are opened as e-mails of their own (0: not opened). */
+  maxNesting: number;
+  /** Most pages read of one PDF. */
+  maxPdfPages: number;
+  /** Most cells read of one workbook. */
+  maxSheetCells: number;
+  /** Most slides read of one presentation. */
+  maxSlides: number;
+  /** Most characters of an attachment's text kept in its record. */
+  maxAttachmentChars: number;
+  /** Most characters of an e-mail's body kept in its record. */
+  maxBodyChars: number;
+  /** Most a zipped office file (Word, Excel, PowerPoint) may hold once decompressed, in MB. */
+  maxInflatedMb: number;
+  /** Time "Start over from scratch" may take to clear a model's data, in seconds. Not part of a run. */
+  purgeTimeoutSeconds: number;
+  /** Rows the "saving" step writes per batch. Travels with the run but is not part of its identity. */
+  saveBatchRows: number;
+  /** Time one save batch may take, in seconds. Travels with the run but is not part of its identity. */
+  saveStatementSeconds: number;
+  /** Graph elements (records or links) written per statement when a run's graph is built. Travels with the run but is not part of its identity. */
+  projectionBatchRows: number;
+  /** Texts sent per embedding call when a search index is built. Not part of a run's identity. */
+  embeddingBatchSize: number;
+  /** Embedding calls in flight at once when a search index is built. Not part of a run's identity. */
+  embeddingParallelCalls: number;
+  /** Time one embedding call may take, in seconds. Not part of a run's identity. */
+  embeddingTimeoutSeconds: number;
+  /** Records read per page when a search index is built. Not part of a run's identity. */
+  indexReadPageRows: number;
 }
+
+/** Limits of how a run is saved, not of what it builds: they never change the run's fingerprint. */
+export const SAVE_LIMIT_KEYS = ['saveBatchRows', 'saveStatementSeconds', 'projectionBatchRows'] as const satisfies readonly (keyof RunLimits)[];
+
+/**
+ * How a search index is built, not what it holds: they travel with the run and with index requests, and
+ * never change a run's fingerprint or an index's identity. The runtime falls back to its environment for
+ * the ones not set.
+ */
+export const INDEX_BUILD_LIMIT_KEYS = ['embeddingBatchSize', 'embeddingParallelCalls', 'embeddingTimeoutSeconds', 'indexReadPageRows'] as const satisfies readonly (keyof RunLimits)[];
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxRunSources: 5000,
   maxRecordsPerSource: 5000,
   maxRecordsPerRun: 10000,
   maxValuesPerRun: 50000,
+  maxAiRowsPerSource: 500,
+  maxAiParallelCalls: 8,
+  parserMemoryMb: 512,
+  archiveTimeoutSeconds: 900,
+  maxEmlMb: 100,
+  maxAttachmentMb: 50,
+  maxNesting: 3,
+  maxPdfPages: 300,
+  maxSheetCells: 50000,
+  maxSlides: 500,
+  maxAttachmentChars: 100000,
+  maxBodyChars: 100000,
+  maxInflatedMb: 50,
+  purgeTimeoutSeconds: 300,
+  saveBatchRows: 2000,
+  saveStatementSeconds: 10,
+  projectionBatchRows: 5000,
+  embeddingBatchSize: 32,
+  embeddingParallelCalls: 4,
+  embeddingTimeoutSeconds: 30,
+  indexReadPageRows: 5000,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
   maxRunSources: [1, 50000],
-  maxRecordsPerSource: [100, 200000],
-  maxRecordsPerRun: [100, 200000],
-  maxValuesPerRun: [1000, 2000000],
+  maxRecordsPerSource: [100, 500000],
+  maxRecordsPerRun: [100, 500000],
+  maxValuesPerRun: [1000, 5000000],
+  maxAiRowsPerSource: [0, 200000],
+  maxAiParallelCalls: [1, 32],
+  parserMemoryMb: [256, 16384],
+  archiveTimeoutSeconds: [60, 7200],
+  maxEmlMb: [1, 1024],
+  maxAttachmentMb: [1, 500],
+  maxNesting: [0, 5],
+  maxPdfPages: [1, 2000],
+  maxSheetCells: [1000, 1000000],
+  maxSlides: [1, 2000],
+  maxAttachmentChars: [5000, 500000],
+  maxBodyChars: [5000, 500000],
+  maxInflatedMb: [1, 1024],
+  purgeTimeoutSeconds: [30, 3600],
+  saveBatchRows: [100, 50000],
+  saveStatementSeconds: [5, 600],
+  projectionBatchRows: [100, 20000],
+  embeddingBatchSize: [1, 256],
+  embeddingParallelCalls: [1, 16],
+  embeddingTimeoutSeconds: [5, 600],
+  indexReadPageRows: [500, 50000],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

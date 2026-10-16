@@ -4,6 +4,10 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PopulationChanges, PopulationProgress } from '../../types';
 
+/** Phases that come after every source is read: the sources-read count no longer says how far the run is. */
+const AFTER_READING = new Set(['making', 'linking', 'saving', 'comparing', 'projecting']);
+const STEP_UNITS = ['rows', 'files', 'opening', 'entries', 'elements', 'loading'] as const;
+
 const ISSUE_STATUSES = new Set(['processed_with_gaps', 'budget_exhausted', 'unresolved_identity', 'index_unavailable',
   'index_ambiguous', 'source_unavailable']);
 
@@ -24,6 +28,7 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
   conceptLabels?: Record<string, string>;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const stepLabel = useStepLabel();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!running) return;
@@ -40,6 +45,13 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
   const left = running && elapsed !== null && readFresh > 0 && done < total
     ? (elapsed / readFresh) * (total - done) : null;
   const phase = progress.phase ?? 'starting';
+  // After reading, the header bar follows the phase's own step (records saved, graph elements written), not the sources read.
+  const afterReading = running && AFTER_READING.has(phase);
+  const step = progress.step;
+  const stepKnown = !!step && step.total !== null && step.total > 0;
+  const stepPercent = stepKnown ? Math.min(100, Math.round((step.done / step.total!) * 100)) : 0;
+  const headline = afterReading ? { known: stepKnown, percent: stepPercent } : { known: total > 0, percent };
+  const stepText = step ? stepLabel(step) : null;
   const concept = (id?: string) => (id ? conceptLabels[id] : undefined);
   const duration = (seconds: number) => {
     const { unit, count } = durationParts(seconds);
@@ -50,17 +62,24 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
     <div>
       <div className='flex items-baseline justify-between gap-2 text-sm'>
         <span className='font-medium'>{running ? t(`population.progress.phase.${phase}`) : t('population.progress.finished')}</span>
-        {total > 0 && <span className='tabular-nums text-muted-foreground'>{percent}%</span>}
+        {headline.known && <span className='tabular-nums text-muted-foreground'>{headline.percent}%</span>}
       </div>
-      <div className='mt-1.5 h-2 overflow-hidden rounded-full bg-muted' role='progressbar' aria-valuemin={0} aria-valuemax={total || 1} aria-valuenow={done}
-        aria-label={t('population.progress.filesRead', { done, total })}>
-        <div className={cn('h-full rounded-full bg-primary transition-[width] duration-500', running && phase !== 'reading' && 'animate-pulse')}
-          style={{ width: `${phase === 'reading' || phase === 'starting' ? percent : 100}%` }} />
-      </div>
+      {afterReading
+        ? <div className='mt-1.5 h-2 overflow-hidden rounded-full bg-muted' role='progressbar' aria-valuemin={0} aria-valuemax={stepKnown ? step!.total! : 1}
+          aria-valuenow={stepKnown ? step!.done : undefined} aria-label={stepText ?? t('population.progress.step.label')}>
+          <div className={cn('h-full rounded-full bg-primary transition-[width] duration-500', !stepKnown && 'w-1/3 animate-pulse')}
+            style={stepKnown ? { width: `${stepPercent}%` } : undefined} />
+        </div>
+        : <div className='mt-1.5 h-2 overflow-hidden rounded-full bg-muted' role='progressbar' aria-valuemin={0} aria-valuemax={total || 1} aria-valuenow={done}
+          aria-label={t('population.progress.filesRead', { done, total })}>
+          <div className={cn('h-full rounded-full bg-primary transition-[width] duration-500', running && phase !== 'reading' && 'animate-pulse')}
+            style={{ width: `${phase === 'reading' || phase === 'starting' ? percent : 100}%` }} />
+        </div>}
       <p className='mt-1.5 text-xs text-muted-foreground'>
-        {t('population.progress.filesRead', { done: done.toLocaleString(), total: total.toLocaleString() })}
+        {afterReading && stepText && <><span>{stepText}</span>{total > 0 && ' · '}</>}
+        {total > 0 && t('population.progress.filesRead', { done: done.toLocaleString(), total: total.toLocaleString() })}
         {left !== null && <> · {t('population.progress.left', { time: duration(left) })}</>}
-        {!running && elapsed !== null && <> · {t('population.progress.took', { time: duration(elapsed) })}</>}
+        {!running && elapsed !== null && <>{total > 0 && ' · '}{t('population.progress.took', { time: duration(elapsed) })}</>}
       </p>
     </div>
 
@@ -78,6 +97,9 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
         <dd className={cn('text-base font-semibold tabular-nums', (progress.gaps ?? 0) > 0 && 'text-amber-700 dark:text-amber-400')}>{(progress.gaps ?? 0).toLocaleString()}</dd>
       </div>
     </dl>
+
+    {running && progress.step && !afterReading && <StepProgress step={progress.step} />}
+    {progress.ai && progress.ai.planned + progress.ai.skipped > 0 && <AiCalls ai={progress.ai} running={running} />}
 
     {!running && progress.changes && <RunChanges changes={progress.changes} />}
 
@@ -108,6 +130,47 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
   </section>;
 }
 
+/** How far the step under way is: rows of a sheet, files sent for indexing, or an archive being opened. */
+function StepProgress({ step }: Readonly<{ step: NonNullable<PopulationProgress['step']> }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const stepLabel = useStepLabel();
+  const known = step.total !== null && step.total > 0;
+  const percent = known ? Math.min(100, Math.round((step.done / step.total!) * 100)) : 0;
+  return <div className='space-y-1'>
+    <p className='flex justify-between gap-2 text-xs text-muted-foreground'>
+      <span>{stepLabel(step)}</span>
+      {known && <span className='tabular-nums'>{percent}%</span>}
+    </p>
+    <div className='h-1 overflow-hidden rounded-full bg-muted' role='progressbar' aria-label={t('population.progress.step.label')}
+      aria-valuemin={0} aria-valuemax={known ? step.total! : 1} aria-valuenow={known ? step.done : undefined}>
+      <div className={cn('h-full rounded-full bg-primary/70 transition-[width] duration-500', !known && 'w-1/3 animate-pulse')}
+        style={known ? { width: `${percent}%` } : undefined} />
+    </div>
+  </div>;
+}
+
+/** The AI calls of the run: answered, reused from an earlier run, failed, and records left over the cap. */
+function AiCalls({ ai, running }: Readonly<{ ai: NonNullable<PopulationProgress['ai']>; running: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const finished = ai.answered + ai.reused + ai.failed;
+  const percent = ai.planned ? Math.min(100, Math.round((finished / ai.planned) * 100)) : 100;
+  return <div className='space-y-1.5 rounded-lg border p-2.5' aria-label={t('population.progress.ai.title')}>
+    <p className='flex justify-between gap-2 text-xs'>
+      <span className='font-medium'>{t('population.progress.ai.title')}</span>
+      <span className='tabular-nums text-muted-foreground'>{t('population.progress.ai.done', { done: finished.toLocaleString(), total: ai.planned.toLocaleString() })}</span>
+    </p>
+    {running && <div className='h-1 overflow-hidden rounded-full bg-muted'>
+      <div className='h-full rounded-full bg-primary/70 transition-[width] duration-500' style={{ width: `${percent}%` }} />
+    </div>}
+    <p className='flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground'>
+      <span>{t('population.progress.ai.answered', { count: ai.answered })}</span>
+      {ai.reused > 0 && <span title={t('population.progress.ai.reusedHint')}>{t('population.progress.ai.reused', { count: ai.reused })}</span>}
+      {ai.failed > 0 && <span className='text-destructive'>{t('population.progress.ai.failed', { count: ai.failed })}</span>}
+      {ai.skipped > 0 && <span className='text-amber-700 dark:text-amber-400' title={t('population.progress.ai.skippedHint')}>{t('population.progress.ai.skipped', { count: ai.skipped })}</span>}
+    </p>
+  </div>;
+}
+
 /** After a run: what it changed in the data in use, and the files it no longer read. */
 function RunChanges({ changes }: Readonly<{ changes: PopulationChanges }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -132,4 +195,15 @@ function RunChanges({ changes }: Readonly<{ changes: PopulationChanges }>) {
       </li>)}
     </ul>}
   </div>;
+}
+
+/** "n of N <unit>", or just "n <unit>" while the total is not known. */
+function useStepLabel() {
+  const { t } = useModuleTranslation('semantic-model');
+  return (step: NonNullable<PopulationProgress['step']>): string => {
+    const unit = ((STEP_UNITS as readonly string[]).includes(step.unit) ? step.unit : 'items') as typeof STEP_UNITS[number] | 'items';
+    return step.total !== null && step.total > 0
+      ? t(`population.progress.step.${unit}`, { done: step.done.toLocaleString(), total: step.total.toLocaleString() })
+      : t(`population.progress.step.${unit}Unknown`, { done: step.done.toLocaleString() });
+  };
 }

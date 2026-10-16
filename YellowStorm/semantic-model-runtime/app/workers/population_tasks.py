@@ -13,45 +13,72 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import time
 import uuid
+from functools import partial
 
+import structlog
 from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
-from app.population.compiler import (canonical_spec_hash, compile_specification,
-                                     filter_fields, validate_specification)
-from app.population.derived import (DerivationError, derivation_items, derive_concept, merge_derived,
-                                    normalize_derivations, read_derived_fields)
-from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
-                                            normalize_row_recipes, recipe_columns, recipe_sources)
-from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
-                                        normalize_field_extractions, uses_ai as uses_cell_ai)
-from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
-from app.population.run_limits import run_limits
+from app.population.payload_rules import analyze_payload
+from app.population.derived import derivation_items, derive_concept, field_plan, merge_derived, read_derived_fields
+from app.population.computed_fields import apply_row_recipes, recipe_columns, recipe_sources
+from app.population.cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
+from app.population.document_rules import answer_options, normalize_ai_settings
+from app.population.run_limits import (DEFAULT_RUN_LIMITS, MAX_SOURCES_PER_TASK, ai_pacing, identity_limits, index_build_limits,
+                                        max_run_sources, run_limits, source_cap_is_users, source_limits,
+                                        source_record_cap)
 from app.datasource.email_archive import resolve_column
+from app.datasource.extraction_limits import EXTRACTION_LIMITS
 from app.population.engine_version import reader_version
-from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
+from app.population.expand import expand_rows, is_item_attribute, normalize_expand
+from app.population.row_health import ConceptHealth
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
-from app.population.tabular import (match_relationships, merge_concept_results,
+from app.population.tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
 
 from .celery_app import POPULATION_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
+events = structlog.get_logger(__name__)
+# What an archive's reading counts as cut: a limit stopped it short, or a mail could not be read.
+CUT_READING = ("truncated", "tooLarge", "inflatedTooLarge", "notRead", "emlTooLarge", "bodyTruncated")
 ASSET_FETCH_WALL_SECONDS = 35
+# Files of an e-mail archive sent for indexing at once, and per batch awaited together.
+DERIVED_UPLOAD_CONCURRENCY = 8
+DERIVED_UPLOAD_BATCH = 500
 # Bump when the e-mail texts or attachment names written to the workspace change.
 EMAIL_DERIVATION_VERSION = "email-derived-v1"
 EMAIL_DERIVATION_CACHE_CONCEPT = "__email_derived_files__"
+# The run limits that change what an e-mail archive's tables hold, and (a subset) which files are copied out of it.
+READ_LIMIT_KEYS = ("maxArchiveEmails", "maxArchiveMb", *EXTRACTION_LIMITS)
+DERIVATION_LIMIT_KEYS = ("maxEmlMb", "maxAttachmentMb", "maxNesting")
+
+
+def changed_limits(limits: dict, keys: tuple[str, ...]) -> dict:
+    """Those of ``keys`` that are not at their built-in value: a run that sets none keeps the cache keys it had."""
+    return {key: limits[key] for key in keys if limits.get(key) != DEFAULT_RUN_LIMITS[key]}
+
+
+def log_archive_read(tables: dict, started: float) -> None:
+    """One terminal summary of a full archive read: how many mails, and what the limits cut. Counts only."""
+    reading = {sheet: table.get("reading") or {} for sheet, table in tables.items() if isinstance(table, dict)}
+    counts = {**reading.get("messages", {}), **reading.get("attachments", {})}
+    events.info("semantic.email_archive.read", scope="tables", count=reading.get("messages", {}).get("total", 0),
+                outcome="cut" if any(counts.get(name) for name in CUT_READING) else "complete",
+                duration_ms=round((time.monotonic() - started) * 1000),
+                detail=" ".join(f"{name}={value}" for name, value in sorted(reading.get("attachments", {}).items())))
+
+
 QUERY_ROW_LIMIT = 1000
-# A workspace mapping expands to one source per document, so a run can read thousands of files.
-MAX_SOURCES_PER_TASK = 5000
 # How long each progress report keeps the lease alive: a long run stays owned while it reports.
 PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
 # Bump when the way a sheet is read changes, so earlier readings are not reused.
-TABULAR_READ_VERSION = "t1"
-# A sheet this large is read again each run rather than kept: its reading would be a large row.
-TABULAR_CACHE_MAX_RECORDS = 20000
+# t2: a sheet cut at its mapping's own record limit is a complete reading (a sample), not a capped one.
+# t3: a sheet's reading also keeps what the model health report needs (its row journey and findings).
+TABULAR_READ_VERSION = "t3"
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
@@ -63,7 +90,8 @@ POPULATION_ENGINE_VERSION = "r1-mvp-8"
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
                                      relation_bindings: list[dict],
                                      ai_extraction: dict | None = None,
-                                     derivations: list[dict] | None = None) -> str:
+                                     derivations: list[dict] | None = None,
+                                     limits: dict | None = None) -> str:
     canonical_sources = [{
         "conceptId": source["conceptId"],
         "sourceKind": source["sourceKind"],
@@ -79,6 +107,8 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
         # Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
         **({"fieldExtractions": source["fieldExtractions"]} if source.get("fieldExtractions") else {}),
+        # Only present when a mapping sets its own reading limits.
+        **({"readLimits": source["readLimits"]} if source.get("readLimits") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -90,6 +120,10 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
     # Only present when a concept is made from another, so other models keep their fingerprint.
     if derivations:
         fingerprinted["derivations"] = derivations
+    # Only the limits an admin set travel with the run (the core hashes the same object), so
+    # other runs keep their fingerprint. The save limits are left out: they only decide how it is written.
+    if identity_limits(limits):
+        fingerprinted["limits"] = identity_limits(limits)
     body = json.dumps(fingerprinted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
@@ -103,12 +137,15 @@ def population_lease_seconds(source_count: int, parser_timeout: int) -> int:
 class PopulationProgress:
     """What a run has done so far, reported (at most about once a second) to whoever watches the job."""
 
-    def __init__(self, report=None, *, min_interval: float = 1.0):  # type: ignore[no-untyped-def]
+    def __init__(self, report=None, *, min_interval: float = 1.0,  # type: ignore[no-untyped-def]
+                 scope_concept_id: str | None = None):
         import time
         from datetime import datetime, timezone
 
         self._report = report
         self._min_interval = min_interval
+        # The one concept a concept refresh makes again; absent for a run of the whole model.
+        self.scope_concept_id = scope_concept_id
         self._last_sent = float("-inf")
         self._clock = time.monotonic
         self.started_at = datetime.now(timezone.utc).isoformat()
@@ -122,14 +159,41 @@ class PopulationProgress:
         self.recent: list[dict] = []
         # What the saved result changed in the data in use, once it is known.
         self.changes: dict | None = None
+        # How far the current step is (rows of a sheet, files sent for indexing…); ``total`` is
+        # None when unknown (an archive being opened).
+        self.step: dict | None = None
+        # AI calls of the whole run: planned, answered, reused from an earlier run, skipped over
+        # the cap, failed.
+        self.ai = {"planned": 0, "answered": 0, "reused": 0, "skipped": 0, "failed": 0}
+        # False once the new data is being saved: a stop request is then not acted on (the run
+        # finishes), so a report must not raise it into the middle of a save.
+        self.cancellable = True
 
     def snapshot(self) -> dict:
         snapshot = {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
                     "records": self.records, "gaps": self.gaps, "current": self.current,
                     "recent": list(self.recent), "startedAt": self.started_at}
+        if self.scope_concept_id:
+            snapshot["scopeConceptId"] = self.scope_concept_id
+        if not self.cancellable:
+            # Past the last chance to stop: a stop request changes nothing, so the UI does not offer it.
+            snapshot["cancellable"] = False
         if self.changes is not None:
             snapshot["changes"] = self.changes
+        if self.step is not None:
+            snapshot["step"] = dict(self.step)
+        if any(self.ai.values()):
+            snapshot["ai"] = dict(self.ai)
         return snapshot
+
+    async def advance(self, unit: str, done: int, total: int | None = None) -> None:
+        """How far the current step is: ``done`` of ``total`` ``unit`` (rows, files, …)."""
+        self.step = {"unit": unit, "done": done, "total": total}
+        await self.send()
+
+    async def count_ai(self, key: str, amount: int = 1) -> None:
+        self.ai[key] = self.ai.get(key, 0) + amount
+        await self.send()
 
     async def send(self, *, force: bool = False) -> None:
         if self._report is None:
@@ -138,7 +202,11 @@ class PopulationProgress:
         if not force and now - self._last_sent < self._min_interval:
             return
         self._last_sent = now
-        await self._report(self.snapshot())
+        try:
+            await self._report(self.snapshot())
+        except RunCancelled:
+            if self.cancellable:
+                raise
 
     async def begin(self, total: int) -> None:
         self.phase, self.total = "reading", total
@@ -153,6 +221,7 @@ class PopulationProgress:
                    reused: bool = False) -> None:
         self.done += 1
         self.current = None
+        self.step = None
         self.reused += 1 if reused else 0
         self.records += records
         self.gaps += gaps
@@ -162,7 +231,7 @@ class PopulationProgress:
         await self.send(force=self.done == self.total)
 
     async def enter(self, phase: str) -> None:
-        self.phase, self.current = phase, None
+        self.phase, self.current, self.step = phase, None, None
         await self.send(force=True)
 
 
@@ -217,188 +286,19 @@ def run_population_for_payload(command_dump: dict) -> dict:
             return {"ok": False, "errorCode": "invalid_command"}
         if payload.get("purpose") not in ("preview", "build", "refresh"):
             return {"ok": False, "errorCode": "invalid_purpose"}
-        spec = payload.get("specification")
-        issues = validate_specification(spec)
-        if issues:
-            return {"ok": False, "errorCode": "invalid_specification",
-                    "issues": issues[:10]}
         expected_hash = payload.get("specHash") or payload.get("spec_hash")
-        if canonical_spec_hash(spec) != expected_hash:
-            return {"ok": False, "errorCode": "spec_hash_mismatch"}
-        sources = payload.get("sources")
-        if (not isinstance(sources, list) or not sources
-                or len(sources) > min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"])):
-            return {"ok": False, "errorCode": "invalid_sources"}
-        compiled = compile_specification(spec)
-        normalized: list[dict] = []
-        mapped_fields: dict[str, set[str]] = {}
-        for entry in sources:
-            if not isinstance(entry, dict):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            concept = compiled["concepts"].get(entry.get("conceptId"))
-            if concept is None:
-                return {"ok": False, "errorCode": "unknown_concept"}
-            source_kind = entry.get("sourceKind") or entry.get("source_kind")
-            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document", "manual"):
-                return {"ok": False, "errorCode": "invalid_source_kind"}
-            if source_kind == "document":
-                field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
-                if not isinstance(field_mappings, list) or not field_mappings:
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                active = [item for item in field_mappings if isinstance(item, dict)
-                          and item.get("mode") != "ignore"]
-                if len(active) != len(field_mappings):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("mode") not in {"extract", "metadata", "constant", "computed"}
-                       or item.get("targetAttribute") not in concept["allowedFields"] for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("mode") == "extract"
-                       and (not isinstance(item.get("sourceField"), str)
-                            or not item["sourceField"].strip()) for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                metadata_fields = {"document_name", "document_id", "workspace_id"}
-                if any(item.get("mode") == "metadata"
-                       and item.get("sourceField") not in metadata_fields for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai", "rules_then_ai")
-                       or (item.get("extractionStrategy") is not None
-                           and item.get("mode") != "extract") for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                # The AI reading settings of a field: a definition (text) and an agent (an id).
-                if any((item.get("semanticDefinition") is not None
-                        and not isinstance(item["semanticDefinition"], str))
-                       or (item.get("agentId") is not None and not isinstance(item["agentId"], str))
-                       or ((item.get("semanticDefinition") is not None or item.get("agentId") is not None)
-                           and item.get("mode") != "extract") for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                # Rules are checked once here, so a bad pattern fails the run before any reading.
-                try:
-                    active = [{**item, "rules": normalize_rules(item["rules"])}
-                              if item.get("rules") is not None else item for item in active]
-                    if any(item.get("rules") is not None and item.get("mode") != "extract" for item in active):
-                        raise RuleError("rules only apply to extracted fields")
-                    active = [{**item, "computed": normalize_computed(item.get("computed"))}
-                              if item.get("mode") == "computed" else item for item in active]
-                    check_inputs(active)
-                    normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
-                mapped_attributes = {item["targetAttribute"] for item in active}
-                if len(mapped_attributes) != len(active):
-                    return {"ok": False, "errorCode": "duplicate_document_mapping"}
-                mapping = None
-            else:
-                mapping = entry.get("columnMapping") or entry.get("column_mapping")
-                constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
-                field_recipes = entry.get("fieldRecipes") or entry.get("field_recipes")
-                field_extractions = entry.get("fieldExtractions") or entry.get("field_extractions")
-                if (not isinstance(mapping, dict) or not isinstance(constants, dict)
-                        or (not mapping and not constants and not field_extractions and not field_recipes)):
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                # A field read out of a cell's text with the document rules and/or AI.
-                try:
-                    extractions = normalize_field_extractions(field_extractions)
-                    if uses_cell_ai(extractions):
-                        normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                if (set(mapping.values()) & set(constants) or set(extractions) & set(mapping.values())
-                        or set(extractions) & set(constants)):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field:
-                # on a column it shapes, or on its own (a field taken from a column or another field).
-                recipe_fields = set(field_recipes) if isinstance(field_recipes, dict) else set()
-                if recipe_fields & (set(constants) | set(extractions)):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                try:
-                    recipes = normalize_row_recipes(
-                        field_recipes, set(mapping.values()) | set(constants) | set(extractions) | recipe_fields)
-                except RuleError:
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)
-                # Several records per row: one column split into items (its columns are only known when read).
-                sheet_expand = ((entry.get("options") or {}).get("expand")
-                                if isinstance(entry.get("options"), dict) else None)
-                if sheet_expand is not None:
-                    try:
-                        if not isinstance(sheet_expand, dict) or "relationId" in sheet_expand:
-                            raise ExpandError("invalid_expand")
-                        normalize_expand(sheet_expand, {sheet_expand.get("field")} - {None, ""})
-                    except ExpandError:
-                        return {"ok": False, "errorCode": "invalid_column_mapping"}
-                elif any(is_item_attribute(column) for column in mapping):
-                    # A field reading an item of a sheet that does not expand a column.
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-            unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
-            # Manual rows without a key value keep their own row key as identity.
-            if unmapped and source_kind != "manual":
-                return {"ok": False, "errorCode": "unmapped_identity"}
-            if mapping is not None and len(set(mapping.values())) != len(mapping):
-                return {"ok": False, "errorCode": "duplicate_column_mapping"}
-            if "_row" in mapped_attributes:
-                return {"ok": False, "errorCode": "reserved_attribute_name"}
-            # A filter on an unmapped attribute sees only None: eq never
-            # matches, so the source would report a clean empty population.
-            for filt in (concept.get("eligibility"), concept.get("materialization")):
-                for field in filter_fields(filt):
-                    if field not in mapped_attributes:
-                        return {"ok": False, "errorCode": "unmapped_filter_field"}
-            source = entry.get("source")
-            if not isinstance(source, dict) or not source.get("assetId"):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            if source_kind == "manual" and not isinstance(source.get("snapshotId"), str):
-                return {"ok": False, "errorCode": "invalid_sources"}
-            options = entry.get("options") or {}
-            normalized.append({
-                "conceptId": entry.get("conceptId"), "source": source,
-                "sourceKind": source_kind or "tabular",
-                "options": options if isinstance(options, dict) else {},
-                **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
-                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants),
-                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {}),
-                         **({"fieldExtractions": extractions, "receivedFieldExtractions": field_extractions}
-                            if extractions else {})}),
-                "labelField": entry.get("labelField") or entry.get("label_field"),
-                "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
-            })
-            mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
-        try:
-            derivations = normalize_derivations(payload.get("derivations"), compiled["concepts"])
-            for derivation in derivations:
-                # The relationship an expanding derivation links its records by joins its two concepts.
-                relation_id = (derivation.get("expand") or {}).get("relationId")
-                relation = compiled["relations"].get(relation_id) if relation_id else None
-                if relation_id and (relation is None or {relation["sourceConceptId"], relation["targetConceptId"]}
-                                    != {derivation["conceptId"], derivation["sourceConceptId"]}):
-                    raise DerivationError("invalid_derivations")
-        except DerivationError as exc:
-            return {"ok": False, "errorCode": str(exc)}
-        for derivation in derivations:
-            mapped_fields.setdefault(derivation["conceptId"], set()).update(
-                field["targetAttribute"] for field in derivation["fieldMappings"])
-        bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
-        if not isinstance(bindings, list):
-            return {"ok": False, "errorCode": "invalid_relation_bindings"}
-        normalized_bindings = []
-        for binding in bindings:
-            if not isinstance(binding, dict):
-                return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            relation = compiled["relations"].get(binding.get("relationId"))
-            if relation is None:
-                return {"ok": False, "errorCode": "unknown_relation"}
-            reference = binding.get("referenceField") or binding.get("reference_field")
-            target = binding.get("targetField") or binding.get("target_field")
-            target_concept = compiled["concepts"][relation["targetConceptId"]]
-            target_identity = target_concept["keyComponents"]
-            if target is None and len(target_identity) == 1:
-                target = target_identity[0]
-            if (not isinstance(reference, str)
-                    or reference not in mapped_fields.get(relation["sourceConceptId"], set())
-                    or not isinstance(target, str)
-                    or target not in mapped_fields.get(relation["targetConceptId"], set())):
-                return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            normalized_bindings.append({"relationId": relation["relationId"],
-                                        "referenceField": reference, "targetField": target})
+        # The rules live in app.population.payload_rules, shared with the model check.
+        analysis = analyze_payload(
+            payload, verify_hash=True, expected_hash=expected_hash,
+            max_sources=max_run_sources(payload))
+        if analysis.spec_issues:
+            return {"ok": False, "errorCode": "invalid_specification",
+                    "issues": analysis.spec_issues[:10]}
+        error = analysis.first_error
+        if error is not None:
+            return {"ok": False, "errorCode": error["code"]}
+        compiled, normalized = analysis.compiled, analysis.sources
+        derivations, normalized_bindings = analysis.derivations, analysis.bindings
         ai_extraction = payload.get("aiExtraction") or payload.get("ai_extraction")
         if ai_extraction is not None and not isinstance(ai_extraction, dict):
             return {"ok": False, "errorCode": "invalid_command"}
@@ -410,7 +310,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
         received = [{**source, "fieldExtractions": source["receivedFieldExtractions"]}
                     if "receivedFieldExtractions" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, received, normalized_bindings, ai_extraction, derivations)
+            expected_hash, received, normalized_bindings, ai_extraction, derivations,
+            payload.get("limits") if isinstance(payload.get("limits"), dict) else None)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
             source.pop("receivedFieldRecipes", None)
@@ -430,15 +331,21 @@ def run_population_for_payload(command_dump: dict) -> dict:
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
                                   query=None, index_connection=None, metadata_fetch=None,
                                   manual_pool=None, progress: PopulationProgress | None = None,
-                                  extraction_cache=None, upload_derived=None, derive=None) -> dict:
-    """Fetch, prepare, query and populate every mapped source (bounded), reporting progress."""
+                                  extraction_cache=None, upload_derived=None, derive=None,
+                                  carried: dict | None = None) -> dict:
+    """Fetch, prepare, query and populate every mapped source (bounded), reporting progress.
+
+    ``carried`` is the data in use when the run refreshes one concept: every record, value and link the
+    run does not make again is kept from it (see ``carry_over``)."""
     import asyncio
     import os
+    import shutil
     import tempfile
+    from typing import Any
     from pathlib import Path
 
     from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
-                                                fetch_workspace_asset)
+                                                fetch_workspace_asset, fetch_workspace_asset_metadata)
     from app.datasource.discovery import is_email_archive
     from app.datasource.dataset_query import query_parquet
     from app.datasource.discovery import resolve_asset_ref
@@ -458,7 +365,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     document_coverage: list[dict] = []
     index_observations: list[dict] = []
     complete_enumeration = True
+    # Sheets cut at their mapping's own record limit: a deliberate sample, served as a complete reading.
+    user_samples: list[dict] = []
     manual_links: list[tuple[str, dict]] = []
+    # How each concept's rows became records, for the model health report.
+    concept_health: dict[str, ConceptHealth] = {}
     progress = progress or PopulationProgress()
     await progress.begin(len(validated["sources"]))
     # One index connection for the whole run, opened on the first document: a workspace can hold
@@ -483,9 +394,28 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                             dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")))
             target = archive_dir["path"] / f"{len(archive_files)}.bin"
             async with asyncio.timeout(asset_fetch_wall_seconds(source)):
-                archive_files[key] = await (fetch or fetch_workspace_asset)(source, actor, target=target)
-            await derive_archive(source, archive_files[key])
+                archive_mb = source_limits(limits, source)["maxArchiveMb"]
+                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=archive_mb))(
+                    source, actor, target=target)
+            # Copying the e-mails into the workspace only feeds its search; the model reads the
+            # archive itself, so it is done only when the data source asks for it.
+            if source.get("indexInWorkspace") is True:
+                await derive_archive(source, archive_files[key])
         return archive_files[key]
+
+    def derivation_cache_key(source: dict) -> str | None:
+        """What marks an archive version as already copied into the workspace, for this model."""
+        if extraction_cache is None:
+            return None
+        from app.persistence.extraction_cache import extraction_cache_key
+        return extraction_cache_key({
+            "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
+            "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"],
+            # Tables cut at the old e-mail or size limit are derived again once it changes, and so are the
+            # files that a mail, attachment or nesting limit now lets in or keeps out.
+            "limits": {**{key: value for key, value in source_limits(limits, source).items()
+                          if key in ("maxArchiveEmails", "maxArchiveMb")},
+                       **changed_limits(source_limits(limits, source), DERIVATION_LIMIT_KEYS)}})
 
     async def derive_archive(source: dict, path: Path) -> None:
         """Store the e-mails' texts and readable attachments in the workspace, where they are indexed.
@@ -496,27 +426,41 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         from app.datasource.asset_delivery import upload_derived_file
         from app.datasource.parser_sandbox import derive_files_subprocess
 
-        cache_key = None
-        if extraction_cache is not None:
-            from app.persistence.extraction_cache import extraction_cache_key
-            cache_key = extraction_cache_key({
-                "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
-                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"]})
-            if await extraction_cache.get(cache_key) is not None:
-                return
+        cache_key = derivation_cache_key(source)
+        if cache_key is not None and await extraction_cache.get(cache_key) is not None:
+            return
         phase = progress.phase
         await progress.enter("deriving")
         try:
             with tempfile.TemporaryDirectory(prefix="semantic-derived-",
                                              dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
-                files = await asyncio.to_thread(derive or derive_files_subprocess, source, path, Path(directory))
-                created = 0
-                for number, entry in enumerate(files, start=1):
-                    stored = Path(directory) / str(entry.get("stored", ""))
-                    result = await (upload_derived or upload_derived_file)(source, actor, entry, stored)
-                    created += bool(result.get("created"))
-                    if number % 100 == 0:
-                        await progress.send(force=True)
+                await progress.advance("opening", 0, None)
+                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=source_limits(limits, source)),
+                                                source, path, Path(directory))
+                created = sent = failed = 0
+                await progress.advance("files", 0, len(files))
+                # Several at once: a large mailbox gives tens of thousands of files. One that fails
+                # does not stop the others; the archive is derived again next run.
+                gate = asyncio.Semaphore(DERIVED_UPLOAD_CONCURRENCY)
+
+                async def send_one(entry: dict) -> None:
+                    nonlocal created, sent, failed
+                    async with gate:
+                        stored = Path(directory) / str(entry.get("stored", ""))
+                        try:
+                            result = await (upload_derived or upload_derived_file)(source, actor, entry, stored)
+                            created += bool(result.get("created"))
+                        except (ValueError, RuntimeError, AssetFetchError, TimeoutError, OSError) as exc:
+                            failed += 1
+                            logger.warning("derived file not sent", extra={"assetId": source.get("assetId"),
+                                                                           "error": str(exc)[:200]})
+                        sent += 1
+                        await progress.advance("files", sent, len(files))
+
+                for start in range(0, len(files), DERIVED_UPLOAD_BATCH):
+                    await asyncio.gather(*(send_one(entry) for entry in files[start:start + DERIVED_UPLOAD_BATCH]))
+                if failed:
+                    raise RuntimeError(f"derived_files_failed:{failed}")
             if cache_key is not None:
                 await extraction_cache.put(cache_key, concept_id=EMAIL_DERIVATION_CACHE_CONCEPT,
                                            asset_id=str(source.get("assetId") or ""),
@@ -531,6 +475,96 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         finally:
             progress.phase = phase
             await progress.send(force=True)
+
+    email_tables: dict[str, dict] = {}
+
+    async def prepare_table(source: dict, options: dict | None, data: Any, artifact: Path) -> dict:
+        """The prepared dataset of one source. An e-mail archive's three tables come from one read
+        of the archive, shared by every mapping of it in this run."""
+        if prepare is None and is_email_archive(source.get("mimeType")) and isinstance(data, Path):
+            from app.datasource.datasets import dataset_id
+            from app.datasource.email_archive import selected_sheet
+            from app.datasource.parser_sandbox import prepare_email_tables_subprocess
+
+            key = str(data)
+            if key not in email_tables:
+                started = time.monotonic()
+                email_tables[key] = await asyncio.to_thread(
+                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables",
+                    limits=source_limits(limits, source))
+                log_archive_read(email_tables[key], started)
+            table = email_tables[key][selected_sheet(options)]
+            await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
+            return {**{name: table[name] for name in ("rowCount", "columns", "sizeBytes", "contentHash")},
+                    "datasetId": dataset_id(source, options),
+                    **({"reading": table["reading"]} if table.get("reading") else {})}
+        result = await asyncio.to_thread(
+            prepare or partial(prepare_dataset_subprocess, limits=limits), source, options, data, artifact)
+        # The parser answers with the preview and the prepared dataset beside it.
+        return result["dataset"] if isinstance(result, dict) and isinstance(result.get("dataset"), dict) else result
+
+    def tabular_cache_key(entry: dict, options: dict | None, asset_ref: dict, content_digest: str | None) -> str:
+        """Over everything that decides a sheet's reading: the file (its version, else its bytes),
+        the mapping and the concept; for an e-mail archive also what is read of its mails and files."""
+        from app.persistence.extraction_cache import extraction_cache_key
+        archive_limits = (changed_limits(source_limits(limits, entry["source"]), READ_LIMIT_KEYS)
+                          if is_email_archive(entry["source"].get("mimeType")) else None)
+        return extraction_cache_key({
+            # A changed file reader reads the table again (reading a table is cheap).
+            "engine": TABULAR_READ_VERSION, "reader": reader_version(),
+            "modelId": str(command_dump.get("modelId") or ""),
+            "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
+            "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
+            "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
+            "labelField": entry.get("labelField"), "assetRef": asset_ref,
+            # None when the version identifies the file, so that key is found before fetching it.
+            "content": content_digest,
+            # A reading cut at the old limit must not be reused once the limit changes.
+            "recordCap": source_record_cap(limits, entry),
+            # Only present for an e-mail archive, so other sheets keep their cached reading.
+            **({"archiveLimits": archive_limits} if archive_limits else {}),
+            # Only present with a recipe, so a sheet without one keeps its cached reading.
+            **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
+            **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
+               if entry.get("fieldExtractions") else {})})
+
+    async def derivation_done(source: dict) -> bool:
+        """False while an archive still has to be copied into the workspace, which needs its bytes."""
+        if source.get("indexInWorkspace") is not True or not is_email_archive(source.get("mimeType")):
+            return True
+        key = derivation_cache_key(source)
+        return key is not None and await extraction_cache.get(key) is not None
+
+    def health_of(concept_id: str) -> ConceptHealth:
+        if concept_id not in concept_health:
+            concept = compiled["concepts"][concept_id]
+            keys = list(concept["keyComponents"])
+            concept_health[concept_id] = ConceptHealth(
+                concept_id, keys, [name for name in concept["allowedFields"] if name not in keys])
+        return concept_health[concept_id]
+
+    async def reuse_reading(entry: dict, cached: dict) -> bool:
+        """Take a sheet's earlier reading as this run's; False when it is not usable."""
+        nonlocal complete_enumeration
+        if not isinstance(cached.get("outputs"), list):
+            return False
+        for output in cached["outputs"]:
+            per_concept.setdefault(entry["conceptId"], []).append(output)
+        earlier = ConceptHealth.restore(cached.get("health"))
+        if earlier is not None:
+            health_of(entry["conceptId"]).absorb(earlier)
+        if not cached.get("completeEnumeration", True):
+            complete_enumeration = False
+        if isinstance(cached.get("userSample"), dict):
+            user_samples.append(cached["userSample"])
+        observation = cached.get("observation") or {}
+        if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
+            dataset_fingerprints.add(observation["contentHash"])
+        observations.append(observation)
+        await progress.read(entry, records=sum(len(output["entities"]) for output in cached["outputs"]),
+                            gaps=sum(len(output["gaps"]) for output in cached["outputs"]),
+                            status="read", reused=True)
+        return True
 
     async def read_sources() -> dict | None:
         """Read every source in turn; an error result stops the run."""
@@ -576,6 +610,26 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     status=output["coverage"]["status"], reused=reused)
                 continue
             try:
+                asset_ref = resolve_asset_ref(source)
+            except ValueError as exc:
+                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+            # A sheet whose file, mapping and concept are unchanged yields what it yielded last time.
+            cache_key = None
+            cached = None
+            if extraction_cache is not None and asset_ref["assetVersionId"].startswith(("sha256:", "md5:")):
+                # The version is the file's content fingerprint, so an unchanged sheet is found
+                # without downloading it; the back end is still asked to confirm the version and access.
+                cache_key = tabular_cache_key(entry, options, asset_ref, None)
+                cached = await extraction_cache.get(cache_key)
+                if cached is not None and await derivation_done(source):
+                    try:
+                        async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                            await (metadata_fetch or fetch_workspace_asset_metadata)(source, actor)
+                    except AssetFetchError as exc:
+                        return {"ok": False, "errorCode": exc.code}
+                    if await reuse_reading(entry, cached):
+                        continue
+            try:
                 if is_email_archive(source.get("mimeType")):
                     data = await fetch_archive(source)
                 else:
@@ -583,56 +637,29 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         data = await (fetch or fetch_workspace_asset)(source, actor)
             except AssetFetchError as exc:
                 return {"ok": False, "errorCode": exc.code}
-            try:
-                asset_ref = resolve_asset_ref(source)
-            except ValueError as exc:
-                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
-            # A sheet whose bytes, mapping and concept are unchanged yields what it yielded last time.
-            cache_key = None
-            if extraction_cache is not None:
-                from app.persistence.extraction_cache import extraction_cache_key
+            if extraction_cache is not None and cache_key is None:
+                # No version to trust: the fetched bytes name the file.
                 if isinstance(data, Path):
                     content_digest = await asyncio.to_thread(_file_sha256, data)
                 else:
                     content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
                     content_digest = hashlib.sha256(content).hexdigest()
-                cache_key = extraction_cache_key({
-                    # A changed file reader reads the table again (reading a table is cheap).
-                    "engine": TABULAR_READ_VERSION, "reader": reader_version(),
-                    "modelId": str(command_dump.get("modelId") or ""),
-                    "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
-                    "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
-                    "options": options, "mappingVersion": entry["mappingVersion"],
-                    "labelField": entry.get("labelField"), "assetRef": asset_ref,
-                    "content": content_digest,
-                    # Only present with a recipe, so a sheet without one keeps its cached reading.
-                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
-                    **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
-                       if entry.get("fieldExtractions") else {})})
+                cache_key = tabular_cache_key(entry, options, asset_ref, content_digest)
                 cached = await extraction_cache.get(cache_key)
-                if cached is not None and isinstance(cached.get("outputs"), list):
-                    for output in cached["outputs"]:
-                        per_concept.setdefault(entry["conceptId"], []).append(output)
-                    if not cached.get("completeEnumeration", True):
-                        complete_enumeration = False
-                    observation = cached.get("observation") or {}
-                    if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
-                        dataset_fingerprints.add(observation["contentHash"])
-                    observations.append(observation)
-                    await progress.read(entry, records=sum(len(output["entities"]) for output in cached["outputs"]),
-                                        gaps=sum(len(output["gaps"]) for output in cached["outputs"]),
-                                        status="read", reused=True)
-                    continue
+            # Fetched anyway (the archive was not yet copied into the workspace): the reading still stands.
+            if cached is not None and await reuse_reading(entry, cached):
+                continue
             temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
             records = gaps = 0
             outputs: list[dict] = []
             sheet_complete = True
+            sample: dict | None = None
             try:
                 with tempfile.TemporaryDirectory(prefix="semantic-populate-",
                                                  dir=temp_root) as directory:
                     artifact = Path(directory) / "dataset.parquet"
-                    manifest = await asyncio.to_thread(
-                        prepare or prepare_dataset_subprocess, source, options, data, artifact)
+                    await progress.advance("opening", 0, None)
+                    manifest = await prepare_table(source, options, data, artifact)
                     asset_ref["datasetRevisionId"] = manifest.get("datasetId")
                     # A column a newer reader renamed is read under its new name.
                     available = manifest.get("columns") if isinstance(manifest, dict) else None
@@ -662,14 +689,29 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                      | ({expand_column} if expand else set()) | {SHEET_ROW_KEY})
                     concept = compiled["concepts"][entry["conceptId"]]
                     # Fields read out of a cell's text, as a document's: rules on every row, AI on a bounded few.
+                    cell_settings = normalize_ai_settings((options or {}).get("aiSettings"))
+                    pacing = ai_pacing(limits, cell_settings)
                     cells = CellReader(extractions, {
                         "conceptId": entry["conceptId"], "conceptLabel": concept.get("label") or entry["conceptId"],
                         "source": source, "assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
                         "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction,
-                        "settings": normalize_ai_settings((options or {}).get("aiSettings"))},
-                        cache=extraction_cache) if extractions else None
+                        "settings": cell_settings},
+                        cache=extraction_cache, ai_rows=pacing["aiRows"],
+                        concurrency=pacing["concurrency"], progress=progress) if extractions else None
+                    row_total = manifest.get("rowCount") if isinstance(manifest, dict) else None
+                    row_total = row_total if isinstance(row_total, int) else None
+                    sheet_health = ConceptHealth(entry["conceptId"], health_of(entry["conceptId"]).key_fields,
+                                                 health_of(entry["conceptId"]).fields)
+                    sheet_health.begin_source(source.get("originalName"), sheet=(options or {}).get("sheetName"),
+                                              workspace_id=source.get("workspaceId"), rows_available=row_total)
+                    if isinstance(manifest, dict) and manifest.get("reading"):
+                        # What the mail reader left out or cut, with the limits it read under.
+                        sheet_health.set_reading(manifest["reading"], {
+                            key: value for key, value in source_limits(limits, source).items() if key in READ_LIMIT_KEYS})
+                    await progress.advance("rows", 0, row_total)
                     missing_cells: dict[str, int] = {}
                     read_rows = 0
+                    rows_taken = 0
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
@@ -677,11 +719,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             limit=QUERY_ROW_LIMIT, offset=offset)
                         constants = entry.get("constantMapping", {})
                         raws = page["rows"]
-                        # The admin's per-source limit: the rest of the sheet is left unread.
-                        capped = len(raws) > limits["maxRecordsPerSource"] - records
+                        # The mapping's (else the admin's) per-source limit: the rest of the sheet is left unread.
+                        record_cap = source_record_cap(limits, entry)
+                        capped = len(raws) > record_cap - records
                         if capped:
-                            raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
-                            complete_enumeration = sheet_complete = False
+                            raws = raws[:max(0, record_cap - records)]
+                            if source_cap_is_users(limits, entry):
+                                # The mapping's own limit is a chosen sample: the reading is complete for serving.
+                                sample = {"conceptId": entry["conceptId"], "sheetName": (options or {}).get("sheetName"),
+                                          "limit": record_cap, "total": row_total}
+                            else:
+                                complete_enumeration = sheet_complete = False
+                        rows_taken += len(raws)
+                        sheet_health.rows_read(len(raws))
                         expand_gaps: list = []
                         if expand:
                             raws, expand_gaps = expand_rows(raws, expand, lambda raw: raw.get(expand_column),
@@ -705,6 +755,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     renamed[attribute] = outcome["values"].get(attribute)
                                     if attribute not in outcome["values"]:
                                         missing_cells[attribute] = missing_cells.get(attribute, 0) + 1
+                                # Fields the AI never read because of its row limit are no missing values.
+                                limited = [attribute for attribute in extractions
+                                           if (outcome["fields"].get(attribute) or {}).get("detail") == "ai_row_limit"]
+                                if limited:
+                                    renamed["_ai_limited"] = limited
                                 cell_evidence[(renamed["_row"], renamed.get("_item"))] = outcome["evidence"]
                             read_rows += len(raws)
                         # Shaped before the identity is read, so the key uses the shaped value.
@@ -716,7 +771,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             concept, rows, {"assetRef": asset_ref,
                                            "mappingVersion": entry["mappingVersion"],
                                            "labelField": entry.get("labelField"),
-                                           "constantFields": list(constants)})
+                                           "constantFields": list(constants)}, observer=sheet_health)
                         # A value read out of a cell keeps where it was found: row, column and span.
                         for assertion in output["assertions"]:
                             item = assertion["evidence"].get("item")
@@ -744,12 +799,16 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         records += len(output["entities"])
                         gaps += len(output["gaps"])
                         offset += page["returnedRows"]
+                        await progress.advance("rows", offset, row_total)
                         if capped or page["returnedRows"] < QUERY_ROW_LIMIT:
                             break
             except ValueError as exc:
                 return {"ok": False, "errorCode": str(exc) or "parser_failed"}
             except AssetFetchError as exc:
                 return {"ok": False, "errorCode": exc.code}
+            if cells is not None:
+                sheet_health.set_ai(pacing["aiRows"], cells.stats, extractions)
+            health_of(entry["conceptId"]).absorb(sheet_health)
             fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
             if isinstance(fingerprint, str) and fingerprint:
                 dataset_fingerprints.add(fingerprint)
@@ -761,15 +820,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 "sizeBytes": manifest.get("sizeBytes"),
                 "rowCount": manifest.get("rowCount")}
             observations.append(observation)
+            if sample is not None:
+                sample["read"] = rows_taken
+                user_samples.append(sample)
             # A failed call to the extraction agent is worth retrying next run.
             ai_failed = cells is not None and cells.stats["aiFailedRows"] > 0
-            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS and not ai_failed:
+            if cache_key is not None and not ai_failed:
                 sheet = (options or {}).get("sheetName") or ""
                 await extraction_cache.put(
                     cache_key, concept_id=entry["conceptId"],
                     asset_id=f"{asset_ref.get('assetId') or ''}#{sheet}",
                     output={"outputs": outputs, "observation": observation,
-                            "completeEnumeration": sheet_complete})
+                            "completeEnumeration": sheet_complete, "health": sheet_health.snapshot(),
+                            **({"userSample": sample} if sample is not None else {})})
             await progress.read(entry, records=records, gaps=gaps, status="read")
         return None
 
@@ -792,13 +855,37 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         merged_by_concept[concept_id] = merged
         for key in counts:
             counts[key] += merged["counts"].get(key, 0)
+    rerun = {derivation["derivationId"] for derivation in validated["derivations"]}
+    carried_links: list[dict] = []
+    if carried is not None:
+        read_concepts = set(per_concept) | ({carried["conceptId"]} if carried.get("conceptId") else set())
+        rerun = derivations_to_rerun(validated["derivations"], read_concepts, carried.get("conceptId"))
+        carried_links = carry_over(merged_by_concept, carried, read_concepts, rerun, validated["derivations"],
+                                   {entry["conceptId"] for entry in validated["sources"]
+                                    if entry.get("sourceKind") == "manual"})
+        read_assets = {str(asset) for observation in observations
+                       if (asset := (observation.get("assetRef") or {}).get("assetId"))}
+        observations.extend(observation for observation in carried.get("sourceObservations", [])
+                            if (observation.get("assetRef") or {}).get("assetId") not in read_assets)
+        # The kept data is part of this result, so a refresh of the same sources over other data differs.
+        dataset_fingerprints.add(f"carried:{carried['revisionId']}")
+        complete_enumeration = complete_enumeration and carried.get("completeEnumeration", True)
+        # A kept concept stays the sample it was; a concept read again reports its own.
+        user_samples.extend(item for item in carried.get("userSampleLimits", [])
+                            if isinstance(item, dict) and item.get("conceptId") not in read_concepts)
     # Concepts made from another concept's records, once every source has been read.
     derived_links: list[dict] = []
     for derivation in validated["derivations"]:
+        if derivation["derivationId"] not in rerun:
+            continue
         source = merged_by_concept.get(derivation["sourceConceptId"])
         if source is None:
             continue
         target = compiled["concepts"][derivation["conceptId"]]
+        # Shown as its own step: AI reading a concept made from another one can take a while.
+        progress.phase = "making"
+        progress.current = {"name": target.get("label") or derivation["conceptId"], "conceptId": derivation["conceptId"]}
+        await progress.send(force=True)
         # Fields read out of a source field's text (rules, AI), taken by a recipe or fixed, with the
         # same readers as a sheet cell; a field copied as it is needs no reading.
         # A derivation expanding a field reads one item record per item (each recipient of a message).
@@ -809,8 +896,20 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                        "originalName": compiled["concepts"][derivation["sourceConceptId"]].get("label")
                        or derivation["sourceConceptId"]},
             "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
-            cache=extraction_cache)
-        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"])
+            cache=extraction_cache, limits=limits, progress=progress)
+        derived_health = ConceptHealth(
+            derivation["conceptId"], list(target["keyComponents"]),
+            [name for name in target["allowedFields"] if name not in target["keyComponents"]])
+        derived_health.begin_source(compiled["concepts"][derivation["sourceConceptId"]].get("label"),
+                                    rows_available=len(items), derived_from=derivation["sourceConceptId"])
+        derived_health.rows_read(len(items))
+        if read.get("stats"):
+            derived_health.set_ai(limits["maxAiRowsPerSource"], read["stats"], field_plan(derivation)["extractions"])
+        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"],
+                                 max_entities=max(limits["maxRecordsPerSource"], MAX_MATERIALIZED_ENTITIES),
+                                 max_assertions=max(limits["maxValuesPerRun"], MAX_ASSERTIONS),
+                                 observer=derived_health)
+        health_of(derivation["conceptId"]).absorb(derived_health)
         relation_id = (derivation.get("expand") or {}).get("relationId")
         if relation_id:
             forward = compiled["relations"][relation_id]["sourceConceptId"] == derivation["sourceConceptId"]
@@ -821,10 +920,16 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         if read["gaps"] or expand_gaps:
             derived["gaps"].extend(read["gaps"] + expand_gaps)
             derived["counts"]["gaps"] = len(derived["gaps"])
+        # A concept made from another one reads no file: its records still show in the run's figures.
+        progress.records += len(derived["entities"])
+        progress.gaps += len(derived["gaps"])
+        await progress.send(force=True)
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:
             counts[key] += derived["counts"].get(key, 0)
+    if progress.phase == "making":
+        await progress.enter("linking")
     # Bound the result before matching so relationships never reference dropped
     # entities and assertions never outlive their entity.
     kept: list[dict] = []
@@ -858,23 +963,29 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     trimmed = {concept_id: [entity for entity in merged["entities"]
                             if entity["entityId"] in kept_ids]
                for concept_id, merged in merged_by_concept.items()}
+    # Links grow with records: a run allowed more records may keep proportionally more links.
+    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     relationships: list[dict] = []
     for binding in validated["relationBindings"]:
         relation = compiled["relations"][binding.get("relationId")]
         reference = binding["referenceField"]
         target = binding["targetField"]
+        # One link past the cap is enough to know the cap is hit (below): no more are built.
         matched = match_relationships(
             relation,
             trimmed.get(relation["sourceConceptId"], []),
             trimmed.get(relation["targetConceptId"], []),
-            reference, target)
+            reference, target, budget=max(0, max_relationships + 1 - len(relationships)))
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     relationships.extend(link for link in derived_links
                          if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids)
     relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
-    # Links grow with records: a run allowed more records may keep proportionally more links.
-    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
+    if carried_links:
+        made = {(link["relationId"], link["sourceEntityId"], link["targetEntityId"]) for link in relationships}
+        relationships.extend(link for link in carried_links
+                             if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids
+                             and (link["relationId"], link["sourceEntityId"], link["targetEntityId"]) not in made)
     if len(relationships) > max_relationships:
         relationships = sorted(relationships,
                                key=lambda item: (item.get("relationId", ""),
@@ -885,17 +996,167 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     if not complete_enumeration:
         gaps.append({"kind": "enumeration_capped", "conceptId": None, "rowNumber": None,
                      "detail": f"per-source enumeration capped at {QUERY_ROW_LIMIT} rows"})
+    health = build_health_report(concept_health, merged_by_concept, kept, validated["derivations"],
+                                 (carried or {}).get("health"))
+    gaps.extend(coarse_key_gaps(concept_health, health))
     counts["materialized"] = len(kept)
     counts["gaps"] = len(gaps)
-    return {"ok": True, "specHash": validated["specHash"],
+    return {"ok": True, "specHash": validated["specHash"], "health": health,
             "executionFingerprint": validated["executionFingerprint"],
             "purpose": validated["purpose"],
-            "completeEnumeration": complete_enumeration, "entities": kept,
+            "completeEnumeration": complete_enumeration, "userSampleLimits": user_samples, "entities": kept,
             "assertions": assertions, "relationships": relationships, "gaps": gaps,
             "counts": counts, "datasetFingerprints": sorted(dataset_fingerprints),
              "sourceObservations": observations,
              "documentCoverage": document_coverage, "indexObservations": index_observations,
              "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+def build_health_report(concept_health: dict[str, ConceptHealth], merged_by_concept: dict[str, dict],
+                        kept: list[dict], derivations: list[dict], earlier: dict | None = None) -> dict:
+    """Each concept's row journey and findings (see ``ConceptHealth.report``). A concept this run did
+    not read again (a concept refresh) keeps the report of the data in use."""
+    kept_by_concept: dict[str, int] = {}
+    for entity in kept:
+        kept_by_concept[entity["conceptId"]] = kept_by_concept.get(entity["conceptId"], 0) + 1
+    reports: dict[str, dict] = {}
+    for concept_id, health in concept_health.items():
+        merged = merged_by_concept.get(concept_id)
+        reports[concept_id] = health.report(records=kept_by_concept.get(concept_id, 0),
+                                            entities=len(merged["entities"]) if merged else None)
+    # Whoever may read a concept's source may read what a concept made from it reports.
+    for _ in derivations:
+        for derivation in derivations:
+            target, source = reports.get(derivation["conceptId"]), reports.get(derivation["sourceConceptId"])
+            if target is not None and source is not None:
+                target["workspaceIds"] = sorted(set(target["workspaceIds"]) | set(source["workspaceIds"]))
+    previous = (earlier or {}).get("concepts") if isinstance(earlier, dict) else None
+    for concept_id, report in (previous or {}).items():
+        if concept_id not in reports and isinstance(report, dict):
+            reports[concept_id] = report
+    return {"version": 1, "concepts": reports}
+
+
+def coarse_key_gaps(concept_health: dict[str, ConceptHealth], health: dict) -> list[dict]:
+    """One gap for each concept whose key is too coarse, so the gap lists name it like any other."""
+    gaps = []
+    for concept_id in concept_health:
+        for finding in (health["concepts"].get(concept_id) or {}).get("findings", []):
+            if finding["kind"] != "identity_too_coarse":
+                continue
+            gaps.append({"kind": "identity_too_coarse", "conceptId": concept_id, "rowNumber": None,
+                         "detail": f"{finding['rows']} rows share {finding['entities']} keys",
+                         "details": {name: finding[name] for name in ("rows", "entities", "keyFields", "topKeyValues",
+                                                                      "discardedValues", "suggestedKey") if name in finding},
+                         "examples": finding["examples"]})
+    return gaps
+
+
+def derivations_to_rerun(derivations: list[dict], read_concepts: set[str],
+                         refreshed_concept: str | None = None) -> set[str]:
+    """The derivations a concept refresh makes again: those making the refreshed concept (from the kept
+    records of the concept it is made from), those reading a refreshed concept, and so on down."""
+    refreshed = set(read_concepts)
+    rerun: set[str] = {derivation["derivationId"] for derivation in derivations
+                       if refreshed_concept and derivation["conceptId"] == refreshed_concept}
+    refreshed.update(derivation["conceptId"] for derivation in derivations if derivation["derivationId"] in rerun)
+    changed = True
+    while changed:
+        changed = False
+        for derivation in derivations:
+            if derivation["derivationId"] not in rerun and derivation["sourceConceptId"] in refreshed:
+                rerun.add(derivation["derivationId"])
+                refreshed.add(derivation["conceptId"])
+                changed = True
+    return rerun
+
+
+def _derivation_of(item: dict, key: str) -> str | None:
+    derived_from = (item.get(key) or {}).get("derivedFrom")
+    return derived_from.get("derivationId") if isinstance(derived_from, dict) else None
+
+
+def carry_over(merged_by_concept: dict[str, dict], carried: dict, read_concepts: set[str],
+               rerun: set[str], derivations: list[dict], manual_concepts: set[str]) -> list[dict]:
+    """Keep, from the data in use, what a concept refresh does not make again.
+
+    A record read from a source is kept unless its concept was read again; a record a derivation made
+    is kept unless that derivation runs again. Values a rerun derivation filled into a kept record are
+    dropped, so the derivation fills them afresh. Returns the links to keep: those made by derivations
+    or typed by people, which the run does not match again itself.
+    """
+    read_values: set[str] = set()  # records holding a value read from a source, not derived
+    for assertion in carried.get("assertions", []):
+        if _derivation_of(assertion, "evidence") is None:
+            read_values.add(assertion["entityId"])
+    entities_by_id: dict[str, dict] = {}
+    direct: dict[str, list[dict]] = {}
+    derived: dict[str, list[dict]] = {}
+    for entity in carried.get("entities", []):
+        derivation_id = _derivation_of(entity, "provenance")
+        if derivation_id is not None and not (derivation_id in rerun and entity["entityId"] in read_values):
+            if derivation_id in rerun:
+                continue
+            derived.setdefault(entity["conceptId"], []).append(entity)
+        elif entity["conceptId"] in read_concepts:
+            continue
+        else:
+            # A record a source gave and a rerun derivation completed keeps what the source gave.
+            if derivation_id is not None:
+                entity["provenance"] = {key: value for key, value in entity["provenance"].items()
+                                        if key != "derivedFrom"}
+            direct.setdefault(entity["conceptId"], []).append(entity)
+        entities_by_id[entity["entityId"]] = entity
+    values: dict[str, list[dict]] = {}
+    for assertion in carried.get("assertions", []):
+        entity = entities_by_id.get(assertion["entityId"])
+        if entity is None:
+            continue
+        if _derivation_of(assertion, "evidence") in rerun:
+            entity["attributes"].pop(assertion["attribute"], None)
+            continue
+        values.setdefault(assertion["entityId"], []).append(assertion)
+
+    def part(entities: list[dict]) -> dict:
+        return {"entities": entities, "gaps": [], "counts": {},
+                "assertions": [assertion for entity in entities for assertion in values.get(entity["entityId"], [])]}
+
+    for concept_id, entities in direct.items():
+        merged_by_concept[concept_id] = part(entities)
+    for concept_id, entities in derived.items():
+        merged_by_concept[concept_id] = merge_derived(merged_by_concept.get(concept_id), part(entities))
+    concept_of = {entity["entityId"]: entity["conceptId"] for entity in carried.get("entities", [])}
+    rerun_relations = {relation for derivation in derivations if derivation["derivationId"] in rerun
+                       and (relation := (derivation.get("expand") or {}).get("relationId"))}
+    kept: list[dict] = []
+    for link in carried.get("relationships", []):
+        strategy = link.get("matchingStrategy")
+        if strategy == "derived" and link["relationId"] not in rerun_relations:
+            kept.append(link)
+        elif strategy == "manual" and not ({concept_of.get(link["sourceEntityId"]),
+                                             concept_of.get(link["targetEntityId"])} & manual_concepts):
+            kept.append(link)
+    return kept
+
+
+async def load_carried_data(pool, command_dump: dict) -> dict | None:  # type: ignore[no-untyped-def]
+    """The data in use a concept refresh keeps; None when the model has none yet."""
+    from app.persistence.population_store import (get_active_binding, get_revision_reading,
+                                                  list_revision_assertions, list_revision_entities,
+                                                  list_revision_relationships)
+
+    model_id = str(command_dump.get("modelId") or command_dump.get("model_id") or "")
+    current = await get_active_binding(pool, model_id, "draft") if model_id else None
+    if current is None:
+        return None
+    revision_id = current["data_revision_id"]
+    payload = command_dump.get("payload") or {}
+    reading = await get_revision_reading(pool, revision_id)
+    return {"revisionId": revision_id, "conceptId": (payload.get("scope") or {}).get("conceptId"),
+            "entities": await list_revision_entities(pool, revision_id, limit=1_000_000),
+            "assertions": await list_revision_assertions(pool, revision_id),
+            "relationships": await list_revision_relationships(pool, revision_id, limit=1_000_000),
+            **reading}
 
 
 async def _populate_manual_source(pool, entry: dict, concept: dict) -> dict:  # type: ignore[no-untyped-def]
@@ -966,6 +1227,7 @@ def summarize_job_result(revision_id: str, outcome: dict, persisted: dict) -> di
         "dataRevisionId": revision_id, "specHash": outcome.get("specHash"),
         "purpose": outcome.get("purpose"),
         "completeEnumeration": outcome.get("completeEnumeration"),
+        **({"userSampleLimits": outcome["userSampleLimits"]} if outcome.get("userSampleLimits") else {}),
         "counts": outcome.get("counts"),
         "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
         "entityCount": persisted["entities"],
@@ -1014,13 +1276,24 @@ async def changes_from_data_in_use(pool, command_dump: dict, revision_id: str,  
         return {"added": 0, "removed": 0, "changed": 0, "removedSources": []}
     current_assets = {str(asset) for entry in sources
                       if (asset := (entry.get("source") or {}).get("assetId"))}
-    return compare_revisions(await list_revision_entities(pool, previous_id),
-                             await list_revision_entities(pool, revision_id), current_assets)
+    after = await list_revision_entities(pool, revision_id, limit=1_000_000)
+    if is_concept_refresh(command_dump):
+        # Sources of the concepts kept as they were are still in use, though this run did not read them.
+        current_assets |= {asset for entity in after for asset in _entity_assets(entity)}
+    return compare_revisions(await list_revision_entities(pool, previous_id, limit=1_000_000),
+                             after, current_assets)
+
+
+def is_concept_refresh(command_dump: dict) -> bool:
+    payload = command_dump.get("payload", {})
+    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "concept"
 
 
 def is_whole_model_build(command_dump: dict) -> bool:
+    """A build whose result is the model's whole data: a full build, or a concept refresh, which
+    carries every other concept over from the data in use."""
     payload = command_dump.get("payload", {})
-    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "model"
+    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") in ("model", "concept")
 
 
 async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[no-untyped-def]
@@ -1032,13 +1305,13 @@ async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[n
 
 
 async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
-                                     revision_id: str) -> dict | None:
+                                     revision_id: str, progress: PopulationProgress | None = None) -> dict | None:
     if not is_whole_model_build(command_dump):
         return None
     import asyncpg
     import os
 
-    from app.population.age_projection import finalize_draft_revision
+    from app.population.age_projection import finalize_draft_revision, normalize_graph_exposure
 
     database_url = os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL")
     if not database_url:
@@ -1050,7 +1323,14 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
                          "statement_timeout": "30s", "lock_timeout": "5s",
                          "idle_in_transaction_session_timeout": "30s"})
     try:
-        return await finalize_draft_revision(pool, age_pool, revision_id)
+        # The graph is written on the AGE connection; progress reports on the worker's own pool.
+        payload = command_dump.get("payload") or {}
+        # Absent (an older caller): the graph keeps the exposure it has; present, even empty, it is the choice.
+        exposure = (normalize_graph_exposure(payload.get("graphExposure"))
+                    if "graphExposure" in payload and payload["graphExposure"] is not None else None)
+        return await finalize_draft_revision(
+            pool, age_pool, revision_id, progress.advance if progress is not None else None,
+            batch_rows=run_limits(payload)["projectionBatchRows"], exposure=exposure)
     finally:
         await age_pool.close()
 
@@ -1089,6 +1369,7 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
     links: dict[tuple, int] = {}
     other: dict[tuple, int] = {}
     fields: dict[tuple, set] = {}
+    details: dict[tuple, dict] = {}
     row_samples: list[dict] = []
     link_samples: list[dict] = []
     for gap in outcome.get("gaps", []):
@@ -1106,6 +1387,8 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
             other[key] = other.get(key, 0) + 1
             if gap.get("field"):
                 fields.setdefault(key, set()).add(gap["field"])
+            if gap.get("details") and key not in details:
+                details[key] = {**gap["details"], **({"examples": gap["examples"]} if gap.get("examples") else {})}
             if other[key] <= MAX_GAP_SAMPLES_PER_GROUP and len(row_samples) < MAX_GAP_SAMPLES:
                 row_samples.append({"conceptId": gap.get("conceptId"), "kind": kind,
                                     **({"field": gap["field"]} if gap.get("field") else {}),
@@ -1117,7 +1400,8 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
         "unresolvedLinks": [{"relationId": r, "kind": k, "count": c}
                             for (r, k), c in sorted(links.items())][:MAX_GAP_GROUPS],
         "other": [{"conceptId": cid, "kind": k, "count": c,
-                   **({"fields": sorted(fields[(cid, k)])} if (cid, k) in fields else {})}
+                   **({"fields": sorted(fields[(cid, k)])} if (cid, k) in fields else {}),
+                   **({"details": details[(cid, k)]} if (cid, k) in details else {})}
                   for (cid, k), c in sorted(other.items(), key=lambda i: (str(i[0][0]), i[0][1]))
                   ][:MAX_GAP_GROUPS],
         "rowSamples": row_samples,
@@ -1125,20 +1409,45 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
     }
 
 
-async def persist_population_revision(pool, command_dump: dict, outcome: dict) -> str:
+def saved_rows_reporter(progress: PopulationProgress, total: int):  # type: ignore[no-untyped-def]
+    """A ``SaveBudget.on_rows`` that reports the rows stored so far of ``total`` as one step."""
+    saved = 0
+
+    async def on_rows(count: int) -> None:
+        nonlocal saved
+        saved += count
+        await progress.advance("entries", saved, total)
+
+    return on_rows
+
+
+def _stored_revision(row: dict | None, revision_id: str) -> bool:
+    return row is not None and row.get("id") == revision_id
+
+
+async def persist_population_revision(pool, command_dump: dict, outcome: dict,
+                                      progress: PopulationProgress | None = None) -> str:
     """Persist a computed population as an inert data revision (P6A, P6.16).
 
-    Idempotent (ON CONFLICT DO NOTHING): a retried task re-stores the same
-    revision without duplicates. The revision is inert until an explicit
+    ``progress`` is told after each written batch how many of all the rows (records, values and
+    links) are stored; it reports on the worker's pool, outside the save connection's writes.
+
+    Idempotent: a retried task re-stores the same revision without duplicates (a revision not yet in
+    the graph has its rows replaced by the new ones; one already in the graph is kept, and rows read
+    differently from the same inputs go to a revision of their own). The revision is inert until an explicit
     activation swaps the serving binding, so a stored-but-uncompleted task
     leaves serving state untouched.
     """
-    from app.persistence.population_store import (create_data_revision, list_model_corrections,
-                                                  mirror_specification,
+    from app.persistence.population_store import (SaveBudget, _json_object, content_digest,
+                                                  create_data_revision, get_data_revision,
+                                                  list_model_corrections, mirror_specification,
                                                   model_correction_sequence,
-                                                  model_reset_generation, revision_id_for,
+                                                  model_reset_generation, replace_revision_rows,
+                                                  revision_id_for, save_connection,
                                                   set_revision_validation, store_assertions,
-                                                  store_entities, store_relationships)
+                                                  store_entities, store_relationships,
+                                                  update_revision_reading)
+    from app.population.age_projection import is_live_projection_ref
     from app.population.corrections import apply_corrections
 
     payload = command_dump.get("payload", {})
@@ -1151,19 +1460,35 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
         # Human fixes survive rebuilds: replay every correction still in force
         # on top of the computed rows. The revision records the watermark it
         # applied so activation can refuse a revision built before a newer fix.
-        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id))
+        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id, correction_sequence))
     execution_fingerprint = outcome["executionFingerprint"]
+    reset_generation = await model_reset_generation(pool, model_id)
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),
-                                  correction_sequence,
-                                  await model_reset_generation(pool, model_id))
+                                  correction_sequence, reset_generation)
+    digest = content_digest(outcome.get("entities", []), outcome.get("assertions", []),
+                            outcome.get("relationships", []))
+    # The same inputs give the same revision, yet a run may read other values from them (the AI asked
+    # again, other answers). A revision nobody has put in the graph yet is replaced by the new rows; one
+    # already in the graph is immutable, so other rows make a revision of their own.
+    existing = await get_data_revision(pool, revision_id)
+    if (_stored_revision(existing, revision_id) and is_live_projection_ref(existing.get("projection_ref"))
+            and _json_object(existing.get("coverage")).get("contentDigest") != digest):
+        revision_id = revision_id_for(model_version_id, execution_fingerprint,
+                                      outcome.get("datasetFingerprints", []), correction_sequence,
+                                      reset_generation, variant=digest)
+        existing = await get_data_revision(pool, revision_id)
+    stored = _stored_revision(existing, revision_id)
+    replace = stored and not is_live_projection_ref(existing.get("projection_ref"))
     await mirror_specification(pool, home_workspace_id=home_ws, model_id=model_id,
                                model_version_id=model_version_id,
                                spec_hash=outcome["specHash"], specification=specification)
-    coverage = {"counts": outcome.get("counts", {}),
+    coverage = {"counts": outcome.get("counts", {}), "contentDigest": digest,
                  "completeEnumeration": outcome.get("completeEnumeration", False),
+                 **({"userSampleLimits": outcome["userSampleLimits"]} if outcome.get("userSampleLimits") else {}),
                  "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
                  "documents": outcome.get("documentCoverage", []),
+                 **({"health": outcome["health"]} if outcome.get("health") else {}),
                  "gaps": summarize_gaps(outcome, specification)}
     await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
                                 model_version_id=model_version_id,
@@ -1172,12 +1497,39 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                                source_observations=outcome.get("sourceObservations", []),
                                correction_sequence=correction_sequence,
                                coverage=coverage)
-    await store_entities(pool, model_id=model_id, revision_id=revision_id,
-                         entities=outcome.get("entities", []))
-    await store_assertions(pool, model_id=model_id, revision_id=revision_id,
-                           assertions=outcome.get("assertions", []))
-    await store_relationships(pool, model_id=model_id, revision_id=revision_id,
-                               relationships=outcome.get("relationships", []))
+    if stored and not replace:
+        # The rows are kept as they are; how completely they were read may have changed.
+        await update_revision_reading(pool, revision_id, coverage=coverage,
+                                      source_observations=outcome.get("sourceObservations", []))
+    # The admin's batch size and time per batch; the pool's own 10 s limit would cut a large run short.
+    limits = run_limits(payload)
+    entities = outcome.get("entities", [])
+    split = on_rows = None
+    if progress is not None:
+        from app.persistence.population_store import split_assertions
+
+        split = split_assertions(outcome.get("assertions", []))
+        on_rows = saved_rows_reporter(
+            progress, len(entities) + len(split[0]) + len(split[1]) + len(outcome.get("relationships", [])))
+    budget = SaveBudget(rows=limits["saveBatchRows"], seconds=limits["saveStatementSeconds"], on_rows=on_rows)
+    async def write(connection) -> None:  # type: ignore[no-untyped-def]
+        await store_entities(connection, model_id=model_id, revision_id=revision_id,
+                             entities=entities, budget=budget)
+        await store_assertions(connection, model_id=model_id, revision_id=revision_id,
+                               assertions=outcome.get("assertions", []), budget=budget, split=split)
+        await store_relationships(connection, model_id=model_id, revision_id=revision_id,
+                                  relationships=outcome.get("relationships", []), budget=budget)
+
+    async with save_connection(pool, budget) as connection:
+        if replace:
+            # One transaction: the earlier rows go and the new ones come, so a failure leaves the earlier ones.
+            async with connection.transaction():
+                await replace_revision_rows(connection, revision_id, coverage=coverage,
+                                            source_observations=outcome.get("sourceObservations", []),
+                                            timeout=budget.seconds)
+                await write(connection)
+        else:
+            await write(connection)
     from app.persistence.index_observations import record_index_observation
     for observation in outcome.get("indexObservations", []):
         await record_index_observation(pool, observation)
@@ -1233,17 +1585,27 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             if await repository.cancel_requested(lease.job_id):
                 raise RunCancelled()
 
-        progress = PopulationProgress(report)
+        progress = PopulationProgress(
+            report, scope_concept_id=(lease.payload.get("scope") or {}).get("conceptId")
+            if is_concept_refresh(lease.payload) else None)
         model_id = str(lease.payload.get("modelId") or lease.payload.get("model_id") or "")
+        carried = await load_carried_data(pool, lease.payload) if is_concept_refresh(lease.payload) else None
         try:
-            outcome = await run_population_for_task(
-                lease.payload, manual_pool=pool, progress=progress,
-                extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None)
+            if is_concept_refresh(lease.payload) and carried is None:
+                # Nothing to keep: one concept alone would replace the whole model's data.
+                outcome = {"ok": False, "errorCode": "no_data_in_use"}
+            else:
+                outcome = await run_population_for_task(
+                    lease.payload, manual_pool=pool, progress=progress,
+                    extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None,
+                    carried=carried)
             if outcome.get("ok") and outcome.get("purpose") != "preview":
                 # The last chance to stop: after this the new data is saved.
                 await progress.enter("saving")
             if await repository.cancel_requested(lease.job_id):
                 raise RunCancelled()
+            # Past the last chance to stop: the saving reports below never end the run.
+            progress.cancellable = False
         except RunCancelled:
             try:
                 await repository.cancel_task(task_id=task_id, lease_owner=lease_owner,
@@ -1270,11 +1632,13 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             # the summary.
             from app.persistence.population_store import count_revision_rows
 
-            revision_id = await persist_population_revision(pool, lease.payload, outcome)
+            revision_id = await persist_population_revision(pool, lease.payload, outcome, progress)
             persisted = await count_revision_rows(pool, revision_id)
             result = summarize_job_result(revision_id, outcome, persisted)
             # Measured against the data in use before this result can replace it.
             if is_whole_model_build(lease.payload):
+                # Loads both revisions' records to compare them: a phase of its own, with no count.
+                await progress.enter("comparing")
                 try:
                     changes = await changes_from_data_in_use(
                         pool, lease.payload, revision_id,
@@ -1298,16 +1662,25 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 decision = serving_decision(blocking, await has_draft_binding(pool, lease.payload))
             result.update({"blockingGapKinds": blocking, "servingDecision": decision})
             if decision == "activate":
-                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
+                if is_whole_model_build(lease.payload):
+                    try:
+                        await progress.enter("projecting")
+                    except RunCancelled:
+                        pass  # Already saved: a late stop request changes nothing.
+                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id, progress)
                 if finalized is not None:
                     result.update({"projectionRef": finalized["projectionRef"],
                                    "boundEnvironment": finalized["environment"]})
                     # The new draft data gets its search index in its own job; a failure
                     # here never fails the build (reads request it again).
                     from app.graph_search.indexer import request_index_quietly
+                    from app.graph_search.settings import IndexBuildSettings
                     from app.jobs.service import JobService
 
-                    await request_index_quietly(pool, JobService(repository).admit, revision_id)
+                    # The admin's index build knobs ride on the run (they never enter its fingerprint).
+                    build = index_build_limits((lease.payload.get("payload") or {}).get("limits"))
+                    await request_index_quietly(pool, JobService(repository).admit, revision_id,
+                                                build=IndexBuildSettings.model_validate(build) if build else None)
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

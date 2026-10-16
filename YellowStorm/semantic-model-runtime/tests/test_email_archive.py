@@ -11,7 +11,8 @@ import pytest
 from app.datasource.dataset_query import query_parquet
 from app.datasource.datasets import prepare_parquet
 from app.datasource.discovery import discover, preview_source
-from app.datasource.email_archive import (BODY_CHARS, MESSAGE_COLUMNS, _addresses, iter_derived_files,
+from app.datasource.extraction_limits import BODY_CHARS
+from app.datasource.email_archive import (MESSAGE_COLUMNS, _addresses, iter_derived_files,
                                           iter_sheet_rows, read_messages, read_tnef, resolve_column,
                                           split_new_text)
 
@@ -258,7 +259,7 @@ def test_sandbox_previews_prepares_and_derives_from_a_file(archive: bytes, tmp_p
 async def test_population_downloads_an_archive_once_and_derives_its_files_once(archive: bytes, tmp_path: Path):
     from test_population_task import command
 
-    source = {**SOURCE, "sizeBytes": len(archive)}
+    source = {**SOURCE, "sizeBytes": len(archive), "indexInWorkspace": True}
     sources = [{"conceptId": "c1", "source": dict(source), "options": {"sheetName": sheet},
                 "columnMapping": {key: "customer_id", "nom_fichier" if sheet == "attachments" else "objet": "name"},
                 "mappingVersion": "map-v1"}
@@ -294,12 +295,87 @@ async def test_population_downloads_an_archive_once_and_derives_its_files_once(a
     assert len(uploads) == 6  # 4 message texts + 2 PDFs
     second = await run(command(sources=sources), fetch, upload, cache)
     assert second["ok"] is True and len(uploads) == 6
+    # Nothing changed: the archive is not downloaded again for the cached readings.
+    assert downloads == [SOURCE["assetId"]]
 
 
-async def run(cmd: dict, fetch, upload, cache) -> dict:  # type: ignore[no-untyped-def]
+@pytest.mark.asyncio
+async def test_an_unchanged_archive_is_not_downloaded_for_any_of_its_three_tables(archive: bytes):
+    from test_population_task import command
+
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    sheets = (("messages", "cle_message", "objet"), ("participants", "cle_message", "adresse"),
+              ("attachments", "cle_piece_jointe", "nom_fichier"))
+    sources = [{"conceptId": "c1", "source": dict(source), "options": {"sheetName": sheet},
+                "columnMapping": {key: "customer_id", name: "name"}, "mappingVersion": "map-v1"}
+               for sheet, key, name in sheets]
+    downloads: list[str] = []
+    checked: list[str] = []
+
+    async def fetch(src: dict, actor: str, *, target: Path) -> Path:
+        downloads.append(src["assetId"])
+        target.write_bytes(archive)
+        return target
+
+    async def metadata(src: dict, actor: str) -> dict:
+        checked.append(src["assetId"])
+        return src
+
+    class Cache:
+        def __init__(self) -> None:
+            self.rows: dict[str, dict] = {}
+
+        async def get(self, key: str) -> dict | None:
+            return self.rows.get(key)
+
+        async def put(self, key: str, *, concept_id: str, asset_id: str, output: dict) -> None:
+            self.rows[key] = output
+
+    cache = Cache()
+    first = await run(command(sources=sources), fetch, None, cache, metadata)
+    assert first["ok"] is True, first
+    # One download feeds the three tables of the archive.
+    assert downloads == [SOURCE["assetId"]] and checked == []
+    second = await run(command(sources=sources), fetch, None, cache, metadata)
+    assert second["ok"] is True and second["entities"] == first["entities"]
+    assert downloads == [SOURCE["assetId"]] and checked == [SOURCE["assetId"]] * 3
+
+    # A re-uploaded archive (another content hash) is downloaded and read again.
+    changed = [{**entry, "source": {**entry["source"], "contentHash": "f" * 32}} for entry in sources]
+    third = await run(command(sources=changed), fetch, None, cache, metadata)
+    assert third["ok"] is True and downloads == [SOURCE["assetId"]] * 2
+
+
+@pytest.mark.asyncio
+async def test_population_leaves_the_workspace_alone_unless_the_source_asks_to_index_there(archive: bytes):
+    from test_population_task import command
+
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    sources = [{"conceptId": "c1", "source": source, "options": {"sheetName": "messages"},
+                "columnMapping": {"cle_message": "customer_id", "objet": "name"}, "mappingVersion": "map-v1"}]
+    uploads: list[str] = []
+
+    async def fetch(src: dict, actor: str, *, target: Path) -> Path:
+        target.write_bytes(archive)
+        return target
+
+    async def upload(src: dict, actor: str, entry: dict, path: Path) -> dict:
+        uploads.append(entry["fileName"])
+        return {"documentId": "d", "created": True}
+
+    outcome = await run(command(sources=sources), fetch, upload, None)
+    assert outcome["ok"] is True and outcome["counts"]["materialized"] == 4
+    assert uploads == []
+
+
+async def run(cmd: dict, fetch, upload, cache, metadata=None) -> dict:  # type: ignore[no-untyped-def]
     from app.workers.population_tasks import run_population_for_task
 
-    return await run_population_for_task(cmd, fetch=fetch, upload_derived=upload, extraction_cache=cache)
+    async def unchanged(src: dict, actor: str) -> dict:
+        return src
+
+    return await run_population_for_task(cmd, fetch=fetch, upload_derived=upload, extraction_cache=cache,
+                                         metadata_fetch=metadata or unchanged)
 
 
 def test_a_message_whose_body_is_a_single_file_has_that_attachment():
@@ -320,6 +396,18 @@ def test_run_limits_fall_back_to_built_in_values_and_stay_in_range():
     assert run_limits({}) == DEFAULT_RUN_LIMITS
     assert run_limits({"limits": {"maxRecordsPerRun": 50000, "maxValuesPerRun": 10**9,
                                   "maxRunSources": True}}) == {**DEFAULT_RUN_LIMITS, "maxRecordsPerRun": 50000}
+
+
+def test_an_archive_connection_sets_its_own_limits_but_not_more_time_or_memory_than_the_run():
+    from app.population.run_limits import DEFAULT_RUN_LIMITS, source_limits
+
+    limits = {**DEFAULT_RUN_LIMITS, "archiveTimeoutSeconds": 600}
+    assert source_limits(limits, {"assetId": "a"}) is limits
+    chosen = source_limits(limits, {"archiveLimits": {"maxArchiveEmails": 200, "maxArchiveMb": 5000,
+                                                      "archiveTimeoutSeconds": 3000, "parserMemoryMb": 300,
+                                                      "maxRecordsPerRun": 100}})
+    assert chosen == {**limits, "maxArchiveEmails": 200, "maxArchiveMb": 5000, "archiveTimeoutSeconds": 600,
+                      "parserMemoryMb": 300}
 
 
 @pytest.mark.asyncio
@@ -378,6 +466,12 @@ async def test_admin_limit_on_records_per_source_stops_reading_that_source():
     limited["payload"]["limits"] = {"maxRecordsPerSource": 100}
     outcome = await run_population_for_task(limited, fetch=fetch, upload_derived=upload)
     assert outcome["counts"]["materialized"] == 100 and outcome["completeEnumeration"] is False
+    # A mapping may read fewer records than the admin allows, never more.
+    own = command(sources=[{**sources[0], "readLimits": {"maxRecords": 40}}])
+    assert (await run_population_for_task(own, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 40
+    more = command(sources=[{**sources[0], "readLimits": {"maxRecords": 400}}])
+    more["payload"]["limits"] = {"maxRecordsPerSource": 100}
+    assert (await run_population_for_task(more, fetch=fetch, upload_derived=upload))["counts"]["materialized"] == 100
 
 
 def test_corps_falls_back_to_full_text_when_nothing_new() -> None:
@@ -386,3 +480,18 @@ def test_corps_falls_back_to_full_text_when_nothing_new() -> None:
     row = next(read_messages(raw, "message/rfc822")).row
     assert row["corps"] == row["corps_complet"]
     assert "Le devis est joint." in row["corps"]
+
+
+def test_one_read_prepares_the_three_tables_as_reading_each_does(archive: bytes, tmp_path: Path):
+    from app.datasource.parser_sandbox import prepare_dataset_subprocess, prepare_email_tables_subprocess
+
+    on_disk = tmp_path / "mailbox.zip"
+    on_disk.write_bytes(archive)
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    tables = prepare_email_tables_subprocess(source, on_disk, tmp_path / "tables")
+    for sheet in ("messages", "participants", "attachments"):
+        single = prepare_dataset_subprocess(source, {"sheetName": sheet}, on_disk, tmp_path / f"{sheet}.parquet")["dataset"]
+        assert {key: tables[sheet][key] for key in ("rowCount", "columns")} == {key: single[key] for key in ("rowCount", "columns")}
+        together = query_parquet(tables[sheet]["path"], columns=single["columns"], limit=100)["rows"]
+        alone = query_parquet(tmp_path / f"{sheet}.parquet", columns=single["columns"], limit=100)["rows"]
+        assert together == alone

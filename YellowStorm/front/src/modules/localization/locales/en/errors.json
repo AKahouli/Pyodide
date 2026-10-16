@@ -214,6 +214,18 @@
   "ERR_4020": "This invitation has expired.",
   "ERR_4021": "This invitation has already been used.",
   "ERR_4022": "This invitation does not match your account.",
+  "ERR_3800": "Template category not found.",
+  "ERR_3801": "A template category with this name or slug already exists.",
+  "ERR_3802": "Template not found.",
+  "ERR_3803": "A template with this title already exists in this category.",
+  "ERR_3804": "The template source ZIP is invalid or empty.",
+  "ERR_3805": "This template is not published yet.",
+  "ERR_3806": "The template cover image is invalid.",
+  "ERR_3807": "This template is not compatible with the platform runtime and cannot be published.",
   "ERR_1130": "Authentication is temporarily unavailable. Your session was not affected; we are retrying.",
-  "ERR_1131": "Signing in is being synchronized. Please retry."
+  "ERR_1131": "Signing in is being synchronized. Please retry.",
+  "ERR_1132": "This invitation link is invalid or has already been used.",
+  "ERR_1133": "This invitation link has expired. Ask an administrator to send a new one.",
+  "ERR_1134": "This invitation was issued for a different email address.",
+  "ERR_1203": "The invitation email could not be sent. Please try again."
 }

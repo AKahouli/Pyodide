@@ -1,22 +1,26 @@
 import { RootWorkPublicService } from './root-work-public.service';
 import { newStopRequestId } from './root-work.types';
+import { ErrorCode, NotFoundException } from '../../exceptions';
 
 describe('Creator-owned Root work controls', () => {
   function fixture(enabled = true) {
     const conversation = { createdBy: 'owner', rootAgentId: 'root', rootWorkEpoch: 4 };
     const conversations = { getConversationDocument: jest.fn().mockResolvedValue(conversation) };
-    const work = { stopRootWork: jest.fn().mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 1 }) };
-    const jobs = { publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
+    const work = { getExecution: jest.fn().mockResolvedValue(null),
+      stopRootWork: jest.fn().mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 1 }) };
+    const jobs = { cancel: jest.fn().mockResolvedValue({ executionId: 'job', status: 'cancelled' }),
+      publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
       { executionId: 'job', parentExecutionId: 'parent', status: 'running', role: 'library_worker',
         createdAt: 'created', deadline: 'deadline', nativeState: { requestProfile: { private: true }, pendingInputs: [] } },
     ] }) };
     const events = { replay: jest.fn().mockResolvedValue([]) };
     const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
-    const stream = { getActiveStreamSnapshot: jest.fn().mockReturnValue(null), stopStream: jest.fn().mockResolvedValue(undefined) };
+    const stream = { getActiveStreamSnapshots: jest.fn().mockReturnValue([]), stopStream: jest.fn().mockResolvedValue(undefined) };
     const messages = { findById: jest.fn().mockResolvedValue({ conversationId: 'conversation' }) };
+    const foreground = { snapshot: jest.fn().mockResolvedValue([]) };
     const service = new RootWorkPublicService(conversations as never, work as never, jobs as never, events as never,
-      results as never, stream as never, messages as never, { get: jest.fn().mockReturnValue(enabled) } as never);
-    return { service, conversation, conversations, work, jobs, events, results, stream, messages };
+      results as never, stream as never, messages as never, { get: jest.fn().mockReturnValue(enabled) } as never, foreground as never);
+    return { service, conversation, conversations, work, jobs, events, results, stream, messages, foreground };
   }
 
   it('never touches unmigrated background tables while the feature is disabled', async () => {
@@ -25,6 +29,26 @@ describe('Creator-owned Root work controls', () => {
     expect(await h.service.replay('conversation', 'owner', 4, '0')).toEqual([]);
     expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
     expect(h.events.replay).not.toHaveBeenCalled();
+  });
+
+  it('retains foreground worker visibility while background support is disabled', async () => {
+    const h = fixture(false);
+    h.foreground.snapshot.mockResolvedValue([{ executionId: 'worker', mode: 'foreground', role: 'temporary_worker' }] as never);
+    expect(await h.service.snapshot('conversation', 'owner')).toMatchObject({ jobs: [], foregroundWorkers: [
+      { executionId: 'worker', mode: 'foreground', role: 'temporary_worker' },
+    ] });
+    expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
+  });
+  it('does not publish an old foreground projection under a new background snapshot epoch', async () => {
+    const h = fixture();
+    const initial = { ...h.conversation };
+    h.conversations.getConversationDocument.mockResolvedValueOnce(initial);
+    h.foreground.snapshot.mockImplementationOnce(async () => {
+      h.conversation.rootWorkEpoch = 5;
+      h.jobs.publicSnapshot.mockResolvedValue({ epoch: 5, watermark: '0', rootAgentId: 'root', jobs: [] });
+      return [{ executionId: 'old-worker' }] as never;
+    });
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('epoch changed');
   });
 
   it('publishes only authorized public job metadata and rejects an epoch change during hydration', async () => {
@@ -36,6 +60,21 @@ describe('Creator-owned Root work controls', () => {
     await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('epoch changed');
   });
 
+  it('omits inaccessible historical jobs without hiding currently authorized work', async () => {
+    const h = fixture();
+    const snapshot = await h.jobs.publicSnapshot();
+    h.jobs.publicSnapshot.mockResolvedValue({ ...snapshot, jobs: [
+      { ...snapshot.jobs[0], executionId: 'old-profile' }, snapshot.jobs[0],
+    ] });
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'old-profile') throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Execution result is unavailable');
+      return {};
+    });
+    expect((await h.service.snapshot('conversation', 'owner')).jobs.map((job) => job.executionId)).toEqual(['job']);
+    h.results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('dependency failed'));
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('dependency failed');
+  });
+
   it.each(['member', 'guest'])('denies private controls to %s before reading durable work', async (actor) => {
     const h = fixture();
     await expect(h.service.snapshot('conversation', actor)).rejects.toThrow('unavailable');
@@ -43,12 +82,81 @@ describe('Creator-owned Root work controls', () => {
     expect(h.jobs.publicSnapshot).not.toHaveBeenCalled();
     expect(h.work.stopRootWork).not.toHaveBeenCalled();
   });
+  it('links trusted origin messages and exposes authorized fan-out item states', async () => {
+    const h = fixture();
+    h.jobs.publicSnapshot.mockResolvedValue({ epoch: 4, watermark: '10', rootAgentId: 'root', jobs: [
+      { executionId: 'job', parentExecutionId: 'parent', role: 'fanout_driver', status: 'running',
+        createdAt: 'created', deadline: 'deadline', nativeState: { backgroundFanout: { manifestId: 'manifest', digest: 'digest' } } },
+    ] } as never);
+    h.work.getExecution.mockImplementation(async (id: string) => id === 'parent' ? {
+      resultPayload: { nativeState: { origin: { assistantMessageId: 'answer', questionMessageId: 'question' },
+        fanoutManifests: [{ manifestId: 'manifest', digest: 'digest', items: [
+          { executionId: 'item', task: 'Item one' }, { executionId: 'queued-item', task: 'Not admitted yet' },
+        ] }] } },
+    } as never : id === 'item' ? { status: 'completed', resultPayload: { nativeState: {
+      backgroundFanoutItem: { coordinatorExecutionId: 'job' } } } } as never : null);
+    expect((await h.service.snapshot('conversation', 'owner')).jobs[0]).toMatchObject({
+      originQuestionMessageId: 'question', originAssistantMessageId: 'answer', fanoutItems: [
+        { executionId: 'item', status: 'completed', label: 'Item one' },
+        { executionId: 'queued-item', status: 'queued', label: 'Not admitted yet' },
+      ],
+    });
+    expect(h.results.authorizeBackgroundExecution).toHaveBeenCalledWith('conversation', 'item', 'owner');
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'item') throw new Error('Source access revoked');
+    });
+    await expect(h.service.snapshot('conversation', 'owner')).rejects.toThrow('revoked');
+    h.results.authorizeBackgroundExecution.mockImplementation(async (_conversation, id) => {
+      if (id === 'item') throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access revoked');
+    });
+    expect((await h.service.snapshot('conversation', 'owner')).jobs).toEqual([]);
+    h.results.authorizeBackgroundExecution.mockResolvedValue({});
+    h.work.getExecution.mockImplementation(async (id: string) => id === 'parent' ? {
+      resultPayload: { nativeState: { fanoutManifests: [{ manifestId: 'manifest', digest: 'digest',
+        items: [{ executionId: 'item', task: 'Private label' }] }] } },
+    } as never : { status: 'completed', resultPayload: { nativeState: {
+      backgroundFanoutItem: { coordinatorExecutionId: 'other-job' } } } } as never);
+    expect((await h.service.snapshot('conversation', 'owner')).jobs).toEqual([]);
+  });
+
+  it('cancels one authorized job without applying a conversation barrier or stopping the foreground', async () => {
+    const h = fixture();
+    await h.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 });
+    expect(h.jobs.cancel).toHaveBeenCalledWith('conversation', 'owner', 'job', 4);
+    expect(h.work.stopRootWork).not.toHaveBeenCalled();
+    expect(h.stream.stopStream).not.toHaveBeenCalled();
+    await expect(h.service.cancel('conversation', 'member', 'job', { expectedEpoch: 4 })).rejects.toThrow('unavailable');
+    h.results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('revoked'));
+    await expect(h.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 })).rejects.toThrow('revoked');
+    expect(h.jobs.cancel).toHaveBeenCalledTimes(1);
+    const disabled = fixture(false);
+    await expect(disabled.service.cancel('conversation', 'owner', 'job', { expectedEpoch: 4 })).rejects.toThrow('unavailable');
+    expect(disabled.jobs.cancel).not.toHaveBeenCalled();
+  });
 
   it('commits Stop after foreground completion and does not require a live stream', async () => {
     const h = fixture(); const request = { expectedEpoch: 4, stopRequestId: newStopRequestId() };
     expect(await h.service.stop('conversation', 'owner', request)).toMatchObject({ applied: true, foregroundCancellationPending: false });
     expect(h.work.stopRootWork).toHaveBeenCalledWith({ conversationId: 'conversation', actorId: 'owner', ...request });
     expect(h.stream.stopStream).not.toHaveBeenCalled();
+  });
+
+  it('stops every frozen foreground response even if one cancellation fails, and never retargets a replay', async () => {
+    const h = fixture();
+    const request = { expectedEpoch: 4, stopRequestId: newStopRequestId() };
+    h.stream.getActiveStreamSnapshots.mockReturnValue([{ messageId: 'first' }, { messageId: 'second' }]);
+    h.work.stopRootWork.mockResolvedValue({ barrierEpoch: 5, applied: true, markedCount: 2,
+      foregroundMessageIds: ['first', 'second'] } as never);
+    h.stream.stopStream.mockRejectedValueOnce(new Error('observer detached'));
+    expect(await h.service.stop('conversation', 'owner', request)).toMatchObject({ foregroundCancellationPending: true });
+    expect(h.stream.stopStream).toHaveBeenCalledWith('owner', 'conversation', 'first');
+    expect(h.stream.stopStream).toHaveBeenCalledWith('owner', 'conversation', 'second');
+    h.stream.getActiveStreamSnapshots.mockReturnValue([{ messageId: 'newer' }]);
+    h.work.stopRootWork.mockResolvedValue({ barrierEpoch: 5, applied: false, markedCount: 0,
+      foregroundMessageIds: ['first'] } as never);
+    await h.service.stop('conversation', 'owner', request);
+    expect(h.stream.stopStream).toHaveBeenLastCalledWith('owner', 'conversation', 'first');
+    expect(h.stream.stopStream).not.toHaveBeenCalledWith('owner', 'conversation', 'newer');
   });
 
   it('binds foreground cancellation to its conversation and commits the barrier first', async () => {

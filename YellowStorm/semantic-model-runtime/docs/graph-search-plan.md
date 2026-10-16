@@ -14,7 +14,7 @@ No benchmark has been run.
 Decisions taken with the recommended defaults:
 - **D1:** the runtime calls LiteLLM directly (`SEMANTIC_EMBEDDING_*`).
 - **D2:** workspace filtering is always on, for chat and the editor.
-- **D3:** `search_records` is kept.
+- **D3:** `search_records` was retired: `find_records` searches, `query_records` lists and counts.
 
 Live check on the dev data:
 - 8 bound revisions indexed;
@@ -129,9 +129,11 @@ app/graph_search/
     documents.py    # deterministic serializer + field policy + content hash
     embeddings.py   # LiteLLM /v1/embeddings client (batch, timeout, dimension check)
     indexer.py      # generation lifecycle, batching, cache reuse, readiness
+    incremental.py  # incremental builds: changed set, carry-over of unchanged records (migration 036)
     retrieval.py    # exact / lexical / vector seeds + rank fusion
     traversal.py    # allowlisted one-step Cypher templates, frontier filtering
 app/persistence/graph_search_store.py
+app/persistence/vector_indexes.py       # bulk HNSW build per generation partition (migration 037)
 app/api/graph_search_routes.py          # prefix /v1/semantic-model-search
 app/workers/graph_search_tasks.py       # task "semantic-model-search.index"
 migrations/022_graph_search.sql
@@ -307,7 +309,11 @@ ALTER TABLE index_generations ADD passage_count, passage_indexed_count, passage_
 ```
 
 Passages live and die with their generation (and their record's document): pruning, a revision
-delete and the model purge remove them by cascade; a model clone copies no index.
+delete and the model purge remove them; a model clone copies no index. Since migration `031`
+`entity_documents` and `entity_passages` are LIST-partitioned by `index_id` (one partition per
+generation, created with it by `app/persistence/partitions.py`), so removing a generation drops
+its partitions instead of deleting its rows; the ANN indexes are defined on the parent and
+inherited by each partition.
 
 Notes:
 - **Cache scope:** the cache is scoped per model, so it can't reveal anything across models. A correction or rebuild creates a new revision and a new generation, and unchanged entities reuse their vectors at **zero embedding calls**.
@@ -327,12 +333,30 @@ Notes:
 ### Steps
 1. Resolve the revision and spec. Check that `projection_ref` is set and that `projection_exists`.
 2. Create or reuse the generation, keyed by `UNIQUE(data_revision_id, fingerprint)`. Return early if it is `ready`.
+2b. **Incremental build** (`incremental.py`, migration 036). The model's previous ready generation with the same
+   fingerprint is the base. Each card is stored with `source_digest`, an md5 computed in SQL of everything the card is
+   built from (concept, label, key and attribute values, workspaces, names of linked records); the generation also
+   stores `card_digest` (the concept parts cards are written with). The build compares the new revision's digests with
+   the base generation's stored ones (the snapshot, never the base revision's rows: a revision may be stored again in
+   place under the same id), copies the unchanged cards, passages and vectors in the database (`INSERT … SELECT`, 500
+   records per statement), and builds, caches and embeds only the changed ones. A renamed neighbour changes the
+   digest of the cards showing its name, so they rebuild. It is a **full** build when there is no base, the base has no
+   digest (built before 036), `card_digest` differs, or more than 30% of the records changed; the generation records
+   `build_mode`, `build_reason`, `carried_count`, `rebuilt_count`, `embedded_count`, and progress shows the steps
+   `comparing` and `carrying` first.
 3. Insert `entity_documents` (text, hash, keys, `source_refs`) in one pass, with status `pending`. Fill vectors from `embedding_cache` and mark those rows `ready`.
    Insert the passages of every document the same way, and fill theirs from the same cache.
 4. Embed the remaining `pending` rows in batches (records first, then passages; progress reports
    `embedded` and `passagesEmbedded` beside `reused` / `passagesReused`).
    - Commit each batch, then write it into the cache. No transaction is held during HTTP calls.
    - Progress is just a count over `entity_documents`, so a crash or duplicate delivery resumes on the remaining `pending` rows.
+4b. **Vector indexes** (`vector_indexes.py`, migration 037). A generation's partitions are created with no HNSW index,
+   so copying, cache reuse and embedding write rows without maintaining one (a live HNSW insert costs a graph search per
+   row). Once every vector is stored, the build creates `<partition>_hnsw` on the documents and passages partitions in
+   bulk (`maintenance_work_mem` sized to the rows, up to `SEMANTIC_SEARCH_VECTOR_INDEX_MAX_MEMORY_MB`, default 2048;
+   `SEMANTIC_SEARCH_VECTOR_INDEX_WORKERS` parallel workers, default 8, 0 on a host with little `/dev/shm`) while it keeps
+   its lease and can be stopped. `IF NOT EXISTS` on a fixed name makes a resumed build skip what exists. Only a ready
+   generation is searched, and it is ready only after this step.
 5. **Readiness check:**
    - the number of documents equals the number of entities in the revision;
    - no row is `pending` or `failed`;

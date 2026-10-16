@@ -538,7 +538,8 @@ async def call_mcp_tool(
         action_key: The tool name to call.
         params: Parameters to pass to the tool.
         auth_headers: HTTP headers to inject (for sse/streamable_http).
-        auth_env: Environment variables to inject (for stdio).
+        auth_env: Environment variables for stdio, or trusted delegated-JWT
+            renewal identity for Streamable HTTP.
 
     Returns:
         Text result, structured dict result, or an error string.
@@ -556,6 +557,15 @@ async def call_mcp_tool(
     )
 
     try:
+        jwt_env = auth_env or {}
+        jwt_expiry = 0
+        renew_jwt = bool(jwt_env.get("YELLOWSTORM_MCP_JWT_CONNECTOR_ID"))
+        if renew_jwt:
+            if transport_type != "streamable_http":
+                raise ValueError("Delegated MCP JWTs require streamable_http")
+            from .jwt_auth import renew_mcp_jwt
+            merged_headers, jwt_expiry = await renew_mcp_jwt(server_url, jwt_env, merged_headers or {})
+
         if transport_type == "stdio":
             from mcp.client.stdio import stdio_client, StdioServerParameters
 
@@ -594,13 +604,24 @@ async def call_mcp_tool(
 
             client_headers = merged_headers or {}
             async def _inject_mcp_headers(request: httpx.Request) -> None:
+                nonlocal client_headers, jwt_expiry
+                if renew_jwt:
+                    from .jwt_auth import _server_identity
+                    import time
+                    if _server_identity(str(request.url)) != _server_identity(server_url):
+                        raise RuntimeError("Refusing to forward an MCP JWT to another server")
+                    if jwt_expiry <= time.time() + 30:
+                        client_headers, jwt_expiry = await renew_mcp_jwt(server_url, jwt_env, client_headers)
+                    for name in list(request.headers):
+                        if name.lower() == "authorization":
+                            del request.headers[name]
                 for key, value in client_headers.items():
                     request.headers[key] = value
 
             async with httpx.AsyncClient(
                 headers=client_headers,
                 event_hooks={"request": [_inject_mcp_headers]},
-                follow_redirects=True,
+                follow_redirects=not renew_jwt,
                 # read=None: no timeout on SSE stream reads (tool calls can take >5s)
                 timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
             ) as http_client:
@@ -742,8 +763,24 @@ def _build_headers(
     header name (e.g. a saved API credential), letting auth_headers win
     silently replaces the gateway secret with a value the gateway was never
     issued -> 401, with no error at binding time to point at why.
+
+    Evaluation runtime scope headers take precedence over static settings.
     """
     config_headers = (server_config or {}).get("headers", {})
+    runtime_headers = {key.lower(): value for key, value in (auth_headers or {}).items()}
+    if str(runtime_headers.get("x-execution-id") or "").startswith("eval-"):
+        # Static connector settings cannot reuse another benchmark's scope.
+        protected = {"x-conversation-id", "x-execution-id", "workspace_id", "workspace-id",
+                     "workspace_name", "x-workspace-paths", "x-file-paths", "file_name", "file_names"}
+        config_headers = {key: value for key, value in (config_headers or {}).items() if key.lower() not in protected}
+        auth_headers = {key: value for key, value in (auth_headers or {}).items() if key.lower() not in protected}
+        for key in ("x-conversation-id", "x-execution-id", "x-workspace-paths", "x-file-paths"):
+            if key in runtime_headers:
+                auth_headers[key] = runtime_headers[key]
+        workspace = runtime_headers.get("workspace_id") or runtime_headers.get("workspace-id")
+        if workspace:
+            auth_headers["workspace_id"] = workspace
+            auth_headers["Workspace-Id"] = workspace
     if not config_headers and not auth_headers:
         return None
     colliding = sorted(set(config_headers or {}) & set(auth_headers or {}))

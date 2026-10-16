@@ -172,7 +172,7 @@ class TestAutoAgentGenerationTeam:
         assert error_events == []
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("role", [None, "ROOT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
+    @pytest.mark.parametrize("role", [None, "ROOT", "ROOT_FANOUT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
     async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role):
         """Mono conversation parents should evaluate child results, not use child tools directly."""
         mock_config = MagicMock()
@@ -231,13 +231,15 @@ class TestAutoAgentGenerationTeam:
             from types import SimpleNamespace
             from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
 
-            scope = SimpleNamespace(role=ExecutionRole[role]) if role else None
+            scope = SimpleNamespace(role=ExecutionRole['ROOT' if role == 'ROOT_FANOUT' else role]) if role else None
             worker = role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER')
             if worker:
                 scope = ExecutionScopeV1(role=ExecutionRole[role], execution_id='worker', parent_execution_id='root', depth=1)
             injected_session = MagicMock() if worker else None
             result = await orchestrator.run_single_agent(
-                "parent task", "sess-1", queue, execution_scope=scope, session_service=injected_session
+                "parent task", "sess-1", queue, execution_scope=scope, session_service=injected_session,
+                **({'fanout_tool': 'fanout-control', 'delegation_instruction': 'Only foreground fan-out is available.'}
+                    if role == 'ROOT_FANOUT' else {})
             )
             if worker:
                 mock_session_factory.assert_not_awaited()
@@ -250,9 +252,10 @@ class TestAutoAgentGenerationTeam:
             assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs['session_helper'] is injected_session
             assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs['message'] == 'parent task'
             return
-        if role == "ROOT":
-            assert mock_agent.tools == [{"name": "search"}]
-            assert mock_agent.instruction == "Parent instruction"
+        if role in ("ROOT", "ROOT_FANOUT"):
+            assert mock_agent.tools == ([{"name": "search"}, 'fanout-control'] if role == 'ROOT_FANOUT' else [{"name": "search"}])
+            assert mock_agent.instruction == ("Parent instruction\nOnly foreground fan-out is available."
+                if role == 'ROOT_FANOUT' else "Parent instruction")
             orchestrator.delegation_factory._execute_agent_with_error_handling.assert_not_awaited()
             assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs["message"] == "parent task"
             return

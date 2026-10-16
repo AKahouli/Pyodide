@@ -61,7 +61,7 @@ def test_text_only_message_with_only_unsupported_parts_uses_absent_content():
     ]
 
 
-def test_unconfigured_messages_preserve_multimodal_content():
+def test_unregistered_models_default_to_text_only():
     messages = [
         {
             "role": "user",
@@ -72,7 +72,13 @@ def test_unconfigured_messages_preserve_multimodal_content():
         }
     ]
 
-    assert normalize_messages_for_model("azure/gpt-5.4", messages) is messages
+    normalized = normalize_messages_for_model("azure/gpt-5.4", messages)
+
+    # Unregistered models default to text-only: the proxy rejects non-text
+    # content ("messages.content.type is invalid, allowed values: ['text']").
+    assert normalized[0]["content"] == [
+        {"type": "text", "text": "Inspect this image"}
+    ]
 
 
 def test_text_only_messages_remove_every_non_text_block_type():
@@ -204,25 +210,131 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
     monkeypatch.delattr(litellm, "_is_yellowstorm_patched", raising=False)
     monkeypatch.setattr(litellm, "acompletion", async_completion)
     monkeypatch.setattr(litellm, "completion", sync_completion)
-    register_model_input_modalities("text-boundary-model", ["text"])
+    register_model_input_modalities("gpt-5.4-boundary", ["text"])
 
     apply_litellm_debug_patch()
 
     assert await litellm.acompletion(
-        "text-boundary-model", messages, num_retries=0
+        "gpt-5.4-boundary", messages, num_retries=0
     ) == "async-result"
     assert litellm.completion(
-        model="text-boundary-model", messages=messages, num_retries=0
+        model="gpt-5.4-boundary", messages=messages, num_retries=0
     ) == "sync-result"
-    assert calls[0][1] == "azure/text-boundary-model"
+    assert calls[0][1] == "azure/gpt-5.4-boundary"
     assert "model" not in calls[0][3]
     assert calls[0][3]["num_retries"] == 0
     assert calls[0][3]["timeout"] == 700  # async path carries the judge timeout bump
     assert calls[0][2][0]["content"] == [{"type": "text", "text": "question"}]
-    assert calls[1][1] == "azure/text-boundary-model"
+    assert calls[1][1] == "azure/gpt-5.4-boundary"
     assert calls[1][2][0]["content"] == [{"type": "text", "text": "question"}]
     assert calls[1][3]["num_retries"] == 0
     assert calls[1][3]["timeout"] == 300
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model,qualified', [
+    ('gpt-5.6-sol-alias-regression', 'azure/gpt-5.6-sol-alias-regression'),
+    ('glm-alias-regression', 'openai/glm-alias-regression'),
+])
+async def test_async_to_sync_routing_preserves_configured_image_capabilities(monkeypatch, model, qualified):
+    import litellm
+    import litellm.main
+    from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+
+    captured = []
+
+    def provider_completion(*args, **kwargs):
+        captured.append(kwargs['messages'])
+        assert kwargs['model'] == qualified
+        return 'intercepted'
+
+    async def real_async_shape(*args, **kwargs):
+        # The real LiteLLM async path invokes its sync completion implementation.
+        return litellm.completion(*args, **kwargs)
+
+    monkeypatch.setattr(litellm, 'acompletion', real_async_shape)
+    monkeypatch.setattr(litellm, 'completion', provider_completion)
+    for attr in ('acompletion', 'completion', '_ys_async_patched', '_ys_sync_patched'):
+        monkeypatch.setattr(litellm.main, attr, getattr(litellm.main, attr, None), raising=False)
+    monkeypatch.delattr(litellm, '_is_yellowstorm_patched', raising=False)
+    apply_litellm_debug_patch()
+    messages = [{'role': 'user', 'content': [
+        {'type': 'text', 'text': 'question'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cGl4ZWxz'}},
+    ]}]
+    # A later text-only selection must overwrite the earlier alias registration.
+    for modalities, expected in [(['text', 'image'], 2), (['text'], 1)]:
+        register_model_input_modalities(model, modalities)
+        assert await litellm.acompletion(model=model, messages=messages) == 'intercepted'
+        assert len(captured[-1][0]['content']) == expected
+    assert len(messages[0]['content']) == 2
+
+
+def test_routed_input_alias_preserves_explicit_admin_configuration():
+    from src.smart_rag.infrastructure.model_parameters import register_model_input_alias
+    model = 'gpt-alias-explicit-policy'
+    alias = 'azure/' + model
+    messages = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'redacted'}}]}]
+    register_model_input_modalities(model, ['text', 'image'])
+    register_model_input_modalities(alias, ['text'])
+    register_model_input_alias(model, alias)
+    assert normalize_messages_for_model(alias, messages)[0]['content'] is None
+
+
+@pytest.mark.asyncio
+async def test_routed_input_aliases_are_request_local_and_unknown_stays_text_only():
+    import asyncio
+    from src.smart_rag.infrastructure.model_parameters import register_model_input_alias
+    model = 'gpt-alias-request-isolation'
+    alias = 'azure/' + model
+    messages = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'redacted'}}]}]
+
+    async def request(modalities):
+        register_model_input_modalities(model, modalities)
+        register_model_input_alias(model, alias)
+        await asyncio.sleep(0)
+        return normalize_messages_for_model(alias, messages)[0]['content'] is not None
+
+    assert await asyncio.gather(request(['text', 'image']), request(['text'])) == [True, False]
+    register_model_input_alias('unknown-route-model', 'azure/unknown-route-model')
+    assert normalize_messages_for_model('azure/unknown-route-model', messages)[0]['content'] is None
+    assert normalize_messages_for_model(alias, messages)[0]['content'] is None
+
+
+@pytest.mark.asyncio
+async def test_litellm_patch_qualifies_non_azure_model_as_openai(monkeypatch):
+    import litellm
+
+    from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+
+    calls = []
+
+    async def async_completion(model, messages, **kwargs):
+        calls.append(("async", model, messages, kwargs))
+        return "async-result"
+
+    def sync_completion(model, messages, **kwargs):
+        calls.append(("sync", model, messages, kwargs))
+        return "sync-result"
+
+    monkeypatch.delattr(litellm, "_is_yellowstorm_patched", raising=False)
+    monkeypatch.setattr(litellm, "acompletion", async_completion)
+    monkeypatch.setattr(litellm, "completion", sync_completion)
+
+    apply_litellm_debug_patch()
+
+    await litellm.acompletion("glm-5.2", [{"role": "user", "content": "hi"}], num_retries=0)
+    litellm.completion(model="glm-5.2", messages=[{"role": "user", "content": "hi"}], num_retries=0)
+    await litellm.acompletion("openai/glm-5.2", [{"role": "user", "content": "hi"}], num_retries=0)
+
+    # Non-Azure models must be routed through the OpenAI-compatible proxy endpoint,
+    # not azure/<model> (the proxy rejects azure/glm-5.2, and litellm refuses a
+    # bare "glm-5.2" with "LLM Provider NOT provided").
+    assert calls[0][1] == "openai/glm-5.2"
+    assert calls[1][1] == "openai/glm-5.2"
+    assert calls[1][3]["num_retries"] == 0
+    # An already-qualified provider name is left untouched.
+    assert calls[2][1] == "openai/glm-5.2"
 
 
 @pytest.mark.asyncio
@@ -249,8 +361,8 @@ async def test_litellm_patch_preserves_caller_timeout(monkeypatch):
 
     assert await litellm.acompletion(model="test-model", messages=[], timeout=90) == "async-result"
     assert litellm.completion(model="test-model", messages=[], timeout=90) == "sync-result"
-    assert calls == [("async", {"model": "azure/test-model", "messages": [], "timeout": 90}),
-                     ("sync", {"model": "azure/test-model", "messages": [], "timeout": 90})]
+    assert calls == [("async", {"model": "openai/test-model", "messages": [], "timeout": 90}),
+                     ("sync", {"model": "openai/test-model", "messages": [], "timeout": 90})]
 
 
 # --- compaction resolution (configurable ADK context compaction) ---

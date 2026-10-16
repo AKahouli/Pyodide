@@ -13,19 +13,6 @@ def _runner():
 
 class TestRunnerMore:
     @pytest.mark.asyncio
-    async def test_handle_python_interpreter_response_streams_sandbox(self):
-        runner = _runner()
-        function_response = MagicMock()
-        function_response.response = {"stdout": "42", "stderr": ""}
-        function_response.id = "sandbox-1"
-        queue = AsyncMock()
-        runner.streaming_formatter.format_component_event.return_value = {"type": "sandbox"}
-        await runner._handle_python_interpreter_response(
-            function_response, "agent-1", "OperatorAgent", "sess-1", queue
-        )
-        queue.put.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_handle_structured_tool_response_non_dict(self):
         runner = _runner()
         function_response = MagicMock()

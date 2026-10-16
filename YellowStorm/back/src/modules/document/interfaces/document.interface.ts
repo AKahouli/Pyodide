@@ -42,6 +42,13 @@ export interface UploadOptions {
 
   /** Whether to generate a unique filename (default: true) */
   generateUniqueName?: boolean;
+
+  /**
+   * Skip the platform document MIME whitelist. Only for trusted internal
+   * writers (App Builder content-addressed blobs), not user uploads.
+   * Size and filename checks still apply.
+   */
+  skipMimeValidation?: boolean;
 }
 
 export interface DownloadOptions {

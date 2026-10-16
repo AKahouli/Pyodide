@@ -63,10 +63,13 @@ export interface LoginCredentials {
   password: string;
 }
 
-// Register credentials (backend only needs email + password)
+// Register credentials (backend needs email + password, plus an optional
+// super-admin invitation token that binds the registration to the invited
+// address).
 export interface RegisterCredentials {
   email: string;
   password: string;
+  inviteToken?: string;
 }
 
 // Profile completion data
@@ -115,7 +118,12 @@ export interface LoginResponse {
 
 export interface RegisterResponse {
   message: string;
-  userId: string;
+}
+
+/** Resolved super-admin invitation, used to pre-fill the register modal. */
+export interface InviteDetails {
+  email: string;
+  expiresAt: string;
 }
 
 export interface RefreshResponse {

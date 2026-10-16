@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mockApiClient } from '@/test/setup';
-import { getAuthProviders, getOAuthProviders, exchangeOAuthToken } from './api';
+import { getAuthProviders, getOAuthProviders, exchangeOAuthLogin, getInviteDetails, register } from './api';
 
 describe('Auth OAuth API', () => {
   describe('getAuthProviders', () => {
@@ -38,8 +38,8 @@ describe('Auth OAuth API', () => {
     });
   });
 
-  describe('exchangeOAuthToken', () => {
-    it('should exchange temp token for login response', async () => {
+  describe('exchangeOAuthLogin', () => {
+    it('should exchange the cookie-borne code for a login response without sending a token', async () => {
       const mockResponse = {
         accessToken: 'jwt-token',
         expiresIn: 900,
@@ -55,24 +55,45 @@ describe('Auth OAuth API', () => {
         data: { data: mockResponse },
       });
 
-      const result = await exchangeOAuthToken('temp-token-123');
+      const result = await exchangeOAuthLogin();
 
       expect(result).toEqual(mockResponse);
-      expect(mockApiClient.post).toHaveBeenCalledWith(
-        '/auth/providers/exchange',
-        { token: 'temp-token-123' },
-      );
+      expect(mockApiClient.post).toHaveBeenCalledWith('/auth/providers/exchange');
     });
 
-    it('should propagate error on invalid token', async () => {
+    it('should propagate error on invalid exchange code', async () => {
       mockApiClient.post.mockRejectedValue({
         code: 'ERR_1125',
         message: 'Invalid or expired temp token',
         statusCode: 401,
       });
 
-      await expect(exchangeOAuthToken('invalid')).rejects.toMatchObject({
+      await expect(exchangeOAuthLogin()).rejects.toMatchObject({
         code: 'ERR_1125',
+      });
+    });
+  });
+
+  describe('invitations', () => {
+    it('resolves an invitation token for the landing page', async () => {
+      const details = { email: 'invited@example.com', expiresAt: '2030-01-01T00:00:00.000Z' };
+      mockApiClient.get.mockResolvedValue({ data: { data: details } });
+
+      const result = await getInviteDetails('tok-abc');
+
+      expect(result).toEqual(details);
+      expect(mockApiClient.get).toHaveBeenCalledWith('/auth/invite?token=tok-abc');
+    });
+
+    it('sends the invite token when registering an invited user', async () => {
+      mockApiClient.post.mockResolvedValue({ data: { data: { message: 'ok' } } });
+
+      await register({ email: 'invited@example.com', password: 'Passw0rd!', inviteToken: 'tok-abc' });
+
+      expect(mockApiClient.post).toHaveBeenCalledWith('/auth/register', {
+        email: 'invited@example.com',
+        password: 'Passw0rd!',
+        inviteToken: 'tok-abc',
       });
     });
   });

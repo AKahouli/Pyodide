@@ -7,8 +7,10 @@ const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
+const removeFileMock = vi.hoisted(() => vi.fn());
+const streamingMock = vi.hoisted(() => ({ value: false }));
 const currentConversationMock = vi.hoisted(() => ({
-  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot'; taggedAgentIds?: string[] },
+  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot'; taggedAgentIds?: string[]; concurrentRepliesEnabled?: boolean; rootAgentId?: string },
 }));
 const workspaceSelectionMock = vi.hoisted(() => ({
   value: ['ws-2'] as string[],
@@ -125,10 +127,11 @@ vi.mock('../hooks/useConversationFileUpload', () => ({
   useConversationFileUpload: () => ({
     files: [{ localId: 'l1', file: new File(['x'], 'a.txt', { type: 'text/plain' }), status: 'completed', progress: 100, documentId: 'doc-1' }],
     addFiles: vi.fn(),
-    removeFile: vi.fn(),
+    removeFile: removeFileMock,
     completedFileIds: ['doc-1'],
     isUploading: false,
     clearAll: clearAllMock,
+    clearSubmitted: clearAllMock,
   }),
 }));
 
@@ -159,7 +162,7 @@ vi.mock('../store', () => ({
         updateConversation: updateConversationMock,
         stopStream: stopStreamMock,
         clearReplyingTo: vi.fn(),
-        isStreaming: false,
+        isStreaming: streamingMock.value,
         selectedSkillIds: [],
         selectedConnectorRepo: {
           connectorId: 'connector-1',
@@ -192,7 +195,6 @@ vi.mock('../store', () => ({
   useSelectedSemanticModelId: () => null,
   useSetSelectedWorkspaceIds: () => workspaceSelectionMock.set,
   useDeepSearchEnabled: () => false,
-  useSetDeepSearchEnabled: () => vi.fn(),
   useWebConnectorAccessEnabled: () => true,
   useSetWebConnectorAccessEnabled: () => vi.fn(),
   useSelectedModelId: () => 'model-1',
@@ -211,8 +213,28 @@ vi.mock('../store', () => ({
 describe('ConversationInput', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    streamingMock.value = false;
     currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'] };
     workspaceSelectionMock.value = ['ws-2'];
+  });
+
+  it('accepts another question and exact-root mention while a reply streams', async () => {
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], rootAgentId: 'agent-1', concurrentRepliesEnabled: true };
+    streamingMock.value = true;
+    render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole('button', { name: 'submit-message' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(sendMessageMock.mock.calls[0][1].requestId).not.toBe(sendMessageMock.mock.calls[1][1].requestId);
+  });
+
+  it('rejects changing agents while a reply streams', async () => {
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], rootAgentId: 'another-root', concurrentRepliesEnabled: true };
+    streamingMock.value = true;
+    render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-message' }));
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   it('submits message with uploaded files and clears upload state', async () => {
@@ -226,6 +248,7 @@ describe('ConversationInput', () => {
     await waitFor(() => {
       expect(updateConversationMock).toHaveBeenCalledWith('conv-1', { workspaces: ['ws-2'] });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-1', {
+        requestId: expect.any(String),
         content: 'hello',
         attachedFileIds: ['doc-1'],
         attachedFiles: [
@@ -248,7 +271,8 @@ describe('ConversationInput', () => {
           repoUrl: 'https://github.com/org-name/repo-name',
         },
       });
-      expect(clearAllMock).toHaveBeenCalled();
+      expect(clearAllMock).toHaveBeenCalledWith(['l1']);
+      expect(removeFileMock).not.toHaveBeenCalled();
       expect(updateConversationMock.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
     });
   });

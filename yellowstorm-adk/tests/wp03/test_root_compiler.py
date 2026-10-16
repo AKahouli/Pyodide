@@ -47,6 +47,12 @@ def test_native_input_control_is_versioned_root_only_and_keeps_callbacks():
     attach_root_input_control(root, _root_scope(), 1)
     assert root.tools == [request_input]
     assert root.before_tool_callback is callback
+    assert 'two or three concrete examples on EACH' in root.instruction
+    assert 'listing alternatives only in message' in root.instruction
+    assert '"examples":["Next trading day","1 week","1 month"]' in root.instruction
+    assert 'End every user-facing answer' in root.instruction
+    assert 'never request the missing inputs of an earlier request' in root.instruction
+    assert 'do not ask the user to supply it unnecessarily' in root.instruction
     for scope in (None, _worker_scope(), ExecutionScopeV1(role=ExecutionRole.FOLLOWUP)):
         agent = _fake_agent()
         attach_root_input_control(agent, scope, 1)
@@ -73,6 +79,8 @@ async def test_compile_worker_delegates_to_existing_factory():
     assert compiled.agent is sentinel_agent
     assert compiled.toolkit is sentinel_toolkit
     assert compiled.scope.execution_id == "exec_worker"
+    assert 'depth-one leaf worker' in compiled.agent.instruction
+    assert 'Root conversation orchestration skills do not apply' in compiled.agent.instruction
     assert calls == [({"id": "agent_1"}, "Advisory", "advisory")]
 
     disposed = []
@@ -90,6 +98,33 @@ async def test_compile_worker_raises_when_factory_fails():
 
     with pytest.raises(RuntimeError):
         await compile_worker({}, "Broken", "broken", _worker_scope(), factory)
+
+
+@pytest.mark.asyncio
+async def test_worker_catalog_excludes_root_orchestration_without_mutating_profile():
+    profile = {'skills': [{'name': 'mono-agent-work-orchestration'}, {'name': 'research'}]}
+    async def factory(config, *_args):
+        assert config['skills'] == [{'name': 'research'}]
+        return _fake_agent(), None
+    await compile_worker(profile, 'Worker', 'worker', _worker_scope(), factory)
+    assert len(profile['skills']) == 2
+
+
+@pytest.mark.asyncio
+async def test_workers_cannot_present_conversation_choices_but_keep_retrieval():
+    from google.adk.tools import FunctionTool
+    from src.smart_rag.tools import present_choices
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    async def research(query: str):
+        return {'source': query}
+    register_tool_execution_kind(research, 'leaf')
+    async def factory(*_args):
+        return LlmAgent(name='worker', model='test-model', tools=[present_choices, research]), None
+    compiled = await compile_worker({}, 'Worker', 'worker', _worker_scope(), factory)
+    assert [tool.name for tool in compiled.agent.tools] == ['research']
+    gate = compiled.agent.before_tool_callback[0]
+    assert 'error' in await gate(FunctionTool(present_choices), {}, None)
+    assert await gate(compiled.agent.tools[0], {}, None) is None
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ import { BranchNavigation } from './BranchNavigation';
 import { ConversationAssistantBubble } from './activity/ConversationAssistantBubble';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
+import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { TopLoadTrigger, getScrollContainer } from './TopLoadTrigger';
 import type { ChoiceInteractionMetadata, Message } from '../types';
 import { ParentMessagePreview } from './ParentMessagePreview';
@@ -154,7 +155,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   {isUser
                     ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
-                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} showUiTargets />}
+                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0]} showUiTargets />}
                 </div>
               </>
             )}
@@ -339,6 +340,7 @@ export function GroupConversationContent() {
           )}
           </div>
         </ChatConversationContent>
+        <OutlineAnchorScroller />
         <MentionMessageJump />
         <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>

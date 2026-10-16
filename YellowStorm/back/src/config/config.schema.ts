@@ -122,6 +122,19 @@ export const configValidationSchema = Joi.object({
   // Express trust proxy: false|0|empty, hop count, true, or CIDR/name list
   TRUST_PROXY: Joi.string().allow('').default(''),
 
+  // Storage backend selection. A typo must fail at boot rather than silently
+  // falling back to Ceph and pointing at the wrong storage.
+  STORAGE_PROVIDER: Joi.string().valid('ceph', 'azure').default('ceph'),
+
+  // Azure Blob / Data Lake Gen2 — required when STORAGE_PROVIDER=azure.
+  // The connection string must carry an account key: SAS generation needs it.
+  AZURE_STORAGE_CONNECTION_STRING: Joi.string().when('STORAGE_PROVIDER', {
+    is: 'azure',
+    then: Joi.required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  AZURE_STORAGE_CONTAINER_NAME: Joi.string().default('documents'),
+
   // Ceph S3 Storage
   CEPH_S3_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
   CEPH_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
@@ -167,7 +180,7 @@ export const configValidationSchema = Joi.object({
   // key is absent, receipts are disabled and replayed rotations conflict.
   AUTH_ROTATION_RECEIPT_KEY: Joi.string()
     .optional()
-    .custom((value, helpers) => {
+    .custom((value: string, helpers) => {
       try {
         const decoded = Buffer.from(value, 'base64');
         if (decoded.length !== 32) {
@@ -179,6 +192,7 @@ export const configValidationSchema = Joi.object({
       return value;
     }),
   AUTH_ROTATION_RECEIPT_KEY_ID: Joi.string().default('receipt-v1'),
+  AUTH_REGISTER_MIN_DURATION_MS: Joi.number().integer().min(0).max(10000).default(1000),
   AUTH_ROTATION_RECEIPT_WINDOW_SECONDS: Joi.number().integer().min(30).max(600).default(120),
 
   // Third-party API key (static key for the public /agents endpoint, X-API-Key header)
@@ -262,7 +276,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
   CONVERSATION_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
 
-  // Conversation V2 (Manus)
+  // App Builder (Manus)
   CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
   CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
@@ -274,7 +288,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS: Joi.number().min(1000).default(900000),
   CONVERSATION_V2_LIVE_TAIL_POLL_MS: Joi.number().min(100).default(1000),
 
-  // Conversation V2 gRPC channel security (separate AI service → own cert + key).
+  // App Builder gRPC channel security (separate AI service → own cert + key).
   CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
   CONVERSATION_V2_GRPC_TLS_MODE: Joi.string().valid('insecure', 'tls').default('insecure'),
   CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
@@ -377,7 +391,18 @@ export const configValidationSchema = Joi.object({
   // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
+  PLAYBOOK_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  AGENT_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  PLAYBOOK_MCP_JWT_AUDIENCE: Joi.string().default('mcp-playbook'),
+  AGENT_MCP_JWT_AUDIENCE: Joi.string().default('mcp-agent'),
+  MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
+  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
+  // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
+  SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
+  SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
+  SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
   // Browser Pyodide MCP relay (mcp-pyodide). Connectors pointing at this URL receive the acting user's identity.
   PYODIDE_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8027/mcp'),
   // Browser Pyodide runtime relay. Disabled outside development until qualified.
@@ -463,4 +488,6 @@ export const configValidationSchema = Joi.object({
   WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
   WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
   WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
-});
+})
+  // Auth throttling/lockout overrides (see auth.config.ts): AUTH_RATE_LIMIT_<KEY>_LIMIT|_WINDOW_SECONDS, AUTH_LOCKOUT_*
+  .pattern(/^AUTH_(RATE_LIMIT|LOCKOUT)_/, Joi.number().integer().min(1));

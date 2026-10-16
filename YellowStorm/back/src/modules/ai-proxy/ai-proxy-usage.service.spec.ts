@@ -2,7 +2,7 @@ import { UsageService } from '../usage';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { AiProxyUsageService } from './ai-proxy-usage.service';
-import type { ConversationV2SessionStore } from '../conversation-v2/persistence/conversation-v2-session.store';
+import type { AppBuilderSessionStore } from '../app-builder/persistence/app-builder-session.store';
 
 describe('AiProxyUsageService', () => {
   const usageService = {
@@ -57,7 +57,7 @@ describe('AiProxyUsageService', () => {
   it('records known tokens with pricing metadata from ModelsService', async () => {
     await createService().recordChatCompletionUsage({
       userId: 'user-1',
-      model: 'gpt-4o',
+      model: 'catalog-chat-model',
       startedAt: Date.now() - 10,
       success: true,
       tokens: { status: 'known', promptTokens: 1, completionTokens: 2 },
@@ -65,7 +65,7 @@ describe('AiProxyUsageService', () => {
       litellmRequestId: 'chatcmpl-1',
     });
 
-    expect(modelsService.findPricing).toHaveBeenCalledWith('gpt-4o');
+    expect(modelsService.findPricing).toHaveBeenCalledWith('catalog-chat-model');
     expect(usageService.recordUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         inputTokens: 1,
@@ -90,7 +90,7 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+    const sessions: jest.Mocked<Pick<AppBuilderSessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
       findByAiSessionId: jest.fn().mockResolvedValue({
         id: 'session-42',
         title: 'Draft',
@@ -125,7 +125,7 @@ describe('AiProxyUsageService', () => {
 
     await service.recordChatCompletionUsage({
       userId: 'owner-1',
-      model: 'gpt-4o',
+      model: 'catalog-chat-model',
       request: request as never,
       startedAt: Date.now() - 5,
       success: true,
@@ -159,7 +159,7 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+    const sessions: jest.Mocked<Pick<AppBuilderSessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
       findByAiSessionId: jest.fn().mockResolvedValue({
         id: 'session-99',
         title: 'Remote App',
@@ -186,7 +186,7 @@ describe('AiProxyUsageService', () => {
 
     await service.recordChatCompletionUsage({
       userId: 'owner-2',
-      model: 'gpt-4o',
+      model: 'catalog-chat-model',
       request: {
         aiProxyAuth: {
           mode: 'app_end_user',
@@ -219,7 +219,7 @@ describe('AiProxyUsageService', () => {
   it('marks missing stream tokens as unknown instead of silent zero usage', async () => {
     await createService().recordChatCompletionUsage({
       userId: 'user-1',
-      model: 'gpt-4o',
+      model: 'catalog-chat-model',
       startedAt: Date.now() - 10,
       success: true,
       tokens: { status: 'unknown' },

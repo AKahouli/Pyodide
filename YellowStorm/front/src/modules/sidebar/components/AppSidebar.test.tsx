@@ -81,8 +81,8 @@ vi.mock('@/components/ui/command', () => ({
 vi.mock('@/components/AppBrandLogo', () => ({ AppBrandLogo: () => <div>logo</div> }));
 vi.mock('@/components/ui/profile-menu', () => ({ ProfileMenu: () => <div>profile-menu</div> }));
 vi.mock('@/components/mode-toggle', () => ({ ModeToggle: () => <div>mode-toggle</div> }));
-vi.mock('@/modules/workspace', () => ({ WorkspaceButton: () => <div>workspace-btn</div> }));
-vi.mock('@/modules/semantic-model/components/SemanticModelButton', () => ({ SemanticModelButton: () => <div>semantic-model-btn</div> }));
+vi.mock('@/modules/workspace', () => ({ WorkspaceButton: ({ label }: { label?: string }) => <button data-sidebar='menu-button' aria-label={label} onClick={() => navigateMock('/workspace')}>workspace-btn</button> }));
+vi.mock('@/modules/semantic-model/components/SemanticModelButton', () => ({ SemanticModelButton: ({ label }: { label?: string }) => <button data-sidebar='menu-button' aria-label={label} onClick={() => navigateMock('/semantic-models')}>semantic-model-btn</button> }));
 vi.mock('@/modules/playbook/components/PlaybookButton', () => ({ PlaybookButton: () => <div>playbook-btn</div> }));
 vi.mock('@/modules/governance', () => ({ GovernanceButton: () => <div>governance-btn</div> }));
 vi.mock('@/modules/worky/components/WorkyButton', () => ({ WorkyButton: () => <div>worky-btn</div> }));
@@ -126,9 +126,9 @@ vi.mock('@/modules/conversation/store', () => ({
   useConversationsLoading: () => convoState.loading,
 }));
 
-vi.mock('@/modules/conversation-v2/store', () => ({
-  useConversationV2PointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
-  useConversationV2Store: (
+vi.mock('@/modules/app-builder-studio/store', () => ({
+  useAppBuilderStudioPointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
+  useAppBuilderStudioStore: (
     selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
   ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
 }));
@@ -240,7 +240,7 @@ describe('AppSidebar', () => {
     expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 25 });
   });
 
-  it('caps recent chats at 25 rows and links to All chats', () => {
+  it('shows five recent chats without date headings and anchors All chats in the footer', () => {
     convoState.conversations = Array.from({ length: 30 }, (_, i) => ({
       id: `c${i}`,
       title: `Chat ${i}`,
@@ -254,16 +254,16 @@ describe('AppSidebar', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getAllByText(/^conversation-c\d+$/)).toHaveLength(25);
+    expect(screen.getAllByText(/^conversation-c\d+$/)).toHaveLength(5);
     const allChatsLink = screen.getByRole('link', { name: /recentChats\.allChats/ });
     const history = screen.getByRole('button', { name: 'History' }).closest<HTMLElement>('[data-slot="collapsible"]');
     expect(allChatsLink).toHaveAttribute('href', '/chats');
-    expect(container.querySelector('nav')).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden');
-    expect(container.querySelector('nav')?.firstElementChild).toHaveClass('max-h-[65%]', 'overflow-y-auto');
-    expect(container.querySelector('nav')?.firstElementChild).not.toContainElement(history);
-    expect(history).toHaveClass('min-h-0', 'flex-1', 'flex-col');
-    expect(history?.querySelector('[data-slot="collapsible-content"]')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
-    expect(allChatsLink.closest('[data-sidebar="menu"]')).toHaveClass('sticky', 'bottom-0');
+    expect(container.querySelector('nav')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto', 'overflow-x-hidden');
+    expect(container.querySelector('nav')).toContainElement(history);
+    expect(history?.querySelector('[data-slot="collapsible-content"]')).not.toHaveClass('overflow-y-auto');
+    expect(allChatsLink.closest('[data-sidebar="footer"]')).toBeInTheDocument();
+    expect(screen.queryByText('recentChats.today')).not.toBeInTheDocument();
+    expect(screen.queryByText('recentChats.older')).not.toBeInTheDocument();
   });
 
   it('does not remap the agents target when its permission is denied', () => {
@@ -376,7 +376,7 @@ describe('AppSidebar', () => {
     expect(autoCollapseState.toggleSidebar).toHaveBeenCalled();
   });
 
-  it('re-opens the rail from a click anywhere on the collapsed rail', () => {
+  it('keeps the collapsed rail closed when clicking its background', () => {
     autoCollapseState.state = 'collapsed';
     const { container } = render(
       <MemoryRouter>
@@ -386,15 +386,15 @@ describe('AppSidebar', () => {
       </MemoryRouter>,
     );
 
-    expect(container.querySelector('[data-sidebar="content"]')).toHaveClass('[&_[data-slot=collapsible-content]]:hidden');
+    expect(container.querySelector('[data-sidebar="content"]')).not.toHaveClass('[&_[data-slot=collapsible-content]]:hidden');
     expect(container.querySelector('[data-sidebar="footer"]')?.firstElementChild).toHaveClass('flex-col');
 
     fireEvent.click(screen.getByText('Build'));
 
-    expect(autoCollapseState.setOpen).toHaveBeenCalledWith(true);
+    expect(autoCollapseState.setOpen).not.toHaveBeenCalled();
   });
 
-  it('navigates collapsed disclosure icons on the first click', async () => {
+  it('opens a collapsed group flyout and navigates only to the selected destination', async () => {
     autoCollapseState.state = 'collapsed';
     render(
       <MemoryRouter>
@@ -405,14 +405,15 @@ describe('AppSidebar', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
-    await userEvent.click(screen.getByRole('button', { name: 'History' }));
-
-    expect(navigateMock).toHaveBeenCalledWith('/workspace');
-    expect(navigateMock).toHaveBeenCalledWith('/chats');
-    expect(autoCollapseState.setOpen).toHaveBeenCalledWith(true);
+    expect(screen.getByRole('dialog', { name: 'Knowledge' })).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(autoCollapseState.setOpen).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Business models' }));
+    expect(navigateMock).toHaveBeenCalledWith('/semantic-models');
+    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/chats');
   });
 
-  it('uses the first permitted destination for a collapsed disclosure icon', async () => {
+  it('offers only permitted destinations in the collapsed group flyout', async () => {
     autoCollapseState.state = 'collapsed';
     visibilityPermissionState.deniedFeatures.add('workspace');
     render(
@@ -424,8 +425,9 @@ describe('AppSidebar', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
-
-    expect(navigateMock).toHaveBeenCalledWith('/semantic-models');
+    expect(screen.queryByRole('button', { name: 'Workspace' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Business models' })).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
   it('keeps disclosure icons as toggles while expanded', async () => {
@@ -493,6 +495,22 @@ describe('AppSidebar', () => {
     expect(screen.getByText('workspace-btn')).toBeInTheDocument();
     // Projects remain independent from managed navigation folders.
     expect(screen.getByText('projects-section')).toBeInTheDocument();
+  });
+
+  it('opens and highlights the ancestor of the current destination', () => {
+    render(<MemoryRouter initialEntries={['/semantic-models/model-1']}><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    const knowledge = screen.getByRole('button', { name: 'Knowledge' });
+    expect(knowledge).toHaveAttribute('aria-expanded', 'true');
+    expect(knowledge).toHaveAttribute('data-active', 'true');
+    expect(screen.getByText('semantic-model-btn')).toBeInTheDocument();
+  });
+
+  it('allows the current folder to be manually collapsed', async () => {
+    render(<MemoryRouter initialEntries={['/semantic-models']}><SidebarProvider><AppSidebar /></SidebarProvider></MemoryRouter>);
+    const knowledge = screen.getByRole('button', { name: 'Knowledge' });
+    await userEvent.click(knowledge);
+    expect(knowledge).toHaveAttribute('aria-expanded', 'false');
+    expect(knowledge).toHaveAttribute('data-active', 'true');
   });
 
   it('opens the global search palette from the trigger', async () => {

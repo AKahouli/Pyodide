@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from typing import Any
+import httpx
 
 from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
@@ -13,8 +14,33 @@ from src.logger.logging import get_logger
 from src.root_runtime.contracts import ExecutionRole
 from src.root_runtime.delegate_resolver import _post, settle_delegate
 from src.root_runtime.dispatcher import build_worker_dispatcher, child_execution_id
+from yellowmind_observability import get_logger as get_observability_logger
 
 logger = get_logger('root_runtime.fanout')
+outcome_logger = get_observability_logger(__name__)
+
+
+def foreground_proposal_rejection(error):
+    """Only known pre-reservation validation proves that no work was admitted."""
+    if error.response.status_code != 400 or len(error.response.content) > 8192:
+        return None
+    try:
+        body = error.response.json()
+    except ValueError:
+        return None
+    envelope = body.get('error') if isinstance(body, dict) else None
+    reason = envelope.get('message') if isinstance(envelope, dict) else None
+    if reason == 'Fan-out input reference is not authorized':
+        return ('No fan-out work was submitted. contextRefs must be actual workspace IDs authorized for the worker profile, '
+            'never conversation or document IDs. Do not invent IDs or silently drop a required source constraint. '
+            'Check your available source tools; if the required workspace is unavailable, ask the user to select or configure it.')
+    if isinstance(reason, str) and reason in {
+        'Invalid foreground fan-out proposal', 'Invalid fan-out target',
+        'Fan-out finite item or payload limit exceeded', 'Invalid or duplicate fan-out item',
+    }:
+        return ('No fan-out work was submitted. Correct the proposal: use an allowed target and mode, a finite item list '
+            'within the current limits, unique alphanumeric/underscore/hyphen keys, and bounded task/output fields.')
+    return None
 
 
 async def run_supervised_items(items, execute, parallel: int, abort_signal=None):
@@ -150,6 +176,10 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
         """Run a finite list of independent tasks in foreground. Each item needs
         a unique key and task; optional expectedOutput and contextRefs narrow
         inputs. worker_type is library (with approved agent_id) or temporary.
+        contextRefs accepts only actual workspace IDs authorized for the worker
+        profile, never conversation or document IDs. Do not invent references.
+        Check source access before dispatching document work; ask for the missing
+        workspace when unavailable. Omitting refs does not create source access.
         mode is foreground by default; background requires explicit runtime
         permission and returns a durable job reference. Simple answers need no fan-out.
         """
@@ -160,8 +190,11 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             raise ValueError('Invalid fan-out target')
         branch = f'{tool_context.branch}.run_fanout@{call_id}' if tool_context.branch else f'run_fanout@{call_id}'
         target = {'kind': worker_type, **({'agentId': agent_id} if worker_type == 'library' else {})}
-        if mode not in ('foreground', 'background') or mode == 'background' and root_context.get('background_fanout_enabled') is not True:
-            raise ValueError('Fan-out execution mode is unavailable')
+        allowed_modes = ['foreground', 'background'] if root_context.get('background_fanout_enabled') is True else ['foreground']
+        if mode not in allowed_modes:
+            outcome_logger.warning('tool.call.failed', tool_name='run_fanout', operation='validate_mode', run_id=scope.execution_id)
+            return {'status': 'failed', 'error_code': 'fanout_mode_unavailable', 'allowed_modes': allowed_modes,
+                'safe_error': 'No work was submitted. Choose an allowed mode or answer directly; do not claim work has started.'}
         if mode == 'background':
             execution_id = hashlib.sha256(f'{scope.execution_id}:{branch}:background_fanout'.encode()).hexdigest()[:24]
             try:
@@ -174,11 +207,22 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             except Exception:
                 return {'status': 'outcome_unknown', 'execution_id': execution_id, 'result_ref': execution_id,
                     'safe_error': 'Submission could not be confirmed. Inspect this job before submitting another fan-out.'}
-        manifest = await _post(scope, 'fanout-manifest', {'version': 1, 'mode': 'foreground', 'nativeCallId': call_id,
-            'nativeCallBranch': branch, 'target': target, 'items': items})
+        try:
+            manifest = await _post(scope, 'fanout-manifest', {'version': 1, 'mode': 'foreground', 'nativeCallId': call_id,
+                'nativeCallBranch': branch, 'target': target, 'items': items})
+        except httpx.HTTPStatusError as error:
+            rejection = foreground_proposal_rejection(error)
+            if rejection is None:
+                raise
+            outcome_logger.warning('tool.call.failed', tool_name='run_fanout', operation='validate_manifest', run_id=scope.execution_id)
+            return {'status': 'failed', 'error_code': 'fanout_proposal_rejected', 'safe_error': rejection}
         validate_manifest(scope, branch, call_id, manifest, maximum)
         return await tool_context.run_node(workflow, node_input={'manifest': manifest},
             run_id=f"manifest_{manifest['manifestId']}", override_branch=branch,
             use_sub_branch=False, raise_on_wait=True)
 
-    return FunctionTool(func=run_fanout)
+    tool = FunctionTool(func=run_fanout)
+    tool.description += (' This invocation permits foreground and background modes.'
+        if root_context.get('background_fanout_enabled') is True else
+        ' This invocation permits only mode="foreground". Background fan-out is disabled; use foreground fan-out for independent items.')
+    return tool

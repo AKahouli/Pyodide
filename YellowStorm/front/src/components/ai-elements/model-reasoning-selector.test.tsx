@@ -20,7 +20,7 @@ const model = {
   types: ['chat'],
   isActive: true,
   isDefault: true,
-  isConversationV2Default: false,
+  __WIRE__isConversationV2Default__: false,
   omitTemperature: false,
   inputModalities: ['text'],
   maxInputTokens: null,

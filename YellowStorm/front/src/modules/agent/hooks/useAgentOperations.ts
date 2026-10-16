@@ -98,6 +98,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           reasoning_effort: data.reasoningEffort,
           instruction: data.instruction,
           ignorePrePrompt: data.ignorePrePrompt,
+          genUiEnabled: data.genUiEnabled,
           knowledgeBases: data.knowledgeBases,
           tools: data.tools,
           skills: data.skills,
@@ -116,7 +117,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
         if (editingAgent) {
           await updateAgent(editingAgent.id, payload);
         } else {
-          await createAgent(payload);
+          await createAgent({ ...payload, rootExecutionPolicy: payload.rootExecutionPolicy ?? undefined });
         }
         setShowCreateEditDialog(false);
         setEditingAgent(null);
@@ -179,6 +180,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
           reasoning_effort: agent.reasoning_effort,
           instruction: agent.instruction,
           ignorePrePrompt: agent.ignorePrePrompt,
+          genUiEnabled: agent.genUiEnabled,
           knowledgeBases: agent.knowledgeBases,
           tools: agent.tools,
           skills: agent.skills,

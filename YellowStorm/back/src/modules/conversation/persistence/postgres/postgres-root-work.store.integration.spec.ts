@@ -45,6 +45,13 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
       max_child_executions_per_work_group: 2, max_work_group_duration_seconds: 60,
       temporary_workers_enabled: true, max_temporary_workers: 2 };
   };
+  it('preserves server-owned origin messages across native trace writes', async () => {
+    nativeState.origin = { assistantMessageId: newId(), questionMessageId: newId() };
+    await store.registerExecution(input());
+    const recorded = await store.recordNativeState(executionId, { ...nativeState,
+      origin: { assistantMessageId: newId(), questionMessageId: newId() } }, 'running');
+    expect(recorded!.resultPayload!.nativeState!.origin).toEqual(nativeState.origin);
+  });
 
   it('shares worker slots across concurrent callers and never lets another owner release them', async () => {
     nativeState.rootContext = { max_parallel_workers: 1, max_child_executions_per_work_group: 3,
@@ -169,6 +176,31 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
     expect(newer.cancelRequestedAt).toBeNull();
   });
 
+  it('freezes all parallel foreground cancellation targets and excludes later turns on replay', async () => {
+    await database.db.update(conversations).set({ createdBy: nativeState.actorId })
+      .where(eq(conversations.id, conversationId));
+    const first = newId(); const second = newId();
+    await database.db.insert(conversationExecutions).values([first, second].map((messageId) => ({
+      id: newId(), conversationId, userId: nativeState.actorId, messageId,
+      nativeSessionId: `turn_${messageId}`, expiresAt: new Date(Date.now() + 60000),
+    })));
+    const request = { conversationId, actorId: nativeState.actorId, expectedEpoch: 0, stopRequestId: newStopRequestId() };
+    const stopped = await store.stopRootWork(request);
+    expect(stopped.foregroundMessageIds).toEqual(expect.arrayContaining([first, second]));
+    expect(stopped.foregroundMessageIds).toHaveLength(2);
+    const newer = newId();
+    await database.db.insert(conversationExecutions).values({ id: newId(), conversationId,
+      userId: nativeState.actorId, messageId: newer, nativeSessionId: `turn_${newer}`,
+      expiresAt: new Date(Date.now() + 60000) });
+    const replay = await store.stopRootWork(request);
+    expect(replay.applied).toBe(false);
+    expect(replay.foregroundMessageIds).toEqual(expect.arrayContaining([first, second]));
+    expect(replay.foregroundMessageIds).not.toContain(newer);
+    const [untouched] = await database.db.select().from(conversationExecutions)
+      .where(eq(conversationExecutions.messageId, newer));
+    expect(untouched.cancelRequestedAt).toBeNull();
+  });
+
   it.each(['completed', 'failed'] as const)('seals finite background result membership when ROOT becomes %s', async (status) => {
     enableFanout();
     nativeState.hasBackgroundJobs = true;
@@ -199,7 +231,7 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
       executionId, producerAgentId: null, producerRole: 'root', status: 'completed',
       text: 'done', citationRefs: [], artifactRefs: [], safeError: null,
     });
-    expect(complete?.resultPayload?.nativeState).toEqual(state);
+    expect(complete?.resultPayload?.nativeState).toEqual({ ...state, clarifications: [] });
     expect(await store.listWaitingRoots(conversationId, 0)).toEqual([]);
     expect(await store.recordNativeState(executionId, nativeState, 'running')).toBeNull();
   });

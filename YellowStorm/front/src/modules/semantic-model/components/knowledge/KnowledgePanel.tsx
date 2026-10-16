@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, GitMerge, GripVertical, Loader2, Search, Share2, Table2, Trash2, Warehouse, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, GitMerge, GripVertical, Loader2, Mail, Search, Share2, Table2, Trash2, Warehouse, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,8 @@ import { getDocument, getDocuments, getFolderContents, getSharedWorkspaces, getW
 import type { Workspace, WorkspaceDocument } from '@/modules/workspace/types';
 import { KNOWLEDGE_DRAG_TYPE, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
+import { isMailArchive } from '../../utils/data-sources';
+import { ConnectArchiveButton, DataConnectionsSection } from './DataConnectionsSection';
 import { HelpTip, INPUT, SectionHeader } from '../form/FormParts';
 
 export const STRUCTURED_DOCUMENT_MIME_PREFIXES = [
@@ -30,7 +32,7 @@ export function isMappableDocument(mimeType:string): boolean {
   return isStructuredDocument(mimeType)||MAPPABLE_DOCUMENT_MIME_TYPES.has(mimeType);
 }
 
-export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapData,onMapWorkspace,onDeriveFrom,switching }: Readonly<{ switching?:{label:string;count:number}; canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void;onMapWorkspace?:(scope:{workspaceId:string;folderId?:string;name:string;workspaceName?:string})=>void;onDeriveFrom?:(conceptId:string)=>void }>) {
+export function KnowledgePanel({ modelId='',canEdit,knowledge,targetNodeId,onClose,onMapData,onMapWorkspace,onDeriveFrom,switching }: Readonly<{ modelId?:string;switching?:{label:string;count:number}; canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void;onMapWorkspace?:(scope:{workspaceId:string;folderId?:string;name:string;workspaceName?:string})=>void;onDeriveFrom?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state)=>state.graph);
   const [available,setAvailable] = useState<Workspace[]>([]);
@@ -45,6 +47,7 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
   const [workspaceTotalPages,setWorkspaceTotalPages] = useState(1);
   const [loadingWorkspaces,setLoadingWorkspaces] = useState(false);
   const [loadFailed,setLoadFailed] = useState(false);
+  const workspacesRef = useRef<HTMLDivElement>(null);
 
   useEffect(()=>{
     let active=true;
@@ -138,7 +141,9 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
         return <div key={document.id}><div className='flex items-center'><button type='button' className='flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-xs hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}} onClick={()=>void toggleFolder(workspaceId,document.id)} aria-label={open?t('knowledge.collapseWorkspace',{name}):t('knowledge.expandWorkspace',{name})}>{open?<ChevronDown className='h-4 w-4 shrink-0'/>:<ChevronRight className='h-4 w-4 shrink-0'/>}<Folder className='h-4 w-4 shrink-0 text-primary'/><span className='truncate'>{name}</span></button>{canEdit&&onMapWorkspace&&<Button size='sm' variant='ghost' className='h-11 shrink-0 gap-1 px-2 text-xs text-teal-700 dark:text-teal-400' onClick={()=>onMapWorkspace({workspaceId:workspaceId,folderId:document.id,name:`${workspaceNames[workspaceId]??''} / ${name}`,workspaceName:workspaceNames[workspaceId]})} aria-label={t('knowledge.useAllIn',{name:`${workspaceNames[workspaceId]??''} / ${name}`})} title={t('knowledge.useAllHint')}><FolderOpen className='h-3.5 w-3.5'/>{t('knowledge.useAll')}</Button>}</div>{open&&<div className='border-l border-border/60'>{renderDocumentPage(workspaceId,document.id,depth+1)}</div>}</div>;
       }
        const resource:KnowledgeResource={kind:'document',workspaceId,documentId:document.id,name:document.originalName,structured:isStructuredDocument(document.mimeType),mappable:isMappableDocument(document.mimeType),mimeType:document.mimeType,path:document.path};
-      return <div key={document.id} role='group' aria-label={t('knowledge.dragDocument',{name:document.originalName})} draggable={canEdit&&resource.mappable} onDragStart={(event)=>beginDrag(event,resource)} onDragEnd={()=>knowledge.setDraggedResource(null)} className='flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}}><FileText className='h-4 w-4 shrink-0 text-muted-foreground'/><span className='min-w-0 flex-1 truncate text-xs'>{document.originalName}</span>{canEdit&&(resource.mappable&&onMapData?<><GripVertical className='h-3.5 w-3.5 text-muted-foreground'/><Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 gap-1 px-2 text-xs text-teal-700 dark:text-teal-400' onClick={()=>onMapData(resource)} aria-label={t('knowledge.useFile',{name:document.originalName})}><Table2 className='h-3.5 w-3.5'/>{t('knowledge.use')}</Button></>:<span className='shrink-0 px-2 text-[10px] text-muted-foreground'>{t('knowledge.notReadable')}</span>)}</div>;
+      const archive=isMailArchive(document.mimeType);
+      const DocumentIcon=archive?Mail:FileText;
+      return <div key={document.id} role='group' aria-label={t('knowledge.dragDocument',{name:document.originalName})} draggable={canEdit&&resource.mappable} onDragStart={(event)=>beginDrag(event,resource)} onDragEnd={()=>knowledge.setDraggedResource(null)} className='flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}}><DocumentIcon className='h-4 w-4 shrink-0 text-muted-foreground'/><span className='min-w-0 flex-1 truncate text-xs'>{document.originalName}</span>{canEdit&&archive&&modelId&&<ConnectArchiveButton modelId={modelId} workspaceId={workspaceId} documentId={document.id} name={document.originalName}/>}{canEdit&&(resource.mappable&&onMapData?<><GripVertical className='h-3.5 w-3.5 text-muted-foreground'/><Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 gap-1 px-2 text-xs text-teal-700 dark:text-teal-400' onClick={()=>onMapData(resource)} aria-label={t('knowledge.useFile',{name:document.originalName})}><Table2 className='h-3.5 w-3.5'/>{t('knowledge.use')}</Button></>:<span className='shrink-0 px-2 text-[10px] text-muted-foreground'>{t('knowledge.notReadable')}</span>)}</div>;
     })}{page.page<page.totalPages&&<Button variant='ghost' className='h-11 w-full text-xs' disabled={loadingDocuments.has(key)} onClick={()=>void loadDocumentPage(workspaceId,page.page+1,folderId)}>{loadingDocuments.has(key)?<Loader2 className='mr-2 h-4 w-4 animate-spin'/>:null}{t('action.loadMore')}</Button>}</div>;
   };
 
@@ -160,7 +165,8 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
     </div>
     <div className='min-h-0 flex-1 overflow-y-auto p-4'>
       {targetNode&&targetBindings.length>0&&<section className='mb-6 space-y-2'><SectionHeader title={t('knowledge.oldLinks',{count:targetBindings.length})} help={t('knowledge.oldLinksHelp')}/>{targetBindings.length?targetBindings.map((binding)=><div key={binding.id} className='flex items-center gap-2 rounded-xl border bg-card p-2.5'><div className='rounded-lg bg-muted p-1.5'>{binding.resourceKind==='document'?<FileText className='h-4 w-4'/>:<Warehouse className='h-4 w-4'/>}</div><div className='min-w-0 flex-1'><p className='truncate text-xs font-medium'>{binding.resourceKind==='workspace'?(workspaceNames[binding.workspaceId]??t('knowledge.workspace')):(boundDocumentNames[`${binding.workspaceId}:${binding.documentId}`]??t('knowledge.document'))}</p><p className='truncate text-[10px] text-muted-foreground'>{workspaceNames[binding.workspaceId]??t('knowledge.workspace')}</p></div>{canEdit&&!binding.protected&&<Button size='icon' variant='ghost' className='h-11 w-11 shrink-0' disabled={knowledge.isBusy} onClick={()=>void knowledge.remove(binding.id)} aria-label={t('knowledge.remove')}><Trash2 className='h-4 w-4'/></Button>}</div>):<p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('knowledge.noSources')}</p>}</section>}
-      <SectionHeader className='mb-2' title={t('knowledge.available')} help={canEdit?t('knowledge.dragHint'):undefined}/>
+      {modelId&&<DataConnectionsSection modelId={modelId} canEdit={canEdit} onUse={onMapData} onDragStart={beginDrag} onDragEnd={()=>knowledge.setDraggedResource(null)} onShowWorkspaces={()=>workspacesRef.current?.scrollIntoView({behavior:'smooth',block:'start'})}/>}
+      <div ref={workspacesRef}><SectionHeader className='mb-2' title={t('knowledge.available')} help={canEdit?t('knowledge.dragHint'):undefined}/></div>
       {loadFailed?<p className='rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground'>{t('knowledge.loadError')}</p>:
         <div className='space-y-2'>
           {available.length?available.map((workspace)=>{

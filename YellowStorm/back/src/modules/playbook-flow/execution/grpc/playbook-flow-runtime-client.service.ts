@@ -38,7 +38,15 @@ export class PlaybookFlowRuntimeClientService {
         this.configService,
         (msg) => { this.logger.warn(msg); },
       );
-      this.client = new pfPackage.PlaybookFlowRuntime(grpcUrl, credentials, options);
+      // Execution traces carry raw tool outputs (exported untruncated by the
+      // evaluation), so match the ADK server's 50MB message ceiling instead of
+      // the grpc-js 4MB default.
+      const channelOptions = {
+        ...options,
+        'grpc.max_receive_message_length': 50 * 1024 * 1024,
+        'grpc.max_send_message_length': 50 * 1024 * 1024,
+      };
+      this.client = new pfPackage.PlaybookFlowRuntime(grpcUrl, credentials, channelOptions);
       this.available = true;
       this.logger.log(`Playbook flow gRPC client initialized at ${grpcUrl}`);
     } catch (err) {

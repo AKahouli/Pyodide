@@ -1,11 +1,9 @@
 """Route definitions for playbook_dir step execution."""
 
 import asyncio
-import re
-from typing import Annotated, Any, Dict
+from typing import Annotated
 
-_SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9_\-.:]{1,200}$")
-from fastapi import APIRouter, Body, status, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from starlette.responses import StreamingResponse
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
@@ -19,38 +17,6 @@ from src.routers.sse_stream import event_stream
 app_settings = get_settings()
 logger = get_logger("api.routers.playbook")
 playbook_router = APIRouter(prefix="/playbook", tags=["playbook"])
-
-
-@playbook_router.post("/index/webhook", include_in_schema=False)
-async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    """Receives indexing completion callbacks from the vectorstores service.
-
-    No authentication — this endpoint is called by the external vectorstores API.
-    The payload is resolved into a waiting asyncio.Future inside action_executor.
-    """
-    from src.flow_engine.runtime.indexing_webhook import resolve_indexing_webhook
-
-    metadata = payload.get("metadata") or {}
-    external_id_value = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
-    raw_status = str(payload.get("status") or "").strip()
-
-    if not external_id_value:
-        logger.warning("[index/webhook] Received payload with no external identifier")
-        return {"ok": False, "error": "missing external identifier"}
-
-    resolved = resolve_indexing_webhook(external_id_value, raw_status, payload)
-
-    # Validate against a strict allow-list before logging (S5145 log-injection guard).
-    safe_external_id = external_id_value if _SAFE_LOG_TOKEN.match(external_id_value) else "<invalid>"
-    safe_status = raw_status if _SAFE_LOG_TOKEN.match(raw_status) else "<invalid>"
-    safe_resolved = bool(resolved)
-    logger.info(
-        "[index/webhook] external_id=%s status=%s resolved=%s",
-        safe_external_id,
-        safe_status,
-        safe_resolved,
-    )
-    return {"ok": True, "resolved": resolved}
 
 
 @playbook_router.post(

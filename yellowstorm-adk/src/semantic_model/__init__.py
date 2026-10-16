@@ -1,6 +1,10 @@
-"""Semantic Model generation runtime."""
+"""Semantic Model attribute extraction.
 
-from .ontology_agent import SemanticModelOntologyAgent
-from .mapping_agent import SemanticModelMappingAgent
+Fills the concepts no spreadsheet column carries by reading document evidence
+with an LLM. Graph construction, ontology generation and mapping planning moved
+to the semantic-model-runtime service.
+"""
 
-__all__ = ["SemanticModelMappingAgent", "SemanticModelOntologyAgent"]
+from .attribute_extractor import AttributeExtractionAgent
+
+__all__ = ["AttributeExtractionAgent"]

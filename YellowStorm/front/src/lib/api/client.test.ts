@@ -17,7 +17,7 @@ const apiClientMock = vi.hoisted(() => {
 const reconnectConversationMock = vi.hoisted(() => vi.fn());
 const ensureConversationPipeMock = vi.hoisted(() => vi.fn());
 const reconnectNotificationsMock = vi.hoisted(() => vi.fn());
-const reconnectConversationV2Mock = vi.hoisted(() => vi.fn());
+const reconnectAppBuilderStudioMock = vi.hoisted(() => vi.fn());
 
 vi.mock('axios', () => ({
   default: { create: vi.fn(() => apiClientMock) },
@@ -26,7 +26,7 @@ vi.mock('axios', () => ({
 
 vi.mock('./config', () => ({
   API_CONFIG: { baseURL: 'https://api.example.test', timeout: 1000, withCredentials: true },
-  AUTH_STORAGE_KEYS: { accessToken: 'accessToken', user: 'user' },
+  AUTH_STORAGE_KEYS: { user: 'user' },
   API_ENDPOINTS: {
     auth: {
       login: '/auth/login',
@@ -48,11 +48,11 @@ vi.mock('@/modules/conversation/stream', () => ({
   },
 }));
 
-vi.mock('@/modules/conversation-v2/conversationV2Stream', () => ({
-  conversationV2StreamService: { reconnectWithNewToken: reconnectConversationV2Mock },
+vi.mock('@/modules/app-builder-studio/appBuilderStudioStream', () => ({
+  appBuilderStudioStreamService: { reconnectWithNewToken: reconnectAppBuilderStudioMock },
 }));
 
-import { clearAuthData, scheduleProactiveRefresh } from './client';
+import { AUTH_LOST_EVENT, clearAuthData, restoreSessionFromCookie, scheduleProactiveRefresh } from './client';
 
 const responseErrorHandler = responseUseMock.mock.calls[0]?.[1] as (error: unknown) => Promise<unknown>;
 
@@ -95,11 +95,50 @@ describe('apiClient token refresh', () => {
 
     expect(apiClientPostMock).toHaveBeenCalledWith(
       '/auth/refresh',
-      null,
+      {},
       expect.objectContaining({ headers: expect.objectContaining({ 'X-Refresh-Attempt-Id': expect.any(String) }) }),
     );
     clearAuthData();
     vi.useRealTimers();
+  });
+
+  it('boot-marked refresh rejection stays a guest; unmarked still logs out', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    const refresh401 = {
+      config: { url: '/auth/refresh', headers: {} as Record<string, string> },
+      response: { status: 401, data: { error: { code: 'ERR_1107', message: 'x', statusCode: 401 } } },
+    };
+
+    // Marked (boot restore): guest state — no redirect, no auth-loss event.
+    await expect(responseErrorHandler({
+      ...refresh401,
+      config: { ...refresh401.config, headers: { 'X-YellowStorm-Boot-Restore': '1' } },
+    })).rejects.toMatchObject({ code: 'ERR_1107' });
+    expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: AUTH_LOST_EVENT }));
+
+    // Unmarked (real recovery): pre-existing logout behavior must survive.
+    await expect(responseErrorHandler(refresh401)).rejects.toMatchObject({ code: 'ERR_1107' });
+    expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: AUTH_LOST_EVENT }));
+    dispatchSpy.mockRestore();
+  });
+
+  it('boot restore treats a definitive cookie rejection as guest (null), not a redirect', async () => {
+    // Flat apiError shape — what the response interceptor hands to refresh.
+    apiClientPostMock.mockRejectedValueOnce({ code: 'ERR_1107', statusCode: 401 });
+
+    await expect(restoreSessionFromCookie()).resolves.toBeNull();
+    // The boot marker is what exempts this 401 from the logout redirect.
+    expect(apiClientPostMock).toHaveBeenCalledWith(
+      '/auth/refresh',
+      {},
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-YellowStorm-Boot-Restore': '1' }) }),
+    );
+  });
+
+  it('boot restore surfaces transient failures so the UI can offer a retry', async () => {
+    apiClientPostMock.mockRejectedValueOnce({ message: 'network down' });
+
+    await expect(restoreSessionFromCookie()).rejects.toMatchObject({ message: 'network down' });
   });
 
   it('cancels proactive refresh when auth data is cleared', async () => {

@@ -21,6 +21,7 @@ export const conversations = conversationSchema.table(
     // Last accepted Stop-all request (WP03/WP08): a retried old Stop with a
     // different request id must not cancel a newer request's work.
     rootWorkLastStopRequestId: uuid('root_work_last_stop_request_id'),
+    rootWorkLastStopForegroundMessageIds: jsonb('root_work_last_stop_foreground_message_ids').$type<string[]>().notNull().default([]),
     platformCopilotCreationRequestId: text('platform_copilot_creation_request_id'),
     governedCreationRequestId: text('governed_creation_request_id'),
     title: varchar('title', { length: 200 }).notNull().default('New Conversation'),
@@ -344,6 +345,7 @@ export const conversationExecutions = conversationSchema.table(
     messageId: char('message_id', { length: 24 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('running'),
     ownerReplicaId: text('owner_replica_id'),
+    nativeSessionId: text('native_session_id'),
     cancelRequestedAt: timestamp('cancel_requested_at', { withTimezone: true }),
     terminalAt: timestamp('terminal_at', { withTimezone: true }),
     // Running rows count against capacity only until this instant; the
@@ -355,8 +357,8 @@ export const conversationExecutions = conversationSchema.table(
   (t) => [
     check('conversation_executions_id_object_id', objectIdCheck(t.id)),
     check('conversation_executions_status', sql`${t.status} IN ('running', 'cancelled', 'completed', 'failed', 'interrupted')`),
-    uniqueIndex('uq_conversation_executions_running_conversation')
-      .on(t.conversationId)
+    uniqueIndex('uq_conversation_executions_running_session')
+      .on(t.conversationId, sql`COALESCE(${t.nativeSessionId}, 'legacy')`)
       .where(sql`${t.status} = 'running'`),
     uniqueIndex('uq_conversation_executions_message').on(t.messageId),
     index('idx_conversation_executions_user_running')

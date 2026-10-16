@@ -59,7 +59,7 @@ src/
 ├── lib/notifications.ts    # sonner wrapper (showSuccess, showError, …)
 ├── lib/form-utils.ts       # scrollToFirstError, rhf helpers
 ├── lib/utils.ts            # cn() class merger
-├── modules/                # Feature modules: auth, conversation-v2, playbook, worky, governance, admin, …
+├── modules/                # Feature modules: auth, app-builder-studio, playbook, worky, governance, admin, …
 ├── pages/                  # Top-level route pages not owned by a module
 ├── test/                   # Vitest global setup + helpers
 └── utils/                  # App-wide utilities (prefer lib/)
@@ -96,7 +96,7 @@ import { useConversationStore } from '@/modules/conversation';
 
 **Barrel rules:** Export **only** the public surface (pages, store hook, public types). Cross-module consumers import from `@/modules/<name>`, never from internals. Code inside the same module should import its sibling implementation directly rather than routing back through its own barrel.
 
-Representative current modules include: `admin`, `agent`, `app-marketplace`, `auth`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `platform-copilot`, `platform-overview`, `playbook`, `profile`, `project`, `semantic-model`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. This list is descriptive, not an exhaustive registry; verify `src/modules/`. When adding a module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
+Representative current modules include: `admin`, `agent`, `app-marketplace`, `auth`, `connected-app`, `connector`, `conversation`, `app-builder-studio`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `platform-copilot`, `platform-overview`, `playbook`, `profile`, `project`, `semantic-model`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. This list is descriptive, not an exhaustive registry; verify `src/modules/`. When adding a module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
 
 ```ts
 export { ConversationPage } from './ConversationPage';
@@ -159,7 +159,7 @@ The frontend has two distinct feature-flag layers. Do not mix them. Both layers 
 
 These are consumed across module boundaries (e.g. `workspace` reads Data Room flags, `governance` reads governed-conversation flags). Treat them as cross-module contracts: changing a default or removing a flag requires tracing every consumer. Vite replaces `import.meta.env.VITE_*` expressions during the production build; these values cannot be changed when the built container starts.
 
-**Module-local state-migration flags** live in `<module>/features.ts` (currently `playbook`, with a separate app-runtime rollout switch under `conversation-v2`). These gate staged migrations between Zustand and TanStack Query / XState. They are also build-time `VITE_*` values.
+**Module-local state-migration flags** live in `<module>/features.ts` (currently `playbook`, with a separate app-runtime rollout switch under `app-builder-studio`). These gate staged migrations between Zustand and TanStack Query / XState. They are also build-time `VITE_*` values.
 
 When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts`, document how the build receives it, and list it in the deployment env template. For runtime-only public settings (API URL), use `VITE_*` on the container and `env.sh` → `/config.js`.
 
@@ -233,7 +233,9 @@ During migration a module may run **both paths** — Zustand store reads from th
 
 ### Browser storage
 
-`localStorage` for `yellostorm_access_token`, `yellostorm_user`, and UI prefs. `sessionStorage` for maintenance info. Keys always declared as exported constants.
+`localStorage` for `yellostorm_user` (display cache) and UI prefs — never credentials: the access token lives in memory
+(`lib/api/access-token-store.ts`) and session continuity comes from the HttpOnly refresh cookie (`restoreSessionFromCookie()`).
+`sessionStorage` for maintenance info and the refresh attempt id. Keys always declared as exported constants.
 
 ---
 
@@ -291,9 +293,9 @@ Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `Eve
 
 `PlaybookStreamService` — one `EventSource` shared across tabs via `BroadcastChannel` with leader election. Leader owns the connection and broadcasts events to followers. Followers sync state via channel messages. Heartbeat, reconnect, and buffered step updates. SSE events dispatched into TanStack Query cache (when `querySseEnabled`) and optionally mirrored to Zustand.
 
-### Pattern 3: Singleton Per-User Multiplexed Stream (conversation-v2)
+### Pattern 3: Singleton Per-User Multiplexed Stream (app-builder-studio)
 
-`ConversationV2StreamService` opens **one** `EventSource` per authenticated user to `/conversation-v2/stream`, kept alive for the whole app session. The connection hook (`useConversationV2StreamConnection`) is mounted **once at the app shell** (`RootGuard`), not per conversation page. The connection is intentionally decoupled from any single conversation view: it stays open across navigation so multiple conversations can stream at the same time and the user can switch between them freely.
+`AppBuilderStudioStreamService` opens **one** `EventSource` per authenticated user to `/app-builder/stream`, kept alive for the whole app session. The connection hook (`useAppBuilderStudioStreamConnection`) is mounted **once at the app shell** (`RootGuard`), not per conversation page. The connection is intentionally decoupled from any single conversation view: it stays open across navigation so multiple conversations can stream at the same time and the user can switch between them freely.
 
 Events are tagged with their `sessionId`; the Zustand store renders the current session live and accumulates the rest in a background cache. Session pages hydrate background state and replay paged historical events for gap recovery. Heartbeat, backoff, and reconnect are handled in the service; token refresh reintegrates via the axios interceptor.
 
@@ -319,14 +321,14 @@ Ack messages use raw strings (`BUSY`, `BAD_REQUEST`, `NO_SESSION`), not the glob
 
 ### Pattern 7: Socket.IO Browser-Hosted App Runtime
 
-`BrowserRuntimeClient` connects to `/app-runtime` for Conversation V2 application previews. It authenticates with a one-shot runtime ticket obtained through the authenticated REST API, not the access token. `BrowserRuntimeHost` owns registration, heartbeat, revision rehydration, and tool execution for the browser-hosted runtime.
+`BrowserRuntimeClient` connects to `/app-runtime` for App Builder application previews. It authenticates with a one-shot runtime ticket obtained through the authenticated REST API, not the access token. `BrowserRuntimeHost` owns registration, heartbeat, revision rehydration, and tool execution for the browser-hosted runtime.
 
 The shared protocol events are `runtime.register`, `runtime.heartbeat`, `runtime.rehydrate`, `tool.invoke`, `tool.progress`, `tool.completed`, and `tool.failed`. Keep event names and payloads aligned with `back/src/modules/app-runtime/types/app-runtime-protocol.ts`. Do not create a second app-runtime socket owner or reuse the one-shot ticket after connection.
 
 ### Rules (all patterns)
 
 - Never open ad-hoc `new EventSource` in a component (use the module's service/hook)
-- Never hand-roll SSE parsing in a component; use the module stream helper (`conversation-v2/useStream`, `worky/stream/sse.ts`, or service singleton)
+- Never hand-roll SSE parsing in a component; use the module stream helper (`app-builder-studio/useStream`, `worky/stream/sse.ts`, or service singleton)
 - Never open ad-hoc `io()` Socket.IO connections in a component; use the owning module's hook or service (`useBrowserSession`, WhatsApp pairing hooks, `BrowserRuntimeClient`)
 - Token refresh integration mandatory where applicable
 - Always clean up on unmount / disconnect
@@ -396,7 +398,7 @@ Frontend configuration has two distinct delivery mechanisms:
 
 Vite substitutes `import.meta.env.VITE_*` while building. The production Dockerfile does not copy the repository `.env`; supply values via build args and/or container env. At start, `env.sh` writes `window.__APP_CONFIG__` in `/config.js` from `VITE_API_URL` (runtime overrides build-time when both are set). Never put secrets in either mechanism — frontend configuration is public to the browser.
 
-Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment/build env template. Current debt extends beyond Data Room and governed-conversation flags: API/socket/app URLs, Worky MCP, Conversation V2 app runtime, and several Playbook migration flags are also undeclared or undocumented. Fix this when touching those areas; do not replicate the drift.
+Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment/build env template. Current debt extends beyond Data Room and governed-conversation flags: API/socket/app URLs, Worky MCP, App Builder app runtime, and several Playbook migration flags are also undeclared or undocumented. Fix this when touching those areas; do not replicate the drift.
 
 ---
 
@@ -421,7 +423,7 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 | `streamdown`, `shiki`, `react-markdown` | Streaming/static markdown |
 | `motion` | Animation — use instead of `framer-motion` |
 | `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer` | PDF/document viewers |
-| `@novnc/novnc` (`RFB`) | Live remote-browser viewer over a signed VNC URL (conversation-v2 `BrowserToolView`, `useVncSession`) — **not** a document viewer. `viewOnly` toggles takeover; `VM_UNAVAILABLE` falls back to a screenshot. Treat as a realtime session, not a static embed. |
+| `@novnc/novnc` (`RFB`) | Live remote-browser viewer over a signed VNC URL (app-builder-studio `BrowserToolView`, `useVncSession`) — **not** a document viewer. `viewOnly` toggles takeover; `VM_UNAVAILABLE` falls back to a screenshot. Treat as a realtime session, not a static embed. |
 | `socket.io-client` | WhatsApp QR pairing channels, `/browser-session` interactive web import (Pattern 6), and `/app-runtime` browser-hosted execution (Pattern 7) |
 | `cmdk` | Command menu primitives |
 | `react-resizable-panels` | Split pane layouts |
@@ -444,12 +446,12 @@ These patterns capture how specific modules extend or deviate from the base rule
 - **Established exception to the barrel rule (§3):** `governance/index.ts` re-exports the API surface, every query hook, and all types (`export *`). When adding to governance, follow this expanded surface; do not retrofit the limited-surface rule without a planned refactor.
 - The legacy `conversation` module imports governance internals directly for its banner and carousel (`ConversationPage.tsx`, `NewConversationPage.tsx`). This cross-module internal import is a documented exception for governed-conversation integration — do not replicate the pattern for new integrations; expose a public surface on the consumer module instead.
 
-### 20.2 conversation-v2 UI patterns
+### 20.2 app-builder-studio UI patterns
 
-- Event types beyond messages include `step`, `tool`, `plan`, and `application_component` — discriminated unions in `conversationV2Stream.ts`.
+- Event types beyond messages include `step`, `tool`, `plan`, and `application_component` — discriminated unions in `appBuilderStudioStream.ts`.
 - `StepBlock` renders collapsible execution steps with their tool calls; `ToolCallCard` opens a mutually-exclusive right-panel detail view (only one tool detail visible at a time).
 - The current "thinking" UI is `ThinkingIndicator` (three-dot animation). `PulseProgress` is not the canonical CoT component.
-- Read-only shared conversations use a token route (`SharedConversationV2Page`) that fetches a snapshot and renders a `MessageList`. Deployed-app sharing UI exists (`ShareDeployDialog`, `DeployControls`) but is currently commented out in `RightPanel` — do not assume it is live.
+- Read-only shared conversations use a token route (`SharedAppBuilderStudioPage`) that fetches a snapshot and renders a `MessageList`. Deployed-app sharing UI exists (`ShareDeployDialog`, `DeployControls`) but is currently commented out in `RightPanel` — do not assume it is live.
 
 ### 20.3 Widget embedding (administered from `agent`)
 
@@ -483,7 +485,7 @@ There is no separate React widget app on the frontend. The widget is **generated
 - [ ] Backend error codes mirrored in `src/lib/error-codes.ts` and EN + FR `errors.json` (see §13 parity rule).
 - [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts`, supplied at build time, and listed in the deployment/build env template; container runtime uses the same `VITE_*` names via `/config.js`.
 - [ ] Shared rollout flags live in `src/config/*Features.ts`; module state-migration flags live in `<module>/features.ts` — not mixed.
-- [ ] If touching streaming/realtime behavior: conversation-v2 connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6); app-runtime ticket and registration semantics remain aligned (Pattern 7).
+- [ ] If touching streaming/realtime behavior: app-builder-studio connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6); app-runtime ticket and registration semantics remain aligned (Pattern 7).
 - [ ] If touching the widget template (`agent/constants/widget-template.ts`): changes must work as standalone vanilla JS, no React/JSX.
 - [ ] Tests colocated, `vi.mock` for axios client. `npm test` + `npm run build` pass.
 - [ ] Commit: `<type>(<scope>): <subject>` (conventional commit).
@@ -511,9 +513,9 @@ There is no separate React widget app on the frontend. The widget is **generated
 - Treating `src/lib/error-codes.ts` as loosely aligned with backend instead of a strict mirror; or adding a backend code without updating EN + FR `errors.json` in the same change.
 - Reading a `VITE_*` env key in code without declaring it in `src/vite-env.d.ts`.
 - Mixing the two feature-flag layers: shared rollout flags must live in `src/config/*Features.ts`, module state-migration flags must live in `<module>/features.ts`.
-- Mounting the conversation-v2 stream connection hook anywhere other than the app shell, or opening a second per-session `EventSource` for v2.
+- Mounting the app-builder-studio stream connection hook anywhere other than the app shell, or opening a second per-session `EventSource` for v2.
 - Changing the browser-session client viewport constants without updating the backend Playwright viewport in the same change.
 - Assuming `PulseProgress` is the canonical CoT indicator — it is `ThinkingIndicator`.
-- Assuming deployed-app sharing UI is live — it is currently commented out in `conversation-v2/RightPanel`.
+- Assuming deployed-app sharing UI is live — it is currently commented out in `app-builder-studio/RightPanel`.
 - Treating the generated widget template as React; importing JSX/hooks into `agent/constants/widget-template.ts`.
 - Importing `@novnc/novnc` (`RFB`) as a static document viewer; it is a signed live-remote-browser session.

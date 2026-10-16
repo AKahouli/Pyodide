@@ -35,6 +35,8 @@ export enum ErrorCode {
   USER_NOT_FOUND = 'ERR_1200',
   USER_ALREADY_EXISTS = 'ERR_1201',
   USER_INACTIVE = 'ERR_1202',
+  /** A super-admin invitation could not be delivered (mail dependency failure). */
+  USER_INVITE_EMAIL_FAILED = 'ERR_1203',
 
   // Agent errors (1300-1399)
   AGENT_NOT_FOUND = 'ERR_1300',
@@ -175,6 +177,12 @@ export enum ErrorCode {
   // the receipt window. Retryable with the same rotation attempt id; not a
   // credential denial and must not log the client out.
   AUTH_ROTATION_CONFLICT = 'ERR_1131',
+
+  // Super-admin e-mail invitations (1132-1139). The invitee holds the link, so
+  // these are explicit refusals rather than the anti-enumeration generic body.
+  AUTH_INVITE_TOKEN_INVALID = 'ERR_1132',
+  AUTH_INVITE_TOKEN_EXPIRED = 'ERR_1133',
+  AUTH_INVITE_EMAIL_MISMATCH = 'ERR_1134',
 
   // Models errors (2000-2099)
   MODEL_NOT_FOUND = 'ERR_2000',
@@ -410,6 +418,16 @@ export enum ErrorCode {
   APP_DATA_INVITE_CONSUMED = 'ERR_4021',
   APP_DATA_INVITE_MISMATCH = 'ERR_4022',
 
+  // App Builder template catalog errors (3800-3809)
+  APP_BUILDER_TEMPLATE_CATEGORY_NOT_FOUND = 'ERR_3800',
+  APP_BUILDER_TEMPLATE_CATEGORY_ALREADY_EXISTS = 'ERR_3801',
+  APP_BUILDER_TEMPLATE_NOT_FOUND = 'ERR_3802',
+  APP_BUILDER_TEMPLATE_ALREADY_EXISTS = 'ERR_3803',
+  APP_BUILDER_TEMPLATE_ZIP_INVALID = 'ERR_3804',
+  APP_BUILDER_TEMPLATE_NOT_PUBLISHED = 'ERR_3805',
+  APP_BUILDER_TEMPLATE_COVER_INVALID = 'ERR_3806',
+  APP_BUILDER_TEMPLATE_PLATFORM_INCOMPATIBLE = 'ERR_3807',
+
   // Semantic Model errors (3700-3799)
   SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
   SEMANTIC_MODEL_NAME_EXISTS = 'ERR_3701',
@@ -469,6 +487,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.USER_NOT_FOUND]: 'User not found.',
   [ErrorCode.USER_ALREADY_EXISTS]: 'A user with this email already exists.',
   [ErrorCode.USER_INACTIVE]: 'This account has been deactivated.',
+  [ErrorCode.USER_INVITE_EMAIL_FAILED]: 'The invitation email could not be sent. Please try again.',
 
   [ErrorCode.AGENT_NOT_FOUND]: 'Agent not found.',
   [ErrorCode.AGENT_UNAVAILABLE]: 'This agent is currently unavailable.',
@@ -579,6 +598,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.AUTH_OAUTH_ACCOUNT_ALREADY_LINKED]: 'This provider account is already linked to another user.',
   [ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE]: 'Authentication is temporarily unavailable. Please try again shortly.',
   [ErrorCode.AUTH_ROTATION_CONFLICT]: 'Sign-in refresh is being coordinated. Please retry.',
+  [ErrorCode.AUTH_INVITE_TOKEN_INVALID]: 'This invitation link is invalid or has already been used.',
+  [ErrorCode.AUTH_INVITE_TOKEN_EXPIRED]: 'This invitation link has expired. Please ask an administrator to send a new invitation.',
+  [ErrorCode.AUTH_INVITE_EMAIL_MISMATCH]: 'This invitation was issued for a different email address.',
 
   [ErrorCode.MODEL_NOT_FOUND]: 'Model not found.',
   [ErrorCode.MODEL_INACTIVE]: 'This model is currently unavailable. Please select a different model.',
@@ -731,6 +753,18 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.GOVERNED_CONNECTOR_NOT_ALLOWED]: 'Connectors are not available in governed conversations.',
   [ErrorCode.GOVERNED_TEAM_NOT_ALLOWED]: 'Teams are not available in governed conversations.',
   [ErrorCode.GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE]: 'Governed conversation runtime settings cannot be changed.',
+
+  [ErrorCode.APP_BUILDER_TEMPLATE_CATEGORY_NOT_FOUND]: 'Template category not found.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_CATEGORY_ALREADY_EXISTS]:
+    'A template category with this name or slug already exists.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_NOT_FOUND]: 'Template not found.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_ALREADY_EXISTS]:
+    'A template with this title already exists in this category.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_ZIP_INVALID]: 'The template source ZIP is invalid or empty.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_NOT_PUBLISHED]: 'This template is not published yet.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_COVER_INVALID]: 'The template cover image is invalid.',
+  [ErrorCode.APP_BUILDER_TEMPLATE_PLATFORM_INCOMPATIBLE]:
+    'This template is not compatible with the platform runtime and cannot be published.',
 
   [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',
   [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',

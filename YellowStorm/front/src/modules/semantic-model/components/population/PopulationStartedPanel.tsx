@@ -1,8 +1,12 @@
 import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Loader2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ConceptSourceMapping, PopulationProgress } from '../../types';
+import type { ConceptSourceMapping, PopulationJobQueue, PopulationProgress } from '../../types';
+import { QueuedRunNotice } from './QueuedRunNotice';
 import { RunProgress } from './RunProgress';
+import { SearchIndexProgress } from './SearchIndexProgress';
+import { errorText } from './RunHistoryPanel';
 
 export interface PopulationOutcome {
   jobId: string;
@@ -18,6 +22,8 @@ export interface PopulationOutcome {
   progress?: Partial<PopulationProgress>;
   /** Whether the result replaced the graph in use, kept once the run ends (the job is no longer followed then). */
   serving?: PopulationServing;
+  /** Why the run failed, from the runtime, kept once the run ends. */
+  errorCode?: string | null;
 }
 
 type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';
@@ -35,18 +41,49 @@ export interface PopulationServing {
   decision: 'activate' | 'keep_previous';
   /** What the result is missing (source not read, a cap reached…); empty when complete. */
   blocking: string[];
+  /** Sources read up to the limit their mapping sets: a chosen sample, served as it is, not missing data. */
+  samples?: PopulationSample[];
+}
+
+export interface PopulationSample {
+  conceptId: string;
+  read: number;
+  /** Rows the source holds; absent when the reader did not count them. */
+  total?: number;
 }
 
 export function populationServing(result: Record<string, unknown> | null | undefined): PopulationServing | undefined {
   const decision = result?.servingDecision;
   if (decision !== 'activate' && decision !== 'keep_previous') return undefined;
   const blocking = Array.isArray(result?.blockingGapKinds) ? result.blockingGapKinds.filter((kind): kind is string => typeof kind === 'string') : [];
-  return { decision, blocking };
+  const samples = Array.isArray(result?.userSampleLimits) ? result.userSampleLimits.flatMap((item): PopulationSample[] => {
+    const sample = item as Partial<Record<keyof PopulationSample, unknown>> | null;
+    return sample && typeof sample.conceptId === 'string' && typeof sample.read === 'number'
+      ? [{ conceptId: sample.conceptId, read: sample.read, ...(typeof sample.total === 'number' ? { total: sample.total } : {}) }] : [];
+  }) : [];
+  return { decision, blocking, ...(samples.length ? { samples } : {}) };
+}
+
+/** Phases after the last chance to stop: the new data is being saved, compared or put in the graph. */
+const PAST_STOP = new Set(['saving', 'comparing', 'projecting']);
+
+/** Whether a stop request still changes anything: not once the run has begun to save its data. */
+export function runCanStop(progress?: Partial<PopulationProgress> | null): boolean {
+  return progress?.cancellable !== false && !(progress?.phase && PAST_STOP.has(progress.phase));
+}
+
+/**
+ * Sources a run reads: what it reports, else what was counted when it started, else the mappings it covers.
+ * A concept refresh covers only that concept's mappings, never the whole model's.
+ */
+export function runSourceCount(outcome: Pick<PopulationOutcome, 'sourceCount' | 'skipped'>, progress: Partial<PopulationProgress> | undefined, sourceMappings: ConceptSourceMapping[]): number {
+  const covered = progress?.scopeConceptId ? sourceMappings.filter((mapping) => mapping.conceptId === progress.scopeConceptId) : sourceMappings;
+  return progress?.total || outcome.sourceCount || Math.max(0, covered.length - outcome.skipped.length);
 }
 
 const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
 
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, serving }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, stoppingSlow = false, serving, modelId, dataRevisionId, queue, queuedSince }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -57,13 +94,24 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   /** Stop the run; nothing it read is kept. Absent when the person cannot stop it. */
   onStop?: () => void;
   stopping?: boolean;
+  /** The stop has been pending for long: the worker running the update may no longer answer. */
+  stoppingSlow?: boolean;
   serving?: PopulationServing;
+  /** The model, to follow the search index of the new data once the run has saved it. */
+  modelId?: string;
+  /** The data the run saved (from its job result). */
+  dataRevisionId?: string | null;
+  /** Where the run waits on its queue; sent by the runtime only while the job is still queued. */
+  queue?: PopulationJobQueue;
+  /** When the queued job was created (ISO). */
+  queuedSince?: string;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
   const shownProgress = progress ?? outcome.progress;
-  const readCount = shownProgress?.total || outcome.sourceCount || Math.max(0, sourceMappings.length - outcome.skipped.length);
+  const readCount = runSourceCount(outcome, shownProgress, sourceMappings);
   const tone = toneOf(outcome.status);
+  const canStop = runCanStop(shownProgress);
 
   const title = tone === 'stopped' ? t('runStop.stopped')
     : tone === 'stopping' ? t('runStop.stopping')
@@ -73,8 +121,8 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
     : outcome.reused ? t('population.alreadyRunning') : t('population.started');
 
   const detail = tone === 'stopped' ? t('runStop.stoppedHint')
-    : tone === 'stopping' ? t('runStop.stoppingHint')
-    : tone === 'failed' ? t('population.failedHint')
+    : tone === 'stopping' ? t(stoppingSlow ? 'runStatus.stoppingSlowHint' : 'runStop.stoppingHint')
+    : tone === 'failed' ? (outcome.errorCode ? errorText(outcome.errorCode, t as Parameters<typeof errorText>[1]) : t('population.failedHint'))
     : tone === 'gaps' ? t('population.gapsHint')
     : tone === 'done' ? t(outcome.reused ? 'population.finishedHint' : 'population.doneHint')
     : t('population.startedHint', { count: readCount });
@@ -96,17 +144,38 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
     </header>
 
     <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-3 pb-28'>
-      {tone === 'running' && onStop && <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
-        {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
-        {stopping ? t('runStop.stopping') : t('runStop.stop')}
-      </Button>}
-      {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {tone === 'running' && onStop && (canStop
+        ? <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
+          {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+          {stopping ? t('runStop.stopping') : t('runStop.stop')}
+        </Button>
+        // Saving cannot be undone half way: the button stays, disabled, and says why.
+        : <TooltipProvider><Tooltip>
+          <TooltipTrigger asChild><span className='block w-full' tabIndex={0}>
+            <Button variant='outline' size='sm' className='w-full' disabled aria-label={`${t('runStop.stop')}: ${t('runStop.notNow')}`}><StopCircle className='mr-1.5 h-4 w-4' />{t('runStop.stop')}</Button>
+          </span></TooltipTrigger>
+          <TooltipContent>{t('runStop.notNow')}</TooltipContent>
+        </Tooltip></TooltipProvider>)}
+      {tone === 'running' && queue && <QueuedRunNotice queue={queue} queuedSince={queuedSince} />}
+      {/* A refresh of a concept made from another one reads no file, yet reports its steps, AI calls and records. */}
+      {shownProgress && ((shownProgress.total ?? 0) > 0 || Boolean(shownProgress.phase)) && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {/* The new data becomes searchable once its index is built, after the run. */}
+      {modelId && (tone === 'done' || tone === 'gaps') && serving?.decision !== 'keep_previous' && <SearchIndexProgress modelId={modelId} dataRevisionId={dataRevisionId} />}
       {/* A result missing data never replaces the graph in use; the first graph of a model is shown anyway. */}
       {serving && serving.blocking.length > 0 && tone !== 'running' && <section role='status' className='rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300'>
         <p className='font-semibold'>{t(serving.decision === 'keep_previous' ? 'runServing.kept' : 'runServing.firstIncomplete')}</p>
         <p className='mt-1'>{t(serving.decision === 'keep_previous' ? 'runServing.keptHint' : 'runServing.firstIncompleteHint')}</p>
         <ul className='mt-2 list-disc space-y-0.5 pl-4'>
           {serving.blocking.map((kind) => <li key={kind}>{t((KNOWN_BLOCKING.has(kind) ? `runServing.kind_${kind}` : 'runServing.kind_other') as 'runServing.kind_other')}</li>)}
+        </ul>
+      </section>}
+      {/* A limit the person set on a source is respected, not a gap: the sample is served as the data. */}
+      {serving?.samples && tone !== 'running' && <section role='note' className='rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground'>
+        <p className='font-semibold text-foreground'>{t('runServing.sampleTitle')}</p>
+        <p className='mt-1'>{t('runServing.sampleHint')}</p>
+        <ul className='mt-2 list-disc space-y-0.5 pl-4'>
+          {serving.samples.map((sample) => <li key={sample.conceptId}>{t(sample.total === undefined ? 'runServing.userSampleUnknownTotal' : 'runServing.userSample', {
+            concept: conceptLabels?.[sample.conceptId] ?? '', read: sample.read.toLocaleString(), total: (sample.total ?? 0).toLocaleString() })}</li>)}
         </ul>
       </section>}
       {/* A reused terminal job means this click changed nothing — say so rather than implying progress. */}

@@ -19,13 +19,27 @@ const graph: SemanticGraph = {
   nodes:[{id:'customer',key:'customer',label:'Customer',description:'Customer account',category:'business_object',recordPolicy:'none',systemKey:null,aliases:[],attributes:[],position:{x:120,y:120}}],
 };
 const knowledge={bindings:[],workspaceLinks:[],countsByNode:{},draggedResource:null,isBusy:false,setDraggedResource:vi.fn(),hasBinding:vi.fn(),link:vi.fn(),remove:vi.fn()} as unknown as KnowledgeLinkingController;
-const renderInspector=(canEdit:boolean)=>render(
+const folded=()=>[...document.querySelectorAll<HTMLButtonElement>('button[aria-controls^="settings-pane-concept-"][aria-expanded="false"]')];
+/** The details with every part opened, as a person reading them all; folding is tried on its own. */
+const renderInspector=(canEdit:boolean,{open=true}:{open?:boolean}={})=>{
+  const view=render(
   <QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>
     <SemanticModelInspector modelId="model" canEdit={canEdit} knowledge={knowledge} knowledgeOpen={false} knowledgeTargetId={null} onKnowledgeClose={vi.fn()}/>
   </QueryClientProvider>);
+  if(open) folded().forEach((button)=>fireEvent.click(button));
+  return view;
+};
 
 describe('SemanticModelInspector', () => {
   beforeEach(() => { hookState.mappings=[];hookState.rules=[];hookState.labels=[];saveLabelField.mockClear();saveIdentityRule.mockClear();useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
+
+  it('opens a concept with every part folded, each title saying what it holds', () => {
+    renderInspector(true,{open:false});
+    expect(folded().map((button)=>button.querySelector('h3')?.textContent)).toEqual(['workspaceUi.meaning','attributes.title','identity.title','workspaceUi.relationships','mapping.sourcesTitle','workspaceUi.advanced']);
+    expect(screen.queryByRole('textbox',{name:'aliases.placeholder'})).not.toBeInTheDocument();
+    fireEvent.click(folded()[0]);
+    expect(screen.getByRole('textbox',{name:'aliases.placeholder'})).toBeInTheDocument();
+  });
 
   it('renders read-only details without mutation-shaped controls', () => {
     renderInspector(false);
@@ -100,6 +114,28 @@ describe('SemanticModelInspector', () => {
     expect(screen.getByRole('button', { name: 'Country' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Number' }));
     await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
+  });
+
+  it('offers the fields the last run suggested as the unique ones, and saves them only when asked', async () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }, { key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().suggestIdentity('customer', ['country', 'number', 'gone']);
+    hookState.rules=[{ conceptId: 'customer', fields: ['country'] }];
+    renderInspector(true);
+    // Fields that are no longer on the concept are not offered.
+    expect(screen.getByRole('status')).toHaveTextContent('identity.suggested');
+    expect(saveIdentityRule).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'identity.useSuggested' }));
+    await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().identitySuggestion).toBeNull());
+  });
+
+  it('lets the person turn the suggestion down', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().suggestIdentity('customer', ['number']);
+    renderInspector(true);
+    fireEvent.click(screen.getByRole('button', { name: 'identity.dismissSuggested' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(saveIdentityRule).not.toHaveBeenCalled();
   });
 
   it('warns when a mapped concept has nothing that makes it unique', () => {

@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
 import { DocumentService } from './document.service';
 import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
+import { S3StorageBackend } from './storage/s3.backend';
 import { LoggerService } from '../logger';
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
 
@@ -34,6 +35,8 @@ jest.mock('@aws-sdk/client-s3', () => {
     GetObjectCommand: makeCommand('GetObjectCommand'),
     DeleteObjectCommand: makeCommand('DeleteObjectCommand'),
     HeadObjectCommand: makeCommand('HeadObjectCommand'),
+    HeadBucketCommand: makeCommand('HeadBucketCommand'),
+    CreateBucketCommand: makeCommand('CreateBucketCommand'),
     CopyObjectCommand: makeCommand('CopyObjectCommand'),
     ListObjectsV2Command: makeCommand('ListObjectsV2Command'),
   };
@@ -129,6 +132,24 @@ describe('DocumentService', () => {
       debug: jest.fn(),
     };
 
+    // A real S3 backend over the mocked SDK: DocumentService talks to the
+    // storage port, while the assertions below stay at the command level.
+    const backend = new S3StorageBackend(
+      {
+        endpoint: PUBLIC_URL,
+        region: 'us-east-1',
+        bucket: BUCKET,
+        accessKeyId: 'testAccessKey',
+        secretAccessKey: 'testSecretKey',
+        forcePathStyle: true,
+        publicUrl: PUBLIC_URL,
+      },
+      { log: mockLoggerService.log, warn: mockLoggerService.warn },
+    );
+    await backend.connect();
+    jest.clearAllMocks();
+    mockSend.mockResolvedValue({});
+
     const mockConnectionService = {
       isConnectedNow: jest.fn().mockReturnValue(true),
       getHealthStatus: jest.fn().mockReturnValue({
@@ -138,9 +159,7 @@ describe('DocumentService', () => {
         reconnectAttempts: 0,
         isReconnecting: false,
       } as StorageConnectionStatus),
-      getS3Client: jest.fn().mockReturnValue({ send: mockSend }),
-      getBucket: jest.fn().mockReturnValue(BUCKET),
-      getPublicUrl: jest.fn().mockReturnValue(PUBLIC_URL),
+      getBackend: jest.fn().mockReturnValue(backend),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -283,6 +302,32 @@ describe('DocumentService', () => {
       await expect(service.upload(testFile, testFileName, 'application/exe')).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should allow non-whitelisted MIME when skipMimeValidation is set', async () => {
+      const result = await service.upload(
+        testFile,
+        'hero.png',
+        'application/octet-stream',
+        {
+          generateUniqueName: false,
+          customFileName: 'appbuilder/blobs/sha256/ab/abcdef',
+          skipMimeValidation: true,
+        },
+      );
+
+      expect(result.mimeType).toBe('application/octet-stream');
+      expect(result.blobPath).toBe('appbuilder/blobs/sha256/ab/abcdef');
+    });
+
+    it('should still enforce size limits when skipMimeValidation is set', async () => {
+      const largeFile = Buffer.alloc(60 * 1024 * 1024);
+
+      await expect(
+        service.upload(largeFile, 'hero.png', 'application/octet-stream', {
+          skipMimeValidation: true,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw BadRequestException for file exceeding size limit', async () => {
@@ -606,7 +651,7 @@ describe('DocumentService', () => {
         await expect(pending).resolves.toBe(true);
         expect(mockSend).toHaveBeenCalledTimes(3);
         expect(loggerService.warn).toHaveBeenCalledWith(
-          'S3 HeadObject still 403 Unknown after retries; assuming object present',
+          'Storage could not confirm object state; assuming present',
           expect.objectContaining({
             objectKeyFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
           }),

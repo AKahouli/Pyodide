@@ -19,6 +19,7 @@ export interface GovernedConversationRuntime {
 export interface GovernedConversationRecord {
   runtimeMode: 'standard' | 'governed';
   createdBy: string;
+  memberIds?: string[];
   governanceContext?: {
     programId: string;
     scopeId: string;
@@ -46,7 +47,7 @@ export class GovernedConversationRuntimeService {
 
   async resolveRuntime(userId: string, conversation: GovernedConversationRecord): Promise<GovernedConversationRuntime> {
     if (conversation.runtimeMode !== 'governed' || !conversation.governanceContext) throw new NotFoundException(ErrorCode.GOVERNED_CONVERSATION_NOT_FOUND);
-    if (conversation.createdBy !== userId) throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN);
+    if (conversation.createdBy !== userId && !conversation.memberIds?.includes(userId)) throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN);
     const context = conversation.governanceContext;
     const [scope, deployment, revision] = await Promise.all([
       this.scopeStore.findById(context.scopeId),

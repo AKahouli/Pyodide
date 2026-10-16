@@ -1,9 +1,7 @@
-"""Shared helpers for the semantic-model mapping pipeline."""
+"""Shared helpers for semantic-model attribute extraction."""
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from typing import Any
 
 
@@ -11,17 +9,6 @@ _PLACEHOLDER_VALUES = {
     "null", "none", "nil", "n/a", "na", "unknown", "not found", "not_found",
     "missing", "empty", "-", "--", "aucun", "aucune", "inconnu", "inconnue",
 }
-
-
-def normalize_for_match(value: Any) -> str:
-    if value is None:
-        return ""
-    # Strip diacritics so accented and non-accented forms match ("Élodie" == "Elodie").
-    # Critical for French corpora where the same entity is often spelled both ways
-    # across documents.
-    normalized = unicodedata.normalize("NFKD", str(value))
-    stripped = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    return " ".join(stripped.split()).casefold()
 
 
 def is_meaningful_value(value: Any) -> bool:
@@ -35,45 +22,6 @@ def is_meaningful_value(value: Any) -> bool:
     return True
 
 
-def merge_node_pair(canonical: dict[str, Any], fragment: dict[str, Any]) -> dict[str, Any]:
-    """Union of attributes — canonical wins on key collisions."""
-    by_key = {attr["key"]: attr for attr in canonical.get("attributes", [])}
-    for attr in fragment.get("attributes", []):
-        key = attr.get("key")
-        if not key or key in by_key:
-            continue
-        by_key[key] = attr
-    return {
-        **canonical,
-        "attributes": list(by_key.values()),
-        "evidenceReferences": list({
-            *(canonical.get("evidenceReferences") or []),
-            *(fragment.get("evidenceReferences") or []),
-        }),
-        "_sourceDocumentIds": list({
-            *(canonical.get("_sourceDocumentIds") or []),
-            *(fragment.get("_sourceDocumentIds") or []),
-        }),
-    }
-
-
-def to_semantica_entity(node: dict[str, Any]) -> dict[str, Any]:
-    """Convert a mapping-plan node to the shape Semantica's DuplicateDetector expects."""
-    properties = {attr["key"]: attr["value"] for attr in node.get("attributes", [])}
-    source_ids = node.get("_sourceDocumentIds") or []
-    return {
-        "id": node["id"],
-        "name": normalize_for_match(node.get("label") or ""),
-        "type": node.get("nodeTypeId", ""),
-        "properties": properties,
-        "_sourceDocumentId": source_ids[0] if source_ids else "",
-    }
-
-
-def strip_provenance(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [{k: v for k, v in node.items() if not k.startswith("_")} for node in nodes]
-
-
 def normalize_evidence(evidence: list[Any], normalize_text: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in evidence:
@@ -84,10 +32,3 @@ def normalize_evidence(evidence: list[Any], normalize_text: Any) -> list[dict[st
             continue
         normalized.append({**item, "quote": normalize_text(quote)})
     return normalized
-
-
-def word_variants(label: str) -> list[str]:
-    """Return the label plus its slug and individual words (≥4 chars) for fuzzy matching."""
-    slug = re.sub(r"[.\-_]", " ", label)
-    words = [w for w in slug.split() if len(w) >= 4]
-    return [label, slug, *words]

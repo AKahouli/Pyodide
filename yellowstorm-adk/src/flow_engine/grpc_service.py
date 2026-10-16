@@ -188,7 +188,9 @@ def _request_to_log_json(request: Any) -> str:
 
 
 def _grpc_in_log_message(label: str, request: Any) -> str:
-    """Put raw JSON in the message so it can be copied directly from console logs."""
+    """Suppress benchmark payloads; retain the existing log format for other runs."""
+    if str(getattr(request, "execution_id", "") or "").startswith("eval-"):
+        return f"[gRPC IN] {label} (benchmark payload suppressed)"
     return f"[gRPC IN] {label} request_json={_request_to_log_json(request)}"
 
 
@@ -202,7 +204,7 @@ def _log_temporary_child_summary(execution_id: str, label: str) -> None:
         execution_id=execution_id,
         created_count=summary["created_count"],
         execution_modes=summary["execution_modes"],
-        children=summary["children"],
+        children=[] if execution_id.startswith("eval-") else summary["children"],
     )
 
 try:

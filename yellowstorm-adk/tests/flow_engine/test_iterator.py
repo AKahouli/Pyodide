@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from src.flow_engine.builder import compose
 from src.flow_engine.builder.iterator import (
@@ -555,6 +557,88 @@ async def test_invoke_iterator_graph_with_items():
     assert iterations[0]["childResults"][0]["taskId"] == "child-step"
     assert iterations[0]["childResults"][0]["status"] == "completed"
     assert iterations[0]["itemPreview"] == "item-1"
+
+
+@pytest.mark.asyncio
+async def test_iterator_human_approval_suspends_and_resumes_each_item():
+    snapshot = {
+        "nodes": [
+            {
+                "id": "iter-node",
+                "kind": "iterator",
+                "iterator_config": {"collection_path": "inputs.items"},
+            },
+            {
+                "id": "approval-node",
+                "kind": "human_approval",
+                "label": "Approve email",
+                "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}},
+                "human_approval_config": {"prompt_template": "Approve this email?"},
+            },
+            {
+                "id": "decision-step",
+                "kind": "step",
+                "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}},
+            },
+        ],
+        "control_edges": [
+            {"id": "e1", "kind": "sequential", "source": "iter-node", "target": "approval-node"},
+            {"id": "e2", "kind": "sequential", "source": "approval-node", "target": "decision-step"},
+        ],
+        "data_bindings": [],
+        "settings": {"recursion_limit": 25, "max_parallelism": 5},
+    }
+    graph = compose(snapshot, InMemorySaver())
+    config = {"configurable": {"thread_id": "iterator-human-approval"}}
+    initial_state = {
+        "execution_id": "iterator-human-approval",
+        "flow_id": "iterator-human-approval",
+        "inputs": {"items": [{"to": "first@example.com"}, {"to": "second@example.com"}]},
+        "task_outputs": {},
+        "iterations": {},
+        "router_decisions": {},
+        "errors": [],
+        "pending_approval": None,
+        "cancelled": False,
+    }
+    downstream_decisions = []
+
+    async def record_decision(node_id, node_config, state, node_inputs=None):
+        del node_config, node_inputs
+        item_index = state["inputs"]["_index"]
+        approval = state["task_outputs"][("approval-node", item_index)]
+        downstream_decisions.append((state["inputs"]["_item"]["to"], approval["decision"]))
+        return {
+            "task_outputs": {(node_id, 0): {"output": "processed"}},
+            "iterations": {node_id: 1},
+        }
+
+    with patch.dict("src.flow_engine.builder.iterator.NODE_KIND_DISPATCH", {"step": record_decision}):
+        graph = compose(snapshot, InMemorySaver())
+        first_stream = [
+            chunk
+            async for chunk in stream_graph(graph, initial_state, config=config)
+        ]
+        first_interrupts = [
+            chunk["_data"]
+            for chunk in first_stream
+            if chunk["_mode"] == "custom" and chunk["_data"].get("type") == "ApprovalRequested"
+        ]
+        first_pause = await graph.aget_state(config)
+        second_pause = await graph.ainvoke(Command(resume={"decision": "approved"}), config)
+        completed = await graph.ainvoke(Command(resume={"decision": "rejected"}), config)
+
+    assert len(first_interrupts) == 1
+    assert first_interrupts[0]["iteration"] == 0
+    assert first_interrupts[0]["payload"]["prompt"] == "Approve this email?"
+    assert first_pause.interrupts[0].value["iteration"] == 0
+    assert second_pause["__interrupt__"][0].value["iteration"] == 1
+    assert downstream_decisions == [
+        ("first@example.com", "approved"),
+        ("second@example.com", "rejected"),
+    ]
+    iterator_output = completed["task_outputs"][("iter-node", 0)]
+    assert [item["status"] for item in iterator_output["iterator_iterations"]] == ["completed", "completed"]
 
 
 class TestIteratorStreamingEvents:

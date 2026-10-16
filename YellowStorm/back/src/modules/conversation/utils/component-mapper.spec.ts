@@ -3,6 +3,16 @@
 import { aggregateTextFromComponents, extractComponentData, getComponentType } from './component-mapper';
 
 describe('component-mapper text extraction', () => {
+  it('retains the actual text producer from chunk metadata', () => {
+    expect(extractComponentData({ id: 'answer', text: { content: 'Hello' } }, 'answer-agent').data)
+      .toMatchObject({ content: 'Hello', actorId: 'answer-agent' });
+  });
+
+  it('retains the configured producer name from initial activity', () => {
+    expect(extractComponentData({ id: 'initial', agent_activity: {
+      summary: '', status: 'completed', actor_id: 'answer-agent', actor_name: 'Guide Agent',
+    } }).data).toMatchObject({ actorId: 'answer-agent', actorName: 'Guide Agent' });
+  });
   it('extracts text content from proto oneof text field', () => {
     const result = extractComponentData({
       id: 'comp-1',
@@ -309,6 +319,17 @@ describe('component-mapper chart extraction', () => {
       parentId: 'text-1', sourceKind: 'web', sourceType: 'web', source: 'https://example.com/article',
       title: 'Article', reference: '[2]', exactText: 'Revenue increased by 38%.',
       prefix: 'Results:', suffix: 'Outlook.', evidenceOrigin: 'page_content',
+    } });
+  });
+
+  it('maps a cited semantic model record, even beside empty default branches', () => {
+    expect(extractComponentData({ citation: { parent_id: 'text-1', web_source: null, record_source: {
+      type: 'record', reference: '[3]', model_id: 'm-1', model_name: 'Mails', data: 'published', data_revision_id: 'rev-1',
+      entity_id: 'e-1', concept: 'Contract', name: 'CT001', key_fields: { id: 'CT001' }, field: 'Body', quote: 'ends on 31/12/2025',
+    } } })).toEqual({ type: 'citation', data: {
+      parentId: 'text-1', sourceKind: 'record', sourceType: 'record', reference: '[3]', modelId: 'm-1', modelName: 'Mails',
+      data: 'published', dataRevisionId: 'rev-1', entityId: 'e-1', concept: 'Contract', name: 'CT001', keyFields: { id: 'CT001' },
+      field: 'Body', quote: 'ends on 31/12/2025', source: 'CT001',
     } });
   });
 });

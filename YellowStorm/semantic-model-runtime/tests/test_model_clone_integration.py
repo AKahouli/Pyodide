@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 
 from app.persistence.model_clone_store import CloneTargetNotEmpty, clone_model_data
+from app.persistence.partitions import ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning
 from app.population.compiler import canonical_spec_hash
 
@@ -44,6 +45,7 @@ async def _seed(connection: asyncpg.Connection, model: str, version: str) -> Non
         "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash, projection_ref, "
         "validation_state, coverage) VALUES ($1, $2, $3, $4, $5, 'valid', $6::jsonb)",
         revision, model, version, spec_hash, f"age:v1:pop_{revision}", json.dumps({"conceptId": CONCEPT}))
+    await ensure_revision_partitions(connection, revision)
     await connection.execute(
         "INSERT INTO semantic_runtime.active_bindings (model_id, environment, model_version_id, data_revision_id, "
         "projection_ref) VALUES ($1, 'draft', $2, $3, $4)", model, version, revision, f"age:v1:pop_{revision}")
@@ -59,6 +61,9 @@ async def _seed(connection: asyncpg.Connection, model: str, version: str) -> Non
         await connection.execute(
             "INSERT INTO semantic_population.assertions (model_id, data_revision_id, entity_id, attribute, value) "
             "VALUES ($1, $2, $3, 'name', 'x')", model, revision, f"person:{key}")
+        await connection.execute(
+            "INSERT INTO semantic_population.assertion_candidates (model_id, data_revision_id, entity_id, "
+            "attribute, value) VALUES ($1, $2, $3, 'name', 'y')", model, revision, f"person:{key}")
     await connection.execute(
         "INSERT INTO semantic_population.relationships (model_id, data_revision_id, relation_id, source_entity_id, "
         "target_entity_id) VALUES ($1, $2, $3, 'person:a', 'person:b')", model, revision, RELATION)
@@ -115,6 +120,8 @@ async def test_clone_copies_only_the_source_rows_with_remapped_ids(pool) -> None
     assert result["copied"] is True
     assert result["counts"] == {"entities": 2, "aliases": 2, "assertions": 2, "relationships": 1,
                                 "reviewItems": 1, "corrections": 1, "manualSnapshots": 1}
+    assert await pool.fetchval("SELECT count(*) FROM semantic_population.assertion_candidates "
+                               "WHERE data_revision_id = $1", result["revisionId"]) == 2
     revision = await pool.fetchrow("SELECT * FROM semantic_population.data_revisions WHERE id = $1",
                                    result["revisionId"])
     assert revision["model_id"] == TARGET and revision["model_version_id"] == TARGET_VERSION

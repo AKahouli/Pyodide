@@ -16,6 +16,11 @@
   "mcpTransportType": "streamable_http",
   "mcpServerUrl": "https://mcp.example.test/mail",
   "mcpServerConfig": {},
+  "workerPolicy": {
+    "enabled": true,
+    "defaultExecutionKind": "leaf",
+    "agentLaunchEnabled": false
+  },
   "dynamicHeaders": [
     {
       "headerName": "X-Workspace-Id",
@@ -43,6 +48,8 @@
       },
       "outputSchema": {},
       "safety": "read",
+      "executionKind": "inherit",
+      "workerAccess": "inherit",
       "supportsBatch": false,
       "supportsIteration": true,
       "isEnabled": true,
@@ -56,6 +63,8 @@
       "parameterSchema": {},
       "outputSchema": {},
       "safety": "write",
+      "executionKind": "inherit",
+      "workerAccess": "inherit",
       "supportsBatch": false,
       "supportsIteration": false,
       "isEnabled": false,

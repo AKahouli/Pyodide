@@ -184,12 +184,20 @@ class BackgroundInvocationHost:
                     status = 'outcome_unknown'
             payload = {**authority, 'status': status}
             if status == 'completed':
-                if not isinstance(result, str) or len(result.encode()) > 262144:
-                    raise ValueError('Completed background output is not bounded native text')
                 session = await service.get_session(app_name=grant.app_name, user_id=grant.actor_id, session_id=grant.session_id)
                 evidence = collect_evidence(session.state, grant.execution_id)
-                payload.update(text=result[:8000], fullText=result,
-                    evidence=[{key: item[key] for key in ('nativeIdentity', 'outputOrdinal', 'kind', 'payload')} for item in evidence])
+                from src.root_runtime.worker_result import validate_worker_result
+                from src.root_runtime.worker_execution import WorkerExecutionRejected
+                try:
+                    text = validate_worker_result(result, evidence, grant.execution_id)
+                except WorkerExecutionRejected:
+                    status = 'failed'
+                    payload['status'] = status
+                else:
+                    from src.root_runtime.evidence_submission import prepare_evidence_submission
+                    submitted = await prepare_evidence_submission(scope, grant.execution_id, evidence,
+                        'background-evidence-page', authority)
+                    payload.update(text=text[:8000], fullText=text, **submitted)
             acknowledgement = await _post(scope, 'background-lifecycle', payload)
             if acknowledgement.get('status') != status:
                 raise ValueError('Background outcome acknowledgement differs from committed state')

@@ -24,7 +24,6 @@ describe('PlaybookFlowMailWebhookService', () => {
     expect(listByTrigger).toHaveBeenCalledWith('mail', {
       enabled: true,
       subscriptionId: 'sub-1',
-      subscriptionClientState: 'flow-1',
     });
     expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
     expect(handoffService.handoffMatchedEvent).not.toHaveBeenCalled();
@@ -45,6 +44,59 @@ describe('PlaybookFlowMailWebhookService', () => {
     expect(await service.handleNotifications({ value: [{ subscriptionId: 'sub-1', clientState: 'flow-1', resourceData: { id: 'message-1' } }] }))
       .toEqual({ processed: 0, results: [] });
     expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
+  });
+
+  it('rejects a notification whose resource escapes the subscribed folder', async () => {
+    // The clientState is only a bearer secret: once it is guessed or leaked,
+    // the resource path must not become a way to read arbitrary mailbox
+    // folders with the owner's token.
+    const flow = {
+      id: 'flow-1', ownerId: 'owner-1', workspaces: [],
+      triggerConfig: { params: { enabled: true, subscriptionId: 'sub-1', subscriptionClientState: 'flow-1', mailboxAppKey: 'microsoft' } },
+    };
+    const listByTrigger = jest.fn().mockResolvedValue([flow]);
+    const graphClient = { getMessageByResource: jest.fn() };
+    const service = new PlaybookFlowMailWebhookService(
+      { listByTrigger } as any, {} as any, graphClient as any, {} as any, {} as any, {} as any, logger() as any,
+    );
+
+    expect(await service.handleNotifications({ value: [{
+      subscriptionId: 'sub-1', clientState: 'flow-1',
+      resource: "users/owner-1/mailFolders('sentitems')/messages/message-1",
+      resourceData: { id: 'message-1' },
+    }] })).toEqual({ processed: 0, results: [] });
+    expect(await service.handleNotifications({ value: [{
+      subscriptionId: 'sub-1', clientState: 'flow-1',
+      resource: "me/mailFolders('inbox')/messages/../../users/victim/messages/X",
+      resourceData: { id: 'message-1' },
+    }] })).toEqual({ processed: 0, results: [] });
+    expect(graphClient.getMessageByResource).not.toHaveBeenCalled();
+  });
+
+  it('reconstructs the fetch path from the pinned inbox shape', async () => {
+    const flow = {
+      id: 'flow-1', ownerId: 'owner-1', workspaces: [],
+      triggerConfig: { params: { enabled: true, subscriptionId: 'sub-1', subscriptionClientState: 'flow-1', mailboxAppKey: 'microsoft' } },
+    };
+    const listByTrigger = jest.fn().mockResolvedValue([flow]);
+    const graphClient = { getMessageByResource: jest.fn().mockResolvedValue({ id: 'message-1', receivedDateTime: new Date().toISOString() }) };
+    const orchestrationService = { ingestAndEvaluate: jest.fn().mockResolvedValue({
+      finalStatus: 'unmatched', match: { matched: false, reasons: [] }, ingestion: { duplicate: false, entry: { id: 'event-1' } },
+    }) };
+    const service = new PlaybookFlowMailWebhookService(
+      { listByTrigger } as any, {} as any, graphClient as any, orchestrationService as any,
+      {} as any, {} as any, logger() as any,
+    );
+
+    await service.handleNotifications({ value: [{
+      subscriptionId: 'sub-1', clientState: 'flow-1',
+      resource: "/Users/ownerGraphId/mailFolders('AQMkADAwATM0MDAAMS0yMDctLWExLTMtMDEDAAA=')/messages/AAMkAGZl",
+      resourceData: { id: 'AAMkAGZl' },
+    }] });
+
+    expect(graphClient.getMessageByResource).toHaveBeenCalledWith(
+      'owner-1', 'microsoft', "me/mailFolders('AQMkADAwATM0MDAAMS0yMDctLWExLTMtMDEDAAA=')/messages/AAMkAGZl",
+    );
   });
 
   it('hands off only after a matching incoming message is evaluated', async () => {

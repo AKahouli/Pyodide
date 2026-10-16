@@ -34,14 +34,22 @@ the affected revisions must be projected again before activation.
   `INTERNAL_SERVICE_SECRET`; sent only to the configured backend origin.
 - `YELLOWSTORM_BACKEND_API_PREFIX`: NestJS global API prefix (default `api`).
 
+The per-revision tables (`semantic_population.entities`, `entity_identities`, `assertions`,
+`assertion_candidates`, `relationships`, and the graph search `entity_documents`, `entity_passages`)
+are LIST-partitioned (migration `031`): the store creates a revision's or a search generation's
+partitions with it (`app/persistence/partitions.py`) and a purge, a model delete or a generation prune
+drops them. Code that inserts rows for a new revision outside the store must call
+`ensure_revision_partitions` first. The runtime's database role must own these tables.
+
 Graph search (`/v1/semantic-model-search`, migration `022`, plan in
 `docs/graph-search-plan.md`) needs pgvector >= 0.7 and pg_trgm in the runtime
 database and an embedding profile; without one, search answers exact keys only:
 
 - `SEMANTIC_EMBEDDING_BASE_URL`: OpenAI-compatible LiteLLM origin (no `/v1`).
 - `SEMANTIC_EMBEDDING_API_KEY`: a LiteLLM key for this service.
-- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions, the
-  `halfvec(2560)` storage size; another size needs its own storage).
+- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions).
+- `SEMANTIC_EMBEDDING_DIMENSION` (2560): the model's vector size. It must equal the
+  `halfvec(...)` width of the embedding columns, so changing it means a migration too.
 - Optional: `SEMANTIC_EMBEDDING_TIMEOUT_SECONDS` (30),
   `SEMANTIC_EMBEDDING_BATCH_SIZE` (32), `SEMANTIC_SEARCH_MIN_SIMILARITY` (0.4).
 

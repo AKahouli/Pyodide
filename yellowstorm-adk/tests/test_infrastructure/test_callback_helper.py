@@ -133,7 +133,7 @@ class TestCallbackHelperExtended:
 
     assert "source-1" in result
     assert tool_context.state["text_order"] == 1
-    assert "_pending_tool_images_resp-1" in tool_context.state
+    assert "temp:_pending_tool_images_resp-1" in tool_context.state
 
   def test_extract_html_from_markdown_fence(self):
     html = "<html><body><p>Hi</p></body></html>"

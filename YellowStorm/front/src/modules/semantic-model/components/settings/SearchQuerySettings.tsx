@@ -12,7 +12,8 @@ import {
   MAX_EXTRA_STOP_WORDS, MAX_STOP_WORD_LENGTH, SEARCH_QUERY_DEFAULTS, SEARCH_QUERY_FIELDS, SEARCH_SETTINGS_QUERY_KEY, outOfRange,
   searchQueryProblems, searchSettingsApi, stopWordsProblem, type SearchQuerySettings as QuerySettings,
 } from '../../searchSettings';
-import { FORM_SECTION, FormField, SectionHeader, TEXTAREA } from '../form/FormParts';
+import { FormField, TEXTAREA } from '../form/FormParts';
+import { SettingsPane } from './SettingsPane';
 import { ResetFieldButton, SettingNumberField, withKey } from './SettingNumberField';
 
 /** Words typed with commas, semicolons, spaces or new lines between them; each once. */
@@ -60,8 +61,7 @@ export function SearchQuerySettings() {
   const stopWordsLabel = t('searchSettings.search.stopWords');
   const extraLabel = t('searchSettings.search.extraStopWords');
   const wordsWrong = stopWordsProblem(configured.extraStopWords);
-  return <section className={cn(FORM_SECTION, 'space-y-4')}>
-    <SectionHeader title={t('searchSettings.search.title')} help={t('searchSettings.search.description')} icon={<Search className='h-4 w-4 text-muted-foreground' aria-hidden />} />
+  return <SettingsPane id='search-query' title={t('searchSettings.search.title')} help={t('searchSettings.search.description')} icon={<Search className='h-4 w-4 text-muted-foreground' aria-hidden />}>
     <div className='grid gap-x-6 gap-y-4 sm:grid-cols-2'>
       {SEARCH_QUERY_FIELDS.map(({ key, min, max, step }) => <SettingNumberField key={key} id={`search-query-${key}`}
         label={t(`searchSettings.search.${key}`)} help={t(`searchSettings.search.${key}Tip`)}
@@ -102,5 +102,5 @@ export function SearchQuerySettings() {
       </Button>
       {Object.keys(configured).length > 0 && <Button variant='ghost' onClick={() => adopt({})}>{t('settings.reset')}</Button>}
     </div>
-  </section>;
+  </SettingsPane>;
 }

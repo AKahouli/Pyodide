@@ -11,8 +11,8 @@ import { Request } from 'express';
 import { ForbiddenException, UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
-import { AuthService } from '../../auth/auth.service';
-import { UserService } from '../../user/user.service';
+import { SessionService } from '../../auth/services/session.service';
+import { UserService } from '../../user/services/user.service';
 import type { UserDocLike } from '../../user/persistence/user-record.mapper';
 import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { AppDataCatalogService } from '../../app-data/services/app-data-catalog.service';
@@ -55,7 +55,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly userService: UserService,
-    private readonly authService: AuthService,
+    private readonly sessionService: SessionService,
     @Optional() private readonly appDataClient?: AppDataClientService,
     @Optional() private readonly appDataCatalog?: AppDataCatalogService,
     @Optional() private readonly endUserAuth?: AppDataEndUserAuthService,
@@ -157,7 +157,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     }
 
     if (payload.sessionId) {
-      const valid = await this.authService.isSessionValid(payload.sessionId);
+      const valid = await this.sessionService.isSessionValid(payload.sessionId);
       if (!valid) {
         throw new UnauthorizedException(ErrorCode.AUTH_SESSION_REVOKED, 'Session has been revoked');
       }

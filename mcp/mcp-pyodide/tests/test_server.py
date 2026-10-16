@@ -90,6 +90,30 @@ async def test_execute_python_relays_logical_file_references(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_python_accepts_a_single_file_name_as_a_string(monkeypatch):
+    stub = BackendStub(response={"ok": True})
+    monkeypatch.setattr(server, "backend", lambda: stub)
+    token = actor_headers()
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool(
+                "execute_python",
+                {"code": "1", "inputs": "data.txt", "outputs": "result.csv"},
+            )
+    finally:
+        actor_context.reset(token)
+
+    assert stub.payloads == [{
+        "code": "1",
+        "input": None,
+        "timeoutMs": 30000,
+        "inputs": ["data.txt"],
+        "outputs": ["result.csv"],
+    }]
+    assert result_dict(response)["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_execute_python_rejects_paths_in_file_names(monkeypatch):
     stub = BackendStub(response={"ok": True})
     monkeypatch.setattr(server, "backend", lambda: stub)

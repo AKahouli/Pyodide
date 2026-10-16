@@ -1,0 +1,781 @@
+import { Nodepod } from '@scelar/nodepod';
+import { parseNpmAddedPackages } from '../utils/npm-install-output';
+import {
+  resolvePreviewPort,
+  looksLikeDevServerReady,
+  PREVIEW_PORTS,
+  PreviewController,
+  waitUntilDirectServerReady,
+  type DevServerPromotePolicy,
+} from './PreviewController';
+import type { VfsFiles } from './RevisionHydrator';
+import type { FileEntry } from './runtime.types';
+import { sha256 } from './hashing';
+import { toVfsPath } from './paths';
+import {
+  detectDevCommand,
+  UnsupportedDevToolchainError,
+  unsupportedDevToolchainReason,
+} from './dev-toolchain';
+import {
+  IGNORED_DIRS,
+  RUN_OUTPUT_MAX_BYTES,
+  RUN_TIMEOUT_DEFAULT,
+  boundOutput,
+  preferCompleteOutput,
+} from './limits';
+import {
+  ROLLDOWN_WASM_PKG,
+  LIGHTNINGCSS_WASM_PKG,
+  OXIDE_WASM_PKG,
+  ensureWasiNativeBindings,
+  isFatalWasiToolchainError,
+} from './wasi-native-bindings';
+
+const LOG = '[NodepodAdapter]';
+
+type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
+type NodepodProc = Awaited<ReturnType<NodepodInstance['spawn']>>;
+
+const VITE_PKG_PATH = '/node_modules/vite';
+const REACT_PKG_PATH = '/node_modules/react';
+const READY_SOFT_MS = 20_000;
+/** Large templates (e.g. Material UI kits) can need several minutes for first Vite boot. */
+const READY_HARD_MS = 300_000;
+const PORT_SCAN_INTERVAL_MS = 8_000;
+const MAX_CACHE_AGE_MS = 10 * 60 * 1000;
+
+function log(phase: string, details?: Record<string, unknown>) {
+  if (details) {
+    console.log(`${LOG} [${phase}]`, details);
+  } else {
+    console.log(`${LOG} [${phase}]`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level pod cache
+// ---------------------------------------------------------------------------
+
+interface PodCacheEntry {
+  pod: NodepodInstance;
+  previewUrl: string | null;
+  files: VfsFiles | null;
+  alive: boolean;
+  lastAccessed: number;
+  /** Manifest fingerprint at the time `node_modules` was last installed. */
+  installFingerprint: string | null;
+}
+
+const podCache = new Map<string, PodCacheEntry>();
+
+function cacheKey(sessionId: string, revision: string) {
+  return `${sessionId}:${revision}`;
+}
+
+export function invalidateSession(sessionId: string): void {
+  const prefix = `${sessionId}:`;
+  for (const [key, entry] of podCache) {
+    if (key.startsWith(prefix)) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+      podCache.delete(key);
+    }
+  }
+}
+
+function cleanupStaleEntries() {
+  const now = Date.now();
+  for (const [key, entry] of podCache) {
+    if (!entry.alive || now - entry.lastAccessed > MAX_CACHE_AGE_MS) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+      podCache.delete(key);
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    for (const entry of podCache.values()) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+    }
+    podCache.clear();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export interface StartDevServerOptions {
+  softTimeoutMs?: number;
+  hardTimeoutMs?: number;
+  promotePolicy?: DevServerPromotePolicy;
+}
+
+function uniquePortCandidates(pendingUrl: string | null, pendingPort: number | null): number[] {
+  const out: number[] = [];
+  const add = (value: number | null | undefined) => {
+    if (value == null || !Number.isInteger(value) || value <= 0) return;
+    if (!out.includes(value)) out.push(value);
+  };
+  add(resolvePreviewPort({ previewUrl: pendingUrl, reportedPort: pendingPort }));
+  add(pendingPort);
+  for (const port of PREVIEW_PORTS) add(port);
+  return out;
+}
+
+export interface SpawnResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+}
+
+export interface SpawnOpts {
+  env?: Record<string, string>;
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
+}
+
+/** Thrown when a spawn exceeds its deadline; maps to `TOOL_TIMEOUT`. */
+export class SpawnTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`Command timed out after ${timeoutMs}ms`);
+    this.name = 'SpawnTimeoutError';
+  }
+}
+
+export type ProgressCallback = (phase: string, message: string) => void;
+
+/** Lockfiles that, together with package.json, define the dependency set. */
+const LOCKFILES = ['/package-lock.json', '/pnpm-lock.yaml', '/yarn.lock'];
+
+// ---------------------------------------------------------------------------
+// Adapter
+// ---------------------------------------------------------------------------
+
+export class NodepodRuntimeAdapter {
+  private pod: NodepodInstance | null = null;
+  private sessionId: string | null = null;
+  private revision: string = 'rev_0';
+  private _files: VfsFiles | null = null;
+  private lastInstallFingerprint: string | null = null;
+  private currentDevProc: NodepodProc | null = null;
+  private pendingServerPort: number | null = null;
+  private pendingServerUrl: string | null = null;
+
+  get currentPod(): NodepodInstance | null {
+    return this.pod;
+  }
+
+  get files(): VfsFiles | null {
+    return this._files;
+  }
+
+  async boot(
+    files: VfsFiles,
+    sessionId: string,
+    revision: string,
+    onServerReady?: (port: number, url: string | null) => void,
+  ): Promise<void> {
+    if (this.sessionId) invalidateSession(this.sessionId);
+    this.sessionId = sessionId;
+    this.revision = revision;
+    this._files = files;
+    this.pendingServerPort = null;
+    this.pendingServerUrl = null;
+
+    log('boot:start', { fileCount: Object.keys(files).length });
+
+    // NodePod runs real Node in the browser (FS / npm / HTTP preview). Refuse
+    // toolchains that cannot bind a Vite preview before we pay for npm install.
+    // Docs: https://r1ck404.github.io/Nodepod/ — Vite must listen on 0.0.0.0;
+    // preview needs COOP/COEP (SharedArrayBuffer) + the host preview bridge.
+    const pkgRaw = files['/package.json'];
+    if (typeof pkgRaw !== 'string') {
+      throw new UnsupportedDevToolchainError(
+        'Template is missing /package.json at the project root (required for NodePod).',
+      );
+    }
+    let parsedPkg: Parameters<typeof unsupportedDevToolchainReason>[0] = null;
+    try {
+      parsedPkg = JSON.parse(pkgRaw) as NonNullable<typeof parsedPkg>;
+    } catch {
+      throw new UnsupportedDevToolchainError('Template package.json is not valid JSON.');
+    }
+    const toolchainBlock = unsupportedDevToolchainReason(parsedPkg);
+    if (toolchainBlock) {
+      throw new UnsupportedDevToolchainError(toolchainBlock);
+    }
+
+    const pod = await Nodepod.boot({
+      files,
+      workdir: '/',
+      watermark: false,
+      onServerReady: (port: number, url: string) => {
+        log('server-ready', { port, url });
+        this.pendingServerPort = port;
+        this.pendingServerUrl = url;
+        onServerReady?.(port, url);
+      },
+    });
+    log('boot:done');
+    this.pod = pod;
+
+    const key = cacheKey(sessionId, revision);
+    podCache.set(key, {
+      pod,
+      previewUrl: null,
+      files,
+      alive: true,
+      lastAccessed: Date.now(),
+      installFingerprint: null,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dependency install policy (MVP 10.3)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fingerprint of the dependency manifest set. Any change to package.json or a
+   * lockfile invalidates the installed `node_modules`.
+   */
+  async installFingerprint(): Promise<string> {
+    const pod = this.requirePod();
+    const parts: string[] = [];
+    for (const file of ['/package.json', ...LOCKFILES]) {
+      try {
+        if (!(await pod.fs.exists(file))) continue;
+        parts.push(`${file}:${await pod.fs.readFile(file, 'utf-8')}`);
+      } catch {
+        // Unreadable manifest — treat as absent rather than failing the boot.
+      }
+    }
+    return sha256(parts.join('\n\u0000\n'));
+  }
+
+  /**
+   * Force the next `ensureDeps` to reinstall. Called when a `run` tool mutates
+   * the dependency set (npm install / pnpm add / ...).
+   */
+  markDepsDirty(): void {
+    this.lastInstallFingerprint = null;
+    this.updateCacheFingerprint(null);
+  }
+
+  /**
+   * Install dependencies only when they are actually stale: first boot, a
+   * changed manifest fingerprint, or an explicit `force`.
+   */
+  async ensureDeps(
+    opts: { force?: boolean; onProgress?: ProgressCallback } = {},
+  ): Promise<{ installed: boolean }> {
+    const pod = this.requirePod();
+    const fingerprint = await this.installFingerprint();
+    const hasModules = await pod.fs.exists('/node_modules');
+
+    if (!opts.force && hasModules && fingerprint === this.lastInstallFingerprint) {
+      log('npm-install:skip', { reason: 'fingerprint-unchanged' });
+      await this.ensureWasiBindings();
+      return { installed: false };
+    }
+
+    await this.installDeps(opts.onProgress);
+    this.lastInstallFingerprint = fingerprint;
+    this.updateCacheFingerprint(fingerprint);
+    return { installed: true };
+  }
+
+  async installDeps(onProgress?: ProgressCallback): Promise<void> {
+    const pod = this.requirePod();
+    log('npm-install:start');
+    onProgress?.('installing', 'npm install');
+    const install = await pod.spawn('npm', ['install']);
+    install.on('output', (text: string) => console.log(`${LOG} [npm:stdout]`, text));
+    install.on('error', (text: string) => console.warn(`${LOG} [npm:stderr]`, text));
+    const result = await install.completion;
+    const addedPackages = parseNpmAddedPackages(result.stdout);
+    const hasVite = await pod.fs.exists(VITE_PKG_PATH);
+    const hasReact = await pod.fs.exists(REACT_PKG_PATH);
+    log('npm-install:verify', { exitCode: result.exitCode, addedPackages, hasVite, hasReact });
+
+    if (result.exitCode !== 0) {
+      throw new Error(`npm install failed (exit ${result.exitCode}).`);
+    }
+    if (!hasVite && !hasReact) {
+      throw new Error(
+        addedPackages === 0
+          ? 'npm install added 0 packages and node_modules/vite (or react) is missing.'
+          : 'node_modules/vite (or react) is missing after npm install.',
+      );
+    }
+
+    await this.ensureWasiBindings();
+    log('npm-install:done');
+  }
+
+  /**
+   * Install wasm32-wasi companions (Rolldown / LightningCSS / Tailwind Oxide) and
+   * alias `*.debug.wasm` onto the release artifacts NodePod's CDN proxy cannot find.
+   */
+  private async ensureWasiBindings(): Promise<boolean> {
+    const pod = this.requirePod();
+    const { prepared, failed } = await ensureWasiNativeBindings(pod, log);
+    if (failed.length) {
+      log('wasi-bindings:partial', { prepared, failed });
+    } else if (prepared.length) {
+      log('wasi-bindings:ready', { prepared });
+    }
+    if (
+      prepared.some((p) => p.includes('rolldown')) &&
+      typeof SharedArrayBuffer === 'undefined'
+    ) {
+      throw new Error('Vite/rolldown requires SharedArrayBuffer (COOP/COEP).');
+    }
+    return prepared.length > 0;
+  }
+
+  /**
+   * Start the dev server and wait for it to become ready.
+   * Returns the preview URL once probed, or null on timeout.
+   */
+  async startDevServer(
+    previewCtrl: PreviewController,
+    isStale: () => boolean,
+    onProgress?: ProgressCallback,
+    extraEnv?: Record<string, string>,
+    serverOpts?: StartDevServerOptions,
+  ): Promise<string | null> {
+    const pod = this.requirePod();
+    const files = this._files ?? {};
+    const { cmd, args } = detectDevCommand(files);
+    const needsWasi =
+      (await pod.fs.exists(ROLLDOWN_WASM_PKG)) ||
+      (await pod.fs.exists(LIGHTNINGCSS_WASM_PKG)) ||
+      (await pod.fs.exists(OXIDE_WASM_PKG));
+    const softTimeoutMs = serverOpts?.softTimeoutMs ?? READY_SOFT_MS;
+    const hardTimeoutMs = serverOpts?.hardTimeoutMs ?? READY_HARD_MS;
+    const promotePolicy = serverOpts?.promotePolicy ?? 'full';
+    // HOST + Vite --host (from detectDevCommand) match NodePod's documented
+    // preview pattern: `npx vite --host 0.0.0.0` so the bridge can reach the server.
+    const devEnv = {
+      HOST: '0.0.0.0',
+      ...(needsWasi ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' } : {}),
+      ...(extraEnv ?? {}),
+    };
+    const spawnEnv = Object.keys(devEnv).length > 0 ? devEnv : undefined;
+
+    // A restart must deterministically replace the previous Vite process:
+    // a stale survivor keeps the port alive (and the OLD VITE_YM_APP_DATA_*
+    // env baked into its module graph) and can win the ready-probe race.
+    if (this.currentDevProc) {
+      try {
+        this.currentDevProc.kill();
+      } catch {
+        // Already exited between the check and the kill.
+      }
+      this.currentDevProc = null;
+    }
+
+    log('dev-server:spawn', { cmd, args, env: spawnEnv ?? null });
+    onProgress?.('starting', `${cmd} ${args.join(' ')}`);
+
+    let pendingPort: number | null = this.pendingServerPort;
+    let pendingUrl: string | null = this.pendingServerUrl;
+    let devExited = false;
+    let resolved = false;
+    let toolchainBroken = false;
+    let promoteChain: Promise<void> = Promise.resolve();
+
+    return new Promise<string | null>((resolve) => {
+      let portScanTimer: ReturnType<typeof setInterval> | null = null;
+
+      const finish = (url: string | null) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(softTimer);
+        clearTimeout(hardTimer);
+        if (portScanTimer) clearInterval(portScanTimer);
+        if (url) {
+          const port =
+            previewCtrl.port ??
+            resolvePreviewPort({ previewUrl: url, reportedPort: pendingPort }) ??
+            pendingPort ??
+            5173;
+          previewCtrl.setPreview(url, port);
+          this.updateCachePreview(url);
+        }
+        resolve(url);
+      };
+
+      const noteToolchainError = (text: string) => {
+        if (!isFatalWasiToolchainError(text)) return;
+        if (!toolchainBroken) {
+          toolchainBroken = true;
+          log('dev-server:toolchain-broken', { sample: text.slice(0, 240) });
+        }
+      };
+
+      const tryProbe = (url: string, port: number, source: string) => {
+        promoteChain = promoteChain.then(async () => {
+          if (resolved || isStale()) return;
+          if (toolchainBroken) {
+            log('promote:blocked-toolchain', { source, url, port });
+            return;
+          }
+          log('promote:start', { source, url, port, promotePolicy });
+          const result = await previewCtrl.probeAndPromote(pod, url, port, isStale, {
+            promotePolicy,
+          });
+          if (toolchainBroken) {
+            log('promote:blocked-toolchain-after-probe', { source });
+            return;
+          }
+          if (result.ok) {
+            finish(previewCtrl.previewUrl);
+            return;
+          }
+          if (result.error) {
+            log('promote:retry-later', { source, reason: result.error, devExited });
+          }
+        });
+        return promoteChain;
+      };
+
+      const scanAllPorts = async (source: string, attemptsPerPort: number) => {
+        if (resolved || isStale() || toolchainBroken) return;
+        for (const port of uniquePortCandidates(pendingUrl, pendingPort)) {
+          if (resolved || isStale() || toolchainBroken) return;
+          const url = pod.port(port);
+          if (!url) continue;
+          const directOk = await waitUntilDirectServerReady(pod, port, isStale, attemptsPerPort);
+          if (!directOk) continue;
+          pendingPort = port;
+          pendingUrl = url;
+          await tryProbe(url, port, `${source}:port-${port}`);
+          if (resolved) return;
+        }
+      };
+
+      void (async () => {
+        const proc = await pod.spawn(cmd, args, spawnEnv ? { env: spawnEnv } : undefined);
+        this.currentDevProc = proc;
+
+        if (pendingUrl && pendingPort != null) {
+          void tryProbe(pendingUrl, pendingPort, 'boot-server-ready');
+        }
+
+        portScanTimer = setInterval(() => {
+          if (resolved || isStale() || devExited || toolchainBroken) return;
+          void scanAllPorts('interval-scan', 6);
+        }, PORT_SCAN_INTERVAL_MS);
+
+        proc.on('output', (text: string) => {
+          console.log(`${LOG} [dev:stdout]`, text);
+          noteToolchainError(text);
+          if (!resolved && !isStale() && !toolchainBroken && looksLikeDevServerReady(text)) {
+            const port = resolvePreviewPort({
+              previewUrl: pendingUrl,
+              reportedPort: pendingPort ?? 5173,
+              stdoutText: text,
+            }) ?? 5173;
+            pendingPort = port;
+            const url =
+              pendingUrl ||
+              pod.port(port) ||
+              PREVIEW_PORTS.map((p) => pod.port(p)).find(Boolean) ||
+              null;
+            if (url) {
+              pendingUrl = url;
+              void tryProbe(url, port, 'stdout-ready');
+            }
+          }
+        });
+        proc.on('error', (text: string) => {
+          console.warn(`${LOG} [dev:stderr]`, text);
+          noteToolchainError(text);
+        });
+        proc.on('exit', (code: number) => {
+          devExited = true;
+          if (this.currentDevProc === proc) this.currentDevProc = null;
+          log('dev-server:exit', { code, toolchainBroken });
+          if (!resolved) finish(null);
+        });
+      })();
+
+      const softTimer = setTimeout(() => {
+        if (resolved || isStale()) return;
+        if (toolchainBroken) {
+          finish(null);
+          return;
+        }
+        void scanAllPorts('soft-timeout', 12).then(() => {
+          if (!resolved && (devExited || toolchainBroken) && !isStale()) finish(null);
+        });
+      }, softTimeoutMs);
+
+      const hardTimer = setTimeout(() => {
+        if (resolved || isStale()) return;
+        void (async () => {
+          if (!toolchainBroken) await scanAllPorts('hard-timeout', 24);
+          if (!resolved && !isStale()) finish(null);
+        })();
+      }, hardTimeoutMs);
+    });
+  }
+
+  private updateCachePreview(url: string): void {
+    if (!this.sessionId) return;
+    const key = cacheKey(this.sessionId, this.revision);
+    const entry = podCache.get(key);
+    if (entry) entry.previewUrl = url;
+  }
+
+  private updateCacheFingerprint(fingerprint: string | null): void {
+    if (!this.sessionId) return;
+    const entry = podCache.get(cacheKey(this.sessionId, this.revision));
+    if (entry) entry.installFingerprint = fingerprint;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filesystem API — used by RuntimeToolHandlers
+  // ---------------------------------------------------------------------------
+
+  async readFile(path: string): Promise<string> {
+    return this.requirePod().fs.readFile(path, 'utf-8');
+  }
+
+  /** Raw bytes for binary assets (png/jpg/…); used by shaManifest + commit. */
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const raw: unknown = await this.requirePod().fs.readFile(path);
+    if (raw instanceof Uint8Array) return raw;
+    if (typeof raw === 'string') return new TextEncoder().encode(raw);
+    throw new Error(`Unsupported file payload for ${path}`);
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return this.requirePod().fs.exists(path);
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    const pod = this.requirePod();
+    const dir = path.substring(0, path.lastIndexOf('/'));
+    if (dir && dir !== '/') {
+      try { await pod.fs.mkdir(dir, { recursive: true }); } catch { /* exists */ }
+    }
+    await pod.fs.writeFile(path, content);
+  }
+
+  async deleteFile(path: string): Promise<void> {
+    await this.requirePod().fs.unlink(path);
+  }
+
+  /** Absolute VFS paths of every non-ignored file under `path`. */
+  async listFiles(path = '/'): Promise<string[]> {
+    const pod = this.requirePod();
+    const entries: string[] = [];
+    const walk = async (dir: string) => {
+      const items = await pod.fs.readdir(dir);
+      for (const item of items) {
+        if (typeof item !== 'string') continue;
+        const full = dir === '/' ? `/${item}` : `${dir}/${item}`;
+        try {
+          const stat = await pod.fs.stat(full);
+          if (stat.isDirectory) {
+            if (!IGNORED_DIRS.has(item)) await walk(full);
+          } else {
+            entries.push(full);
+          }
+        } catch {
+          entries.push(full);
+        }
+      }
+    };
+    await walk(path);
+    return entries;
+  }
+
+  /** Refresh the cached workspace snapshot used by the source viewer. */
+  async refreshFileCache(): Promise<VfsFiles> {
+    const pod = this.requirePod();
+    const paths = await this.listFiles('/');
+    const files: VfsFiles = {};
+    for (const path of paths) {
+      try {
+        files[path] = await pod.fs.readFile(path, 'utf-8');
+      } catch {
+        try {
+          const raw: unknown = await pod.fs.readFile(path);
+          files[path] =
+            raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw));
+        } catch {
+          // Skip unreadable paths.
+        }
+      }
+    }
+    this._files = files;
+    if (this.sessionId) {
+      const entry = podCache.get(cacheKey(this.sessionId, this.revision));
+      if (entry) entry.files = files;
+    }
+    return files;
+  }
+
+  /**
+   * Contract-shaped directory listing for the `list` tool. `name` is relative
+   * to `relativeRoot`; entries deeper than `depth` levels are omitted (their
+   * ancestor directory is still reported).
+   */
+  async listEntries(relativeRoot: string, depth: number): Promise<FileEntry[]> {
+    const pod = this.requirePod();
+    const root = toVfsPath(relativeRoot);
+    const results: FileEntry[] = [];
+
+    const walk = async (dir: string, prefix: string, level: number) => {
+      let items: string[];
+      try {
+        items = await pod.fs.readdir(dir);
+      } catch {
+        return;
+      }
+      for (const item of items) {
+        if (typeof item !== 'string' || IGNORED_DIRS.has(item)) continue;
+        const full = dir === '/' ? `/${item}` : `${dir}/${item}`;
+        const name = prefix ? `${prefix}/${item}` : item;
+        let stat;
+        try {
+          stat = await pod.fs.stat(full);
+        } catch {
+          continue;
+        }
+        if (stat.isDirectory) {
+          results.push({ name, type: 'dir', size: 0, sha256: null });
+          if (level < depth) await walk(full, name, level + 1);
+        } else {
+          let hash: string | null = null;
+          try {
+            hash = await sha256(await pod.fs.readFile(full, 'utf-8'));
+          } catch {
+            // Binary or unreadable file — the entry still exists, just unhashed.
+          }
+          results.push({ name, type: 'file', size: stat.size, sha256: hash });
+        }
+      }
+    };
+
+    await walk(root, '', 1);
+    // Directories first, then lexicographic — matches the reference adapter.
+    results.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    return results;
+  }
+
+  /** Path -> sha256 over the whole workspace, used to commit a revision. */
+  async shaManifest(): Promise<Map<string, string>> {
+    const manifest = new Map<string, string>();
+    for (const full of await this.listFiles('/')) {
+      const rel = full.replace(/^\//, '');
+      try {
+        manifest.set(rel, await sha256(await this.readFile(full)));
+      } catch {
+        try {
+          manifest.set(rel, await sha256(await this.readFileBytes(full)));
+        } catch {
+          // Skip unreadable paths.
+        }
+      }
+    }
+    return manifest;
+  }
+
+  /**
+   * Run a command to completion. Output is bounded (tail-kept) and the process
+   * is killed — not merely abandoned — when the deadline expires.
+   *
+   * @throws SpawnTimeoutError on deadline expiry
+   */
+  async spawn(cmd: string, args: string[], opts: SpawnOpts = {}): Promise<SpawnResult> {
+    const pod = this.requirePod();
+    const maxBytes = opts.maxOutputBytes ?? RUN_OUTPUT_MAX_BYTES;
+    const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_DEFAULT;
+
+    const spawnOpts: { env?: Record<string, string>; cwd?: string } = {};
+    if (opts.env) spawnOpts.env = opts.env;
+    if (opts.cwd) spawnOpts.cwd = opts.cwd;
+
+    const proc = await pod.spawn(cmd, args, spawnOpts);
+
+    let stdout = '';
+    let stderr = '';
+    let truncated = false;
+    // Trim as we go so a runaway build cannot pin megabytes of string per chunk.
+    proc.on('output', (text: string) => {
+      const bounded = boundOutput(stdout + text, maxBytes);
+      stdout = bounded.text;
+      truncated ||= bounded.truncated;
+      opts.onOutput?.(text, 'stdout');
+    });
+    proc.on('error', (text: string) => {
+      const bounded = boundOutput(stderr + text, maxBytes);
+      stderr = bounded.text;
+      truncated ||= bounded.truncated;
+      opts.onOutput?.(text, 'stderr');
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        proc.completion,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            try {
+              proc.kill();
+            } catch {
+              // Already exited between the deadline and the kill.
+            }
+            reject(new SpawnTimeoutError(timeoutMs));
+          }, timeoutMs);
+        }),
+      ]);
+
+      // Prefer the longer of the stream and the completion payload so a
+      // partial first `output` event cannot hide the rest of the log.
+      const boundedOut = preferCompleteOutput(stdout, result.stdout, maxBytes);
+      const boundedErr = preferCompleteOutput(stderr, result.stderr, maxBytes);
+      return {
+        exitCode: result.exitCode,
+        stdout: boundedOut.text,
+        stderr: boundedErr.text,
+        truncated: truncated || boundedOut.truncated || boundedErr.truncated,
+      };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  teardown(): void {
+    if (!this.pod) return;
+    log('teardown:start');
+    try {
+      // Nodepod.teardown() is synchronous.
+      this.pod.teardown();
+    } catch (err) {
+      log('teardown:error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    this.pod = null;
+    this.lastInstallFingerprint = null;
+  }
+
+  private requirePod(): NodepodInstance {
+    if (!this.pod) throw new Error('Nodepod not booted');
+    return this.pod;
+  }
+}

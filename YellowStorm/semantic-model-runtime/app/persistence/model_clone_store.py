@@ -15,6 +15,7 @@ import json
 import re
 from typing import Any
 
+from app.persistence.partitions import ensure_revision_partitions
 from app.persistence.population_store import ModelJobsRunning, _TERMINAL_JOB_STATES
 from app.population.compiler import canonical_spec_hash
 
@@ -148,6 +149,8 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
             included = [new for old, new in sequence_map.items() if old <= watermark]
             correction_sequence = max(included) if included else 0
 
+            # Its partitions first (migration 031): rows cannot be written for a revision without them.
+            await ensure_revision_partitions(connection, new_revision_id)
             await connection.execute(
                 "INSERT INTO semantic_population.data_revisions (id, model_id, model_version_id, spec_hash, "
                 "source_observations, correction_sequence, projection_ref, coverage, validation_state, "
@@ -185,6 +188,15 @@ async def clone_model_data(pool: Any, *, source_model_id: str, target_model_id: 
                 lambda r: (target_model_id, new_revision_id, remap.text(r["entity_id"]), r["attribute"],
                            r["value"], r["origin"], r["validation_state"], remap.dumps(r["evidence"]),
                            r["mapping_version"], r["created_at"]))
+            await _copy(
+                connection, "SELECT * FROM semantic_population.assertion_candidates WHERE data_revision_id = $1 "
+                "ORDER BY id", source_revision_id,
+                "INSERT INTO semantic_population.assertion_candidates (model_id, data_revision_id, entity_id, "
+                "attribute, value, origin, evidence, mapping_version, created_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)",
+                lambda r: (target_model_id, new_revision_id, remap.text(r["entity_id"]), r["attribute"],
+                           r["value"], r["origin"], remap.dumps(r["evidence"]), r["mapping_version"],
+                           r["created_at"]))
             counts["relationships"] = await _copy(
                 connection, "SELECT * FROM semantic_population.relationships WHERE data_revision_id = $1 ORDER BY id",
                 source_revision_id,

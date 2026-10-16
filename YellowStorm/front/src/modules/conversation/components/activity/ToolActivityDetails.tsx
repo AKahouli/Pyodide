@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronRight, Eye, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
 import { Button } from '@/components/ui/button';
@@ -42,6 +42,7 @@ interface ToolDetailsProps {
   fullTimestamp: string;
   timestampDateTime?: string;
   onRetry?: () => void;
+  isStreaming?: boolean;
 }
 
 function ToolPayload({ label, content, language, kind }: Readonly<{ label: string; content: string; language?: string; kind: 'request' | 'response' }>) {
@@ -60,12 +61,12 @@ function ToolPayload({ label, content, language, kind }: Readonly<{ label: strin
   );
 }
 
-type ToolResponseRevealState = 'idle' | 'loading' | 'shown' | 'empty' | 'error';
+type ToolResponseRevealState = 'idle' | 'loading' | 'shown' | 'empty' | 'error' | 'pending';
 
 /**
  * Tool responses are loaded from the persisted message only when requested.
  */
-function useToolResponseReveal(conversationId: string, messageId: string, componentId: string | undefined, data: ToolActivityData, redactSensitiveText: boolean): {
+function useToolResponseReveal(conversationId: string, messageId: string, componentId: string | undefined, data: ToolActivityData, redactSensitiveText: boolean, isStreaming: boolean): {
   revealState: ToolResponseRevealState;
   load: () => Promise<void>;
   payload: string | undefined;
@@ -73,7 +74,7 @@ function useToolResponseReveal(conversationId: string, messageId: string, compon
   const [revealState, setRevealState] = useState<ToolResponseRevealState>('idle');
   const [fetchedPayload, setFetchedPayload] = useState<string>();
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (revealState === 'loading' || revealState === 'shown') return;
     if (!componentId) {
       setRevealState('empty');
@@ -84,20 +85,24 @@ function useToolResponseReveal(conversationId: string, messageId: string, compon
       const { resultJson } = await fetchToolResult(conversationId, messageId, componentId);
       const formatted = resultJson ? formatToolResponsePayload(data, resultJson, redactSensitiveText) : undefined;
       setFetchedPayload(formatted);
-      setRevealState(formatted ? 'shown' : 'empty');
+      setRevealState(formatted ? 'shown' : isStreaming ? 'pending' : 'empty');
     } catch {
-      setRevealState('error');
+      setRevealState(isStreaming ? 'pending' : 'error');
     }
-  };
+  }, [revealState, componentId, conversationId, messageId, data, redactSensitiveText, isStreaming]);
+
+  useEffect(() => {
+    if (revealState === 'pending' && !isStreaming) void load();
+  }, [revealState, isStreaming, load]);
 
   return { revealState, load, payload: fetchedPayload };
 }
 
-function ToolDetails({ conversationId, messageId, componentId, data, redactSensitiveText, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, onRetry }: Readonly<ToolDetailsProps>) {
+function ToolDetails({ conversationId, messageId, componentId, data, redactSensitiveText, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, onRetry, isStreaming = false }: Readonly<ToolDetailsProps>) {
   const { t } = useModuleTranslation('conversation');
   const request = resolveToolRequest(data, redactSensitiveText);
   const [responseOpen, setResponseOpen] = useState(false);
-  const { revealState, load, payload } = useToolResponseReveal(conversationId, messageId, componentId, data, redactSensitiveText);
+  const { revealState, load, payload } = useToolResponseReveal(conversationId, messageId, componentId, data, redactSensitiveText, isStreaming);
   const isRunning = data.status === 'running';
   const copyText = [
     fullToolName,
@@ -137,6 +142,7 @@ function ToolDetails({ conversationId, messageId, componentId, data, redactSensi
                   {revealState === 'loading' && <div className='flex min-h-24 items-center justify-center'><Loader2 className='size-5 animate-spin text-primary' aria-hidden='true' /></div>}
                   {revealState === 'shown' && payload && <pre data-tool-payload='response' className='max-h-[65vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-xs text-foreground'>{payload}</pre>}
                   {revealState === 'empty' && <p className='text-sm text-muted-foreground'>{t('stream.activity.responseUnavailable')}</p>}
+                  {revealState === 'pending' && <p role='status' className='text-sm text-muted-foreground'>{t('stream.activity.responsePending')}</p>}
                   {revealState === 'error' && <p className='text-sm text-destructive'>{t('stream.activity.responseError')}</p>}
                 </DialogContent>
               </Dialog>
@@ -162,7 +168,7 @@ function ToolDetails({ conversationId, messageId, componentId, data, redactSensi
   );
 }
 
-export function ToolRow({ conversationId, messageId, component, redactSensitiveText, onRetry }: Readonly<{ conversationId: string; messageId: string; component: MessageComponent; redactSensitiveText: boolean; onRetry?: () => void }>) {
+export function ToolRow({ conversationId, messageId, component, redactSensitiveText, onRetry, isStreaming = false }: Readonly<{ conversationId: string; messageId: string; component: MessageComponent; redactSensitiveText: boolean; onRetry?: () => void; isStreaming?: boolean }>) {
   const { t, language } = useModuleTranslation('conversation');
   const [open, setOpen] = useState(false);
   const data = component.data as ToolActivityData;
@@ -211,7 +217,7 @@ export function ToolRow({ conversationId, messageId, component, redactSensitiveT
           {row}
         </button>
       </CollapsibleTrigger>
-      {open && <ToolDetails conversationId={conversationId} messageId={messageId} componentId={component.id} data={data} redactSensitiveText={redactSensitiveText} fullToolName={fullToolName} summary={description} compactTimestamp={compactTimestamp} fullTimestamp={fullTimestamp} timestampDateTime={timestamp?.dateTime} onRetry={onRetry} />}
+      {open && <ToolDetails conversationId={conversationId} messageId={messageId} componentId={component.id} data={data} redactSensitiveText={redactSensitiveText} fullToolName={fullToolName} summary={description} compactTimestamp={compactTimestamp} fullTimestamp={fullTimestamp} timestampDateTime={timestamp?.dateTime} onRetry={onRetry} isStreaming={isStreaming} />}
     </Collapsible>
   );
 }

@@ -111,7 +111,7 @@ export class RootBackgroundLifecycleService {
   async itemSettle(executionId: string, itemId: string, request: RootBackgroundSettlementDto) {
     const owned = await this.ownedItem(executionId, itemId, request);
     if (request.status === 'cancelled') {
-      if (request.text || request.fullText || request.evidence?.length) {
+      if (request.text || request.fullText || request.evidence?.length || request.evidenceManifest) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Cancellation cannot publish child output');
       }
       const cancelled = await this.work.completeExecution(itemId, 'cancelled', null, [], owned.grant);
@@ -122,10 +122,19 @@ export class RootBackgroundLifecycleService {
     await this.jobs.getOwnedFanoutItem(owned.grant, itemId);
     const result = await this.definitions.settle(owned.parent.id, itemId, {
       status: request.status, text: request.text, fullText: request.fullText, evidence: request.evidence,
+      evidenceManifest: request.evidenceManifest,
     }, owned.grant);
     if (!result) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out settlement unavailable');
     await this.jobs.getOwnedFanoutItem(owned.grant, itemId);
     return result;
+  }
+
+  async stageEvidence(executionId: string, request: RootBackgroundSettlementDto, itemId?: string) {
+    if (request.status !== 'completed') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Evidence page requires a completion proposal');
+    const owned = itemId ? await this.ownedItem(executionId, itemId, request) : await this.owned(executionId, request);
+    const producerId = itemId ?? executionId;
+    await this.results.authorizeBackgroundExecution(owned.job.conversationId, producerId, owned.job.actorId);
+    return this.definitions.stageEvidence(owned.parent.id, producerId, { ...request, status: 'completed' }, owned.grant);
   }
 
   async ingest(executionId: string, request: RootBackgroundEventsDto) {
@@ -152,7 +161,7 @@ export class RootBackgroundLifecycleService {
     if (child.terminalAt) return { executionId, status: child.status, resultRef: executionId };
     const grant = { executionId, owner: request.owner, fence: request.fence, nativeOwner: request.nativeOwner };
     if (request.status === 'cancelled') {
-      if (request.text || request.fullText || request.evidence?.length) {
+      if (request.text || request.fullText || request.evidence?.length || request.evidenceManifest) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Cancellation cannot publish child output');
       }
       const cancelled = await this.work.completeExecution(executionId, 'cancelled', null, [], grant);
@@ -192,6 +201,7 @@ export class RootBackgroundLifecycleService {
     }
     const result = await this.definitions.settle(job.parentExecutionId, executionId, {
       status: request.status, text: request.text, fullText: request.fullText, evidence: request.evidence,
+      evidenceManifest: request.evidenceManifest,
     }, grant);
     if (!result) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Background settlement was not recorded');
     const committed = await this.work.getExecution(executionId);

@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -249,8 +250,11 @@ async def delete_team(team_id: str, workspace_id: str | None = None) -> AgentMcp
 if __name__ == "__main__":
     settings.validate()
     os.environ.setdefault("HOST", "0.0.0.0")
+    public_key = Path(settings.jwt_public_key_file).read_text(encoding="utf-8") if settings.auth_mode == "JWT" else ""
     middleware = [Middleware(
         TrustedIdentityMiddleware,
         ingress_token=settings.ingress_token,
+        auth_mode=settings.auth_mode, jwt_public_key=public_key,
+        jwt_issuer=settings.jwt_issuer, jwt_audience=settings.jwt_audience,
     )]
     mcp.run(transport="streamable-http", host="0.0.0.0", port=settings.port, middleware=middleware)

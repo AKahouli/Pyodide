@@ -12,8 +12,8 @@ import { semanticModelQueryKeys } from '../query/queryKeys';
 export function usePopulationRun(modelId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } = { kind: 'model' }) =>
-      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope }),
+    mutationFn: ({ scope = { kind: 'model' }, rereadDocuments = false }: { scope?: { kind: 'model' } | { kind: 'mapping'; mappingId: string }; rereadDocuments?: boolean } = {}) =>
+      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope, ...(rereadDocuments ? { rereadDocuments } : {}) }),
     onSuccess: () => {
       if (!modelId) return;
       // The run is asynchronous and there is no progress endpoint yet, so refresh what the
@@ -21,6 +21,22 @@ export function usePopulationRun(modelId: string | undefined) {
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) });
+    },
+  });
+}
+
+/**
+ * Rebuilds only the graph of the data in use, from the records and links already stored: no source is
+ * read again and no AI call is made. The records stay as they are.
+ */
+export function useReprojectGraph(modelId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => semanticModelApi.reprojectPopulationGraph(modelId ?? ''),
+    onSuccess: () => {
+      if (!modelId) return;
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graphStatus(modelId) });
     },
   });
 }

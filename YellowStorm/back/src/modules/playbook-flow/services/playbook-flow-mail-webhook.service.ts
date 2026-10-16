@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { PlaybookFlowMailGraphClientService } from './playbook-flow-mail-graph-client.service';
+import {
+  PlaybookFlowMailGraphClientService,
+  pinInboxMessageResource,
+} from './playbook-flow-mail-graph-client.service';
 import { PlaybookFlowMailTriggerOrchestrationService } from './playbook-flow-mail-trigger-orchestration.service';
 import { PlaybookFlowMailTriggerHandoffService } from './playbook-flow-mail-trigger-handoff.service';
 import { FlowNormalizedMailEventData, FlowMailMessageAttachmentData } from '../interfaces/playbook-flow-mail.interface';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { timingSafeStringEquals } from '@common/utils';
 import { LoggerService } from '@modules/logger';
 import { FlowRepository, type FlowTriggerRef } from '../persistence/flow.repository';
 import { MailEventLedgerRepository } from '../persistence/mail-event-ledger.repository';
@@ -40,10 +44,19 @@ export class PlaybookFlowMailWebhookService {
       if (!flow) continue;
 
       try {
+        // Pin the notification to the subscribed inbox shape: Graph does not
+        // sign notifications, so the resource path is attacker-controlled and
+        // must not decide which mailbox resource we read.
+        const pinnedResource = pinInboxMessageResource(resource, messageId);
+        if (!pinnedResource) {
+          this.logger.warn('Rejected mail notification with unexpected resource path', { subscriptionId });
+          continue;
+        }
+
         const graphMessage = await this.graphClient.getMessageByResource(
           flow.ownerId,
           this.getMailboxAppKey(flow),
-          resource || `/me/messages/${encodeURIComponent(messageId)}`,
+          pinnedResource,
         );
 
         const normalizedEvent = this.normalizeMessage(flow, graphMessage);
@@ -95,15 +108,21 @@ export class PlaybookFlowMailWebhookService {
   }
 
   private async findFlowBySubscription(subscriptionId: string, clientState: string): Promise<FlowTriggerRef | null> {
+    // The clientState is the notification's only proof of authenticity, so it
+    // is compared constant-time against the stored secret — never matched
+    // through a lookup whose timing could leak how close a guess was.
     const [flow] = await this.flows.listByTrigger('mail', {
       enabled: true,
       subscriptionId,
-      subscriptionClientState: clientState,
     });
 
     if (!flow) return null;
     const params = flow.triggerConfig?.params ?? {};
-    if (params.subscriptionId !== subscriptionId || params.subscriptionClientState !== clientState) return null;
+    if (params.subscriptionId !== subscriptionId ||
+        !timingSafeStringEquals(clientState, params.subscriptionClientState as string | undefined)) {
+      this.logger.warn('Rejected mail notification with mismatched subscription', { subscriptionId });
+      return null;
+    }
     return flow;
   }
 

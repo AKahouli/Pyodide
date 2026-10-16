@@ -108,9 +108,9 @@ export function applyChunksToComponents(components: StreamingComponent[], chunks
   for (const { action, component } of chunks) {
     if (action === 'add') {
       const existingIndex = result.findIndex((item) => item.id === component.id);
-      if (component.type === 'toolActivity' && existingIndex >= 0) {
+      if (['toolActivity', 'agentActivity'].includes(component.type) && existingIndex >= 0) {
         const existing = result[existingIndex];
-        result[existingIndex] = { ...existing, data: mergeStreamingData('toolActivity', existing.data, component.data) };
+        result[existingIndex] = { ...existing, data: mergeStreamingData(existing.type, existing.data, component.data) };
       } else {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
@@ -150,6 +150,23 @@ function initializeStreamingData(type: string, data: Record<string, unknown>): R
   return { ...data, chartData: actualData, data: actualData };
 }
 
+/**
+ * Streamed reasoning updates carry only the appended text (`detailDelta`) and
+ * the `detailOffset` it extends; a full `detail` replacement is still valid and
+ * is what snapshots, `add` frames and older backends send. An offset behind the
+ * current text means a replayed delta (idempotent re-apply); an offset ahead of
+ * it means a missed frame, so the detail is left untouched rather than
+ * fabricated — the next full replacement or the persisted message repairs it.
+ */
+function mergeAgentActivity(existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
+  const { detailDelta, detailOffset, ...fields } = incoming;
+  if (typeof detailDelta !== 'string') return { ...existing, ...fields };
+  const current = typeof existing.detail === 'string' ? existing.detail : '';
+  const offset = typeof detailOffset === 'number' ? detailOffset : current.length;
+  if (offset > current.length) return { ...existing, ...fields };
+  return { ...existing, ...fields, detail: current.slice(0, offset) + detailDelta };
+}
+
 function mergeStreamingData(type: string, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
   switch (type) {
     case 'text': {
@@ -160,7 +177,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       return { ...existing, content: existingContent + sentenceGap + newContent };
     }
     case 'agentActivity':
-      return { ...existing, ...incoming };
+      return mergeAgentActivity(existing, incoming);
     case 'code':
       return {
         ...existing,

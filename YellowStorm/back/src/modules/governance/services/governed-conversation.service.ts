@@ -62,7 +62,9 @@ export class GovernedConversationService {
 
   async getCapabilities(userId: string, conversationId: string): Promise<Record<string, unknown>> {
     const conversation = await this.conversationService.findById(conversationId);
-    if (conversation.createdBy !== userId) throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN);
+    if (conversation.createdBy !== userId && !conversation.groupMeta?.members.some((member) => member.userId === userId)) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN);
+    }
     if (conversation.runtimeMode !== 'governed' || !conversation.governanceContext) return { runtimeMode: 'standard' };
     await this.audienceService.assertUserAuthorized(userId, conversation.governanceContext.scopeId);
     const [scope, agents, revision] = await Promise.all([

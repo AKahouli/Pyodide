@@ -1,4 +1,4 @@
-# Conversation V2 — Backend-Owned State, Messages, and Artifacts
+# App Builder — Backend-Owned State, Messages, and Artifacts
 
 **Date:** 2026-05-25
 **Branch context:** `feature/conversation_artifacts`
@@ -6,7 +6,7 @@
 
 ## 1. Motivation
 
-Conversation V2 today is a thin pointer on top of an AI-service-owned session. The backend persists only `ConversationV2Session` (sessionId, title, status, workspaceIds, share fields). Every page load calls the AI service's `GetSession` rpc to retrieve the full event history (messages, tool calls, plan/step updates, attachments). Live chat streams events from the `Chat` rpc straight to SSE; we write nothing to Mongo except a few pointer fields (`title`, `status`, `lastEventAt`).
+App Builder today is a thin pointer on top of an AI-service-owned session. The backend persists only `ConversationV2Session` (sessionId, title, status, workspaceIds, share fields). Every page load calls the AI service's `GetSession` rpc to retrieve the full event history (messages, tool calls, plan/step updates, attachments). Live chat streams events from the `Chat` rpc straight to SSE; we write nothing to Mongo except a few pointer fields (`title`, `status`, `lastEventAt`).
 
 This is too thin to evolve on. Concretely, this rework unlocks:
 

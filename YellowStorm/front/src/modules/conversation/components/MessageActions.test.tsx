@@ -117,8 +117,9 @@ vi.mock('../utils', async () => {
   const actual = await vi.importActual<typeof import('../utils')>('../utils');
   return {
     ...actual,
-    componentsToMarkdown: (components: Array<{ data?: { content?: unknown } }>) => {
-      const content = components.find((component) => typeof component.data?.content === 'string')?.data?.content;
+    componentsToMarkdown: (components: Array<{ data?: { content?: unknown } }>, projectText?: (component: unknown) => string | undefined) => {
+      const component = components.find((candidate) => typeof candidate.data?.content === 'string');
+      const content = component ? projectText?.(component) ?? component.data?.content : undefined;
       return typeof content === 'string' ? content : 'markdown';
     },
   };
@@ -205,6 +206,26 @@ describe('MessageActions', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.regenerateAria' }));
     expect(regenerateMessageMock).toHaveBeenCalledWith('conv-1', 'ai-1');
+  });
+
+  it('copies the rendered text of an OpenUI answer instead of its program', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    document.body.innerHTML = '<div id="message-ai-openui"><div data-openui-scope><p>Revenue grew 12%.</p></div></div>';
+    try {
+      render(
+        <MessageActions
+          message={{ id: 'ai-openui', feedback: null, isComplete: true, isStreaming: false, modelId: 'model-1', createdAt: '2026-07-29T13:00:00.000Z',
+            components: [{ id: 'text-1', type: 'text', data: { content: 'root = Stack([a])\na = TextContent(\"Revenue grew 12%.\")' } }] } as never}
+          isLastAiMessage
+          conversationId="conv-1"
+        />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'messageActions.copyAria' }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('Revenue grew 12%.'));
+    } finally {
+      document.body.innerHTML = '';
+    }
   });
 
   it('branches from a completed response using the selected path', async () => {

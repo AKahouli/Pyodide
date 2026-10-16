@@ -2,6 +2,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from hmac import compare_digest
 import re
+import jwt
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 from structlog.contextvars import bind_contextvars, unbind_contextvars
@@ -54,9 +57,34 @@ def _identity_value(headers: dict[bytes, bytes], name: bytes) -> str:
 
 
 class TrustedIdentityMiddleware:
-    def __init__(self, app: ASGIApp, ingress_token: str) -> None:
+    def __init__(self, app: ASGIApp, ingress_token: str, auth_mode: str = "Bearer", jwt_public_key: str = "", jwt_issuer: str = "", jwt_audience: str = "mcp-agent") -> None:
+        if auth_mode not in ("JWT", "Bearer"):
+            raise ValueError("Auth mode must be JWT or Bearer")
+        if auth_mode == "JWT":
+            if not jwt_issuer or not jwt_audience or not isinstance(load_pem_public_key(jwt_public_key.encode()), RSAPublicKey):
+                raise ValueError("JWT mode requires an RSA public key, issuer and audience")
         self.app = app
         self.ingress_token = ingress_token
+        self.auth_mode = auth_mode
+        self.jwt_public_key = jwt_public_key
+        self.jwt_issuer = jwt_issuer
+        self.jwt_audience = jwt_audience
+
+    def _jwt_user_id(self, headers: list[tuple[bytes, bytes]]) -> str:
+        values = [value for name, value in headers if name.lower() == b"authorization"]
+        if len(values) != 1:
+            return ""
+        parts = values[0].decode("utf-8", errors="replace").split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return ""
+        try:
+            claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
+                issuer=self.jwt_issuer, audience=self.jwt_audience,
+                options={"require": ["sub", "iss", "aud", "iat", "exp"]})
+            user_id = claims["sub"]
+            return user_id if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ""
+        except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
+            return ""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -68,7 +96,9 @@ class TrustedIdentityMiddleware:
             return
 
         raw_headers = scope.get("headers", [])
-        if not _has_valid_bearer_auth(raw_headers, self.ingress_token):
+        jwt_user_id = self._jwt_user_id(raw_headers) if self.auth_mode == "JWT" else ""
+        authenticated = bool(jwt_user_id) if self.auth_mode == "JWT" else _has_valid_bearer_auth(raw_headers, self.ingress_token)
+        if not authenticated:
             await send({
                 "type": "http.response.start",
                 "status": 401,
@@ -78,7 +108,7 @@ class TrustedIdentityMiddleware:
             return
 
         headers = {key.lower(): value for key, value in raw_headers}
-        user_id = headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
+        user_id = jwt_user_id if self.auth_mode == "JWT" else headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
         if user_id and not _IDENTIFIER.fullmatch(user_id):
             # The acting user drives authorization; a malformed value is rejected.
             await send({
@@ -91,9 +121,9 @@ class TrustedIdentityMiddleware:
 
         context = PlatformActorContext(
             user_id=user_id,
-            agent_id=_identity_value(headers, b"x-yellowstorm-agent-id") or _UNKNOWN_AGENT,
-            conversation_id=_identity_value(headers, b"x-yellowstorm-conversation-id") or _UNKNOWN_CONVERSATION,
-            correlation_id=_identity_value(headers, b"x-correlation-id") or _UNKNOWN_CORRELATION,
+            agent_id=_identity_value(headers, b"x-yellowstorm-agent-id") or (_UNKNOWN_AGENT if self.auth_mode == "Bearer" else ""),
+            conversation_id=_identity_value(headers, b"x-yellowstorm-conversation-id") or (_UNKNOWN_CONVERSATION if self.auth_mode == "Bearer" else ""),
+            correlation_id=_identity_value(headers, b"x-correlation-id") or (_UNKNOWN_CORRELATION if self.auth_mode == "Bearer" else ""),
         ) if user_id else None
         user_token = acting_user_id.set(user_id or None)
         actor_token = actor_context.set(context)

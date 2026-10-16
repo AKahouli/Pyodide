@@ -735,7 +735,8 @@ export class SemanticSourceMappingService {
     SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     if (kind !== 'document' && !dto.sheetName) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A sheet is required for spreadsheet mappings');
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
-    const aiSettings = kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null;
+    // A sheet read without AI keeps only its own record limit.
+    const aiSettings = storedAiSettings(kind === 'document' || usesAiExtraction(dto.fieldMappings) ? dto.aiSettings : { maxRecords: dto.aiSettings?.maxRecords });
     SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
     const expand = storedExpand(dto.expand);
     const revision = await this.database.transaction(async (client) => {

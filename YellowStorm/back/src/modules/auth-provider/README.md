@@ -63,7 +63,7 @@ Routes under `/api/v1/auth/providers/`. All are public (no JWT required).
 | GET | `/auth/providers` | — | List enabled providers (no secrets exposed) |
 | GET | `/auth/providers/:providerKey/authorize` | 10/min | Redirect to OAuth provider authorization URL |
 | GET | `/auth/providers/:providerKey/callback` | — | Handle OAuth callback, redirect to frontend |
-| POST | `/auth/providers/exchange` | 10/min | Exchange temp token for JWT + refresh cookie |
+| POST | `/auth/providers/exchange` | 10/min | Exchange the `oauth_exchange` cookie for JWT + refresh cookie |
 | GET | `/auth/providers/link/verify` | 5/min | Verify email linking token, redirect to frontend |
 
 ### Admin Endpoints
@@ -137,14 +137,14 @@ Microsoft authenticates user, redirects back
   → Exchanges authorization code for tokens (sends PKCE code_verifier)
   → Fetches userinfo (sub, email, name)
   → Runs decision tree:
-      Linked       → create temp token → redirect with ?token=xxx
+      Linked       → create exchange code → Set-Cookie oauth_exchange → redirect with ?login=success
       Email exists → send linking email → redirect with ?link_required=true
-      New user     → create user + link → redirect with ?token=xxx
+      New user     → create user + link → same as above
   → 302 redirect to frontend /#/oauth-callback?...
 
 Frontend OAuthCallbackPage
-  → POST /auth/providers/exchange { token: xxx }
-  → Backend validates temp token (single-use, 5min TTL)
+  → POST /auth/providers/exchange (no body; the oauth_exchange HttpOnly cookie carries the code)
+  → Backend validates the code (single-use, 2min TTL) and clears the cookie
   → Returns JWT access token + HTTP-only refresh cookie
   → Frontend stores access token, redirects to /
 ```
@@ -168,12 +168,12 @@ Frontend OAuthCallbackPage
 
 ## Security Considerations
 
-- **OAuth State** — Server-side, single-use, 10-minute TTL. Prevents CSRF attacks.
+- **OAuth State** — Server-side, single-use, 10-minute TTL. Prevents CSRF attacks. Bound to the initiating browser: `/authorize` sets an HttpOnly `oauth_state_binding` cookie (SameSite=Lax, scoped to the provider callback path, state TTL) holding a random nonce whose SHA-256 is embedded in the state (`<random>.<sha256(nonce)>`); the callback compares it in constant time and rejects with `ERR_1122` when the cookie is missing or different. The cookie is cleared on every callback outcome.
 - **PKCE (S256)** — Code verifier stored server-side only; only the SHA-256 challenge is sent to the provider. Prevents authorization code interception.
 - **Secrets Encrypted at Rest** — AES-256-GCM with a unique IV per value. Client secrets are never stored in plaintext.
 - **No Secrets in Public Endpoints** — Public provider listing omits all sensitive fields.
 - **Account Linking Requires Email Verification** — Existing accounts are never auto-linked. A verification email must be confirmed before linking completes.
-- **Temp Token** — 5-minute TTL, single-use (deleted on consumption). Bridges the OAuth redirect and the secure JWT exchange.
+- **Exchange code** — 2-minute TTL, single-use (deleted on consumption). Bridges the OAuth redirect and the secure JWT exchange. Delivered only in an HttpOnly `oauth_exchange` cookie (SameSite=Lax, path scoped to the exchange endpoint), never in a URL.
 - **Rate Limiting** — Authorization, exchange, and verify endpoints are rate-limited to prevent abuse.
 - **Audit Logging** — All admin CRUD operations produce audit log entries.
 - **Unlink Protection** — Users cannot remove their last authentication method, preventing account lockout.

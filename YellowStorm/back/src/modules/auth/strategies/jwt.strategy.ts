@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
-import { UserService } from '../../user/user.service';
-import { AuthService } from '../auth.service';
+import { UserService } from '../../user/services/user.service';
+import { AuthService } from '../services/auth.service';
 import type { SessionStore } from '../persistence/session.store';
 import { toAuthUser } from '../../user/persistence/user-record.mapper';
 import { UnauthorizedException, ServiceUnavailableException } from '../../exceptions';
@@ -12,6 +12,16 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { getAccountAccessDenial } from '../../user/utils/assert-account-accessible';
 import { classifySessionStoreError, isTransientSessionStoreError } from '../utils/session-store-errors';
 import { PgSessionStore } from '../persistence/pg-session.store';
+
+import { JWT_ALGORITHM } from '../constants/jwt.constants';
+
+/**
+ * Claims as verified by passport. The permission claims are absent on tokens
+ * minted by older releases, so they are optional here even though new tokens
+ * always carry them.
+ */
+type VerifiedJwtPayload = Omit<JwtPayload, 'permissions' | 'roleNames' | 'permissionsVersion'> &
+  Partial<Pick<JwtPayload, 'permissions' | 'roleNames' | 'permissionsVersion'>>;
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -28,20 +38,20 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
 
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
-        (req) => {
-          return req?.query?.token;
-        },
-      ]),
+      // Header-only: a query-string JWT lands in access logs, history and
+      // Referer. EventSource routes (conversation/notification/playbook
+      // streams) are @Public and authenticate with their own query-token
+      // guards, so they never reach this strategy.
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: secret,
+      algorithms: [JWT_ALGORITHM],
       issuer: configService.get<string>('jwt.issuer'),
       audience: configService.get<string>('jwt.audience'),
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(payload: VerifiedJwtPayload) {
     if (payload.type !== 'access') {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid token type');
     }
@@ -74,9 +84,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         throw new UnauthorizedException(accessDenial.code, accessDenial.message);
       }
       return toAuthUser(found.user, {
-        permissions: payload.permissions || [],
-        roleNames: payload.roleNames || [],
-        permissionsVersion: payload.permissionsVersion || 1,
+        permissions: payload.permissions ?? [],
+        roleNames: payload.roleNames ?? [],
+        permissionsVersion: payload.permissionsVersion ?? 1,
       });
     }
 
@@ -93,9 +103,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     return {
       ...user,
-      permissions: payload.permissions || [],
-      roleNames: payload.roleNames || [],
-      permissionsVersion: payload.permissionsVersion || 1,
+      permissions: payload.permissions ?? [],
+      roleNames: payload.roleNames ?? [],
+      permissionsVersion: payload.permissionsVersion ?? 1,
     };
   }
 }

@@ -15,7 +15,7 @@ from app.datasource.logical_search import LogicalSearchError, combine_hits, sear
 from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadError,
                                            get_outline, read_complete_section_set)
 
-from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_pattern, fold,
+from .document_rules import (PASSAGE_LOCATIONS, all_matches, answer_options, clean, compile_pattern, fold,
                              folded_label_regex, heading_matches, heading_text, label_found,
                              next_line_values, normalize_ai_settings, same_line_values, shaped_input,
                              to_iso_date_or_period)
@@ -166,15 +166,21 @@ def _evidence(block: dict[str, Any], section: dict[str, Any], raw_text: str,
     }
 
 
-async def _whole_document(connection: Any, document_pk: Any) -> list[dict[str, Any]]:
-    """Every section of the document (bounded by the outline limit), in reading order."""
+async def _whole_document(connection: Any, document_pk: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Every section of the document (bounded by the outline limit), in reading order, and
+    whether that is the whole document: false when the outline, the sections asked for or the
+    blocks read were cut, or a section could not be found."""
     outline = await get_outline(connection, document_pk=document_pk)
     section_pks = [section["sectionPk"] for section in outline["sections"]][:MAX_CLOSURE_SECTIONS]
     if not section_pks:
-        return []
+        return [], not outline["truncated"]
     read = await read_complete_section_set(
         connection, document_pk=document_pk, section_pks=section_pks, include_descendants=True)
-    return sorted(read["sections"], key=_section_position)
+    coverage = read["coverage"]
+    complete = (coverage["directBlocksComplete"] and not coverage.get("outlineTruncated")
+                and not outline["truncated"] and len(outline["sections"]) <= MAX_CLOSURE_SECTIONS
+                and not read.get("missingTargets"))
+    return sorted(read["sections"], key=_section_position), complete
 
 
 def _section_position(section: dict[str, Any]) -> tuple[int, int]:
@@ -740,12 +746,12 @@ async def read_document_values(
     rule_items: dict[str, list[tuple[Any, dict[str, Any], str]]] = {}
     cut_fields: list[str] = []
 
-    whole_cache: list[list[dict[str, Any]]] = []
+    whole_cache: list[tuple[list[dict[str, Any]], bool]] = []
 
     async def whole() -> list[dict[str, Any]]:
         if not whole_cache:
             whole_cache.append(await _whole_document(connection, document_pk))
-        return whole_cache[0]
+        return whole_cache[0][0]
 
     search_truncated = False
     read = None
@@ -837,7 +843,9 @@ async def read_document_values(
             # Fields whose values differ per record (not shared), those matching fewer times than there are
             # records, and those with more matches than are read.
             "itemKeys": sorted(rule_items), "unevenFields": uneven, "cutFields": cut_fields,
-            "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
+            "readComplete": bool((read is None or (read["coverage"]["directBlocksComplete"]
+                                                    and not read["coverage"].get("outlineTruncated")))
+                                 and all(complete for _sections, complete in whole_cache)),
             "searchTruncated": search_truncated}
 
 
@@ -906,7 +914,7 @@ async def populate_document(
             "mappingVersion": entry["mappingVersion"], "labelField": entry.get("labelField"),
             "assetRef": asset_ref, "contentHash": current.get("contentHash"),
             "documentPk": candidate["documentPk"], "aiExtraction": ai_extraction,
-            **({"options": options} if options else {})})
+            **({"options": answer_options(options)} if options else {})})
         cached = await cache.get(cache_key)
         if cached is not None:
             cached["indexObservation"] = observation

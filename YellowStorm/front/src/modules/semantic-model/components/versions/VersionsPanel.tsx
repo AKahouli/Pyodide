@@ -10,7 +10,7 @@ import { semanticModelApi } from '../../api';
 import { useSemanticVersions, useVersionComparison } from '../../query/hooks';
 import type { VersionChange, VersionComparison } from '../../types';
 
-export function VersionsPanel({ modelId, canEdit, canPublish, onPublished, onClose }: Readonly<{ modelId: string; canEdit: boolean; canPublish: boolean; onPublished: () => void; onClose?: () => void }>) {
+export function VersionsPanel({ modelId, canEdit, canPublish, publishBlockedReason, onPublished, onClose }: Readonly<{ modelId: string; canEdit: boolean; canPublish: boolean; /** Why publishing is held back by errors in the model, when it is. */ publishBlockedReason?: string | null; onPublished: () => void; onClose?: () => void }>) {
   const { t,language } = useModuleTranslation('semantic-model');
   const versions = useSemanticVersions(modelId);
   const list = versions.data ?? [];
@@ -38,7 +38,8 @@ export function VersionsPanel({ modelId, canEdit, canPublish, onPublished, onClo
       <h3 className='text-sm font-semibold'>{t('versionChanges.ifYouPublish')}</h3>
       <ChangeList comparison={publishChanges.data} loading={publishChanges.isLoading} failed={publishChanges.isError} />
     </section>}
-    {canEdit&&<Button className='mb-5 w-full' onClick={() => setConfirmOpen(true)} disabled={!canPublish}><Send className='mr-2 h-4 w-4' />{t('versions.publish')}</Button>}
+    {canEdit&&<Button className={publishBlockedReason?'mb-2 w-full':'mb-5 w-full'} onClick={() => setConfirmOpen(true)} disabled={!canPublish||Boolean(publishBlockedReason)} title={publishBlockedReason??undefined}><Send className='mr-2 h-4 w-4' />{t('versions.publish')}</Button>}
+    {canEdit&&publishBlockedReason&&<p className='mb-5 text-xs text-destructive' role='status'>{publishBlockedReason}</p>}
     {list.length > 1 && <section className='mb-5 rounded-xl border p-3' aria-label={t('versionChanges.compareTitle')}>
       <h3 className='flex items-center gap-2 text-sm font-semibold'><GitCompare className='h-4 w-4' />{t('versionChanges.compareTitle')}</h3>
       <div className='mt-2 grid gap-2 text-xs'>

@@ -25,12 +25,13 @@ import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.graph_search.connect import MAX_LINKS, MAX_PATHS, connect
 from app.graph_search.embeddings import profile_from_env
-from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
-                                      settings_for_revision)
-from app.graph_search.record_query import compile_query, overview, run_query
-from app.graph_search.retrieval import find_seeds, resolve_concepts, resolve_relations
-from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
+from app.graph_search.indexer import (CANCELLED_CODE, IndexUnavailable, SYSTEM_ACTOR, request_index,
+                                      request_index_quietly, settings_for_revision)
+from app.graph_search.record_query import compile_query, diagnose, field_keys_by_concept, overview, run_query
+from app.graph_search.retrieval import describe_entity, find_seeds, is_visible, resolve_concepts, resolve_relations
+from app.graph_search.settings import IndexBuildSettings, IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
 from app.persistence import population_store as store
@@ -48,10 +49,19 @@ class _Pinned(BaseModel):
     actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
     model_id: str = Field(alias="modelId", min_length=1, max_length=200)
     environment: Environment = "production"
-    allowed_workspace_ids: list[str] | None = Field(default=None, alias="allowedWorkspaceIds",
-                                                    max_length=2000)
+    # The caller computes this from the actor's current workspace access. Required: a missing
+    # or null scope is a validation failure, never "every workspace". An empty list is honest —
+    # only records read from no workspace at all (typed by hand) show.
+    allowed_workspace_ids: list[str] = Field(alias="allowedWorkspaceIds", max_length=2000)
     expected_data_revision_id: str | None = Field(default=None, alias="expectedDataRevisionId",
                                                   max_length=200)
+
+    @field_validator("allowed_workspace_ids")
+    @classmethod
+    def _bounded_workspaces(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 200 for item in value):
+            raise ValueError("workspace id must be 1..200 characters")
+        return value
 
 
 class RequestSettings(BaseModel):
@@ -61,6 +71,8 @@ class RequestSettings(BaseModel):
 
     index: IndexSettings | None = None
     search: SearchSettings | None = None
+    # How an index is built (performance only; never part of an index's identity).
+    build: IndexBuildSettings | None = None
 
 
 class SearchQuery(_Pinned):
@@ -90,23 +102,36 @@ class ExpandQuery(_Pinned):
     seed_entity_ids: list[str] = Field(alias="seedEntityIds", min_length=1, max_length=25)
     steps: list[ExpandStep] = Field(min_length=1, max_length=MAX_STEPS)
     max_nodes: int = Field(default=50, alias="maxNodes", ge=1, le=100)
+    # Field values to return with the records (key, label or alias; "*" for all).
+    fields: list[str] | None = Field(default=None, max_length=60)
+    catalog: Catalog | None = None
 
 
 class RecordFilter(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    field: str = Field(max_length=300)
+    field: str = Field(max_length=600)
     op: str = Field(max_length=30)
     value: Any = None
     as_: str | None = Field(default=None, alias="as", max_length=20)
 
 
+class LinkedTo(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    # A relationship, or several in a row: "<relation>.<relation>".
+    relation: str = Field(max_length=600)
+    record_ids: list[str] = Field(alias="recordIds", min_length=1, max_length=200)
+
+
 class GroupBy(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    field: str = Field(max_length=300)
+    field: str = Field(max_length=600)
     bucket: str | None = Field(default=None, max_length=20)
     as_: str | None = Field(default=None, alias="as", max_length=20)
+    # traverse-records only: group on the records of that point of the walk (0 is its start).
+    step: int | None = Field(default=None, ge=0, le=10)
 
 
 class Aggregate(BaseModel):
@@ -159,6 +184,9 @@ class Catalog(BaseModel):
     relations: list[CatalogRelation] = Field(default_factory=list, max_length=1000)
 
 
+ExpandQuery.model_rebuild()
+
+
 class RecordsQuery(_Pinned):
     """Checked part by part by ``compile_query``; here only sizes are bounded."""
     concept: str = Field(min_length=1, max_length=300)
@@ -168,13 +196,64 @@ class RecordsQuery(_Pinned):
     aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
     order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
     fields: list[str] | None = Field(default=None, max_length=200)
+    linked_to: list[LinkedTo] = Field(default_factory=list, alias="linkedTo", max_length=20)
     limit: int = 50
     offset: int = 0
     catalog: Catalog = Field(default_factory=Catalog)
 
 
+class TraverseStart(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    concept: str = Field(min_length=1, max_length=300)
+    record_ids: list[str] | None = Field(default=None, alias="recordIds", min_length=1, max_length=200)
+    filters: list[RecordFilter] = Field(default_factory=list, max_length=50)
+    match: str = Field(default="all", max_length=10)
+
+
+class TraverseStep(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    relation: str = Field(min_length=1, max_length=300)
+    direction: Literal["outgoing", "incoming"] | None = None
+    min_hops: int = Field(default=1, alias="minHops", ge=1, le=10)
+    max_hops: int | None = Field(default=None, alias="maxHops", ge=1, le=10)
+    filters: list[RecordFilter] = Field(default_factory=list, max_length=50)
+    match: str = Field(default="all", max_length=10)
+
+
+class TraverseQuery(_Pinned):
+    """A walk: start records, then relationships step by step, each with conditions on the
+    records it reaches; answered like records-query on the records of the last step."""
+    start: TraverseStart
+    steps: list[TraverseStep] = Field(min_length=1, max_length=10)
+    group_by: list[GroupBy] = Field(default_factory=list, alias="groupBy", max_length=10)
+    aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
+    order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
+    fields: list[str] | None = Field(default=None, max_length=200)
+    limit: int = 50
+    offset: int = 0
+    catalog: Catalog = Field(default_factory=Catalog)
+
+
+class ConnectQuery(_Pinned):
+    from_entity_id: str = Field(alias="fromEntityId", min_length=1, max_length=300)
+    to_entity_id: str = Field(alias="toEntityId", min_length=1, max_length=300)
+    max_links: int = Field(default=4, alias="maxLinks", ge=1, le=MAX_LINKS)
+    max_paths: int = Field(default=5, alias="maxPaths", ge=1, le=MAX_PATHS)
+    relations: list[str] | None = Field(default=None, max_length=20)
+    catalog: Catalog | None = None
+
+
 class OverviewQuery(_Pinned):
     pass
+
+
+class CitedRecordQuery(_Pinned):
+    """One record an answer cited. ``expectedDataRevisionId`` is the revision it was cited from:
+    unlike other reads, a newer revision is read rather than refused (``changed``), since a
+    record keeps its id while its key does not change."""
+    entity_id: str = Field(alias="entityId", min_length=1, max_length=300)
 
 
 class IndexCommand(BaseModel):
@@ -242,12 +321,23 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         index_settings = await settings_for_revision(pool, revision_id, profile, settings.index)
         fingerprint = index_fingerprint(profile.fingerprint, index_settings)
         generation = await search_store.get_generation(pool, revision_id, fingerprint)
-        if generation is None or generation["state"] == "failed":
-            await request_index_quietly(pool, _admit(request), revision_id, index_settings)
+        if generation is None or (generation["state"] == "failed"
+                                  and generation.get("last_error_code") != CANCELLED_CODE):
+            await request_index_quietly(pool, _admit(request), revision_id, index_settings, settings.build)
             generation = await search_store.get_generation(pool, revision_id, fingerprint)
     index = search_store.public_generation(generation)
     if profile is None:
         index["state"] = "unavailable"
+    searched = generation
+    if generation is None or generation["state"] != "ready":
+        # While the index is built (new data, new settings or text format), the last ready one is searched.
+        fallback = await search_store.fallback_generation(pool, command.model_id, revision_id)
+        if fallback is not None:
+            searched = fallback
+            index["fallback"] = {"indexId": fallback["index_id"], "sameData": fallback["data_revision_id"] == revision_id}
+            # The records searched are the fallback's; how the new build is going stays the new build's.
+            index.update({key: value for key, value in search_store.public_generation(fallback).items()
+                          if key.endswith("Count") and key not in search_store.BUILD_COUNT_KEYS})
     base = {**_pinned(binding, command.environment), "index": index, "concepts": concepts,
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),
@@ -264,8 +354,8 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         pool, revision_id=revision_id, compiled=compiled, query=command.query,
         concept_ids=[concept["conceptId"] for concept in concepts] or None,
         limit=search_settings.limit(command.limit), allowed_workspaces=command.allowed_workspace_ids,
-        generation=generation, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
-    ready = generation is not None and generation["state"] == "ready"
+        generation=searched, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
+    ready = searched is not None and searched["state"] == "ready"
     if found["seeds"]:
         outcome = "found"
     elif not ready:
@@ -290,6 +380,14 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
 def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> list[str]:
     """What makes a search answer incomplete, said plainly for whoever reports it."""
     notes = []
+    fallback = index.get("fallback")
+    if fallback and ready:
+        if fallback["sameData"]:
+            notes.append("The search index is being rebuilt: the previous index of this data was searched, "
+                         "so words and meaning may match a little differently once it is done.")
+        else:
+            notes.append("The search index of the latest data is being built: the index of earlier data was "
+                         "searched, so records added or changed since may be missing, and no excerpt of their text is shown.")
     if found.get("hasMore"):
         notes.append("More records match than were returned: the list is not complete.")
     if found.get("hiddenRecords"):
@@ -304,6 +402,11 @@ def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> l
         if expected and searched < expected:
             notes.append(f"Only {searched} of {expected} records are in the search index: "
                          "matching records may be missing.")
+    for anchor in found.get("anchors") or []:
+        notes.append(f"Found through {anchor['conceptLabel']} \"{anchor['label']}\", which the request names: "
+                     f"{anchor['linkedCount']} record(s) asked for are linked to it (see via on each record).")
+    if found.get("linksTruncated"):
+        notes.append("The walk from the named record was cut short (too many links): linked records may be missing.")
     return notes
 
 
@@ -315,12 +418,13 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
         raise HTTPException(status_code=503, detail="age_projection_unavailable")
     binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
     compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True) if command.catalog else {}
     steps = []
     for index, step in enumerate(command.steps):
         if index > 0 and not step.relations:
             # Following every link twice reaches unrelated records through shared ones.
             raise HTTPException(status_code=422, detail="relations_required_for_second_step")
-        relations, unknown = resolve_relations(compiled, step.relations or [])
+        relations, unknown = resolve_relations(compiled, step.relations or [], catalog)
         if unknown:
             raise HTTPException(status_code=422, detail="unknown_relation")
         concepts, unknown_concepts = resolve_concepts(compiled, step.concepts)
@@ -328,12 +432,14 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
             raise HTTPException(status_code=422, detail="unknown_concept")
         steps.append({"relations": relations or None, "direction": step.direction,
                       "conceptIds": [concept["conceptId"] for concept in concepts] or None})
+    field_keys, unknown_fields = field_keys_by_concept(compiled, catalog, command.fields or [])
     try:
         result = await expand(pool, age_pool, revision_id=binding["data_revision_id"],
                               projection_ref=binding["projection_ref"], compiled=compiled,
                               seed_ids=command.seed_entity_ids, steps=steps,
                               max_nodes=command.max_nodes,
-                              allowed_workspaces=command.allowed_workspace_ids)
+                              allowed_workspaces=command.allowed_workspace_ids,
+                              field_keys=field_keys or None)
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
     if not result["nodes"]:
@@ -342,7 +448,8 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
         outcome = "partial"
     else:
         outcome = "found"
-    return {**_pinned(binding, command.environment), **result, "status": outcome}
+    return {**_pinned(binding, command.environment), **result, "status": outcome,
+            **({"unknownFields": unknown_fields} if unknown_fields else {})}
 
 
 @router.post("/records-query", status_code=status.HTTP_200_OK)
@@ -355,7 +462,7 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
     compiled = await _compiled(pool, binding["data_revision_id"])
     query = command.model_dump(by_alias=True, exclude_none=True,
                                include={"concept", "filters", "match", "group_by", "aggregates",
-                                        "order_by", "fields", "limit", "offset"})
+                                        "order_by", "fields", "linked_to", "limit", "offset"})
     plan, errors, applied = compile_query(
         compiled, command.catalog.model_dump(by_alias=True), query, model_id=command.model_id,
         revision_id=binding["data_revision_id"], allowed_workspaces=command.allowed_workspace_ids,
@@ -366,9 +473,125 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
         return {**pinned, "status": outcome, "errors": errors, "appliedQuery": applied}
     try:
         result = await run_query(pool, plan)
+        if result["total"] == 0:
+            # Nothing matched: say which filter or link left nothing, and what was stored instead.
+            result["diagnostics"] = await diagnose(pool, plan)
     except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
         raise HTTPException(status_code=422, detail="query_too_slow") from exc
     return {**pinned, **result}
+
+
+@router.post("/traverse", status_code=status.HTTP_200_OK)
+async def traverse_records(command: TraverseQuery, request: Request) -> dict[str, object]:
+    """Follow a walk from start records along the stored links, with conditions at each
+    step, and count, group or list the records it reaches (exact, over all the data). The
+    last step's filters are the query's own; ``groupBy`` with ``step`` groups on the records
+    of an earlier point of the walk (0: its start). Answered like records-query."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True)
+    dumped = command.model_dump(by_alias=True, exclude_none=True)
+    steps = [{key: value for key, value in step.items() if key in ("relation", "direction", "minHops", "maxHops",
+                                                                   "filters", "match")}
+             for step in dumped["steps"]]
+    last = steps[-1]
+    query = {key: dumped[key] for key in ("groupBy", "aggregates", "orderBy", "fields", "limit", "offset")
+             if key in dumped}
+    query.update(filters=last.pop("filters", []), match=last.pop("match", "all"))
+    traversal = {"start": dumped["start"], "steps": steps}
+    now = datetime.now(timezone.utc)
+    plan, errors, applied = compile_query(
+        compiled, catalog, query, model_id=command.model_id, revision_id=binding["data_revision_id"],
+        allowed_workspaces=command.allowed_workspace_ids, now=now, traversal=traversal)
+    pinned = _pinned(binding, command.environment)
+    if plan is None:
+        outcome = "not_represented" if errors and errors[0]["reason"] == "unknown_concept" else "invalid_query"
+        return {**pinned, "status": outcome, "errors": errors, "appliedQuery": applied}
+    try:
+        result = await run_query(pool, plan)
+        if result["total"] == 0:
+            result["diagnostics"] = await diagnose(pool, plan)
+            # How many start records there are on their own, and the values a start filter may have meant.
+            start = dumped["start"]
+            start_query = {"concept": start["concept"], "filters": start.get("filters") or [],
+                           "match": start.get("match", "all"), "limit": 0,
+                           **({"recordIds": start["recordIds"]} if start.get("recordIds") else {})}
+            start_plan, _, _ = compile_query(
+                compiled, catalog, start_query, model_id=command.model_id, revision_id=binding["data_revision_id"],
+                allowed_workspaces=command.allowed_workspace_ids, now=now)
+            if start_plan is not None:
+                counted = await run_query(pool, start_plan)
+                result["diagnostics"]["startRecords"] = counted["total"]
+                if counted["total"] == 0 and start_plan.checks:
+                    result["diagnostics"]["start"] = await diagnose(pool, start_plan)
+    except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=422, detail="query_too_slow") from exc
+    return {**pinned, **result}
+
+
+@router.post("/connect", status_code=status.HTTP_200_OK)
+async def connect_records(command: ConnectQuery, request: Request) -> dict[str, object]:
+    """The shortest chains of links between two records (up to ``maxLinks`` links, both ways),
+    over the revision's AGE graph."""
+    pool = _pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    if age_pool is None:
+        raise HTTPException(status_code=503, detail="age_projection_unavailable")
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True) if command.catalog else {}
+    relations = None
+    if command.relations:
+        relations, unknown = resolve_relations(compiled, command.relations, catalog)
+        if unknown:
+            raise HTTPException(status_code=422, detail="unknown_relation")
+    try:
+        result = await connect(pool, age_pool, revision_id=binding["data_revision_id"],
+                               projection_ref=binding["projection_ref"], compiled=compiled,
+                               from_id=command.from_entity_id, to_id=command.to_entity_id,
+                               max_links=command.max_links, max_paths=command.max_paths,
+                               relations=relations or None, allowed_workspaces=command.allowed_workspace_ids)
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    return {**_pinned(binding, command.environment), **result}
+
+
+# A cited record's value longer than this is cut (``truncatedFields``): the drawer shows a record, not a document.
+MAX_CITED_VALUE_CHARS = 4000
+
+
+@router.post("/record", status_code=status.HTTP_200_OK)
+async def cited_record(command: CitedRecordQuery, request: Request) -> dict[str, object]:
+    """One record of the data in use, as an answer cites it: its values, where each value came
+    from (file, page, row) and the files it was read from. A record read from a workspace the
+    actor cannot open is ``hidden``; one no longer in the data is ``missing``."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    revision_id = binding["data_revision_id"]
+    base = {**_pinned(binding, command.environment),
+            "changed": command.expected_data_revision_id not in (None, revision_id)}
+    entity = (await search_store.entity_rows(pool, revision_id, [command.entity_id])).get(command.entity_id)
+    if entity is None:
+        return {**base, "status": "missing"}
+    if not is_visible(entity, command.allowed_workspace_ids):
+        return {**base, "status": "hidden"}
+    compiled = await _compiled(pool, revision_id)
+    concept = compiled["concepts"].get(entity["conceptId"]) or {}
+    values = (await search_store.entity_attributes(pool, revision_id, [command.entity_id])).get(command.entity_id) or {}
+    truncated = []
+    for field, value in values.items():
+        if isinstance(value, str) and len(value) > MAX_CITED_VALUE_CHARS:
+            values[field] = value[:MAX_CITED_VALUE_CHARS]
+            truncated.append(field)
+    origins = (await store.list_entity_origins(pool, revision_id, [command.entity_id])).get(command.entity_id) or {}
+    # What other sources stated for a field than the value shown: a disagreement or a second source.
+    alternatives = await store.list_assertion_candidates(pool, revision_id, command.entity_id)
+    return {**base, "status": "ok", "record": {
+        **describe_entity(entity, compiled), "conceptKey": concept.get("key", ""),
+        "values": values, "truncatedFields": truncated, "origins": origins,
+        **({"alternatives": alternatives} if alternatives else {}),
+    }}
 
 
 @router.post("/records-overview", status_code=status.HTTP_200_OK)
@@ -407,12 +630,90 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
     binding = await _pin(pool, command.model_id, command.environment, None)
     try:
         requested = await request_index(pool, admit, revision_id=binding["data_revision_id"],
-                                        settings=command.settings.index if command.settings else None)
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
     except IndexUnavailable as exc:
         raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
                             detail=exc.code) from exc
     return {"modelId": command.model_id, "environment": command.environment,
             "dataRevisionId": binding["data_revision_id"],
+            "index": search_store.public_generation(requested["generation"]),
+            "jobId": requested["jobId"]}
+
+
+class IndexStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    model_id: str = Field(alias="modelId", min_length=1, max_length=200)
+    environment: Environment = "draft"
+
+
+def _writer(request: Request):  # type: ignore[no-untyped-def]
+    service = getattr(request.app.state, "job_service", None)
+    if service is None or os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") != "true":
+        raise HTTPException(status_code=503, detail="runtime_writes_disabled")
+    return service
+
+
+async def _stop_generation(pool, service, generation: dict) -> tuple[dict | None, dict | None]:  # type: ignore[no-untyped-def]
+    """Stop a queued or indexing generation: its job is asked to stop, and the generation ends here
+    (``failed`` / ``cancelled``, keeping what is embedded) unless a worker answering live holds it,
+    which then ends it itself at its next batch. A worker whose lease ran out (gone, or stuck) is not
+    waited for. Returns the generation as it is now and the job."""
+    job = (await service.repository.request_cancel(generation["job_id"], SYSTEM_ACTOR)
+           if generation.get("job_id") else None)
+    if job is None or job["state"] != "cancel_requested":
+        await search_store.fail_generation(pool, generation["index_id"], CANCELLED_CODE)
+    return await search_store.get_generation_by_id(pool, generation["index_id"]), job
+
+
+@router.post("/indexes/stop", status_code=status.HTTP_200_OK)
+async def stop_search_index(command: IndexStop, request: Request) -> dict[str, object]:
+    """Stop the build of the search index of the bound data (queued or indexing). A build not yet
+    picked up, or whose worker no longer answers (its lease ran out), ends at once; a running one ends
+    at its next batch. The generation then fails with the code ``cancelled``, keeping what is embedded:
+    only an explicit index request builds it again."""
+    pool = _pool(request)
+    service = _writer(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    base = {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"]}
+    if generation is None or generation["state"] not in ("queued", "indexing"):
+        return {**base, "stopped": False, "index": search_store.public_generation(generation)}
+    generation, job = await _stop_generation(pool, service, generation)
+    return {**base, "stopped": True, "index": search_store.public_generation(generation),
+            "jobId": job["jobId"] if job else None}
+
+
+@router.post("/indexes/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_search_index(command: IndexCommand, request: Request) -> dict[str, object]:
+    """Stop a build and start a new one: what is already embedded is reused. A build whose worker still
+    answers is only asked to stop (``restarted`` false): restarting it would wait for that worker."""
+    pool = _pool(request)
+    service = _writer(request)
+    binding = await _pin(pool, command.model_id, command.environment, None)
+    profile = profile_from_env()
+    generation = None if profile is None else await search_store.latest_generation(
+        pool, binding["data_revision_id"], profile.fingerprint)
+    if generation is not None and generation["state"] in ("queued", "indexing"):
+        generation, _ = await _stop_generation(pool, service, generation)
+        if generation is not None and generation["state"] in ("queued", "indexing"):
+            return {"modelId": command.model_id, "environment": command.environment,
+                    "dataRevisionId": binding["data_revision_id"], "restarted": False,
+                    "index": search_store.public_generation(generation), "jobId": generation.get("job_id")}
+    try:
+        requested = await request_index(pool, service.admit, revision_id=binding["data_revision_id"],
+                                        settings=command.settings.index if command.settings else None,
+                                        build=command.settings.build if command.settings else None)
+    except IndexUnavailable as exc:
+        raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
+                            detail=exc.code) from exc
+    return {"modelId": command.model_id, "environment": command.environment,
+            "dataRevisionId": binding["data_revision_id"], "restarted": True,
             "index": search_store.public_generation(requested["generation"]),
             "jobId": requested["jobId"]}
 

@@ -47,6 +47,8 @@ import type {
   AdminUserListResponse,
   AdminUserListParams,
   AssignPlanRequest,
+  InviteUserRequest,
+  InviteUserResponse,
   AuditLogListResponse,
   AuditLogQueryParams,
   LogQueryResult,
@@ -562,6 +564,14 @@ export async function assignPlanToUser(
   return response.data.data;
 }
 
+export async function inviteUser(data: InviteUserRequest): Promise<InviteUserResponse> {
+  const response = await apiClient.post<ApiResponse<InviteUserResponse>>(
+    API_ENDPOINTS.adminUsers.invite,
+    data
+  );
+  return response.data.data;
+}
+
 // App Builder AI API
 
 export async function getAppBuilderAiOverview(): Promise<AppBuilderAiOverview> {
@@ -810,16 +820,16 @@ export async function clearDefaultModel(id: string): Promise<AdminModelResponse>
   return response.data.data;
 }
 
-export async function setConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+export async function setAppBuilderDefaultModel(id: string): Promise<AdminModelResponse> {
   const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
-    API_ENDPOINTS.adminModels.setConversationV2Default(id)
+    API_ENDPOINTS.adminModels.setAppBuilderDefault(id)
   );
   return response.data.data;
 }
 
-export async function clearConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+export async function clearAppBuilderDefaultModel(id: string): Promise<AdminModelResponse> {
   const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
-    API_ENDPOINTS.adminModels.clearConversationV2Default(id)
+    API_ENDPOINTS.adminModels.clearAppBuilderDefault(id)
   );
   return response.data.data;
 }

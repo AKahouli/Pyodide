@@ -15,42 +15,47 @@ function ctx(headers: Record<string, string | undefined>): ExecutionContext {
 describe('InternalServiceGuard', () => {
   const expected = 'internal-secret-token-abcdef';
 
-  const makeGuard = (secret: string) => {
+  const makeGuard = (env: Record<string, string>) => {
     const config = {
-      get: jest.fn((key: string, fallback = '') =>
-        key === 'INTERNAL_SERVICE_SECRET' ? secret : fallback,
-      ),
+      get: jest.fn((key: string, fallback = '') => env[key] ?? fallback),
     } as unknown as ConfigService;
     return new InternalServiceGuard(config);
   };
 
-  it('passes when X-Internal-Token matches the configured secret', () => {
-    const guard = makeGuard(expected);
+  it('passes when X-Internal-Token matches INTERNAL_SERVICE_SECRET', () => {
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
   });
 
   it('rejects with UnauthorizedException when the token header is missing', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() => guard.canActivate(ctx({}))).toThrow(UnauthorizedException);
     expect(() => guard.canActivate(ctx({}))).toThrow(/Missing internal service token/);
   });
 
   it('rejects when the token header is empty', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() => guard.canActivate(ctx({ 'x-internal-token': '' }))).toThrow(
       UnauthorizedException,
     );
   });
 
   it('rejects when the token does not match', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() =>
       guard.canActivate(ctx({ 'x-internal-token': 'wrong-token-value!!!!!' })),
     ).toThrow(UnauthorizedException);
   });
 
   it('fail-closes when INTERNAL_SERVICE_SECRET is not configured', () => {
-    const guard = makeGuard('');
+    const guard = makeGuard({});
+    expect(() =>
+      guard.canActivate(ctx({ 'x-internal-token': 'whatever' })),
+    ).toThrow(UnauthorizedException);
+  });
+
+  it('treats a blank INTERNAL_SERVICE_SECRET as unset', () => {
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: '   ' });
     expect(() =>
       guard.canActivate(ctx({ 'x-internal-token': 'whatever' })),
     ).toThrow(UnauthorizedException);

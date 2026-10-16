@@ -42,6 +42,8 @@ export interface Agent {
   reasoning_effort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
+  /** Generative UI: OpenUI output format added to the prompt, answers rendered with OpenUI. Absent = off. */
+  genUiEnabled?: boolean;
   knowledgeBases: string[];
   tools: string[];
   skills?: string[];
@@ -514,6 +516,7 @@ export interface CreateAgentData {
   reasoning_effort?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
+  genUiEnabled?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
   skills?: string[];
@@ -541,6 +544,7 @@ export interface UpdateAgentData {
   reasoning_effort?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
+  genUiEnabled?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
   skills?: string[];
@@ -553,7 +557,7 @@ export interface UpdateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
-  rootExecutionPolicy?: RootExecutionPolicy;
+  rootExecutionPolicy?: RootExecutionPolicy | null;
   delegateAgentIds?: string[];
   delegateTeamIds?: string[];
 }

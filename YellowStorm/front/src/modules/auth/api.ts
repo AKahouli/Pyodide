@@ -3,7 +3,7 @@
  */
 
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic } from './types';
+import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic, InviteDetails } from './types';
 import type { AppearanceSettings } from '@/modules/admin/types';
 
 /**
@@ -34,6 +34,15 @@ export async function logout(): Promise<void> {
  */
 export async function refreshToken(): Promise<RefreshResponse> {
   const response = await apiClient.post<ApiResponse<RefreshResponse>>(API_ENDPOINTS.auth.refresh);
+  return response.data.data;
+}
+
+/**
+ * Resolve a super-admin invitation token (public). Refuses invalid, used, or
+ * expired tokens with an explicit error code.
+ */
+export async function getInviteDetails(token: string): Promise<InviteDetails> {
+  const response = await apiClient.get<ApiResponse<InviteDetails>>(`${API_ENDPOINTS.auth.invite}?token=${encodeURIComponent(token)}`);
   return response.data.data;
 }
 
@@ -92,10 +101,12 @@ export async function getAuthProviders(): Promise<AuthProviderPublic[]> {
 export const getOAuthProviders = getAuthProviders;
 
 /**
- * Exchange OAuth temp token for JWT + refresh cookie
+ * Complete an OAuth login: the single-use exchange code travels in an HttpOnly
+ * cookie set by the callback, so there is nothing to send. Returns the JWT and
+ * sets the refresh cookie.
  */
-export async function exchangeOAuthToken(token: string): Promise<LoginResponse> {
-  const response = await apiClient.post<ApiResponse<LoginResponse>>(API_ENDPOINTS.auth.oauthExchange, { token });
+export async function exchangeOAuthLogin(): Promise<LoginResponse> {
+  const response = await apiClient.post<ApiResponse<LoginResponse>>(API_ENDPOINTS.auth.oauthExchange);
   return response.data.data;
 }
 

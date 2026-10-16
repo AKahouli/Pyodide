@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { PromptInputProvider, usePromptInputController } from './prompt-input';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PromptInput, PromptInputProvider, PromptInputSubmit, usePromptInputController } from './prompt-input';
 
 function DraftEditor() {
   const { textInput } = usePromptInputController();
@@ -26,5 +26,35 @@ describe('PromptInputProvider drafts', () => {
     expect(screen.getByLabelText('draft')).toHaveValue('long message');
     await user.click(screen.getByRole('button', { name: 'clear' }));
     expect(sessionStorage.getItem('yellostorm_draft:user-1:conversation-1')).toBeNull();
+  });
+});
+
+describe('submission draft ownership', () => {
+  it('does not pass the DOM click event as a stop message identifier', async () => {
+    const stop = vi.fn();
+    render(<PromptInputSubmit status='streaming' onStop={stop} />);
+    await userEvent.click(screen.getByRole('button'));
+    expect(stop).toHaveBeenCalledWith();
+  });
+
+  it('retains a rejected draft', async () => {
+    const user = userEvent.setup();
+    render(<PromptInputProvider><PromptInput onSubmit={() => false}><DraftEditor /><button type='submit'>send</button></PromptInput></PromptInputProvider>);
+    await user.type(screen.getByLabelText('draft'), 'keep me');
+    await user.click(screen.getByRole('button', { name: 'send' }));
+    expect(screen.getByLabelText('draft')).toHaveValue('keep me');
+  });
+
+  it('does not erase newer typing when an earlier submission resolves', async () => {
+    let finish!: () => void;
+    const submitted = new Promise<void>((resolve) => { finish = resolve; });
+    const user = userEvent.setup();
+    render(<PromptInputProvider><PromptInput onSubmit={() => submitted}><DraftEditor /><button type='submit'>send</button></PromptInput></PromptInputProvider>);
+    await user.type(screen.getByLabelText('draft'), 'first');
+    await user.click(screen.getByRole('button', { name: 'send' }));
+    await user.clear(screen.getByLabelText('draft'));
+    await user.type(screen.getByLabelText('draft'), 'second');
+    finish();
+    await waitFor(() => expect(screen.getByLabelText('draft')).toHaveValue('second'));
   });
 });

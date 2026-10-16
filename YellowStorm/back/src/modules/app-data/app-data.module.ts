@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import appDataConfig from '@config/app-data.config';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
-import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
+import { AppBuilderModule } from '@modules/app-builder/app-builder.module';
 import { AppDataMcpController } from './controllers/app-data-mcp.controller';
 import { AppDataOwnerController } from './controllers/app-data-owner.controller';
 import { AppDataHealthController } from './controllers/app-data-health.controller';
@@ -14,7 +14,6 @@ import { AppDataDeploymentService } from './services/app-data-deployment.service
 import { AppDataEndUserAuthService } from './services/app-data-end-user-auth.service';
 import { AppDataEndUserGrantsService } from './services/app-data-end-user-grants.service';
 import { AppDataEndUserService } from './services/app-data-end-user.service';
-import { AppDataPublicAccessService } from './services/app-data-public-access.service';
 import { AppDataIdentifierService } from './services/app-data-identifier.service';
 import { AppDataMigrationService } from './services/app-data-migration.service';
 import { AppDataMcpAuthService } from './services/app-data-mcp-auth.service';
@@ -77,7 +76,7 @@ const LOCAL_PROVIDERS = [
   AppDataEndUserGrantsService,
   AppDataEndUserService,
   AppDataEndUserAuthService,
-  AppDataPublicAccessService,
+
   AppDataMcpAuthService,
   AppDataMcpDispatcherService,
   AppDataReleaseBindingService,
@@ -97,7 +96,7 @@ const REMOTE_PROVIDERS = [
     ConfigModule.forFeature(appDataConfig),
     JwtModule.register({}),
     forwardRef(() => AppRuntimeModule),
-    forwardRef(() => ConversationV2Module),
+    forwardRef(() => AppBuilderModule),
   ],
   controllers: APP_DATA_USE_REMOTE ? REMOTE_CONTROLLERS : LOCAL_CONTROLLERS,
   providers: APP_DATA_USE_REMOTE ? REMOTE_PROVIDERS : LOCAL_PROVIDERS,

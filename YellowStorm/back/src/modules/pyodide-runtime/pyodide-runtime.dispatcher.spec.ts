@@ -154,4 +154,3 @@ describe('PyodideRuntimeDispatcher', () => {
     expect(dispatcher.getCached(executionId)?.ok).toBe(true);
   });
 });
-

@@ -29,7 +29,8 @@ from app.graph_search.traversal import init_age_connection
 from app.jobs.service import JobService
 from app.persistence import graph_search_store as search_store
 from app.persistence.postgres_jobs import PostgresJobRepository
-from app.population.age_projection import drop_projection, projection_exists, projection_graph_name
+from app.population.age_projection import (concept_label, drop_projection, projection_exists,
+                                            graph_counts, projection_graph_name, reproject_revision)
 from test_population_graph_mvp_integration import (AGE_DSN, AGE_SETTINGS, CONTRACTS_ASSET,  # noqa: E402
                                                    CONTRACTS_CSV, CUSTOMERS_ASSET, MIGRATIONS, MODEL_ID,
                                                    RUNTIME_DSN, WORKSPACE_ID, customers_xlsx, run_request)
@@ -125,12 +126,12 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert index_task["queue_name"] == "semantic-model-search.index"
         pending = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-            "query": "support agreement"})).json()
+            "query": "support agreement", "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
         assert pending["index"]["state"] == "queued" and pending["status"] == "index_not_ready"
         assert any("not ready" in note for note in pending["notes"])
         exact_before = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-            "query": "CT003"})).json()
+            "query": "CT003", "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
         assert [seed["label"] for seed in exact_before["seeds"]] == ["CT003"]  # labels are the key values here
         assert exact_before["modeUsed"] == "exact_only"
 
@@ -142,6 +143,11 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         await runtime.execute(
             "UPDATE semantic_population.entities SET attributes = jsonb_set(attributes::jsonb, '{title}', "
             "to_jsonb($2::text)) WHERE data_revision_id = $1 AND label = 'CT003'", revision_id, long_title)
+        # An e-mail address and a reference, as people paste them.
+        await runtime.execute(
+            "UPDATE semantic_population.entities SET attributes = jsonb_set(attributes::jsonb, '{title}', "
+            "to_jsonb($2::text)) WHERE data_revision_id = $1 AND label = 'CT001'", revision_id,
+            "Sony Master Agreement, ref INV-2024-001, contact jane.doe@sony.com")
 
         # 2. The real index worker builds every record's document and vector, and the passages.
         outcome = await search_tasks._run_task(index_task["id"], "e2e-search")
@@ -154,6 +160,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert status["index"]["indexedCount"] + status["index"]["exactOnlyCount"] == 5
         assert status["index"]["passageCount"] == status["index"]["passageIndexedCount"] == outcome["passages"]
         assert status["index"]["passageTruncatedCount"] == 0
+        assert status["index"]["stage"] is None and status["index"]["loadedCount"] == 5
         embedded_once = sum(calls)
 
         # 3. Asking again is free: the generation is ready and reused.
@@ -164,7 +171,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         # 4. Words and vectors rank the support contract first; the key wins outright.
         def query(text: str, **extra) -> dict:  # type: ignore[no-untyped-def]
             return {"actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
-                    "query": text, **extra}
+                    "query": text, "allowedWorkspaceIds": [WORKSPACE_ID], **extra}
 
         found = (await client.post("/v1/semantic-model-search/query", json=query("support agreement"))).json()
         assert found["status"] == "found" and found["modeUsed"] == "hybrid"
@@ -189,6 +196,22 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         absent = (await client.post("/v1/semantic-model-search/query",
                                     json=query("penalty", concepts=["penalty clause"]))).json()
         assert absent["status"] == "not_represented" and absent["unknownConcepts"] == ["penalty clause"]
+        # An exact name is looked up among the records the actor may read: 25 hidden records
+        # bearing the same name never crowd out the readable 26th.
+        twins = [(f"twin-{n:02d}", "ws-hidden" if n < 25 else WORKSPACE_ID) for n in range(26)]
+        model_id = await runtime.fetchval("SELECT model_id FROM semantic_population.data_revisions WHERE id = $1",
+                                          revision_id)
+        await runtime.executemany(
+            "INSERT INTO semantic_population.entities (id, model_id, data_revision_id, concept_id, namespace, "
+            "identity_key, label, provenance) VALUES ($1, $2, $3, 'c-customer', 'ns', $1, 'Twin Corp', $4::jsonb)",
+            [(entity, model_id, revision_id, json.dumps({"sources": [{"assetRef": {"workspaceId": workspace}}]}))
+             for entity, workspace in twins])
+        try:
+            seen = await search_store.exact_entity_ids(runtime, revision_id, "twin corp", None, None, [WORKSPACE_ID])
+            assert seen == ["twin-25"]
+            assert len(await search_store.exact_entity_ids(runtime, revision_id, "twin corp", None, None)) == 25
+        finally:
+            await runtime.execute("DELETE FROM semantic_population.entities WHERE id LIKE 'twin-%'")
         # Records read from a workspace the actor cannot read are never returned or ranked.
         hidden = (await client.post("/v1/semantic-model-search/query",
                                     json=query("support agreement", allowedWorkspaceIds=[]))).json()
@@ -205,6 +228,44 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
                                      json=query("support agreement", allowedWorkspaceIds=[WORKSPACE_ID]))).json()
         assert visible["seeds"][0]["label"] == "CT002"
 
+        # 4b. Words as people type them: an address and a reference match their parts in a row, a
+        # plural its singular; and a contract's search text names its customer.
+        before_extra = sum(calls)
+        address = (await client.post("/v1/semantic-model-search/query", json=query("jane.doe@sony.com"))).json()
+        assert address["seeds"][0]["label"] == "CT001" and "lexicalRank" in address["seeds"][0]["diagnostics"]
+        reference = (await client.post("/v1/semantic-model-search/query", json=query("INV-2024-001"))).json()
+        assert reference["seeds"][0]["label"] == "CT001" and "lexicalRank" in reference["seeds"][0]["diagnostics"]
+        other_reference = (await client.post("/v1/semantic-model-search/query", json=query("INV-2023-001"))).json()
+        assert all("lexicalRank" not in seed["diagnostics"] for seed in other_reference["seeds"])
+        plural = (await client.post("/v1/semantic-model-search/query",
+                                    json=query("supports", concepts=["contract"]))).json()
+        assert plural["seeds"][0]["label"] == "CT002" and "lexicalRank" in plural["seeds"][0]["diagnostics"]
+        contract_ids = {seed["label"]: seed["entityId"] for seed in found["seeds"]}
+        cards = await search_store.document_texts(runtime, status["index"]["indexId"], [contract_ids["CT003"]])
+        assert "Linked Customer: " in cards[contract_ids["CT003"]]
+
+        # 4c. Through the record the request names: Carrefour's contracts are found through the
+        # customer, along the stored link, and say so.
+        through = (await client.post("/v1/semantic-model-search/query",
+                                     json=query("agreements of Carrefour", concepts=["contract"]))).json()
+        assert [(anchor["label"], anchor["conceptLabel"], anchor["linkedCount"]) for anchor in through["anchors"]] \
+            == [("Carrefour", "Customer", 1)], through
+        assert through["seeds"][0]["label"] == "CT003"
+        assert through["seeds"][0]["via"]["label"] == "Carrefour"
+        assert through["seeds"][0]["via"]["path"] == [{"relation": "has_contract", "direction": "outgoing"}]
+        assert any("Found through Customer \"Carrefour\"" in note for note in through["notes"])
+        sony_contracts = (await client.post("/v1/semantic-model-search/query",
+                                            json=query("Sony", concepts=["contract"]))).json()
+        assert {seed["label"] for seed in sony_contracts["seeds"][:2]} == {"CT001", "CT002"}
+        assert all("via" in seed for seed in sony_contracts["seeds"][:2])
+        # A request naming no record of another concept is answered as before.
+        assert "anchors" not in plural
+        # Through a record the actor cannot read, nothing is found.
+        hidden_anchor = (await client.post("/v1/semantic-model-search/query", json=query(
+            "agreements of Carrefour", concepts=["contract"], allowedWorkspaceIds=[]))).json()
+        assert hidden_anchor["seeds"] == [] and "anchors" not in hidden_anchor
+        extra_queries = sum(calls) - before_extra
+
         # 5. From the customer, the real has_contract edges reach exactly its two contracts.
         sony = scoped["seeds"][0]["entityId"]
         expanded = (await client.post("/v1/semantic-model-search/expand", json={
@@ -215,6 +276,44 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert set(related) == {"CT001", "CT002"}
         assert related["CT001"]["path"][0]["relationKey"] == "has_contract"
         assert {(edge["sourceEntityId"], edge["relationKey"]) for edge in expanded["edges"]} == {(sony, "has_contract")}
+        # A typed graph: a table per concept and relationship, each concept's indexed by record id.
+        assert expanded["projectionRef"].startswith("age:v2:") and expanded["graphLayout"] == "typed"
+        graph = projection_graph_name(revision_id)
+        async with age.acquire() as age_connection:
+            indexed = {row["indexname"] for row in await age_connection.fetch(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = $1", graph)}
+        assert {f"{concept_label(concept)}_record_id" for concept in ("c-customer", "c-contract")} <= indexed
+        # The exact number of linked records per relationship, beside the walk.
+        assert [(count["relationKey"], count["direction"], count["count"], count["hidden"])
+                for count in expanded["linkCounts"]] == [("has_contract", "outgoing", 2, 0)]
+        # Field values on request, and a relationship named by its label.
+        with_values = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["signs"], "direction": "outgoing"}],
+            "fields": ["*"], "catalog": {"relations": [{"key": "has_contract", "label": "signs"}]}})).json()
+        contracts = [node for node in with_values["nodes"] if node["inclusionReason"] == "relationship"]
+        assert len(contracts) == 2 and all(node["values"].get("title") for node in contracts), contracts
+        # Hidden linked records are counted apart, never shown.
+        hidden_links = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}],
+            "allowedWorkspaceIds": [WORKSPACE_ID]})).json()
+        assert hidden_links["linkCounts"][0]["count"] == 2
+        # A cited record: its values and where each came from; a newer revision is read, not refused.
+        cited_query = {"actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+                       "entityId": related["CT001"]["entityId"]}
+        cited = (await client.post("/v1/semantic-model-search/record", json=cited_query)).json()
+        assert cited["status"] == "ok" and cited["changed"] is False, cited
+        assert cited["record"]["label"] == "CT001" and cited["record"]["conceptKey"] == "contract"
+        assert cited["record"]["values"].get("title") and cited["record"]["provenance"][0]["assetId"]
+        assert any(origin.get("assetId") for origin in cited["record"]["origins"].values()), cited["record"]["origins"]
+        older = (await client.post("/v1/semantic-model-search/record",
+                                   json={**cited_query, "expectedDataRevisionId": "older-revision"})).json()
+        assert older["status"] == "ok" and older["changed"] is True
+        assert (await client.post("/v1/semantic-model-search/record",
+                                  json={**cited_query, "allowedWorkspaceIds": []})).json()["status"] == "hidden"
+        assert (await client.post("/v1/semantic-model-search/record",
+                                  json={**cited_query, "entityId": "no-such-record"})).json()["status"] == "missing"
         # Incoming from a contract finds its customer; the wrong direction finds nothing.
         contract = related["CT002"]["entityId"]
         back = (await client.post("/v1/semantic-model-search/expand", json={
@@ -239,10 +338,64 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         unknown = await client.post("/v1/semantic-model-search/expand", json={
             **two_steps, "steps": [{"relations": ["owns"]}]})
         assert unknown.status_code == 422 and unknown.json()["detail"] == "unknown_relation"
+
+        # An older Entity graph is rebuilt typed from the stored rows, and the revision, its
+        # binding and its search index move to it together; the old graph is dropped.
+        typed_ref = expanded["projectionRef"]
+        older_ref = "age:v1:" + typed_ref[len("age:v2:"):]
+        for table in ("semantic_population.data_revisions", "semantic_runtime.active_bindings",
+                      "semantic_graph_search.index_generations"):
+            column = "id" if table.endswith("data_revisions") else "data_revision_id"
+            await runtime.execute(f"UPDATE {table} SET projection_ref = $2 WHERE {column} = $1", revision_id, older_ref)
+        graphs.append(f"{graph}_t2")
+        moved = await reproject_revision(runtime, age, revision_id)
+        assert moved["reprojected"] is True and moved["projectionRef"] == f"age:v2:{graph}_t2"
+        assert await reproject_revision(runtime, age, revision_id) == {
+            "revisionId": revision_id, "projectionRef": moved["projectionRef"], "reprojected": False}
+        refs = await runtime.fetch(
+            "SELECT projection_ref FROM semantic_population.data_revisions WHERE id = $1 UNION ALL "
+            "SELECT projection_ref FROM semantic_runtime.active_bindings WHERE data_revision_id = $1 UNION ALL "
+            "SELECT projection_ref FROM semantic_graph_search.index_generations WHERE data_revision_id = $1",
+            revision_id)
+        assert {row["projection_ref"] for row in refs} == {moved["projectionRef"]}
+        async with age.acquire() as age_connection:
+            assert not await projection_exists(age_connection, graph)
+        again = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}]})).json()
+        assert again["projectionRef"] == moved["projectionRef"] and len(again["nodes"]) == 3
+        # "Rebuild the graph only" rebuilds a typed graph too, beside the one in use, then swaps.
+        graphs.append(f"{graph}_t3")
+        forced = await reproject_revision(runtime, age, revision_id, force=True)
+        assert forced["reprojected"] is True and forced["projectionRef"] == f"age:v2:{graph}_t3"
+        assert (await reproject_revision(runtime, age, revision_id, force=True))["projectionRef"] == moved["projectionRef"]
+        async with age.acquire() as age_connection:
+            assert not await projection_exists(age_connection, f"{graph}_t3")
+            assert await graph_counts(age_connection, f"{graph}_t3") is None
+            counts = await graph_counts(age_connection, f"{graph}_t2")
+        status_now = (await client.get(f"/v1/semantic-model-population/models/{MODEL_ID}/graph-status")).json()
+        [served] = status_now["environments"]
+        assert served["graphSchema"] == f"{graph}_t2" and served["layout"] == "typed" and served["state"] == "ok"
+        assert served["stored"] == {"records": counts["vertices"], "links": counts["edges"]}
+        assert counts["conceptLabels"] >= 2 and counts["relationLabels"] >= 1
+        again = (await client.post("/v1/semantic-model-search/expand", json={
+            "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
+            "seedEntityIds": [sony], "steps": [{"relations": ["has_contract"], "direction": "outgoing"}]})).json()
+        assert again["projectionRef"] == moved["projectionRef"] and len(again["nodes"]) == 3
         # Nothing is published yet: production search says so.
         unpublished = await client.post("/v1/semantic-model-search/query",
                                         json={**query("sony"), "environment": "production"})
         assert unpublished.status_code == 404 and unpublished.json()["detail"] == "model_not_published"
+
+        # While an index with other settings is built, the last ready one is searched, and said so.
+        before_rebuild = sum(calls)
+        rebuilding = (await client.post("/v1/semantic-model-search/query", json=query(
+            "support agreement", settings={"index": {"cardValueChars": 400}}))).json()
+        assert rebuilding["index"]["state"] == "queued" and rebuilding["index"]["fallback"]["sameData"] is True
+        assert rebuilding["status"] == "found" and rebuilding["seeds"][0]["label"] == "CT002"
+        assert rebuilding["modeUsed"] == "hybrid"
+        assert any("being rebuilt" in note for note in rebuilding["notes"])
+        extra_queries += sum(calls) - before_rebuild
 
     # 6. A rebuild of the same texts under a new generation reuses every vector: no model call.
     generation = await search_store.get_generation_by_id(runtime, status["index"]["indexId"])
@@ -260,4 +413,4 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
     assert outcome["state"] == "ready" and outcome["embedded"] == 0 and outcome["passagesEmbedded"] == 0
     assert outcome["reused"] == status["index"]["indexedCount"]
     assert outcome["passagesReused"] == status["index"]["passageCount"]
-    assert sum(calls) == embedded_once + 8  # only the query embeddings of step 4
+    assert sum(calls) == embedded_once + 8 + extra_queries  # only the query embeddings

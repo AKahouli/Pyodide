@@ -89,6 +89,8 @@ export interface DelegateResultV1 {
 }
 
 export interface RootNativeState {
+  /** Server-created message binding; native traces cannot replace it. */
+  origin?: { assistantMessageId: string; questionMessageId?: string };
   /** Server-owned immutable reservations; native trace writes cannot replace them. */
   fanoutManifests?: import('./root-fanout-manifest').FanoutManifestV1[];
   /** Foreground owners release on waiting/termination; no timed slot reuse. */
@@ -123,6 +125,11 @@ export interface RootNativeState {
     agentId?: string;
   };
   requestProfile?: MessageReplayContext;
+  /** Validated user submissions accepted for this ROOT's native clarification slots; not an action receipt. */
+  clarifications?: import('./root-clarifications').RootClarification[];
+  sessionSeed?: { idempotencyKey: string; history: Array<{
+    role: 'CONVERSATION_HISTORY_ROLE_USER' | 'CONVERSATION_HISTORY_ROLE_ASSISTANT'; text: string;
+  }> };
   actorId: string;
   scope: ExecutionScopeV1;
   rootContext: Record<string, unknown>;

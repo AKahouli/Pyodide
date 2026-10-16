@@ -3,7 +3,8 @@
  */
 
 import apiClient, { type ApiResponse } from '@/lib/api/client';
-import { API_CONFIG, API_ENDPOINTS, AUTH_STORAGE_KEYS } from '@/lib/api/config';
+import { API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/access-token-store';
 import type {
   Playbook,
   PlaybookSummary,
@@ -1321,7 +1322,7 @@ export async function rewritePlaybookPromptStream(
   data: RewritePlaybookPromptData,
   onChunk: (chunk: string) => void,
 ): Promise<RewritePlaybookPromptResult> {
-  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const token = getAccessToken();
   const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.rewritePrompt}`, {
     method: 'POST',
     headers: {
@@ -1448,7 +1449,16 @@ export async function uploadPlaybookAssistantAttachment(
     { requestId, expectedDefinitionRevision, mediaType: file.type, size: file.size },
   );
   const { attachmentId, uploadUrl } = initialized.data.data;
-  const uploadResponse = await fetch(uploadUrl, { method: 'PUT', body: file });
+  // x-ms-blob-type is mandatory on an Azure Blob PUT; Ceph ignores it because an
+  // S3 presigned URL only signs `host`. See uploadToAzure in workspace/api.ts.
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'x-ms-blob-type': 'BlockBlob',
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  });
   if (!uploadResponse.ok) throw new Error('Assistant image upload failed');
   await apiClient.post(
     API_ENDPOINTS.playbooks.assistantAttachmentConfirm(playbookId, attachmentId),
@@ -1508,7 +1518,7 @@ export async function streamPlaybookIntentConstruction(
   constructionId: string,
   options: { after?: number; signal?: AbortSignal; onEvent: (event: PlaybookIntentConstructionEvent) => void },
 ): Promise<void> {
-  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const token = getAccessToken();
   let lastSequence = options.after ?? 0;
   let attempts = 0;
 

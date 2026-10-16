@@ -45,8 +45,8 @@ describe('RootFanoutService authority', () => {
     await expect(service.reserve(parentId, proposal())).rejects.toThrow('authority changed');
     expect(reserve).not.toHaveBeenCalled();
   });
-  it('rejects unapproved references and background before reservation', async () => {
-    const invalid = proposal(); invalid.items[0].contextRefs = ['revoked'];
+  it.each(['revoked', '605255603b964ab171836cc2'])('rejects unapproved reference %s and background before reservation', async (reference) => {
+    const invalid = proposal(); invalid.items[0].contextRefs = [reference];
     await expect(service.reserve(parentId, invalid)).rejects.toThrow('not authorized');
     await expect(service.reserve(parentId, { ...proposal(), mode: 'background' } as any)).rejects.toThrow('foreground');
     expect(reserve).not.toHaveBeenCalled();

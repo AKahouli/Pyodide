@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { getMimeTypeFromFilename, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { openRecordCitation, type RecordCitationTarget } from '@/modules/semantic-model/citations/record-citation-store';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
@@ -53,8 +54,8 @@ export interface CitationData {
   evidenceId?: string;
   executionId?: string;
   parentId: string;
-  sourceType: 'text' | 'image' | 'web';
-  sourceKind?: 'document' | 'image' | 'web';
+  sourceType: 'text' | 'image' | 'web' | 'record';
+  sourceKind?: 'document' | 'image' | 'web' | 'record';
   source: string;
   fileName?: string;
   externalId: string;
@@ -73,6 +74,8 @@ export interface CitationData {
   prefix?: string;
   suffix?: string;
   evidenceOrigin?: 'page_content' | 'search_snippet';
+  /** A record of a semantic model: it opens in the record drawer, not the file viewer. */
+  record?: RecordCitationTarget;
 }
 
 export interface TextPart {
@@ -80,6 +83,8 @@ export interface TextPart {
   content: string;
   showCursor?: boolean;
   citations?: CitationData[];
+  /** Id of the stored message component this text was built from, when it has one. */
+  componentId?: string;
 }
 
 export interface CodePart {
@@ -298,6 +303,10 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       )}
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
+        if (part.type === 'citation' && citationScope && part.evidenceId && part.executionId
+          && visibleParts.some((candidate) => candidate.type === 'text')
+          && !visibleParts.some((candidate) => candidate.type === 'text'
+            && candidate.content.includes(`[${normalizeCitationReference(part.reference)}]`))) return null;
         return (
           <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} onTaskAgentClick={onTaskAgentClick} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
         );
@@ -463,6 +472,8 @@ function normalizeCitationReference(reference?: string): string | undefined {
 }
 
 function getCitationDisplayName(citation: CitationData, fallback: string): string {
+  if (citation.record) return citation.record.name || fallback;
+  if ((citation.sourceType === 'web' || citation.sourceKind === 'web') && citation.title) return citation.title;
   const source = citation.fileName ||
     (citation.sourceType === 'image' ? citation.path || citation.source : citation.source || citation.path);
   return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
@@ -478,6 +489,10 @@ export async function openCitationSource(
   defaultLabel: string,
   citationScope?: { conversationId: string; messageId: string },
 ): Promise<void> {
+  if (citation.record) {
+    openRecordCitation(citation.record);
+    return;
+  }
   if (citation.evidenceId !== undefined || citation.executionId !== undefined) {
     if (typeof citation.evidenceId !== 'string' || !citation.evidenceId.trim()
       || typeof citation.executionId !== 'string' || !citation.executionId.trim() || !citationScope?.conversationId) {
@@ -486,6 +501,11 @@ export async function openCitationSource(
     const { fetchRootEvidence } = await import('@/modules/conversation/api');
     const load = () => fetchRootEvidence(citationScope.conversationId, citation.executionId!, citation.evidenceId!);
     const location = await load();
+    if (location.kind === 'citation' && (location.sourceKind === 'web' || citation.sourceType === 'web' || citation.sourceKind === 'web')) {
+      const target = buildTextFragmentUrl(location.url, { exact: citation.exactText ?? '', prefix: citation.prefix, suffix: citation.suffix });
+      window.open(target, '_blank', 'noopener,noreferrer');
+      return;
+    }
     let initial: typeof location | undefined = location;
     const key = JSON.stringify([citationScope.conversationId, citation.executionId, citation.evidenceId]);
     await openFileViewerFromUrlLoader(key, location.fileName || defaultLabel,
@@ -535,8 +555,8 @@ export async function openCitationSource(
         { source: objectKey, fileName: citation.fileName, reference },
       );
     }
-    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
-    const { url } = await conversationV2Api.getFileSignedUrl(objectKey);
+    const { appBuilderStudioApi } = await import('@/modules/app-builder-studio/api');
+    const { url } = await appBuilderStudioApi.getFileSignedUrl(objectKey);
     return { url, fileName: displayName, mimeType };
   }, {
     displayMode,
@@ -713,7 +733,8 @@ const MarkdownSegment = memo(
 const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
-  // This ensures citations with a reference but no matching marker are not silently lost.
+  // Owned unused evidence stays in the conversation's Sources menu rather than
+  // adding every research result to the answer as an unrelated trailing badge.
   const { citationMap, trailingCitations } = useMemo(() => {
     if (!citations || citations.length === 0) {
       return { citationMap: new Map<string, CitationData>(), trailingCitations: [] as CitationData[] };
@@ -725,12 +746,12 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
       const ref = normalizeCitationReference(c.reference);
       if (ref && content.includes(`[${ref}]`)) {
         map.set(ref, c);
-      } else {
+      } else if (!citationScope || !c.evidenceId || !c.executionId) {
         trailing.push(c);
       }
     }
     return { citationMap: map, trailingCitations: trailing };
-  }, [citations, content]);
+  }, [citations, content, citationScope]);
 
   const hasInline = citationMap.size > 0;
   const hasTrailing = trailingCitations.length > 0;
@@ -796,7 +817,7 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
   );
 };
 
-const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
+export const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
@@ -818,8 +839,7 @@ const SingleInlineCitation = ({ citation: c, citationScope }: { citation: Citati
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
               <InlineCitationCarouselItem>
-                <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
-                {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+                <CitationCardContent citation={c} />
               </InlineCitationCarouselItem>
             </InlineCitationCarouselContent>
           </InlineCitationCarousel>
@@ -829,8 +849,30 @@ const SingleInlineCitation = ({ citation: c, citationScope }: { citation: Citati
   );
 };
 
+/** What a citation's hover card shows: a document and its page, or a record and its model. */
+const CitationCardContent = ({ citation: c }: { citation: CitationData }) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  if (c.record) {
+    const keys = Object.entries(c.record.keyFields).map(([key, value]) => `${key}: ${value}`).join(' · ');
+    const description = [c.record.concept, c.record.modelName ? tCommon('ai.citations.recordOf', { model: c.record.modelName }) : '', keys].filter(Boolean).join(' · ');
+    return (
+      <>
+        <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultRecord'))} description={description || undefined} />
+        {c.record.quote && <InlineCitationQuote>{c.record.quote}</InlineCitationQuote>}
+        <p className='mt-2 text-xs text-muted-foreground'>{tCommon('ai.citations.openRecord')}</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+      {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+    </>
+  );
+};
+
 // Citations Inline - renders citation badges after text content
-const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
+export const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
@@ -854,8 +896,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
                   <InlineCitationCarouselItem>
-                    <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
-                    {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+                    <CitationCardContent citation={c} />
                   </InlineCitationCarouselItem>
                 </InlineCitationCarouselContent>
               </InlineCitationCarousel>
@@ -890,6 +931,7 @@ const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationP
         highlightText: citation.highlightText,
         highlightBBox: citation.highlightBBox,
         blockBBox: citation.blockBBox,
+        record: citation.record,
       },
     ]}
   />
@@ -1239,9 +1281,9 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
     const themedHtml = hasOwnScheme
       ? content
       : content.replace(
-          /<head([^>]*)>/i,
-          '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
-        );
+        /<head([^>]*)>/i,
+        '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
+      );
     const previewHtml = isolateGeneratedPreviewHtml(themedHtml);
 
     const blob = new Blob([previewHtml], { type: 'text/html' });

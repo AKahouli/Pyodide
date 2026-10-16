@@ -6,12 +6,22 @@ def build_agent_config(metadata: dict[str, Any]) -> dict[str, Any]:
     agent_params = metadata.get("agent_params") if isinstance(metadata.get("agent_params"), dict) else {}
     agent_tools = metadata.get("agent_tools") if isinstance(metadata.get("agent_tools"), list) else []
     agent_skills = metadata.get("skills") if isinstance(metadata.get("skills"), list) else []
+    reasoning_effort = metadata.get("agent_reasoning_effort")
+    input_modalities = metadata.get("agent_input_modalities")
+    context_window_tokens = metadata.get("agent_context_window_tokens")
+    compaction = metadata.get("agent_compaction")
     return {
         "name": str(metadata.get("agent_name") or ""),
         "type": str(metadata.get("agent_type") or metadata.get("type") or ""),
+        "model": str(metadata.get("agent_model") or ""),
         "tools": [tool for tool in agent_tools if isinstance(tool, dict)],
         "skills": [skill for skill in agent_skills if isinstance(skill, dict)],
         "agent_params": agent_params,
+        # Conversation-parity model knobs forwarded by the backend agent builder.
+        "reasoning_effort": reasoning_effort if isinstance(reasoning_effort, str) and reasoning_effort else None,
+        "input_modalities": [str(modality) for modality in input_modalities] if isinstance(input_modalities, list) else [],
+        "context_window_tokens": int(context_window_tokens) if isinstance(context_window_tokens, (int, float)) and context_window_tokens > 0 else None,
+        "compaction": compaction if isinstance(compaction, dict) else None,
         "brain_ids": [
             str(item.get("workspace_id"))
             for item in metadata.get("brain_context", [])

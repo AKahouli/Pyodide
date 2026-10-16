@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min, Max, IsEnum, IsEmail, IsArray, MaxLength } from 'class-validator';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { RegistrationApproval, UserStatus } from '../user.types';
@@ -54,6 +54,33 @@ export class AssignPlanDto {
   @ApiProperty({ description: 'Plan ID to assign' })
   @IsString()
   planId!: string;
+}
+
+export class InviteUserDto {
+  @ApiProperty({ description: 'Email address to invite', example: 'user@example.com' })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @MaxLength(320)
+  email!: string;
+
+  @ApiPropertyOptional({
+    description: 'Role ids granted to the invitee at registration',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roleIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Plan id granted to the invitee at registration' })
+  @IsOptional()
+  @IsString()
+  planId?: string;
+}
+
+export interface InviteUserResponse {
+  message: string;
+  email: string;
+  expiresAt: Date;
 }
 
 export interface AdminUserResponse {

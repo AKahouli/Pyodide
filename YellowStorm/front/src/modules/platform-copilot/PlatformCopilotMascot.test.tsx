@@ -225,6 +225,27 @@ describe('PlatformCopilotMascot', () => {
     expect(screen.getByRole('complementary', { name: 'Yellowmind' }).parentElement).toHaveClass('z-40');
   });
 
+  it('keeps the default and keyboard-moved launcher above the chat composer', () => {
+    setViewport(1432);
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 629 });
+    const composer = document.createElement('div');
+    composer.setAttribute('data-conversation-composer', '');
+    document.body.append(composer);
+    const composerRect = vi.spyOn(composer, 'getBoundingClientRect').mockReturnValue({ left: 240, right: 1432, top: 470, bottom: 629, width: 1192, height: 159 } as DOMRect);
+    const launcherRect = vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 1232, right: 1412, top: 553, bottom: 609, width: 180, height: 56 } as DOMRect);
+    try {
+      renderMascot('/conversation/test');
+      const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });
+      expect(launcher).toHaveStyle({ top: '406px' });
+      fireEvent.keyDown(launcher, { key: 'ArrowDown' });
+      expect(launcher).toHaveStyle({ top: '406px' });
+      fireEvent.click(launcher);
+      expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+    } finally {
+      composerRect.mockRestore(); launcherRect.mockRestore(); composer.remove();
+    }
+  });
+
   it('allows keyboard users to reposition the launcher with arrow keys', () => {
     renderMascot();
     const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });

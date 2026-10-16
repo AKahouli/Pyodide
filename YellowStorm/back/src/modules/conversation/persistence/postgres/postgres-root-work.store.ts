@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { ROOT_POLICY_CEILINGS } from '../../../agent/interfaces/root-execution-policy.interface';
 import { isDeepStrictEqual } from 'node:util';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, lte, sql } from 'drizzle-orm';
 import { admitRootExecution, toRecord } from './root-execution-admission';
 import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -23,6 +24,11 @@ import {
 } from '@modules/conversation/root-work/root-work.types';
 import { requireBackgroundOwner } from './root-background-owner';
 import { requireBackgroundItemOwner } from './root-background-fanout';
+import { mergeRootClarifications } from '../../root-work/root-clarifications';
+import { reconcileUncertainFanout } from './root-fanout-reconciliation';
+import { logDomainEvent } from '../../../logger/logger.service';
+import { loadStagedEvidence, stageEvidencePage } from './root-evidence-staging';
+import { verifyEvidenceManifest, type RootEvidenceManifest } from '../../root-work/root-evidence-manifest';
 import { sealRootScheduling } from './root-scheduling-seal';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
@@ -73,14 +79,34 @@ export class PostgresRootWorkStore implements RootWorkStore {
     return rows.map(toRecord);
   }
 
+  async listWorkerExecutions(conversationId: string, epoch: number): Promise<RootExecutionRecord[]> {
+    const columns = { ...getTableColumns(schema.rootExecutions), resultPayload: sql<DelegateResultV1>`
+      jsonb_build_object('nativeState', (${schema.rootExecutions.resultPayload}->'nativeState')
+        - ARRAY['preparedContext','sessionSeed','requestProfile','clarifications'])` };
+    const roots = await this.db.select(columns).from(schema.rootExecutions).where(and(
+      eq(schema.rootExecutions.conversationId, conversationId), eq(schema.rootExecutions.conversationEpoch, epoch),
+      eq(schema.rootExecutions.role, 'root'),
+    )).orderBy(sql`CASE WHEN ${schema.rootExecutions.status} IN ('running','waiting','cancellation_requested') THEN 0 ELSE 1 END`,
+      sql`${schema.rootExecutions.createdAt} DESC`).limit(20);
+    if (!roots.length) return [];
+    const children = await this.db.select(columns).from(schema.rootExecutions).where(and(
+      eq(schema.rootExecutions.conversationId, conversationId), eq(schema.rootExecutions.conversationEpoch, epoch),
+      inArray(schema.rootExecutions.parentExecutionId, roots.map((root) => root.id)),
+      inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker']),
+    )).limit(20 * ROOT_POLICY_CEILINGS.maxChildExecutionsPerWorkGroup);
+    return [...roots, ...children].map(toRecord);
+  }
+
   async completeExecution(
     executionId: string,
     status: 'completed' | 'cancelled' | 'failed' | 'outcome_unknown',
     result: RootExecutionRecord['resultPayload'],
     evidence: RegisterEvidenceInput[] = [],
     backgroundOwner?: RootBackgroundJobOwnerV1,
+    evidenceManifest?: RootEvidenceManifest,
   ): Promise<RootExecutionRecord | null> {
-    return this.db.transaction(async (tx) => {
+    let uncertainChildren: number | undefined;
+    const settled = await this.db.transaction(async (tx) => {
     let [execution] = await tx.select().from(schema.rootExecutions)
       .where(eq(schema.rootExecutions.id, executionId)).limit(1);
     if (!execution) return null;
@@ -98,8 +124,26 @@ export class PostgresRootWorkStore implements RootWorkStore {
       && conversation.epoch > execution.conversationEpoch;
     const fanoutItem = (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundFanoutItem;
     if (fanoutItem && !stoppedCancellation) await requireBackgroundItemOwner(tx, execution, backgroundOwner);
-    if (background && !stoppedCancellation) await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner);
-    if (evidence.length) {
+    const ownedJob = background && !stoppedCancellation ? await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner) : null;
+    if (ownedJob && execution.role === 'fanout_driver' && status === 'outcome_unknown') {
+      const [parent] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, execution.parentExecutionId!)).limit(1);
+      if (!parent) throw new Error('Fan-out parent unavailable');
+      uncertainChildren = await reconcileUncertainFanout(tx, parent, execution, ownedJob);
+    }
+    if (evidenceManifest) {
+      if (status !== 'completed' || !result || !['library_worker', 'temporary_worker'].includes(execution.role)) {
+        throw new Error('Staged evidence requires completed worker settlement');
+      }
+      const staged = verifyEvidenceManifest(await loadStagedEvidence(tx, executionId), evidenceManifest);
+      const expected = [...result.citationRefs, ...result.artifactRefs].sort();
+      if (!isDeepStrictEqual(expected, staged.map((item) => item.evidenceId).sort())
+        || staged.some((item) => item.conversationId !== execution.conversationId
+          || item.producerAgentId !== result.producerAgentId
+          || !(item.kind === 'citation' ? result.citationRefs : result.artifactRefs).includes(item.evidenceId))) {
+        throw new Error('Staged evidence result references changed');
+      }
+    }
+    if (evidence.length && !evidenceManifest) {
       if (status !== 'completed' || !['library_worker', 'temporary_worker'].includes(execution.role)) {
         throw new Error('Evidence requires completed library worker settlement');
       }
@@ -152,6 +196,10 @@ export class PostgresRootWorkStore implements RootWorkStore {
     if (row && fanoutItem && !stoppedCancellation) await requireBackgroundItemOwner(tx, row, backgroundOwner);
     return row ? toRecord(row) : null;
     });
+    if (settled && uncertainChildren !== undefined) logDomainEvent('warn', 'job.execution.outcome_unknown', {
+      job_id: executionId, run_id: executionId, conversation_id: settled.conversationId,
+      job_kind: 'fanout', reason_code: 'coordinator_unknown', count: uncertainChildren });
+    return settled;
   }
 
   async markWaiting(executionId: string): Promise<void> {
@@ -163,6 +211,33 @@ export class PostgresRootWorkStore implements RootWorkStore {
           sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundJobId' IS NULL`,
           sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundFanoutItem' IS NULL`),
       );
+  }
+
+  async stageEvidence(executionId: string, evidence: RegisterEvidenceInput[], owner?: RootBackgroundJobOwnerV1): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [identity] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, executionId)).limit(1);
+      if (!identity) throw new Error('Evidence producer unavailable');
+      const [conversation] = await tx.select().from(schema.conversations).where(eq(schema.conversations.id, identity.conversationId)).limit(1).for('update');
+      const [execution] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, executionId)).limit(1).for('update');
+      const state = (execution?.resultPayload as DelegateResultV1 | null)?.nativeState;
+      if (!conversation || !execution || !state || conversation.rootWorkEpoch !== execution.conversationEpoch
+        || conversation.createdBy !== state.actorId || conversation.isArchived || conversation.isGroup
+        || conversation.rootAgentId !== execution.rootAgentId || !['library_worker', 'temporary_worker'].includes(execution.role)
+        || !['running', 'waiting'].includes(execution.status)
+        || evidence.some((item) => item.executionId !== executionId || item.conversationId !== execution.conversationId
+          || item.producerAgentId !== String(state.rootContext.selected_agent_id))) throw new Error('Evidence producer binding changed');
+      const [parent] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, execution.parentExecutionId!)).limit(1);
+      if (!parent || parent.conversationId !== execution.conversationId || parent.conversationEpoch !== execution.conversationEpoch) {
+        throw new Error('Evidence root binding changed');
+      }
+      if (state.backgroundFanoutItem) await requireBackgroundItemOwner(tx, execution, owner);
+      else if (state.backgroundJobId) await requireBackgroundOwner(tx, toRecord(execution), owner);
+      else if (!['running', 'waiting'].includes(parent.status)) throw new Error('Evidence root is terminal');
+      await stageEvidencePage(tx, executionId, evidence);
+      // An expired lease during persistence rolls the page back.
+      if (state.backgroundFanoutItem) await requireBackgroundItemOwner(tx, execution, owner);
+      else if (state.backgroundJobId) await requireBackgroundOwner(tx, toRecord(execution), owner);
+    });
   }
 
   async recordNativeState(executionId: string, state: RootNativeState,
@@ -192,13 +267,14 @@ export class PostgresRootWorkStore implements RootWorkStore {
       }
       const [row] = await tx.update(schema.rootExecutions).set({
         status, resultPayload: { ...payload, nativeState: { ...state,
+          clarifications: mergeRootClarifications(previous.clarifications, state.clarifications),
           fanoutManifests: previous.fanoutManifests, workerPermits: previous.workerPermits,
           admittedRequest: previous.admittedRequest,
           backgroundEventSequence: previous.backgroundEventSequence,
           backgroundJobId: previous.backgroundJobId, backgroundFanout: previous.backgroundFanout,
           backgroundFanoutItem: previous.backgroundFanoutItem,
           hasBackgroundJobs: previous.hasBackgroundJobs, schedulingSeal: previous.schedulingSeal,
-          followup: previous.followup } }, updatedAt: new Date(),
+          followup: previous.followup, origin: previous.origin, sessionSeed: previous.sessionSeed } }, updatedAt: new Date(),
       }).where(and(eq(schema.rootExecutions.id, executionId),
         inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
       if (row && job) {
@@ -268,6 +344,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
         .select({
           epoch: schema.conversations.rootWorkEpoch,
           lastStopRequestId: schema.conversations.rootWorkLastStopRequestId,
+          stoppedForegroundIds: schema.conversations.rootWorkLastStopForegroundMessageIds,
           actorId: schema.conversations.createdBy,
           archived: schema.conversations.isArchived,
           group: schema.conversations.isGroup,
@@ -282,27 +359,25 @@ export class PostgresRootWorkStore implements RootWorkStore {
       if (input.actorId !== undefined && (conversation.actorId !== input.actorId || conversation.archived || conversation.group)) {
         throw new Error('Root Stop creator authority changed');
       }
-      if (input.expectedEpoch !== undefined && input.expectedEpoch !== conversation.epoch) {
-        const [pending] = input.foregroundMessageId && conversation.lastStopRequestId === input.stopRequestId
+      if ((input.expectedEpoch !== undefined && input.expectedEpoch !== conversation.epoch)
+        || (conversation.lastStopRequestId !== null && conversation.lastStopRequestId >= input.stopRequestId)) {
+        const stoppedIds = conversation.stoppedForegroundIds ?? [];
+        const pending = stoppedIds.length && conversation.lastStopRequestId === input.stopRequestId
           ? await tx.select({ messageId: schema.conversationExecutions.messageId })
             .from(schema.conversationExecutions).where(and(
               eq(schema.conversationExecutions.conversationId, input.conversationId),
-              eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
+              inArray(schema.conversationExecutions.messageId, stoppedIds),
               sql`${schema.conversationExecutions.cancelRequestedAt} IS NOT NULL`,
-              eq(schema.conversationExecutions.status, 'running'))).limit(1) : [];
+              eq(schema.conversationExecutions.status, 'running'))) : [];
+        const original = pending.find((entry) => entry.messageId === input.foregroundMessageId);
         return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0,
-          ...(pending ? { foregroundMessageId: pending.messageId } : {}) };
+          foregroundMessageIds: pending.map((entry) => entry.messageId),
+          ...(original ? { foregroundMessageId: original.messageId } : {}) };
       }
       // Stop ids are UUIDv7 (time-ordered, see newStopRequestId), so
       // lexicographic order is chronological. Equal id = idempotent replay;
       // a smaller id arriving after a newer one is a stale/retried Stop and
       // is ignored so it cannot cancel work admitted under the newer barrier.
-      if (
-        conversation.lastStopRequestId !== null &&
-        conversation.lastStopRequestId >= input.stopRequestId
-      ) {
-        return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0 };
-      }
       const barrierEpoch = conversation.epoch + 1;
       await tx.execute(sql`UPDATE conversation.conversation_executions SET status = 'cancelled',
         cancel_requested_at = clock_timestamp(), terminal_at = clock_timestamp(), updated_at = clock_timestamp()
@@ -311,12 +386,11 @@ export class PostgresRootWorkStore implements RootWorkStore {
             AND role = 'followup' AND conversation_epoch <= ${conversation.epoch})`);
       // Persist the exact foreground cancellation intent with the barrier, so
       // retrying an observer failure cannot target a newly admitted stream.
-      const [foreground] = input.foregroundMessageId ? await tx.update(schema.conversationExecutions)
+      const foreground = await tx.update(schema.conversationExecutions)
         .set({ cancelRequestedAt: new Date(), updatedAt: new Date() }).where(and(
           eq(schema.conversationExecutions.conversationId, input.conversationId),
-          eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
           eq(schema.conversationExecutions.status, 'running')))
-        .returning({ messageId: schema.conversationExecutions.messageId }) : [];
+        .returning({ messageId: schema.conversationExecutions.messageId });
       const marked = await tx
         .update(schema.rootExecutions)
         .set({ status: 'cancellation_requested', stopRequestId: input.stopRequestId, updatedAt: new Date() })
@@ -340,11 +414,15 @@ export class PostgresRootWorkStore implements RootWorkStore {
       }
       await tx.execute(sql`
         UPDATE conversation.conversations
-        SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId}, updated_at = now()
+        SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId},
+          root_work_last_stop_foreground_message_ids = ${JSON.stringify(foreground.map((entry) => entry.messageId))}::jsonb,
+          updated_at = now()
         WHERE id = ${input.conversationId}::char(24)
       `);
       return { barrierEpoch, applied: true, markedCount: marked.length,
-        ...(foreground ? { foregroundMessageId: foreground.messageId } : {}) };
+        foregroundMessageIds: foreground.map((entry) => entry.messageId),
+        ...(foreground.some((entry) => entry.messageId === input.foregroundMessageId)
+          ? { foregroundMessageId: input.foregroundMessageId } : {}) };
     });
   }
 }
