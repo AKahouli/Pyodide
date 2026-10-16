@@ -165,7 +165,8 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,on
   const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
   useEffect(() => { if (focusRequest?.section) setOpen((current) => ({ ...current, [focusRequest.section!]: true })); }, [focusRequest]);
   const pane = (id: string) => ({ id: `concept-${id}`, open: Boolean(open[id]), onOpenChange: (next: boolean) => setOpen((current) => ({ ...current, [id]: next })) });
-  const identity = useIdentityRules(modelId || undefined).data?.find((rule) => rule.conceptId === item.id)?.fields ?? [];
+  const identity = (useIdentityRules(modelId || undefined).data?.find((rule) => rule.conceptId === item.id)?.fields ?? [])
+    .filter((key) => item.attributes.some((attribute) => attribute.key === key));
   // The sources' names, shown on the folded part: the files or folders, and the concepts it is made from.
   const sourceNames = [
     ...(useSourceMappings(modelId || undefined).data ?? []).filter((mapping) => mapping.conceptId === item.id).map((mapping) => mapping.documentName ?? mapping.documentId),
@@ -218,7 +219,8 @@ export function IdentitySection({ modelId, node, canEdit, bare }: Readonly<{ mod
   const client = useQueryClient();
   const rules = useIdentityRules(modelId);
   const mappings = useSourceMappings(modelId);
-  const fields = rules.data?.find((rule) => rule.conceptId === node.id)?.fields ?? [];
+  const fields = (rules.data?.find((rule) => rule.conceptId === node.id)?.fields ?? [])
+    .filter((key) => node.attributes.some((attribute) => attribute.key === key));
   const mapped = (mappings.data ?? []).some((mapping) => mapping.conceptId === node.id);
   const save = useMutation({
     mutationFn: async (next: string[]) => {

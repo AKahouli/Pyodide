@@ -13,7 +13,9 @@ const apiMocks = vi.hoisted(() => ({
   stopPopulationJob: vi.fn(),
   stopSearchIndex: vi.fn(),
   restartSearchIndex: vi.fn(),
+  saveIdentityRule: vi.fn(),
 }));
+const identityMock = vi.hoisted(() => ({ rules: [] as Array<{ conceptId: string; fields: string[] }> }));
 // The state of the search index the page follows; undefined: nothing is being built.
 const indexMock = vi.hoisted(() => ({ state: undefined as string | undefined, stalled: false }));
 // The model check the page follows; undefined: it is still loading or could not be read.
@@ -32,6 +34,7 @@ vi.mock("../api", () => ({
     stopPopulationJob: apiMocks.stopPopulationJob,
     stopSearchIndex: apiMocks.stopSearchIndex,
     restartSearchIndex: apiMocks.restartSearchIndex,
+    saveIdentityRule: apiMocks.saveIdentityRule,
   },
 }));
 
@@ -81,7 +84,7 @@ vi.mock("../query/hooks", () => ({
   useModelHealth: () => ({ data: { state: 'no_data', dataRevisionId: null, verdict: null, concepts: [], setup: [],
     summary: { concepts: 0, healthy: 0, rowsRead: 0, recordsKept: 0, fixesNeeded: 0, limits: 0, setupItems: 0 } }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
-  useIdentityRules: () => ({ data: [], isLoading: false }),
+  useIdentityRules: () => ({ data: identityMock.rules, isLoading: false }),
   useLabelFields: () => ({ data: [], isLoading: false }),
   useCanvasPositions: () => ({ data: [], isLoading: false }),
   useSemanticVersions: () => ({ data: [], isLoading: false }),
@@ -113,8 +116,9 @@ vi.mock("../components/editor/EditorDialogs", () => ({
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
-  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource, onDataConnectRequest, onSelectRelation, onSelectConcept }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void; onDataConnectRequest?: (connection: { sourceId: string; targetId: string }) => void; onSelectRelation?: (relationId: string) => void; onSelectConcept?: (conceptId: string, details: boolean) => void }) => <div>
+  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource, onDataConnectRequest, onSelectRelation, onSelectConcept, onToggleKey }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void; onDataConnectRequest?: (connection: { sourceId: string; targetId: string }) => void; onSelectRelation?: (relationId: string) => void; onSelectConcept?: (conceptId: string, details: boolean) => void; onToggleKey?: (conceptId: string, field: string) => void }) => <div>
     semantic-model-canvas
+    <button onClick={() => onToggleKey?.('customer', 'docid')}>toggle-docid-key</button>
     <button onClick={() => onMapStructuredDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-1', name: 'customers.xlsx', structured: true, mappable: true }, 'customer')}>map-source</button>
     <button onClick={() => onPaneDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-2', name: 'suppliers.xlsx', structured: true, mappable: true })}>drop-on-pane</button>
     <button onClick={() => onOpenSource?.({ id: 'typed:customer', kind: 'typed', mappings: [] })}>open-typed</button>
@@ -164,6 +168,8 @@ vi.mock('../components/preview/SemanticDataPreview', () => ({
 describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    identityMock.rules = [];
+    apiMocks.saveIdentityRule.mockResolvedValue({ revision: 1 });
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
     apiMocks.getPopulationJob.mockReset().mockResolvedValue({ jobId: 'job-1', state: 'completed' });
@@ -174,6 +180,23 @@ describe("SemanticModelEditorPage", () => {
     checkMock.result = undefined;
     apiMocks.restartSearchIndex.mockResolvedValue({ restarted: true, index: { state: 'queued' } });
     useSemanticModelEditorStore.getState().reset();
+  });
+
+  it('drops removed key fields when choosing a replacement from the canvas', async () => {
+    identityMock.rules = [{ conceptId: 'customer', fields: ['documentid'] }];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+    await screen.findByText('semantic-model-canvas');
+    act(() => useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{
+      id: 'customer', key: 'customer', label: 'Customer', description: '', category: 'business_object',
+      recordPolicy: 'optional', systemKey: null, aliases: [], position: { x: 0, y: 0 },
+      attributes: [{ key: 'docid', label: 'docid', type: 'text', required: false }],
+    }] }));
+    act(() => useSemanticModelEditorStore.getState().markSaving());
+    fireEvent.click(screen.getByRole('button', { name: 'toggle-docid-key' }));
+    expect(apiMocks.saveIdentityRule).not.toHaveBeenCalled();
+    act(() => useSemanticModelEditorStore.getState().markSaved(1, 0));
+    await waitFor(() => expect(apiMocks.saveIdentityRule).toHaveBeenCalledWith('model-1', 'customer', ['docid']));
   });
 
   it("autosaves graph operations", async () => {

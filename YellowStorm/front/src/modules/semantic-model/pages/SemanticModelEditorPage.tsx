@@ -86,7 +86,7 @@ import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowle
 import { useAssistantSync } from "../hooks/use-assistant-sync";
 import { isIndexBuilding, useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, useModelCheck, usePopulationFreshness, useSearchIndexStatus, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useModelHealth, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
-import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
+import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore, waitForGraphSave } from "../store";
 import type { ConceptSourceMapping, HealthAction, ModelCheckIssue, ReviewQueueItem } from "../types";
 import { checkBlockReason, checkTarget } from "../utils/model-check";
 import type { DesignerSource } from "../utils/designer-flow";
@@ -952,9 +952,12 @@ export function SemanticModelEditorPage() {
   };
   const toggleKey = (conceptId: string, field: string) => {
     if (!modelId) return;
-    const fields = identityRules.data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [];
+    const concept = useSemanticModelEditorStore.getState().graph?.nodes.find((node) => node.id === conceptId);
+    if (!concept) return;
+    const fields = (identityRules.data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [])
+      .filter((key) => concept.attributes.some((attribute) => attribute.key === key));
     const next = fields.includes(field) ? fields.filter((item) => item !== field) : [...fields, field];
-    semanticModelApi.saveIdentityRule(modelId, conceptId, next).then(() => Promise.all([
+    waitForGraphSave().then(() => semanticModelApi.saveIdentityRule(modelId, conceptId, next)).then(() => Promise.all([
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
       queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),

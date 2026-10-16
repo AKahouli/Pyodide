@@ -54,6 +54,17 @@ run was claimed. Full frontend typecheck was blocked by unrelated diagnostics, w
 none in the changed discovery/mapping/API/types/read-provider paths. Existing index
 rows still describe this feature and its owners; no new page, index row or ADR is needed.
 
+Identity-choice recovery (2026-10-16): inspector and canvas key actions exclude
+stored identity fields absent from the current concept before toggling a choice;
+the inspector also treats an entirely stale rule as no usable identity. Saving a
+replacement persists only current selections through the existing validated API.
+The canvas action waits for graph autosave, as the inspector already does, so a
+new field is persisted before its identity rule. This does not rewrite stored
+rules until an explicit choice. Regression coverage in `SemanticModelInspector.test.tsx`
+and `SemanticModelEditorPage.test.tsx` passed (46 tests); Chrome QA on the owned copy
+above saved `docid` after the prior `documentid` field had been removed, and verified
+the selected key after reload. No architecture, contract or index change is needed.
+
 Semantic models describe concepts, fields and relationships, map workspace data to those definitions, and produce inspectable population revisions for search and use by agents.
 
 | Workflow | Implemented entry point / behavior |
