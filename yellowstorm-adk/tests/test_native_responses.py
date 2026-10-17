@@ -155,6 +155,44 @@ async def test_native_capacity_disables_sdk_retries_for_rejected_request(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_shared_connection_peer_close_does_not_retry_or_release_uncertain_dispatch(monkeypatch):
+    from src.smart_rag.infrastructure.factories import llm_factory as factory
+    from openai import APIConnectionError
+    pool = SimpleNamespace(acquire=AsyncMock(return_value='permit'), transition=AsyncMock())
+    monkeypatch.setattr('src.root_runtime.model_capacity.capacity_pool', lambda: pool)
+    monkeypatch.setattr('src.config.settings.get_settings', lambda: SimpleNamespace(ROOT_WORK_LLM_CAPACITY_ENABLED=True))
+    calls = []
+    def handler(req):
+        calls.append(req)
+        if len(calls) == 1:
+            return httpx.Response(200, json=response())
+        raise httpx.RemoteProtocolError('peer closed idle connection', request=req)
+    owner = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    factory._gateway_http_owners[asyncio.get_running_loop()] = owner
+    try:
+        for index in (0, 1):
+            client = AsyncOpenAI(api_key='fixture', base_url='https://gateway.invalid/v1',
+                                 http_client=factory._responses_http_client())
+            model = InstrumentedResponsesLlm(model='fixture', client=client)
+            try:
+                if index == 0:
+                    assert [item async for item in model.generate_content_async(request())]
+                else:
+                    with pytest.raises(APIConnectionError):
+                        _ = [item async for item in model.generate_content_async(request())]
+            finally:
+                await client.close()
+        assert len(calls) == 2  # One dispatch per turn, including the failed reuse.
+        assert [call.args for call in pool.transition.await_args_list] == [
+            ('permit', 'running'), ('permit', 'free'),
+            ('permit', 'running'), ('permit', 'outcome_unknown'),
+        ]
+        assert not owner.is_closed
+    finally:
+        await factory.close_shared_gateway_http_client()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('enabled', [False, True])
 async def test_early_generator_close_closes_sdk_stream_and_retains_uncertain_capacity(monkeypatch, enabled):
     pool = SimpleNamespace(acquire=AsyncMock(return_value='permit'), transition=AsyncMock())
@@ -495,7 +533,10 @@ async def test_shared_gateway_transport_preserves_owner_routing_and_shutdown(mon
     client = factory._responses_http_client()
     owner = factory._gateway_http_owners[asyncio.get_running_loop()]
     assert owner._transport._pool._http2 is True
-    assert owner._transport._pool._keepalive_expiry == 5.0  # Preserve SDK default idle expiry.
+    from openai import DEFAULT_CONNECTION_LIMITS
+    assert owner._transport._pool._keepalive_expiry == 30.0
+    assert owner._transport._pool._max_connections == DEFAULT_CONNECTION_LIMITS.max_connections
+    assert owner._transport._pool._max_keepalive_connections == DEFAULT_CONNECTION_LIMITS.max_keepalive_connections
     route = httpx.MockTransport(lambda req: httpx.Response(200, json={'ok': True}))
     urls = []
     def select(url):

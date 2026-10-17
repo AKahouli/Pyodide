@@ -39,12 +39,17 @@ Capacity diagnostics separately record admission and dispatch-to-first-response 
 the existing public provider TTFT metric keeps its original meaning.
 
 Responses clients now borrow loop-owned HTTP/2-capable connections while retaining
-separate per-turn headers, credentials and cookies. SDK pool limits/five-second idle
-expiry remain unchanged; lifespan shutdown closes the pool after gRPC stops. Install
+separate per-turn headers, credentials and cookies. SDK connection counts are retained;
+shared connections expire after 30 seconds idle, qualified through this gateway at
+six/15/25 seconds reuse and 31 seconds reconnect. Lifespan shutdown closes the pool
+after gRPC stops. Install
 the pinned `httpx[http2]` requirement. Chat Completions keeps its existing transport.
 Numeric HTTP and usage diagnostics distinguish gateway overhead, connection setup,
 cached input and model response time. No reasoning, tool, history or capacity setting
 changes; warm connection reuse saves roughly 180 ms, not the entire provider delay.
+The longer reuse window avoids this setup cost on more human turns without restarting
+or reconfiguring the gateway. Idle peer failures still propagate without overlapping
+retries; uncertain capacity remains occupied until reconciled.
 
 `conversation_latency_diag.provider_stream` further separates upload, headers,
 first body bytes, native lifecycle/reasoning/text/tool events and useful ADK output

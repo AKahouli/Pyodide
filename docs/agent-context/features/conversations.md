@@ -67,7 +67,8 @@ action; a fresh same-agent marker was saved and recalled exactly on the next tur
 Follow-up upstream investigation (2026-10-17) identified avoidable HTTP/1.1 reconnects
 after the installed SDK ends SSE at `[DONE]`. Responses now borrows HTTP/2-capable
 network connections across per-turn clients; credentials, headers and cookies remain
-separate. SDK five-second idle expiry is retained. Controlled gateway comparisons
+separate. The initial implementation retained SDK five-second idle expiry (extended
+to 30 seconds by the qualified follow-up below). Controlled gateway comparisons
 isolated about 180 ms saved per reused connection, with all permits released and
 unchanged reasoning, tools and history. Both Responses history modes and Chat
 Completions passed two-turn deferred-tool checks; native high-effort summaries and
@@ -80,6 +81,16 @@ effort. These UI calls exceeded the five-second reuse window and still paid TCP/
 so their latency changes are not evidence of handshake savings. The matched factory
 probes demonstrate that saving. Most remaining delay is outside measured gateway
 overhead; transport reuse does not eliminate provider variability.
+
+The subsequent no-gateway-restart optimization extends only shared Responses
+connection idle retention from five to 30 seconds. Same-input gateway probes reused
+connections after six/15/25 seconds and reconnected after 31 seconds; all nine permits
+were released. The six-second comparison improved dispatch-to-useful output from
+1,102 to 918 ms even though reported gateway processing rose from 710 to 721 ms.
+This supports roughly 190 ms saved on reused connections, not a guaranteed reduction
+in model generation. SDK connection counts, reasoning effort, tools, history and
+capacity policy remain unchanged. Existing spend logs for the two Luna greetings
+reported first-native-event times of 1,579/1,567 ms; they did not expose queue time.
 
 Follow-up first-event profiling (2026-10-17) retained Luna Medium, Auto summaries,
 all tools and the existing conversation history. Two greetings completed normally:

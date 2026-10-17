@@ -30,12 +30,13 @@ os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
 LLM_REQUEST_TIMEOUT_SECONDS = 90
 LLM_REQUEST_NUM_RETRIES = 1
 _gateway_http_owners = WeakKeyDictionary()
+GATEWAY_HTTP_KEEPALIVE_SECONDS = 30.0
 
 
 def _responses_http_client():
     """Borrow connections, never another turn's HTTP headers or cookie jar."""
     import httpx
-    from openai import DefaultAsyncHttpxClient
+    from openai import DefaultAsyncHttpxClient, DEFAULT_CONNECTION_LIMITS
     from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
         trace_responses_http_request, trace_responses_http_response,
     )
@@ -46,7 +47,11 @@ def _responses_http_client():
         return DefaultAsyncHttpxClient(http2=True, event_hooks=hooks)
     owner = _gateway_http_owners.get(loop)
     if owner is None or owner.is_closed:
-        owner = DefaultAsyncHttpxClient(http2=True)
+        owner = DefaultAsyncHttpxClient(http2=True, limits=httpx.Limits(
+            max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
+            max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
+            keepalive_expiry=GATEWAY_HTTP_KEEPALIVE_SECONDS,
+        ))
         _gateway_http_owners[loop] = owner
 
     class BorrowedTransport(httpx.AsyncBaseTransport):

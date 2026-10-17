@@ -32,7 +32,8 @@ so even a reused client paid ~183 ms TCP/TLS setup again. Native Responses now u
 loop-owned HTTP/2-capable connections with independent per-turn SDK/HTTP identity,
 headers and cookie jars. A borrowed transport preserves owner proxy routing; turn
 closure does not close the shared pool. The lifespan drains gRPC before closing it.
-SDK pool limits and five-second idle expiry remain unchanged; idle/HTTP1 fallback
+SDK connection counts remain unchanged; the shared pool now has a qualified
+30-second idle expiry (initially five seconds). Expired/HTTP1 fallback
 requests still pay connection setup. A matched pair isolated ~177 ms saved while
 provider processing stayed essentially equal. See proposed
 [ADR-0022](../decisions/ADR-0022-conversation-responses-http2-pool.md) for lifecycle,
@@ -43,6 +44,14 @@ its existing transport. Neither mode changes reasoning, tools, retries or capaci
 HTTP/2 negotiation and finite allowlisted gateway timing headers; `provider_usage`
 records final primary-call input/cached/reasoning/output token counts in both APIs.
 These diagnostics do not serialize HTTP requests or change public latency fields.
+
+Follow-up controlled idle probes reused the gateway connection at six/15/25 seconds
+and reconnected at 31 seconds. The five-second control reconnected at six/25 seconds.
+The six-second comparison isolated about 190 ms saved with identical reasoning/tools
+and essentially equal gateway processing. Only the shared network pool changes;
+SDK connection counts and turn identity/cookies remain isolated. A mocked peer-close
+test verifies no retry and retained uncertain capacity. HTTP/2 idle peer closure can
+still fail a request; the pool does not add speculative retries to conceal it.
 
 First-event profiling adds `conversation_latency_diag.provider_stream` for the
 primary Responses stream only. It separates dispatch/upload, upload-to-headers,
