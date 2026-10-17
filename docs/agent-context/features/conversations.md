@@ -77,6 +77,14 @@ Activity previews render inline Markdown; expanded summaries render safe
 Markdown with paragraph spacing, lists and compact headings. Raw HTML and external
 images are not rendered, and Markdown links retain the renderer's safe URL policy.
 This display formatting does not alter stored summary text or private replay state.
+Gateway compatibility qualification also covers a single ten-turn ADK session
+switching GPT 6 Luna application Responses to provider Responses, GPT 5.4 Mini
+provider Responses, Chat Completions and back to Luna provider Responses. The
+2026-10-17 run passed five local tool executions, fifteen streamed provider calls,
+original-context recall, incompatible-chain reset, compatible delta-only chaining,
+public replay isolation, instrumentation and all fifteen capacity releases.
+The live qualifier's `--require-replay` workload checks encrypted replay separately
+from optional summary generation; a marker-only task may produce no reasoning.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
 Workers and manager/team execution retain their adapters. Truncated native streams fail
 instead of finalizing partial text/tool calls. A private session adapter restores

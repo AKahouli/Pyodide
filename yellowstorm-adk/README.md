@@ -70,6 +70,16 @@ slot according to the existing capacity recovery process; never steal it to make
 a test pass. Add `--api chat_completions` to run the same tool/history/capacity
 scenario through the completion adapter.
 
+Replay qualification must use a reasoning workload: add `--require-replay`
+with `--replay none|last|all|auto`. It verifies actual encrypted-item replay
+and the next-user boundary independently of optional native summary generation.
+`--require-summary` remains a separate summary capability check.
+Use `--history provider --replay auto` to verify stored response chaining.
+Add `--switch-model gpt-5.4-mini --model gpt-6-luna --effort high` for a
+ten-turn, five-tool sequence through application Responses, provider Responses,
+a different model, Chat Completions and back to Responses. Each boundary checks
+context recall, chain rebasing, streaming, instrumentation and capacity release.
+
 ## Shared MCP connections and authentication
 
 Conversation connector tools and Playbook factories share `src/mcp/`; the client is
