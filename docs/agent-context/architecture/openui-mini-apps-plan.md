@@ -1,6 +1,6 @@
 # OpenUI 1.0 migration assessment and general mini-app plan
 
-Status: **phases 1 and 2 qualified; phase 3 approved and in qualification; phases 4–7 remain proposed**.
+Status: **phases 1–4 qualified; phases 5–7 remain proposed**.
 Assessed 2026-10-17 against this branch after chart-export commit `2f2e303c4`.
 Other dirty work in the checkout is outside this assessment. Package versions below
 are an assessment-date snapshot, not a claim about future registry releases.
@@ -378,6 +378,77 @@ injected context is not proof that a whole long document was read. Use authorize
 search/chunk retrieval for longer files; disclose partial coverage. Scanned PDFs
 require an explicitly available OCR/vision path or a clear unsupported-content
 message. Plain extraction must not claim to understand charts or embedded images.
+
+## Phase 4 implementation and qualification
+
+The user approved phase 4 on 2026-10-17. The implementation extends the existing
+ConversationModule and OpenUI library; no table, service or execution runtime is
+introduced. ADR-0025 continues governing private draft identity and authorization.
+
+- `MiniDocument` binds a document ID selected from completed, non-folder uploads
+  in this conversation's existing system workspace. It pages the authenticated
+  conversation files list and offers refresh after composer upload. It does not broaden
+  document scope to arbitrary workspace IDs or accept generated storage URLs.
+- `AskAgent` accepts an optional bounded document-ID array. The host flushes the
+  private draft before attaching an `appTask` descriptor (version 1, exact source
+  program digest, acknowledged revision and up to five distinct document IDs).
+  The server rechecks creator/member access, program/revision, attachment policy
+  and every selected document before creating the normal conversation turn.
+- Existing request IDs and interaction fingerprints make uncertain transport
+  retries idempotent. A later explicit run uses a new request ID. Busy/stream
+  guards reject double clicks; leaving the actor/source scope fences late work.
+- Existing interaction JSON and user/assistant message links own task/result
+  references. Result bodies stay in assistant messages. `MiniTaskResult` follows
+  the enclosing app's actor/source/program/form identity and restores saved
+  output through authenticated message reads, never by dispatching execution.
+- Host draft revision/unsaved state marks old results stale independently of
+  generated inputs. A text component is one atomic draft, so changing any app
+  inside that component can require rerunning its results. Explicit cancellation
+  targets the accepted assistant message. Existing execution status now reaches
+  message responses; cancelled, failed and interrupted partial output is never
+  presented as a successful result.
+- The existing extraction/context budgets above remain in force. The canonical
+  task instruction requires untrusted-document handling and disclosure of partial
+  coverage or unavailable OCR; the selector does not promise whole-file reading.
+  Dynamic app snapshots/exports remain phase 5.
+
+Focused verification: 50 frontend tests, 20 compatibility tests and a consolidated
+158 backend tests across seven affected suites pass.
+Independent source review covers the actor/source/revision gates, retry versus
+explicit rerun, host-owned stale checks and trusted attachment workspace contexts.
+Production frontend/backend TypeScript checks pass. Production bundling passes
+with gzip reporting disabled (1m 54s); the prompt is 54,867 characters, under its
+55,000-character soft budget.
+
+Live qualification on 2026-10-17 uses conversation
+`f417e12e499dba83ffe99d10`. A newly generated document-reader app lists four native
+uploads. Short PDF and DOCX summaries correctly read the synthetic project facts;
+changing document/length hides the previous result as stale. Reload restores
+selection and saved output with unchanged task/message identities and usage.
+Cancellation remains cancelled after reload; only a later explicit run starts work.
+The 55-page PDF run disclosed the verified section and truncated preview instead
+of claiming complete coverage. The image-only PDF yielded the correct Maple/
+Saturday/Rami facts and explicitly limited its claim to extracted page-one text.
+Access tests reject nonmembers, revoked/governed access, cross-workspace documents,
+invalid source/revision, disabled attachments and incomplete files before execution.
+Two-account live browser access testing was not repeated in this phase.
+
+The initial database backup lock cleared without terminating its session. Normal
+backend startup and live Swagger generation now pass. Live testing also found that
+the legacy linked-workspace picker omits native uploads; the existing file
+controller now exposes a participant-scoped paginated upload list without creating
+workspaces. The native agent request now includes actual server-resolved current
+attachment workspaces instead of falling back to the conversation ID. Previous
+attachments and model/client workspace hints cannot widen this context; ADR-0017
+and ADR-0018 actor/MCP isolation remain unchanged. The canonical task manifest
+provides verified IDs, untrusted filename labels and bounded-extraction guidance.
+
+Normal Nest watch compilation exposed a Swagger compiler gap in the inline task
+version literal: it emitted nested schemaVersion metadata without a numeric type,
+reported as a circular dependency at startup. Explicit appTask OpenAPI metadata
+fixes generation without changing transport validation. The real compiled schema
+factory passes; removing the explicit metadata reproduces the exact error. A
+focused schema-generation regression and production TypeScript check pass.
 
 ## Exports from dynamic apps
 

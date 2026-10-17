@@ -16,6 +16,31 @@ describe('private mini-app autosave', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.mocked(fetchOpenUiAppState).mockResolvedValue(snapshot()); vi.mocked(saveOpenUiAppState).mockImplementation(async (_, payload) => snapshot(payload.state, payload.expectedRevision + 1)); });
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
+  it('flushes before an explicit task and rejects conflicts instead of executing against an unsaved revision', async () => {
+    const { result } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    act(() => result.current.handleStateUpdate({ document: 'doc', count: 0 }));
+    let saved: unknown; await act(async () => { saved = await result.current.flush(); });
+    expect(saved).toEqual({ programDigest: identity.programDigest, stateRevision: 1 });
+    expect(saveOpenUiAppState).toHaveBeenCalledOnce();
+    vi.mocked(saveOpenUiAppState).mockRejectedValueOnce({ statusCode: 409 });
+    act(() => result.current.handleStateUpdate({ document: 'changed' }));
+    await act(async () => { await expect(result.current.flush()).rejects.toThrow('Draft is not saved'); });
+    expect(result.current.status).toBe('conflict');
+  });
+
+  it('waits for the in-flight write and saves a newer queued input before returning the task revision', async () => {
+    let complete!: (value: MiniAppStateSnapshot) => void;
+    vi.mocked(saveOpenUiAppState).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const { result } = renderHook(() => useMiniAppState({ identity, enabled: true })); await settle();
+    act(() => result.current.handleStateUpdate({ value: 1 })); await tick();
+    act(() => result.current.handleStateUpdate({ value: 2 }));
+    let promise!: ReturnType<typeof result.current.flush>;
+    act(() => { promise = result.current.flush(); });
+    await act(async () => { complete(snapshot({ value: 1 }, 1)); await promise; });
+    expect(await promise).toEqual({ programDigest: identity.programDigest, stateRevision: 2 });
+    expect(vi.mocked(saveOpenUiAppState).mock.calls[1][1].state).toEqual({ value: 2 });
+  });
+
   it('loads typed unsubmitted values and debounces a complete draft without an agent turn', async () => {
     const typed = { zero: 0, enabled: false, blank: '', absent: null, nested: { values: [0, false, null, ''] } };
     vi.mocked(fetchOpenUiAppState).mockResolvedValue(snapshot(typed, 3));

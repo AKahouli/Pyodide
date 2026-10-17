@@ -336,6 +336,7 @@ export interface MessageResponse {
   editedAt?: string;
   isStreaming: boolean;
   isComplete: boolean;
+  terminalStatus?: 'starting' | 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
   inputTokens?: number;
   outputTokens?: number;
   modelRequestTelemetry?: ModelRequestTelemetry;

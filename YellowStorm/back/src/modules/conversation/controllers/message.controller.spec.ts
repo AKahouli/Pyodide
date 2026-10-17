@@ -18,6 +18,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     markStreamFailed: jest.Mock;
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
+    getOpenUiAppState: jest.Mock;
     findById: jest.Mock;
     findToolActivityResult: jest.Mock;
     reportFrontendLatency: jest.Mock;
@@ -52,6 +53,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     error: jest.Mock;
   };
   let controller: MessageController;
+  let attachmentResolver: { resolve: jest.Mock };
   let conversationSettings: { isLatencyInstrumentationEnabledCached: jest.Mock; isAttachmentIntelligenceEnabled: jest.Mock };
 
   const user = {
@@ -87,6 +89,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       markStreamFailed: jest.fn(),
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),
+      getOpenUiAppState: jest.fn().mockResolvedValue({programDigest: 'd'.repeat(64),stateRevision: 2}),
       findById: jest.fn(),
       findToolActivityResult: jest.fn(),
       reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
@@ -128,6 +131,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true),
       isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(true),
     };
+    attachmentResolver = {resolve: jest.fn().mockResolvedValue([{id: 'b'.repeat(24), originalName: 'plan.docx', filename: 'storage.docx', workspaceId: 'c'.repeat(24), path: '/private/file', url: 'https://private.invalid/file'}])};
     controller = new MessageController(
       messageService as any,
       streamService as any,
@@ -143,6 +147,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       conversationArtifactService as any,
       playbookHandoffService as any,
       conversationSettings as any,
+      attachmentResolver as any,
     );
   });
 
@@ -559,6 +564,55 @@ describe('MessageController.sendMessage sticky routing', () => {
     await expect(controller.sendMessage(user, conversationId,
       { ...dto, openUiSubmission: { ...dto.openUiSubmission, formState: { days: '0' } } })).rejects.toBeInstanceOf(ConflictException);
     expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  const appTaskSubmission = (): OpenUiSubmissionDto => ({ ...openUiSubmission(),
+    params: {instruction: 'Summarize the selected documents.', inputs: { count: 0, bullets: false }},
+    appTask: {schemaVersion: 1,programDigest:'d'.repeat(64),stateRevision:2,documentIds:['b'.repeat(24)]}});
+  const prepareAppTask = () => {
+    conversationService.getConversationDocument.mockResolvedValue({isFirstMessage:false,taggedAgentIds:[],systemWorkspaceId:'workspace-1'});
+    messageService.getMessageDocument.mockResolvedValue(openUiSource());
+  };
+  it('binds a mini-app task to an authorized saved revision and scoped documents', async () => {
+    prepareAppTask();const interaction=appTaskSubmission();
+    await controller.sendMessage(user,conversationId,{content:'forged result',requestId:'app-1',openUiSubmission:interaction});
+    expect(messageService.getOpenUiAppState).toHaveBeenCalledWith(userId.toString(),conversationId,'a'.repeat(24),'text-form');
+    expect(attachmentResolver.resolve).toHaveBeenCalledWith('workspace-1',['b'.repeat(24)]);
+    const saved=messageService.createUserMessage.mock.calls[0][0];
+    expect(saved.attachedFileIds).toEqual(['b'.repeat(24)]);expect(saved.interaction).toEqual(interaction);
+    expect(saved.content).toContain('untrusted source data');expect(saved.content).toContain('partial coverage');
+    expect(saved.content).not.toContain('forged result');expect(saved.content).toContain('"count":0');
+    expect(saved.content).toContain(JSON.stringify([{documentId:'b'.repeat(24),filename:'plan.docx',workspaceId:'c'.repeat(24)}]));
+    expect(saved.content).toContain('bounded extraction is valid source material');
+    expect(saved.content).not.toContain('/private/file');expect(saved.content).not.toContain('https://private.invalid/file');
+  });
+  it.each([{programDigest:'e'.repeat(64),stateRevision:2},{programDigest:'d'.repeat(64),stateRevision:3}])('rejects stale mini-app inputs %p', async snapshot => {
+    prepareAppTask();messageService.getOpenUiAppState.mockResolvedValue(snapshot);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();expect(attachmentResolver.resolve).not.toHaveBeenCalled();
+  });
+  it('rejects revoked, foreign and incomplete/folder task selections before creating a turn', async () => {
+    prepareAppTask();messageService.getOpenUiAppState.mockRejectedValueOnce(new Error('access revoked'));
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('access revoked');
+    attachmentResolver.resolve.mockRejectedValueOnce(new Error('outside this conversation'));
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('outside this conversation');
+    attachmentResolver.resolve.mockResolvedValueOnce([]);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('completed files');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+  it('rejects disabled attachments, missing request IDs and mixed client attachments', async () => {
+    prepareAppTask();conversationSettings.isAttachmentIntelligenceEnabled.mockResolvedValue(false);
+    await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission()})).rejects.toThrow('attachments are disabled');
+    for(const patch of [{requestId:undefined},{attachedFileIds:[]}]) await expect(controller.sendMessage(user,conversationId,{content:'',requestId:'app-1',openUiSubmission:appTaskSubmission(),...patch})).rejects.toThrow('stable request ID');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+  it('replays accepted app tasks without document access or inference and rejects changed descriptors', async () => {
+    prepareAppTask();const dto={content:'',requestId:'app-replay',openUiSubmission:appTaskSubmission()};
+    const fingerprint=(controller as unknown as {fingerprintTurn:(value:typeof dto)=>string}).fingerprintTurn(dto);
+    messageService.findTurnByRequestId.mockResolvedValue({requestFingerprint:fingerprint,userMessage:{id:'saved-user'},aiMessageId:'saved-ai'});
+    expect(await controller.sendMessage(user,conversationId,dto)).toEqual({userMessage:{id:'saved-user'},aiMessageId:'saved-ai'});
+    await expect(controller.sendMessage(user,conversationId,{...dto,openUiSubmission:{...dto.openUiSubmission,appTask:{...dto.openUiSubmission.appTask!,documentIds:[]}}})).rejects.toBeInstanceOf(ConflictException);
+    expect(messageService.getOpenUiAppState).not.toHaveBeenCalled();expect(attachmentResolver.resolve).not.toHaveBeenCalled();expect(streamService.startStream).not.toHaveBeenCalled();
   });
 
   it('uses canonical choice content for persistence and agent streaming', async () => {

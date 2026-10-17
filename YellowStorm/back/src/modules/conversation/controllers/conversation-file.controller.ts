@@ -1,6 +1,8 @@
 import {
   Controller,
   Post,
+  Get,
+  Query,
   Delete,
   Body,
   Param,
@@ -17,6 +19,8 @@ import {
 } from '@common/utils';
 import { ConversationService } from '../services/conversation.service';
 import { ConversationAttachmentService } from '../services/conversation-attachment.service';
+import type { PaginatedDocuments } from '../../workspace/interfaces/workspace-document.interface';
+import { DocumentQueryDto } from '../../workspace/dto/document-query.dto';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { BadRequestException, ErrorCode } from '../../exceptions';
@@ -57,6 +61,16 @@ export class ConversationFileController {
         'Conversation file attachments are disabled',
       );
     }
+  }
+
+  @Get()
+  async getUploadedDocuments(
+    @CurrentUser() user: { _id: string },
+    @Param('conversationId') conversationId: string,
+    @Query() query: DocumentQueryDto,
+  ): Promise<PaginatedDocuments> {
+    await this.assertAttachmentsEnabled();
+    return this.conversationService.getUploadedDocuments(conversationId, query, user._id.toString());
   }
 
   @Post('upload-url')

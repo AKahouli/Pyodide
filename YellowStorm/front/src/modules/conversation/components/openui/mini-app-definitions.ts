@@ -34,8 +34,16 @@ export const MiniList = defineComponent({
   name: 'MiniList', description: 'Reactive list of at most 200 strings, e.g. @FilterText(items, $query), with an explicit empty message.',
   props: z.object({ items: z.array(z.string().max(5000)).max(200), emptyText: label }), component: () => null,
 });
-export const miniAppDefinitions = [MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput, MiniList];
+export const MiniDocument = defineComponent({
+  name: 'MiniDocument', description: 'Host-controlled selector of completed files uploaded to this conversation. Bind a string document ID, initially empty. Upload through the composer first. Never invent IDs or URLs.',
+  props: z.object({ name, label, value: reactive(z.string().max(24)), required: z.boolean().default(true) }), component: () => null,
+});
+export const MiniTaskResult = defineComponent({
+  name: 'MiniTaskResult', description: 'Host-owned status and saved agent result for the enclosing MiniApp. Shows loading, cancellation, errors and stale inputs; restores the actual answer after reload without running inference. Place after its AskAgent button.',
+  props: z.object({ label, inputs: z.record(z.string(), z.unknown()) }), component: () => null,
+});
+export const miniAppDefinitions = [MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput, MiniList, MiniDocument, MiniTaskResult];
 export const askAgentAction = defineAction({
   name: 'AskAgent', description: 'Explicitly ask the existing conversation agent to perform the instruction using typed inputs and the current authorized conversation documents. Not a local function. Results arrive as a new answer. Never invent a result or silently call tools.',
-  params: z.object({ instruction: z.string().min(1).max(2000), inputs: z.record(z.string(), z.unknown()) }),
+  params: z.object({ instruction: z.string().min(1).max(2000), inputs: z.record(z.string(), z.unknown()), documentIds: z.array(z.string().regex(/^[a-f\d]{24}$/i)).max(5).optional() }),
 });

@@ -6,10 +6,11 @@ import { useConversationStore } from '../../store';
 import { MiniAppAutosaveContext, OpenUiSubmissionContext, submissionKey, submissionSignature, toFollowUpMessage } from './actions';
 import { AuthContext } from '@/modules/auth/AuthContext';
 import { useMiniAppState } from './use-mini-app-state';
+import { MiniAppTaskContext } from './mini-app-task-context';
 import { Button } from '@/components/ui/button';
 import { OpenUiBoundary } from './OpenUiBoundary';
 import { loadOpenUiRenderer } from './preload';
-import { downloadArtifactFile, getArtifactDownloadUrl } from '../../api';
+import { downloadArtifactFile, getArtifactDownloadUrl, stopStream as stopTaskStream } from '../../api';
 import type { ArtifactActivityData, OpenUiSubmission } from '../../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { showError } from '@/lib/notifications';
@@ -54,7 +55,10 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
   const { t } = useModuleTranslation('conversation');
   const messages = useConversationStore(state => state.messages);
   const [localStatus, setLocalStatus] = useState<Record<string, 'submitting' | 'submitted' | 'error'>>({});
+  const [runningTask, setRunningTask] = useState<{ formName: string; answerId?: string }>();
   const busy = useRef(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const retries = useRef(new Map<string, string>());
   const accepted = useRef(new Map<string, string>());
   const saved = useMemo(() => messages.filter(message => message.conversationType === 'user' && message.interaction?.type === 'openui'
@@ -100,8 +104,31 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
         return;
       }
       if (!partId) { showError(t('openui.interaction.invalid')); return; }
-      const openUiSubmission: OpenUiSubmission = { type: 'openui', schemaVersion: 1, sourceMessageId: messageId, componentId: partId,
+      let openUiSubmission: OpenUiSubmission = { type: 'openui', schemaVersion: 1, sourceMessageId: messageId, componentId: partId,
         actionType: 'continue_conversation', ...followUp.submission };
+      if (event.type === 'AskAgent' && miniApp) {
+        busy.current = true;
+        const key = submissionKey(openUiSubmission);
+        setLocalStatus(previous => ({ ...previous, [key]: 'submitting' }));
+        void (async () => {
+          const snapshot = await draft.flush();
+          if (!active.current) return;
+          const current = useConversationStore.getState();
+          if (current.isStreaming || (current.currentConversationId && current.currentConversationId !== conversationId)) throw new Error('Task scope changed');
+          openUiSubmission = { ...openUiSubmission, appTask: { schemaVersion: 1, ...snapshot, documentIds: followUp.documentIds ?? [] } };
+          const signature = submissionSignature(openUiSubmission);
+          const requestId = retries.current.get(signature) ?? crypto.randomUUID();
+          retries.current.set(signature, requestId);
+          setRunningTask({ formName: key });
+          await state.sendMessage(conversationId, { content: followUp.content, openUiSubmission, requestId, parentMessageId: messageId },
+            answerId => { if (active.current) setRunningTask({ formName: key, answerId }); });
+          if (!active.current) return;
+          retries.current.delete(signature);
+          setLocalStatus(previous => ({ ...previous, [key]: 'submitted' }));
+        })().catch(() => { if (active.current) { setRunningTask(undefined); setLocalStatus(previous => ({ ...previous, [key]: 'error' })); } })
+          .finally(() => { busy.current = false; });
+        return;
+      }
       const signature = submissionSignature(openUiSubmission);
       const key = submissionKey(openUiSubmission);
       const lastSaved = saved.filter(submission => submissionKey(submission) === key).at(-1);
@@ -116,7 +143,7 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
         .catch(() => setLocalStatus(previous => ({ ...previous, [key]: 'error' })))
         .finally(() => { busy.current = false; });
     }
-  }, [conversationId, messageId, partId, artifacts, isStreaming, saved, t]);
+  }, [conversationId, messageId, partId, artifacts, isStreaming, saved, t, miniApp, draft.flush]);
 
   const citationScope = useMemo(() => ({ conversationId, messageId, ...(partId ? { componentId: partId } : {}) }), [conversationId, messageId, partId]);
   const renderMarkdown = (text: string) => (
@@ -141,9 +168,13 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
         </div>}
         <OpenUiSubmissionContext.Provider value={statuses}>
           <MiniAppAutosaveContext.Provider value={miniApp}>
+            <MiniAppTaskContext.Provider value={miniApp ? { conversationId, actorId, messageId, componentId: partId ?? '', programDigest: digest?.hash ?? '', running: runningTask,
+              stateRevision: draft.stateRevision, dirty: draft.status !== 'saved' && draft.status !== 'readonly',
+              cancel: answerId => stopTaskStream(conversationId, answerId) } : null}>
             <fieldset disabled={Object.values(localStatus).includes('submitting') || (miniApp && draft.status === 'readonly')} className='m-0 min-w-0 border-0 p-0'>
               {miniApp && (!digestReady || !draft.ready) ? null : <OpenUiRenderer key={miniApp ? draft.mountRevision : 'legacy'} content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={renderMarkdown} partId={partId} initialState={miniApp ? draft.initialState : initialState} onStateUpdate={miniApp ? draft.handleStateUpdate : undefined} />}
             </fieldset>
+            </MiniAppTaskContext.Provider>
           </MiniAppAutosaveContext.Provider>
           {Object.values(localStatus).includes('error') && <p role='alert' className='mt-2 text-sm text-destructive'>{t('openui.interaction.error')}</p>}
         </OpenUiSubmissionContext.Provider>

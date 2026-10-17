@@ -54,6 +54,7 @@ export interface MessageRecord {
   editedAt?: Date;
   isStreaming: boolean;
   isComplete: boolean;
+  terminalStatus?: 'starting' | 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
   streamExecutionLeaseId?: string;
   streamExecutionLeaseExpiresAt?: Date;
   inputTokens?: number;

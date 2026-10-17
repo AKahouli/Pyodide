@@ -105,7 +105,7 @@ Dynamic mini-app snapshot exports remain deferred. Export requests can produce a
 artifact through the existing agent. See ADR-0025 and the phase plan for the persistence contract and qualification evidence.
 
 The generator transpiles the exact shared TypeScript definitions with the installed TypeScript dependency for Node 20,
-enables bindings and disables tool calls. The phase 3 prompt is 54,799 characters (55,000 soft target; 60,000 hard cap).
+enables bindings and disables tool calls. The phase 4 prompt is 54,867 characters (55,000 soft target; 60,000 hard cap).
 Phase 2 qualification covers four unrelated generated compositions and an explicit document-summary request: the frontend run passes 251 tests in 31 files, including the 12 function/mounted tests, and the final production build passes.
 Live browser QA in conversation `0a36aab51f702536578737aa` generated all four apps from one natural-language request:
 100 Celsius displayed 212.00 Fahrenheit, reset restored 32.00, the discounted scenario displayed 18.00, and `Os` filtered
@@ -203,3 +203,23 @@ Capture failure fails the export explicitly. Captures do not depend on virtualiz
 MCP manifests retain their existing chart metadata and editable data tables without raster capture.
 
 Phase 3 qualification: 264 distinct frontend tests and 23 backend tests pass, including real PostgreSQL isolation/concurrency checks. Production TypeScript checks pass. Live four-app drafts retain typed unsubmitted values after reload; two tabs detect stale writes and recover through load/reapply without inference. Independent source and documentation review passes.
+
+## Document tasks (phase 4)
+
+`MiniDocument(name, label, $documentId, required)` lists completed conversation
+uploads through the authenticated conversation-files API. Composer upload
+and refresh reuse the normal limits; IDs, names and storage URLs are never invented
+by the generated program. Linked external workspaces are not added to this selector.
+
+`AskAgent(instruction, inputs, documentIds?)` explicitly runs the existing agent.
+The host flushes private state, sends a versioned source digest/revision descriptor,
+and preserves the request ID on uncertain retries. Backend source/member/file checks
+precede execution. Busy guards block double clicks; later explicit reruns get a new ID.
+
+`MiniTaskResult(label, inputs)` follows the actual stored user/assistant message link
+for the enclosing app and signed-in actor. It restores saved text without executing
+an action. Its inputs should match AskAgent. Host revision and dirty-state checks
+also mark any changed component snapshot stale, even when generated inputs omit a
+changed field. Cancelled/failed/interrupted partial output is not a completed result.
+The normal conversation answer retains its full content and export actions; dynamic
+mini-app snapshot export remains phase 5. No result body is stored in private drafts.

@@ -32,7 +32,7 @@ export function typedActionData(value: unknown): Record<string, import('../../ty
 }
 
 export type FollowUp =
-  | { kind: 'message'; content: string; submission?: Pick<OpenUiSubmission, 'formName' | 'label' | 'formState' | 'params'> }
+  | { kind: 'message'; content: string; documentIds?: string[]; submission?: Pick<OpenUiSubmission, 'formName' | 'label' | 'formState' | 'params'> }
   | { kind: 'open-url'; url: string }
   | { kind: 'download-artifact'; artifact: ArtifactActivityData }
   | { kind: 'ignore' };
@@ -75,11 +75,14 @@ export function toFollowUpMessage(event: ActionEvent, artifacts: readonly Artifa
     const instruction = event.params?.instruction;
     if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 2000) throw new Error('Invalid app instruction');
     const inputs = typedActionData(event.params?.inputs);
+    const documentIds = event.params?.documentIds;
+    if (documentIds !== undefined && (!Array.isArray(documentIds) || documentIds.length > 5
+      || documentIds.some(id => typeof id !== 'string' || !/^[a-f\d]{24}$/i.test(id)))) throw new Error('Invalid app documents');
     const label = event.humanFriendlyMessage?.trim() || instruction.trim();
     // Same authorized conversation turn and typed persistence contract as ordinary forms.
     // Including JSON in the readable turn lets the existing agent act on the exact inputs.
     const formState = typedActionData(event.formState ?? {});
-    return { kind: 'message', content: `${label}\n\n${instruction.trim()}\n\nInputs (JSON):\n${JSON.stringify(inputs)}`,
+    return { kind: 'message', documentIds: documentIds as string[] | undefined, content: `${label}\n\n${instruction.trim()}\n\nInputs (JSON):\n${JSON.stringify(inputs)}`,
       submission: { ...(event.formName ? { formName: event.formName } : {}), label, formState,
         params: typedActionData({ instruction: instruction.trim(), inputs }) } };
   }

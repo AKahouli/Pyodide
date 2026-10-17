@@ -47,7 +47,7 @@ export function useMiniAppState({ identity, enabled, fallbackState = {} }: Optio
       current.draft = retained;
       reapplyDraft.current = undefined;
       setView(previous => ({ key, ready: true, initialState: initial, status: current.blocked ? 'readonly' : current.draft ? 'unsaved' : 'saved', error: null, mountRevision: previous.mountRevision + 1 }));
-      if (current.draft && !current.blocked) current.timer = setTimeout(() => void save(current), 500);
+      if (current.draft && !current.blocked) current.timer = setTimeout(() => void saveRef.current(), 500);
     }).catch(error => {
       if (!current.active) return;
       setView(previous => ({ ...previous, key, ready: httpStatus(error) === 403, initialState: fallback.current,
@@ -78,14 +78,21 @@ export function useMiniAppState({ identity, enabled, fallbackState = {} }: Optio
         setView(previous => ({ ...previous, status: httpStatus(error) === 409 ? 'conflict' : httpStatus(error) === 403 ? 'readonly' : 'error', error }));
       } finally {
         active.busy = false;
-        if (active.active && !active.blocked && miniAppStateSignature(active.draft) !== active.saved) active.timer = setTimeout(() => void save(active), 500);
+        if (active.active && !active.blocked && miniAppStateSignature(active.draft) !== active.saved) active.timer = setTimeout(() => void saveRef.current(), 500);
       }
     }
-    saveRef.current = () => save(current);
+    saveRef.current = () => {
+      if (pending.current) return pending.current;
+      const operation = save(current);
+      pending.current = operation;
+      void operation.finally(() => { if (pending.current === operation) pending.current = undefined; });
+      return operation;
+    };
     return () => { current.active = false; controller.abort(); clearTimeout(current.timer); };
     // The scalar key contains every scope field; fallback changes must not reset an edited draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, reloadCount]);
+  const pending = useRef<Promise<void>>();
   const saveRef = useRef<() => Promise<void>>(async () => {});
   const handleStateUpdate = useCallback((state: Record<string, unknown>) => {
     const current = session.current;
@@ -114,5 +121,15 @@ export function useMiniAppState({ identity, enabled, fallbackState = {} }: Optio
     current.blocked = false;
     void saveRef.current();
   }, [view.ready, view.status]);
-  return { ...view, ready: view.key === key && view.ready, handleStateUpdate, reload, reapply, retry };
+  const flush = useCallback(async () => {
+    const current = session.current;
+    if (!enabled || !current.active || current.key !== key || current.blocked) throw new Error('Draft is not writable');
+    clearTimeout(current.timer);
+    await saveRef.current();
+    await saveRef.current();
+    clearTimeout(current.timer);
+    if (!current.active || current.key !== key || current.blocked || (current.draft && miniAppStateSignature(current.draft) !== current.saved)) throw new Error('Draft is not saved');
+    return { programDigest: identity.programDigest, stateRevision: current.revision };
+  }, [enabled, key, identity.programDigest]);
+  return { ...view, stateRevision: session.current.revision, flush, ready: view.key === key && view.ready, handleStateUpdate, reload, reapply, retry };
 }

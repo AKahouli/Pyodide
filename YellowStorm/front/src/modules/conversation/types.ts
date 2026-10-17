@@ -351,6 +351,7 @@ export interface OpenUiSubmission {
   label?: string;
   formState: Record<string, OpenUiJson>;
   params?: Record<string, OpenUiJson>;
+  appTask?: { schemaVersion: 1; programDigest: string; stateRevision: number; documentIds: string[] };
 }
 
 export interface Message {
@@ -371,6 +372,7 @@ export interface Message {
   agentIds?: string[];
   memberIds?: string[];
   webSearchEnabled?: boolean;
+  terminalStatus?: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   questionMessageId?: string;
   answerMessageId?: string;
   feedback?: 'like' | 'dislike';

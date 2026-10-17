@@ -74,6 +74,17 @@ export class OpenUiSubmissionDto {
   @IsOptional() @IsString() @MaxLength(1000) label?: string;
   @ApiProperty({ type: 'object', additionalProperties: true })
   formState!: Record<string, unknown>;
+  @ApiPropertyOptional({
+    type: 'object',
+    properties: {
+      schemaVersion: { type: 'integer', enum: [1] },
+      programDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      stateRevision: { type: 'integer', minimum: 0, maximum: 2_147_483_647 },
+      documentIds: { type: 'array', maxItems: 5, uniqueItems: true, items: { type: 'string', pattern: '^[a-f0-9]{24}$' } },
+    },
+    additionalProperties: false,
+  })
+  appTask?: { schemaVersion: 1; programDigest: string; stateRevision: number; documentIds: string[] };
   @ApiPropertyOptional({ type: 'object', additionalProperties: true })
   params?: Record<string, unknown>;
 }
@@ -82,7 +93,7 @@ export function isValidOpenUiSubmission(value: unknown): value is OpenUiSubmissi
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   if (![Object.prototype, null, OpenUiSubmissionDto.prototype].includes(Object.getPrototypeOf(value))) return false;
   const submission = value as Record<string, unknown>;
-  const keys = new Set(['type', 'schemaVersion', 'sourceMessageId', 'componentId', 'actionType', 'formName', 'label', 'formState', 'params']);
+  const keys = new Set(['type', 'schemaVersion', 'sourceMessageId', 'componentId', 'actionType', 'formName', 'label', 'formState', 'params', 'appTask']);
   if (Reflect.ownKeys(submission).some(key => typeof key !== 'string' || !keys.has(key)
     || Object.getOwnPropertyDescriptor(submission, key)?.get !== undefined
     || Object.getOwnPropertyDescriptor(submission, key)?.set !== undefined
@@ -92,6 +103,20 @@ export function isValidOpenUiSubmission(value: unknown): value is OpenUiSubmissi
     || typeof submission.componentId !== 'string' || !submission.componentId.length || submission.componentId.length > 128
     || (submission.formName !== undefined && (typeof submission.formName !== 'string' || submission.formName.length > 128))
     || (submission.label !== undefined && (typeof submission.label !== 'string' || submission.label.length > 1000))) return false;
+  if (submission.appTask !== undefined) {
+    const task = submission.appTask as Record<string, unknown>;
+    if (!task || typeof task !== 'object' || Array.isArray(task) || Object.getPrototypeOf(task) !== Object.prototype
+      || Reflect.ownKeys(task).some(key => typeof key !== 'string' || !['schemaVersion', 'programDigest', 'stateRevision', 'documentIds'].includes(key)
+        || Object.getOwnPropertyDescriptor(task, key)?.get !== undefined || Object.getOwnPropertyDescriptor(task, key)?.set !== undefined)
+      || task.schemaVersion !== 1 || typeof task.programDigest !== 'string' || !/^[a-f0-9]{64}$/.test(task.programDigest)
+      || !Number.isSafeInteger(task.stateRevision) || (task.stateRevision as number) < 0 || (task.stateRevision as number) > 2_147_483_647
+      || !Array.isArray(task.documentIds) || task.documentIds.length > 5
+      || task.documentIds.some(id => typeof id !== 'string' || !/^[a-f0-9]{24}$/i.test(id))
+      || new Set(task.documentIds).size !== task.documentIds.length) return false;
+    const params = submission.params as Record<string, unknown> | undefined;
+    if (!params || typeof params.instruction !== 'string' || !params.instruction.trim() || params.instruction.length > 4000
+      || !params.inputs || typeof params.inputs !== 'object' || Array.isArray(params.inputs)) return false;
+  }
   let items = 0;
   const seen = new Set<object>();
   const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object'
@@ -115,7 +140,8 @@ export function isValidOpenUiSubmission(value: unknown): value is OpenUiSubmissi
       && Object.getOwnPropertyDescriptor(item, key)?.enumerable === true
       && visit(item[key], depth + 1));
   };
-  if (!record(submission.formState) || !visit(submission.formState, 0)
+  if ((submission.appTask !== undefined && !visit(submission.appTask, 0))
+    || !record(submission.formState) || !visit(submission.formState, 0)
     || (submission.params !== undefined && (!record(submission.params) || !visit(submission.params, 0)))) return false;
   try { return Buffer.byteLength(JSON.stringify(submission), 'utf8') <= 20 * 1024; } catch { return false; }
 }

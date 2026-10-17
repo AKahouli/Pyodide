@@ -37,6 +37,34 @@ describe('ConversationAgentRequestBuilder', () => {
     }));
   });
 
+  const attachmentWorkspace = 'b'.repeat(24);
+  const currentDocument = { type: 'document', document: { workspace_id: attachmentWorkspace, document_id: 'c'.repeat(24), filepath: '/private/source', filename: 'plan.docx' } };
+  const buildWithAttachments = (workspaceContexts: unknown[], attachedFiles: unknown[], previousAttachedFiles: unknown[] = []) => new ConversationAgentRequestBuilder().build({
+    userId: 'user-1', conversationId: 'a'.repeat(24), request, workspaceContexts, attachedFiles, previousAttachedFiles, agents: [{id: 'agent-1'}], skills: [],
+  }).payload;
+  it('preserves the legacy conversation fallback when no current trusted document workspace exists', () => {
+    expect(buildWithAttachments([], [], [currentDocument]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+  });
+  it('uses the real current attachment workspace instead of the conversation fallback', () => {
+    const result = buildWithAttachments([], [currentDocument]);
+    expect(result.workspace_context).toEqual([{workspace_id:attachmentWorkspace,workspace_name:attachmentWorkspace,workspace_documents:[]}]);
+    expect(result.attached_files).toEqual([currentDocument]);
+  });
+  it('merges and deduplicates current attachment workspaces with selected contexts', () => {
+    const linked = {workspace_id:'d'.repeat(24),workspace_name:'Knowledge',workspace_documents:[{id:'known'}]};
+    const existing = {workspace_id:attachmentWorkspace,workspace_name:'Uploads',workspace_documents:[]};
+    expect(buildWithAttachments([linked], [currentDocument,currentDocument]).workspace_context).toEqual([linked,{workspace_id:attachmentWorkspace,workspace_name:attachmentWorkspace,workspace_documents:[]}]);
+    expect(buildWithAttachments([linked,existing], [currentDocument]).workspace_context).toEqual([linked,existing]);
+  });
+  it('ignores malformed or non-document attachment workspace metadata', () => {
+    for(const file of [null,{}, {type:'image',document:currentDocument.document}, {type:'document',document:null},
+      {type:'document',document:{workspace_id:'foreign',document_id:'c'.repeat(24)}},
+      {type:'document',document:{workspace_id:attachmentWorkspace,document_id:'bad'}},
+      {type:'document',document:{workspace_id:attachmentWorkspace}}]) {
+      expect(buildWithAttachments([], [file]).workspace_context).toEqual([{workspace_id:'a'.repeat(24),workspace_name:'a'.repeat(24),workspace_documents:[]}]);
+    }
+  });
+
   it('routes multiple resolved agents through the team RPC', () => {
     const result = new ConversationAgentRequestBuilder().build({
       userId: 'user-1', conversationId: 'shadow-1', request,

@@ -969,6 +969,7 @@ export class MessageService {
       editedAt: toISO(message.editedAt),
       isStreaming: message.isStreaming,
       isComplete: message.isComplete,
+      terminalStatus: message.terminalStatus,
       inputTokens: message.inputTokens,
       outputTokens: message.outputTokens,
       modelRequestTelemetry: message.modelRequestTelemetry,

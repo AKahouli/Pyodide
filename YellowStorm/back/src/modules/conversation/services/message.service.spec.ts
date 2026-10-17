@@ -1,3 +1,4 @@
+import { mapPostgresMessage } from '../persistence/postgres/postgres-message-record.mapper';
 import { Types } from 'mongoose';
 import { MessageService } from './message.service';
 
@@ -119,6 +120,13 @@ describe('MessageService store lifecycle', () => {
   it('does not update conversation tags when agent IDs are absent', async () => {
     await service.createUserMessage({ conversationId, senderId, content: 'hello' });
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
+  });
+
+  it.each(['cancelled', 'failed', 'interrupted', 'completed'])('retains durable terminal status %s after reload', terminalStatus => {
+    const mapped = mapPostgresMessage({id: 'a'.repeat(24), conversationId: 'b'.repeat(24), executionStatus: terminalStatus, components: []} as never);
+    expect(mapped.terminalStatus).toBe(terminalStatus);
+    const response = (service as any).mapToResponse(record({ conversationType: 'ai', terminalStatus: mapped.terminalStatus }));
+    expect(response.terminalStatus).toBe(terminalStatus);
   });
 
   it('omits tool results from mapped responses while keeping sanitized params', () => {

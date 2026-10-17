@@ -319,6 +319,7 @@ export const API_ENDPOINTS = {
     report: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/report`,
     markMentionSeen: (conversationId: string, messageId: string) => `/conversations/${conversationId}/messages/${messageId}/mention-seen`,
     workspaceDocuments: (id: string) => `/conversations/${id}/workspace-documents`,
+    files: (id: string) => `/conversations/${id}/files`,
     fileUploadUrl: (convId: string) => `/conversations/${convId}/files/upload-url`,
     fileUpload: (convId: string) => `/conversations/${convId}/files/upload`,
     fileConfirm: (convId: string) => `/conversations/${convId}/files/confirm`,

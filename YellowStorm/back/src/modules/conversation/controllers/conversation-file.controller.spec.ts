@@ -2,6 +2,7 @@ import { ConversationFileController } from './conversation-file.controller';
 
 describe('ConversationFileController attachment policy', () => {
   const enabled = jest.fn<Promise<boolean>, []>();
+  const getUploadedDocuments = jest.fn();
   const ensureSystemWorkspace = jest.fn().mockResolvedValue('workspace-1');
   const documents = {
     requestUploadUrlWithPath: jest.fn(),
@@ -10,7 +11,7 @@ describe('ConversationFileController attachment policy', () => {
   };
   type Dependencies = ConstructorParameters<typeof ConversationFileController>;
   const controller = new ConversationFileController(
-    { ensureSystemWorkspace } as unknown as Dependencies[0],
+    { ensureSystemWorkspace, getUploadedDocuments } as unknown as Dependencies[0],
     {} as Dependencies[1], documents as unknown as Dependencies[2],
     { isAttachmentIntelligenceEnabled: enabled } as unknown as Dependencies[3],
     { setContext: jest.fn(), log: jest.fn() } as unknown as Dependencies[4],
@@ -36,6 +37,21 @@ describe('ConversationFileController attachment policy', () => {
   it.each(Object.entries(invoke))('%s rejects an explicitly disabled policy', async (_, request) => {
     enabled.mockResolvedValueOnce(false);
     await expect(request()).rejects.toThrow('Conversation file attachments are disabled');
+    expect(ensureSystemWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('lists uploads through the participant-scoped service without creating a workspace', async () => {
+    enabled.mockResolvedValueOnce(true);
+    const result = { documents: [{ id: 'file-1' }], pagination: { page: 2, limit: 10, total: 11, totalPages: 2 } };
+    getUploadedDocuments.mockResolvedValueOnce(result);
+    expect(await controller.getUploadedDocuments({ _id: 'user-1' }, 'conversation-1', { page: 2, limit: 10 })).toBe(result);
+    expect(getUploadedDocuments).toHaveBeenCalledWith('conversation-1', { page: 2, limit: 10 }, 'user-1');
+    expect(ensureSystemWorkspace).not.toHaveBeenCalled();
+  });
+  it('does not list uploads when attachments are disabled', async () => {
+    enabled.mockResolvedValueOnce(false);
+    await expect(controller.getUploadedDocuments({ _id: 'user-1' }, 'conversation-1', {})).rejects.toThrow('attachments are disabled');
+    expect(getUploadedDocuments).not.toHaveBeenCalled();
     expect(ensureSystemWorkspace).not.toHaveBeenCalled();
   });
 

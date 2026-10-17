@@ -371,6 +371,11 @@ export async function fetchConversationWorkspaceDocuments(conversationId: string
 
 // ===== Conversation File APIs =====
 
+export async function fetchConversationFiles(conversationId: string, params?: { page?: number; limit?: number }): Promise<BackendPaginatedDocuments> {
+  const response = await apiClient.get<ApiResponse<BackendPaginatedDocuments>>(API_ENDPOINTS.conversations.files(conversationId), { params });
+  return response.data.data;
+}
+
 export interface FileUploadUrlResponse {
   documentId: string;
   uploadUrl: string;

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import { MiniAppAutosaveContext, OpenUiSubmissionContext } from './actions';
 import { MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput, MiniList } from './mini-app-definitions';
+import { miniAppTaskComponents } from './mini-app-task';
 
 function asksAgent(action: unknown): boolean {
   if (!action || typeof action !== 'object') return false;
@@ -28,6 +29,7 @@ function withNullInput(node: ASTNode): ASTNode {
 }
 
 export const miniAppComponents = [
+  ...miniAppTaskComponents,
   { ...MiniApp, component: ({ props, renderNode }: Parameters<typeof MiniApp.component>[0]) => {
     const { t } = useModuleTranslation('conversation');
     const status = useContext(OpenUiSubmissionContext)[props.name];

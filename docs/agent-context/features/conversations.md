@@ -5,7 +5,7 @@
 - Primary product route: `http://localhost:5173/#/conversation`; existing threads use `#/conversation/:id`.
 - This record covers Conversation v1. Studio / Conversation v2 has separate ownership and contracts.
 - Source inspection: **2026-10-13**, revision `cc3d0e078dfcb0f535bcfcb28b8041fa9d2251a9`.
-- Baseline comes from committed source and test definitions. No live browser QA, runtime execution or test run was performed for this document.
+- The original 2026-10-13 baseline used source and test definitions only. Later dated sections record their focused runtime, test and browser verification.
 - Read this page to locate behavior and reuse points; confirm relevant code on the active branch before editing.
 
 ## Purpose and workflows
@@ -26,8 +26,8 @@ authorized conversation-submission path. Private typed drafts now autosave after
 fallback when no private draft exists. Expected revisions prevent stale writes.
 Both private reads and writes require current creator/member access. Document
 summarization accepts pasted text or requests existing authorized conversation
-documents through a normal agent turn. There is no new document execution bridge,
-generated JavaScript or dynamic mini-app export contract. The static summary
+documents through a normal agent turn. Phase 4 adds document selection and task/result
+correlation over that same execution path, without generated JavaScript or a dynamic mini-app export contract. The static summary
 remains a normal exportable answer. See the
 [implementation and remaining phases](../architecture/openui-mini-apps-plan.md#phase-2-implementation-and-qualification).
 
@@ -43,6 +43,17 @@ both loading saved state and explicitly reapplying the whole local draft worked.
 Separate app components also save independently under real SQL concurrency tests.
 See [ADR-0025](../decisions/ADR-0025-openui-private-draft-state.md) for the approved
 private state boundary. Dynamic mini-app export snapshots remain a later phase.
+
+Phase 4 uses `MiniDocument` for completed uploads in the current conversation's
+system workspace and `MiniTaskResult` for the enclosing app's saved assistant
+result. Explicit `AskAgent` tasks flush the private draft and submit a versioned
+program/revision/document descriptor through the existing message API. The backend
+revalidates membership, the source revision, attachment policy and selected file
+scope before execution. Existing request IDs provide replay without rerunning;
+later explicit runs use new IDs. Saved message links restore results after reload.
+Host draft revisions mark changed inputs stale; cancellation/failure/interruption
+remain distinct from successful completion. No new table or service is introduced.
+See the [phase 4 contract and qualification](../architecture/openui-mini-apps-plan.md#phase-4-implementation-and-qualification).
 
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an
