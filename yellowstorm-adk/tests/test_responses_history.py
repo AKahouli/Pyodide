@@ -211,13 +211,16 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('reasoning_type', ['summary', 'content'])
 @pytest.mark.parametrize('summary', ['off', 'auto'])
-async def test_native_stream_summary_is_independent_of_private_replay(summary):
+async def test_native_stream_summary_is_independent_of_private_replay(summary, reasoning_type):
     from tests.test_native_responses import response
     reasoning = {'type': 'reasoning', 'id': 'rs_stream', 'summary': [
                     {'type': 'summary_text', 'text': 'Checking facts'},
                     {'type': 'summary_text', 'text': 'Comparing evidence'}],
                  'encrypted_content': 'opaque_secret_stream'}
+    if reasoning_type == 'content':
+        reasoning['content'] = reasoning.pop('summary')
     final = response([reasoning, {'type': 'message', 'id': 'msg_stream', 'role': 'assistant', 'status': 'completed',
         'content': [{'type': 'output_text', 'text': 'Answer', 'annotations': []}]}])
     events = [
@@ -231,6 +234,10 @@ async def test_native_stream_summary_is_independent_of_private_replay(summary):
         {'type': 'response.output_text.delta', 'item_id': 'msg_stream', 'output_index': 1, 'content_index': 0, 'delta': 'Answer'},
         {'type': 'response.completed', 'response': final},
     ]
+    if reasoning_type == 'content':
+        for event in events:
+            if event['type'] == 'response.reasoning_summary_text.delta':
+                event['type'] = 'response.reasoning_text.delta'
     def handler(req):
         return httpx.Response(200, headers={'content-type': 'text/event-stream'},
             text=''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events))
@@ -249,6 +256,9 @@ async def test_native_stream_summary_is_independent_of_private_replay(summary):
     streamed_thoughts = [part.text for result in results if result.partial is True
                         for part in getattr(result.content, 'parts', None) or [] if part.thought]
     assert streamed_thoughts == (['Checking facts', 'Comparing evidence'] if summary == 'auto' else [])
+    for result in results:
+        has_summary = any(part.thought and part.text for part in getattr(result.content, 'parts', None) or [])
+        assert (result.custom_metadata or {}).get('activity_kind') == ('reasoning_summary' if has_summary and reasoning_type == 'summary' else None)
     commit = next(result._responses_commit for result in results if hasattr(result, '_responses_commit'))
     assert any(item.get('encrypted_content') == 'opaque_secret_stream' for item in commit['items'])
     await client.close()

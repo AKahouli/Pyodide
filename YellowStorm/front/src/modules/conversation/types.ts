@@ -555,6 +555,8 @@ export interface PreparedConversationPlaybookHandoffV1 {
 
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
 export interface AgentActivityData extends Record<string, unknown> {
+  /** Explicit provenance supplied by the runtime, never inferred from summary text. */
+  activityKind?: 'reasoning_summary';
   summary: string;
   detail?: string;
   status: 'running' | 'completed';

@@ -142,6 +142,7 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         capacity = resource if isinstance(resource, CapacityClient) else None
         token = capacity.begin() if capacity else None
         streams = []
+        native_summary_delta = False
         async def create(**kwargs):
             from openai import BadRequestError, NotFoundError
             try:
@@ -162,6 +163,13 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                 if not capacity:
                     result = ResponsesStream(result)
                 streams.append(result)
+                async def observed_events():
+                    nonlocal native_summary_delta
+                    async for event in result:
+                        event_type = event.get('type') if isinstance(event, dict) else getattr(event, 'type', None)
+                        native_summary_delta = event_type == 'response.reasoning_summary_text.delta'
+                        yield event
+                return observed_events()
             return result
         provider = self.model_copy()
         provider.__dict__['_openai_client'] = SimpleNamespace(responses=SimpleNamespace(create=create))
@@ -210,6 +218,15 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                         response.custom_metadata = {'openai_response': {
                             key: metadata[key] for key in ('id', 'status', 'stream_event') if key in metadata
                         }}
+                    # ADK also calls provider reasoning_text "thought". Only
+                    # explicit native summaries carry summary provenance.
+                    reasoning_items = [item for item in metadata.get('output', []) if item.get('type') == 'reasoning']
+                    native_summary = (native_summary_delta if response.partial is True else
+                                      bool(reasoning_items) and any(item.get('summary') for item in reasoning_items)
+                                      and not any(item.get('content') for item in reasoning_items))
+                    if native_summary and response.content and any(part.thought and part.text for part in response.content.parts or []):
+                        response.custom_metadata = {**(response.custom_metadata or {}),
+                                                    'activity_kind': 'reasoning_summary'}
                     if primary:
                         trace.mark_llm_first_delta()
                     yield response

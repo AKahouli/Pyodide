@@ -410,6 +410,7 @@ message AgentActivityComponent {
     optional int64 duration_ms = 6;
     optional string actor_id = 7;
     optional string actor_name = 8;
+    optional string activity_kind = 9; // reasoning_summary for explicit native summaries
 }
 
 // Task status enum

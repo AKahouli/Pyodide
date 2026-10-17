@@ -423,8 +423,9 @@ class TestAgentRunner:
         (False, "start", False, []),
         (False, "Inspect the selected file.", True, []),
     ])
+    @pytest.mark.parametrize("activity_kind", [None, "reasoning_summary", "unknown"])
     async def test_run_standard_agent_with_function_call(
-        self, narration_partial, narration, narration_on_tool, expected_narration,
+        self, narration_partial, narration, narration_on_tool, expected_narration, activity_kind,
     ):
         """Test running standard agent with function calls."""
         mock_event_extractor = MagicMock()
@@ -507,6 +508,7 @@ class TestAgentRunner:
                 delta = MagicMock()
                 delta.content.parts = [thought]
                 delta.partial = True
+                delta.custom_metadata = {"activity_kind": activity_kind}
                 delta.is_final_response.return_value = False
                 yield delta
                 if index == 1:
@@ -518,6 +520,7 @@ class TestAgentRunner:
             snapshot = MagicMock()
             snapshot.content.parts = [types.Part(text="Private chain of thought", thought=True)]
             snapshot.partial = False
+            snapshot.custom_metadata = {"activity_kind": activity_kind}
             snapshot.is_final_response.return_value = False
             yield snapshot
             yield function_event
@@ -595,6 +598,10 @@ class TestAgentRunner:
                 *(["add"] if expected_narration else []),
             ]
             thought_events = activity_events[:4]
+            assert all(event['component_data'].get('activity_kind') == (
+                'reasoning_summary' if activity_kind == 'reasoning_summary' else None
+            ) for event in thought_events)
+            assert all('activity_kind' not in event['component_data'] for event in activity_events[4:])
             assert len({event["component_id"] for event in thought_events}) == 1
             assert thought_events[-1]["component_data"]["detail"] == "Private chain of thought"
             assert len({event["component_data"]["started_at"] for event in thought_events}) == 1

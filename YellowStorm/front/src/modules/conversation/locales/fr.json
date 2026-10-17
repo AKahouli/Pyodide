@@ -541,7 +541,7 @@
   "stream.activity.toolStatus.completed": "Terminé",
   "stream.activity.toolStatus.failed": "Échec",
   "stream.activity.agent": "Activité",
-  "stream.activity.agentRowAria": "{{description}}, {{status}}. Afficher le raisonnement complet",
+  "stream.activity.agentRowAria": "{{description}}, {{status}}. Afficher les détails de l’activité",
   "stream.activity.agentPlanning": "Préparation de votre demande",
   "stream.activity.agentPrepared": "Demande préparée",
   "stream.activity.thinking": "Réflexion… {{seconds}}s",
@@ -749,5 +749,10 @@
   "openui.slides.export.timeout": "L’exportation a pris trop de temps. Veuillez réessayer.",
   "openui.image.loading": "Chargement de l’image du document…",
   "openui.image.unavailable": "L’image du document n’a pas pu être chargée.",
-  "openui.image.page": "Page {{page}}"
+  "openui.image.page": "Page {{page}}",
+  "stream.activity.reasoningSummary": "Résumé du raisonnement",
+  "stream.activity.summaryCount_one": "{{count}} résumé",
+  "stream.activity.summaryCount_other": "{{count}} résumés",
+  "stream.activity.toolCount_one": "{{count}} appel d’outil",
+  "stream.activity.toolCount_other": "{{count}} appels d’outils"
 }

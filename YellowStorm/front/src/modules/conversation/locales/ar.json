@@ -465,7 +465,7 @@
   "stream.activity.toolStatus.completed": "مكتمل",
   "stream.activity.toolStatus.failed": "فاشل",
   "stream.activity.agent": "النشاط",
-  "stream.activity.agentRowAria": "{{description}}، {{status}}. عرض الاستدلال الكامل",
+  "stream.activity.agentRowAria": "{{description}}، {{status}}. عرض تفاصيل النشاط",
   "stream.activity.agentPlanning": "جارٍ تحضير طلبك",
   "stream.activity.agentPrepared": "تم تحضير الطلب",
   "stream.activity.thinking": "جارٍ التفكير… {{seconds}} ث",
@@ -676,5 +676,10 @@
   "rootInput.pendingCount_other": "{{count}} بحاجة إلى مدخلاتك",
   "openui.report.panelTitle": "التقرير",
   "openui.report.close": "إغلاق التقرير",
-  "openui.report.sources": "المصادر"
+  "openui.report.sources": "المصادر",
+  "stream.activity.reasoningSummary": "ملخص الاستدلال",
+  "stream.activity.summaryCount_one": "{{count}} ملخص",
+  "stream.activity.summaryCount_other": "{{count}} ملخصات",
+  "stream.activity.toolCount_one": "{{count}} استدعاء أداة",
+  "stream.activity.toolCount_other": "{{count}} استدعاءات أدوات"
 }

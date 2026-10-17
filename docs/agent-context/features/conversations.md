@@ -77,6 +77,14 @@ Activity previews render inline Markdown; expanded summaries render safe
 Markdown with paragraph spacing, lists and compact headings. Raw HTML and external
 images are not rendered, and Markdown links retain the renderer's safe URL policy.
 This display formatting does not alter stored summary text or private replay state.
+Native summary activity carries optional, allowlisted `activity_kind=reasoning_summary`
+over the existing gRPC component (`activityKind` in browser data). It comes from
+explicit Responses summary events/output, never from prose or generic thought text.
+The activity panel gives these rows a stable localized Reasoning summary title,
+shows summary and tool counts separately, and hides empty completed preparation
+rows once useful activity exists. Legacy untyped rows retain generic activity
+behavior. Expand controls say Show activity details; existing pane resizing and
+stream completion behavior remain unchanged.
 Gateway compatibility qualification also covers a single ten-turn ADK session
 switching GPT 6 Luna application Responses to provider Responses, GPT 5.4 Mini
 provider Responses, Chat Completions and back to Luna provider Responses. The
@@ -85,6 +93,15 @@ original-context recall, incompatible-chain reset, compatible delta-only chainin
 public replay isolation, instrumentation and all fifteen capacity releases.
 The live qualifier's `--require-replay` workload checks encrypted replay separately
 from optional summary generation; a marker-only task may produce no reasoning.
+
+Workspace/agent-resolution latency includes connector authentication. Independent
+connector bindings now prepare concurrently in two phases: each preserves
+destination/access/credential validation order, and every validation must succeed
+before JWT binding starts. Credentials remain fresh per request; no authorization
+checks or actor/destination isolation are cached or skipped (ADR-0017/0018).
+The same four-connector live comparison on 2026-10-17 measured resolution at
+2,219.83 ms before and 927.30 ms after (58.2% lower). Backend pre-ADK time fell
+from 3,510.78 ms to 2,798.64 ms; history-seeding/provider time remains separate.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
 Workers and manager/team execution retain their adapters. Truncated native streams fail
 instead of finalizing partial text/tool calls. A private session adapter restores

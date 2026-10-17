@@ -246,13 +246,15 @@ export class AgentConnectorRuntimeService {
       .filter((binding: any) => binding.actions.length > 0);
 
     if (userId) {
-      for (const binding of bindings) {
+      // Different connectors have independent auth state. Resolve them together,
+      // retaining each connector's destination/access/credential ordering.
+      await Promise.all(bindings.map(async (binding) => {
         const connector = connectorsMap.get(binding.connector_id);
-        if (!connector) continue;
+        if (!connector) return;
         const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
         await this.connectorService.assertRuntimeDestination(connector);
         if (this.mcpJwt) await this.mcpJwt.assertConnectorAccess(connector, userId);
-        if (policy.profile !== 'configured') continue;
+        if (policy.profile !== 'configured') return;
         if (connector.authSourceType && connector.authSourceType !== 'none') {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
@@ -293,16 +295,18 @@ export class AgentConnectorRuntimeService {
             error: (err as Error).message,
           });
         }
-      }
+      }));
     }
 
-    if (userId && this.mcpJwt) {
-      for (const binding of bindings) {
-        const auth = await this.mcpJwt.bindingAuth(binding.mcp_server_url, userId,
+    const mcpJwt = this.mcpJwt;
+    if (userId && mcpJwt) {
+      // Do not mint any JWT until every connector above passed validation.
+      await Promise.all(bindings.map(async (binding) => {
+        const auth = await mcpJwt.bindingAuth(binding.mcp_server_url, userId,
           binding.connector_id, binding.auth_headers, binding.auth_env);
         binding.auth_headers = auth.headers;
         binding.auth_env = auth.env;
-      }
+      }));
     }
     return bindings;
   }

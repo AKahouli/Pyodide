@@ -2179,6 +2179,8 @@ class ChatbotServicer(
                 value = component_data.get(field)
                 if value is not None and value != "":
                     setattr(agent_activity, field, value)
+            if component_data.get('activity_kind') == 'reasoning_summary':
+                agent_activity.activity_kind = 'reasoning_summary'
             component_kwargs["agent_activity"] = agent_activity
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects

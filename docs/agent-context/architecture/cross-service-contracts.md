@@ -95,6 +95,13 @@ found no critical/major issues. Live provider/deployment verification is separat
 
 ## gRPC (NestJS ↔ ADK)
 
+Conversation `AgentActivityComponent` optionally carries `activity_kind` (field 9).
+Only explicit native Responses summary output/events produce `reasoning_summary`;
+raw reasoning and legacy agent activity omit it. Both proto mirrors and generated
+Python descriptor agree. The gRPC producer/backend mapper allowlist this value
+and expose browser `activityKind`; unknown/absent values retain generic activity.
+This display provenance contains no encrypted replay state and needs no migration.
+
 Conversation Responses continuity (2026-10-17): the mirrored `chatbot.proto`
 `SeedConversationSessionRequest.source_session_id` is optional. Backend derives
 it from the completed history snapshot; Python reads only the same app/user

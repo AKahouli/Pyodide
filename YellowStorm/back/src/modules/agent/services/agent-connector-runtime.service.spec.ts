@@ -2,6 +2,68 @@ import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { AgentConnectorRuntimeService } from './agent-connector-runtime.service';
 
 describe('AgentConnectorRuntimeService', () => {
+  it('resolves independent connectors concurrently without reordering bindings or bypassing the validation barrier', async () => {
+    let releaseDestinations!: () => void;
+    const destinationGate = new Promise<void>((resolve) => { releaseDestinations = resolve; });
+    const destinations = jest.fn().mockReturnValue(destinationGate);
+    const jwtReleases = new Map<string, (value: { headers: Record<string, string>; env: Record<string, string> }) => void>();
+    const jwt = {
+      assertConnectorAccess: jest.fn().mockResolvedValue(undefined),
+      bindingAuth: jest.fn((_url: string, _user: string, id: string) => new Promise((resolve) => {
+        jwtReleases.set(id, resolve);
+      })),
+    };
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
+      { assertRuntimeDestination: destinations } as never, {} as never,
+      { get: jest.fn((_key, fallback) => fallback) } as never, jwt as never,
+    );
+    const ids = ['connector-1', 'connector-2', 'connector-3'];
+    const connectors = new Map(ids.map((id) => [id, {
+      id, name: id, mcpTransportType: 'streamable_http', mcpServerUrl: `https://${id}.example/mcp`,
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user', allowPrivateNetwork: false, requiredPermissions: [] },
+      actions: [{ key: 'read', isEnabled: true }],
+    } as never]));
+    const pending = service.buildConnectorBindings(connectors, ids, 'acting-user');
+    expect(destinations).toHaveBeenCalledTimes(3);
+    expect(jwt.assertConnectorAccess).not.toHaveBeenCalled();
+    expect(jwt.bindingAuth).not.toHaveBeenCalled();
+    releaseDestinations();
+    await new Promise(setImmediate);
+    expect(jwt.assertConnectorAccess).toHaveBeenCalledTimes(3);
+    expect(jwt.bindingAuth).toHaveBeenCalledTimes(3);
+    for (const id of [...ids].reverse()) jwtReleases.get(id)!({ headers: { Authorization: `Bearer ${id}` }, env: {} });
+    const bindings = await pending;
+    expect(bindings.map((binding) => binding.connector_id)).toEqual(ids);
+    expect(bindings.map((binding) => binding.auth_headers)).toEqual(ids.map((id) => ({ Authorization: `Bearer ${id}` })));
+    expect(jwt.bindingAuth.mock.calls.every((call) => call[1] === 'acting-user')).toBe(true);
+  });
+
+  it('does not mint any binding JWT when another concurrent connector fails access validation', async () => {
+    let rejectAccess!: (error: Error) => void;
+    const accessGate = new Promise<void>((_resolve, reject) => { rejectAccess = reject; });
+    const jwt = { assertConnectorAccess: jest.fn((connector: { id: string }) =>
+      connector.id === 'denied' ? accessGate : Promise.resolve()), bindingAuth: jest.fn() };
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() } as never, {} as never,
+      { assertRuntimeDestination: jest.fn().mockResolvedValue(undefined) } as never, {} as never,
+      { get: jest.fn((_key, fallback) => fallback) } as never, jwt as never,
+    );
+    const connectors = new Map(['allowed', 'denied'].map((id) => [id, {
+      id, name: id, mcpTransportType: 'streamable_http', mcpServerUrl: `https://${id}.example/mcp`,
+      mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: id, actorDelegation: 'verified_user', allowPrivateNetwork: false, requiredPermissions: [] },
+      actions: [{ key: 'read', isEnabled: true }],
+    } as never]));
+    const pending = service.buildConnectorBindings(connectors, ['allowed', 'denied'], 'acting-user');
+    const rejected = expect(pending).rejects.toThrow('access denied');
+    await new Promise(setImmediate);
+    expect(jwt.assertConnectorAccess).toHaveBeenCalledTimes(2);
+    expect(jwt.bindingAuth).not.toHaveBeenCalled();
+    rejectAccess(new Error('access denied'));
+    await rejected;
+    expect(jwt.bindingAuth).not.toHaveBeenCalled();
+  });
+
   it('injects JWT and renewal metadata even when the connector has no saved credential', async () => {
     const mcpJwt = { assertConnectorAccess: jest.fn().mockResolvedValue(undefined), bindingAuth: jest.fn().mockResolvedValue({
       headers: { Authorization: 'Bearer signed-jwt' },

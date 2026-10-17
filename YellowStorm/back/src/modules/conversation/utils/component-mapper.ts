@@ -203,6 +203,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
         data: {
           summary: comp.agent_activity?.summary || '',
           ...(comp.agent_activity?.detail ? { detail: comp.agent_activity.detail } : {}),
+          ...(comp.agent_activity?.activity_kind === 'reasoning_summary' ? { activityKind: 'reasoning_summary' } : {}),
           status: comp.agent_activity?.status || 'running',
           ...(comp.agent_activity?.started_at ? { startedAt: comp.agent_activity.started_at } : {}),
           ...(comp.agent_activity?.completed_at ? { completedAt: comp.agent_activity.completed_at } : {}),

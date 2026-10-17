@@ -123,9 +123,14 @@ function stripReasoningReplayPrefix(component: MessageComponent, reasoningTexts:
 }
 
 function projectActivityComponents(components: MessageComponent[], redactSensitiveText: boolean): MessageComponent[] {
+  const hasUsefulActivity = components.some((component) => component.type === 'toolActivity'
+    || (component.type === 'agentActivity' && [component.data.summary, component.data.detail]
+      .some((value) => typeof value === 'string' && value.trim())));
   return components.flatMap((component, index) => {
     if (component.type !== 'agentActivity') return [component];
     const data = component.data as AgentActivityData;
+    if (hasUsefulActivity && data.status === 'completed'
+      && !data.summary?.trim() && !data.detail?.trim()) return [];
     const previous = components[index - 1];
     // Historical streams may have persisted the full thought snapshot as a second row.
     // Compare full payloads before truncation, and never cross a tool/actor boundary.
@@ -174,16 +179,22 @@ function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: 
   const active = isStreaming && data.status === 'running';
   const thinking = awaiting && !preview;
   const thinkingSeconds = useElapsedSeconds(thinking);
-  const summary = preview || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
+  const nativeSummary = data.activityKind === 'reasoning_summary';
+  const summary = (nativeSummary ? t('stream.activity.reasoningSummary') : preview) || (thinking ? t('stream.activity.thinking', { seconds: thinkingSeconds }) : t(agentFallbackLabelKey(data.status)));
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
-  const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || summary;
+  const detail = sanitizeActivityDetail(data.detail, redactSensitiveText) || (nativeSummary ? preview : summary);
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
         <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
-          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>
-            <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{summary}</ReactMarkdown>
+          <span className='min-w-0 flex-1'>
+            <span data-agent-summary className='block truncate font-medium leading-4 text-foreground'>
+              <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{summary}</ReactMarkdown>
+            </span>
+            {nativeSummary && preview && <span data-reasoning-summary-preview className='mt-1 line-clamp-2 text-xs font-normal leading-5 text-muted-foreground'>
+              <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{preview}</ReactMarkdown>
+            </span>}
           </span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
           <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
@@ -489,6 +500,14 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     (name) => t('stream.activity.delegateTo', { name }),
   )), questionCount, t('stream.activity.clarificationQuestions', { count: questionCount })), redactSensitiveText);
   const activityCount = activityComponents.length;
+  const summaryCount = activityComponents.filter((component) => component.type === 'agentActivity' && component.data.activityKind === 'reasoning_summary').length;
+  const toolCount = activityComponents.filter((component) => component.type === 'toolActivity').length;
+  const otherActivityCount = activityCount - summaryCount - toolCount;
+  const activityCountLabel = summaryCount > 0 || toolCount > 0
+    ? [summaryCount > 0 ? t(summaryCount === 1 ? 'stream.activity.summaryCount_one' : 'stream.activity.summaryCount_other', { count: summaryCount }) : undefined,
+      toolCount > 0 ? t(toolCount === 1 ? 'stream.activity.toolCount_one' : 'stream.activity.toolCount_other', { count: toolCount }) : undefined,
+      otherActivityCount > 0 ? t(otherActivityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: otherActivityCount }) : undefined].filter(Boolean).join(' · ')
+    : t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount });
   const activityDuration = resolveActivityDuration(activityComponents);
   const activityPaneCollapsed = props.restrictActivityDetails ? false : paneCollapsed;
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
@@ -648,7 +667,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
                 : !answerNodes.length ? t('rootInput.requestActivity')
                 : activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
               <span aria-hidden='true'>·</span>
-              <span className='shrink-0 text-xs tabular-nums'>{t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount })}</span>
+              <span className='shrink-0 text-xs tabular-nums'>{activityCountLabel}</span>
               <span className='shrink-0 text-xs font-medium text-foreground'>{t('stream.activity.viewProcess')}</span>
               <ChevronDown className={cn('size-4 shrink-0 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
             </button>

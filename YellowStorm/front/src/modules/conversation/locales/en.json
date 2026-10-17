@@ -524,7 +524,7 @@
   "stream.activity.toolStatus.completed": "Completed",
   "stream.activity.toolStatus.failed": "Failed",
   "stream.activity.agent": "Activity",
-  "stream.activity.agentRowAria": "{{description}}, {{status}}. Show full reasoning",
+  "stream.activity.agentRowAria": "{{description}}, {{status}}. Show activity details",
   "stream.activity.agentPlanning": "Preparing your request",
   "stream.activity.agentPrepared": "Request prepared",
   "stream.activity.thinking": "Thinking… {{seconds}}s",
@@ -749,5 +749,10 @@
   "openui.slides.export.timeout": "The slide export took too long. Please try again.",
   "openui.image.loading": "Loading document image…",
   "openui.image.unavailable": "The document image could not be loaded.",
-  "openui.image.page": "Page {{page}}"
+  "openui.image.page": "Page {{page}}",
+  "stream.activity.reasoningSummary": "Reasoning summary",
+  "stream.activity.summaryCount_one": "{{count}} summary",
+  "stream.activity.summaryCount_other": "{{count}} summaries",
+  "stream.activity.toolCount_one": "{{count}} tool call",
+  "stream.activity.toolCount_other": "{{count}} tool calls"
 }

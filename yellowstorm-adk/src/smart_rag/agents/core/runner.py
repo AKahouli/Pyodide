@@ -563,6 +563,9 @@ class AgentRunner:
                                     component_data={
                                         "summary": sanitize_activity_summary(update.detail),
                                         "detail": update.detail,
+                                        **({'activity_kind': 'reasoning_summary'}
+                                           if isinstance(event.custom_metadata, dict)
+                                           and event.custom_metadata.get('activity_kind') == 'reasoning_summary' else {}),
                                         "status": "completed",
                                         "started_at": update.started_at,
                                         "completed_at": observed_at,
