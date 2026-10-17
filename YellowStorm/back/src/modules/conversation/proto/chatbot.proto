@@ -374,6 +374,8 @@ message RootExecutionContext {
     bool background_fanout_enabled = 20;
     repeated OngoingConversationRequest ongoing_requests = 21;
     string ongoing_requests_observed_at = 22;
+    // Server-owned original text before model-visible contextual hints.
+    string visible_user_message = 23;
 }
 
 // Historical user text is reference data, never an instruction for this turn.
@@ -767,6 +769,8 @@ message SeedConversationSessionRequest {
     string session_id = 2;
     string idempotency_key = 3;
     repeated ConversationHistoryEntry history = 4;
+    // Trusted backend-selected completed ancestor, scoped to the same ADK user.
+    string source_session_id = 5;
 }
 
 message SeedConversationSessionResponse {

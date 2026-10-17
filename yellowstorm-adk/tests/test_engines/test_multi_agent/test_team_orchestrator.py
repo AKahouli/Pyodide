@@ -182,6 +182,9 @@ class TestAutoAgentGenerationTeam:
         native_model = SimpleNamespace(client=SimpleNamespace(close=AsyncMock()))
         native_adapter = MagicMock(return_value=native_model)
         monkeypatch.setattr(LLMFactory, 'for_conversation', native_adapter)
+        from src.smart_rag.infrastructure.monitoring import responses_history
+        history_callbacks = MagicMock()
+        monkeypatch.setattr(responses_history, 'install_history_callbacks', history_callbacks)
         mock_config.user_id = "user123"
         orchestrator = AutoAgentGenerationTeam(mock_config)
         orchestrator.streaming_processor = MagicMock()
@@ -245,6 +248,7 @@ class TestAutoAgentGenerationTeam:
             injected_session = MagicMock() if worker else None
             result = await orchestrator.run_single_agent(
                 "parent task", "sess-1", queue, execution_scope=scope, session_service=injected_session,
+                visible_user_message='visible parent task',
                 **({'fanout_tool': 'fanout-control', 'delegation_instruction': 'Only foreground fan-out is available.'}
                     if role == 'ROOT_FANOUT' else {})
             )
@@ -255,6 +259,10 @@ class TestAutoAgentGenerationTeam:
         assert native_adapter.call_count == (0 if worker else 1)
         if not worker:
             assert native_adapter.call_args.args[1] == conversation_api
+            history_callbacks.assert_called_once_with(mock_agent, conversation_api, 'search-1',
+                user_message=('parent task', 'visible parent task'))
+        else:
+            history_callbacks.assert_not_called()
         assert native_model.client.close.await_count == (0 if worker else 1)
         if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
             assert mock_agent.tools == [] and mock_agent.sub_agents == []

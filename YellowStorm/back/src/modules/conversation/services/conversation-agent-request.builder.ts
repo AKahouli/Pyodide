@@ -112,7 +112,11 @@ export class ConversationAgentRequestBuilder {
       ...(input.nativeInputResponses ? { native_input_responses: input.nativeInputResponses.map((response) => ({
         input_id: response.inputId, function_name: response.functionName, response: toGrpcStruct(response.response),
       })) } : {}),
-      ...(input.rootDelegation ? { root_context: input.rootDelegation.rootContext } : {}),
+      ...(input.rootDelegation ? { root_context: {
+        ...input.rootDelegation.rootContext,
+        // Server-owned visible text before contextual page hints are appended.
+        visible_user_message: input.request.content,
+      } } : {}),
       ...(input.rootDelegation && input.rootDelegation.candidates.length
         ? { delegate_candidates: input.rootDelegation.candidates }
         : {}),

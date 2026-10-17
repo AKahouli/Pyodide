@@ -13,12 +13,81 @@ from openai import AsyncOpenAI
 
 from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedResponsesLlm
 from src.smart_rag.infrastructure.monitoring.responses_history import (
-    STATE_KEY, install_history_callbacks, prepare, select_reasoning,
+    STATE_KEY, install_history_callbacks, prepare, select_reasoning, seed_private_history,
 )
 
 
 def message(role, text):
     return {'type': 'message', 'role': role, 'content': text}
+
+
+@pytest.mark.parametrize('changed', [False, 'edited', 'truncated', 'extra_text'])
+def test_isolated_turn_seed_validates_visible_history_and_keeps_private_tool_order(changed):
+    from google.adk.events import Event
+    from google.adk.integrations.openai import OpenAIResponsesLlm
+    entries = [('user', 'Question'), ('assistant', 'Answer')]
+    events = [Event(author=role, content=types.Content(
+        role='user' if role == 'user' else 'model', parts=[types.Part(text=text)]))
+        for role, text in entries]
+    events.insert(1, Event(author='assistant', content=types.Content(role='model',
+        parts=[types.Part(text='Private summary', thought=True)])))
+    raw = [message('user', 'Question'), {'type': 'reasoning', 'encrypted_content': 'opaque'},
+           {'type': 'function_call', 'call_id': 'one'},
+           {'type': 'function_call_output', 'call_id': 'one'}, message('assistant', 'Answer')]
+    saved = {'signature': 'verified_later', 'response_id': 'resp_one', 'items': raw,
+             'projection': ['original tool-inclusive projection']}
+    source = SimpleNamespace(state={STATE_KEY: saved, 'unrelated_secret': 'never_copy'}, events=events)
+    if changed == 'edited': entries[-1] = ('assistant', 'Edited')
+    if changed == 'truncated': entries = entries[-1:]
+    if changed == 'extra_text': events.append(Event(author='assistant', content=types.Content(
+        role='model', parts=[types.Part(text='Intermediate text')])) )
+    result = seed_private_history(source, entries)
+    if changed:
+        assert result == {}
+    else:
+        assert list(result) == [STATE_KEY]
+        assert result[STATE_KEY]['items'] == raw
+        assert result[STATE_KEY]['signature'] == saved['signature']
+        expected = OpenAIResponsesLlm(model='test')._get_response_input(LlmRequest(contents=[
+            event.content for event in (events[0], events[-1])]))
+        from src.smart_rag.infrastructure.monitoring.responses_history import projection
+        assert result[STATE_KEY]['projection'] == projection(expected)
+        assert source.state[STATE_KEY]['projection'] == ['original tool-inclusive projection']
+
+
+def test_seed_missing_or_cleared_lineage_never_resurrects_responses_state():
+    assert seed_private_history(None, [('user', 'Question')]) == {}
+    assert seed_private_history(SimpleNamespace(state={STATE_KEY: {}}, events=[]), []) == {}
+
+
+def test_seed_trusted_user_receipt_matches_exact_runtime_wrapper_only():
+    from google.adk.events import Event
+    source = SimpleNamespace(state={STATE_KEY: {'response_id': 'resp_one', 'items': [],
+        'user_message': {'rendered': 'Runtime snapshot + Question', 'original': 'Question'}}}, events=[
+        Event(author='user', content=types.Content(role='user', parts=[types.Part(text='Runtime snapshot + Question')])),
+        Event(author='agent', content=types.Content(role='model', parts=[types.Part(text='Answer')]))])
+    assert STATE_KEY in seed_private_history(source, [('user', 'Question'), ('assistant', 'Answer')])
+    source.events[0].content.parts[0].text = 'Changed wrapper + Question'
+    assert seed_private_history(source, [('user', 'Question'), ('assistant', 'Answer')]) == {}
+
+
+@pytest.mark.parametrize('policy_changed', [False, True])
+def test_only_trusted_timestamp_substitution_is_volatile(policy_changed):
+    model = SimpleNamespace(client=SimpleNamespace(base_url='http://gateway/v1'), history_mode='provider', reasoning_history='auto')
+    request = LlmRequest()
+    object.__setattr__(request, '_responses_timestamp', '2026-10-17T09:00')
+    object.__setattr__(request, '_responses_instruction_template', 'Policy. Current timestamp is {time}.')
+    kwargs = {'model': 'model', 'input': [message('user', 'Question')],
+              'instructions': 'Policy. Current timestamp is 2026-10-17T09:00.'}
+    saved = prepare(model, request, copy.deepcopy(kwargs))
+    saved['response_id'] = 'resp_one'
+    object.__setattr__(request, '_responses_history', saved)
+    object.__setattr__(request, '_responses_timestamp', '2026-10-17T09:01')
+    kwargs['instructions'] = ('Changed policy' if policy_changed else 'Policy') + '. Current timestamp is 2026-10-17T09:01.'
+    kwargs['input'].append(message('user', 'Next'))
+    prepare(model, request, kwargs)
+    assert ('previous_response_id' in kwargs) is not policy_changed
+    assert '2026-10-17T09:01' in kwargs['instructions']
 
 
 @pytest.mark.parametrize('policy,expected', [('none', []), ('last', ['rs_new']), ('auto', ['rs_new']), ('all', ['rs_old', 'rs_new'])])
@@ -53,8 +122,9 @@ def test_incompatible_context_never_reuses_provider_chain(change):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('isolated', [False, True])
 @pytest.mark.parametrize('mode,expired', [('application', False), ('provider', False), ('provider', True)])
-async def test_runner_persists_private_items_across_reconstructed_adapter_and_tools(mode, expired):
+async def test_runner_persists_private_items_across_reconstructed_adapter_and_tools(mode, expired, isolated):
     sent = []
     accepted = []
     rejected = []
@@ -80,6 +150,7 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
             'usage': {'input_tokens': 10, 'output_tokens': 10, 'total_tokens': 20}})
 
     sessions = InMemorySessionService()
+    session_id = 'session'
     await sessions.create_session(app_name='test', user_id='user', session_id='session')
     calls = []
     def lookup(value: str) -> dict:
@@ -87,6 +158,17 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
         calls.append(value)
         return {'value': value}
     for text in ('Look up fixture', 'Repeat fixture'):
+        if isolated and text == 'Repeat fixture':
+            from google.adk.events import Event
+            source = await sessions.get_session(app_name='test', user_id='user', session_id=session_id)
+            history = [('user', 'Look up fixture'), ('assistant', 'fixture')]
+            state = seed_private_history(source, history)
+            assert STATE_KEY in state
+            session_id = 'isolated_successor'
+            seeded = await sessions.create_session(app_name='test', user_id='user', session_id=session_id, state=state)
+            for role, value in history:
+                await sessions.append_event(seeded, Event(author=role, content=types.Content(
+                    role='user' if role == 'user' else 'model', parts=[types.Part(text=value)])))
         client = AsyncOpenAI(api_key='test', base_url='https://gateway.invalid/v1',
                              http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
         model = InstrumentedResponsesLlm(model='gpt-5.4-mini', client=client,
@@ -95,7 +177,7 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
         agent = Agent(name='agent_one', model=model, tools=[lookup])
         install_history_callbacks(agent, 'responses', 'agent_one')
         runner = Runner(agent=agent, app_name='test', session_service=sessions)
-        events = [event async for event in runner.run_async(user_id='user', session_id='session',
+        events = [event async for event in runner.run_async(user_id='user', session_id=session_id,
             new_message=types.Content(role='user', parts=[types.Part(text=text)]))]
         public = json.dumps([event.model_dump(mode='json') for event in events])
         assert 'opaque_secret' not in public
@@ -116,7 +198,7 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
     else:
         assert all('previous_response_id' not in body for body in sent)
         assert any(item.get('encrypted_content') == 'opaque_secret_1' for item in sent[1]['input'])
-    session = await sessions.get_session(app_name='test', user_id='user', session_id='session')
+    session = await sessions.get_session(app_name='test', user_id='user', session_id=session_id)
     assert 'opaque_secret_3' in json.dumps(session.state[STATE_KEY])
     # The Chat Completions callback clears lineage without changing its request.
     completion_agent = Agent(name='agent_one', model='placeholder')

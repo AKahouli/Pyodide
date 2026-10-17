@@ -155,6 +155,7 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                     raise
                 from .responses_history import select_reasoning
                 kwargs.pop('previous_response_id')
+                llm_request._responses_pending['provider_chained'] = False
                 kwargs['input'] = select_reasoning(llm_request._responses_pending['items'], self.reasoning_history)
                 result = await resource.create(**kwargs)
             if kwargs.get('stream'):

@@ -3,6 +3,37 @@ from unittest.mock import AsyncMock
 import pytest
 from google.adk.errors.already_exists_error import AlreadyExistsError
 
+
+@pytest.mark.asyncio
+async def test_seed_scopes_private_source_to_same_user_and_app(monkeypatch):
+    from src.smart_rag.infrastructure.monitoring import responses_history
+    from unittest.mock import Mock
+    source = object()
+    storage = AsyncMock()
+    storage.get_session.return_value = source
+    storage.create_session.return_value = type('Session', (), {'state': {}})()
+    selected = {responses_history.STATE_KEY: {'response_id': 'private-response'}}
+    helper = Mock(return_value=selected)
+    monkeypatch.setattr(responses_history, 'seed_private_history', helper)
+    service = ConversationSessionSeedService(storage)
+    await service.seed(user_id='owner', session_id='turn_new', idempotency_key='new',
+                       history=[('user', ' question ')], source_session_id='turn_previous')
+    storage.get_session.assert_awaited_once_with(app_name=APP_NAME, user_id='owner', session_id='turn_previous')
+    helper.assert_called_once_with(source, [('user', 'question')])
+    assert storage.create_session.call_args.kwargs['state'] == {'branch_seed_idempotency_key': 'new', **selected}
+
+
+@pytest.mark.asyncio
+async def test_seed_missing_private_source_keeps_application_history():
+    storage = AsyncMock()
+    storage.get_session.return_value = None
+    storage.create_session.return_value = type('Session', (), {'state': {}})()
+    service = ConversationSessionSeedService(storage)
+    assert await service.seed(user_id='owner', session_id='turn_new', idempotency_key='new',
+                              history=[('user', 'question')], source_session_id='turn_missing') is True
+    assert storage.create_session.call_args.kwargs['state'] == {'branch_seed_idempotency_key': 'new'}
+    assert storage.append_event.await_count == 1
+
 from src.grpc_server.conversation_session_seed import (
     APP_NAME,
     ConversationSessionSeedService,

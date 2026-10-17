@@ -67,6 +67,10 @@ Workers and manager/team execution retain their adapters. Truncated native strea
 instead of finalizing partial text/tool calls. A private session adapter restores
 reasoning replay omitted by the pinned ADK converter. See the runtime architecture
 record and proposed ADR-0020.
+Real isolated turns transfer compatible private replay context from the last
+completed answer included in local history through the existing session seed
+boundary. The runtime verifies the source transcript and actor before reuse;
+missing or changed history safely starts a new chain.
 
 1. The [hash router](../../../YellowStorm/front/src/Router.tsx) lazy-loads the new/existing conversation pages.
 2. [ConversationPage](../../../YellowStorm/front/src/modules/conversation/ConversationPage.tsx) loads thread state and dispatches group threads to the group page.

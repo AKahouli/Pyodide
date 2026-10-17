@@ -717,7 +717,8 @@ Do not render charts for single values or non-numeric content.
                                 abort_signal: Optional[asyncio.Event] = None,
                                 native_input_responses=None,
                                 temporary_worker_tool=None, fanout_tool=None, session_service=None,
-                                background_task_tool=None, conversation_reply_tool=None) -> Optional[str]:
+                                background_task_tool=None, conversation_reply_tool=None,
+                                visible_user_message: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -816,7 +817,9 @@ Do not render charts for single values or non-numeric content.
                 )
                 from src.smart_rag.infrastructure.monitoring.responses_history import install_history_callbacks
                 install_history_callbacks(agent, response_params.get('conversation_api', 'chat_completions'),
-                                          str(agent_config.get('id') or agent_name))
+                                          str(agent_config.get('id') or agent_name),
+                                          user_message=(user_prompt, visible_user_message)
+                                          if visible_user_message is not None else None)
                 if agent.model is not original_model:
                     native_client = agent.model.client
             if await stopped_during_bootstrap():

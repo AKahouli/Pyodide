@@ -170,6 +170,7 @@ class ChatbotServicer(
                 session_id=request.session_id,
                 idempotency_key=request.idempotency_key,
                 history=history,
+                source_session_id=request.source_session_id,
             )
             return chatbot_pb2.SeedConversationSessionResponse(
                 session_id=request.session_id,

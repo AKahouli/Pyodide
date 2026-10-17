@@ -49,6 +49,15 @@ Apply migration `0051_model_responses_history_controls.sql`. See proposed
 Per-turn SDK clients close in the orchestrator's `finally` path. MCP identity and
 tools are unchanged.
 
+Isolated root turns carry compatible private context through the existing
+`SeedConversationSession` boundary's optional source session ID. The backend selects
+the last completed answer actually included in the seed snapshot. The runtime
+loads only the same app/user source and verifies its complete visible transcript
+before copying Responses state into the new session. It rebuilds the seed's text
+projection while preserving raw ordered provider items and the configuration
+signature; edits, truncation or missing source safely rebase. No other source
+session state or event is copied.
+
 Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
 calls use `CapacityClient.create()` with retries disabled when capacity is enabled.
 Stream validation requires a terminal Responses event before EOF. Truncated text

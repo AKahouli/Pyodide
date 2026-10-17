@@ -55,7 +55,7 @@ import { RootBackgroundJobStore } from '../persistence/postgres/root-background-
 import { freezeRootCapabilityCeiling } from '../root-work/root-capability-ceiling';
 import { ExecutionScopeV1, RootNativeState, newStopRequestId } from '../root-work/root-work.types';
 import { isCanonicalObjectId, newObjectId } from '@common/postgres/object-id';
-import { completedTurnHistory } from '../utils/completed-turn-history';
+import { completedTurnSeed } from '../utils/completed-turn-history';
 import { ongoingRequestContext, type OngoingRequestContext } from '../utils/ongoing-request-context';
 
 export interface StreamRequest {
@@ -194,12 +194,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.replicaId = this.configService.get<string>('REPLICA_ID') || null;
   }
 
-  async seedConversationSession(userId: string, sessionId: string, idempotencyKey: string, history: ConversationHistoryEntry[]): Promise<void> {
+  async seedConversationSession(userId: string, sessionId: string, idempotencyKey: string, history: ConversationHistoryEntry[], sourceSessionId?: string): Promise<void> {
     await this.callConversationSessionRpc('SeedConversationSession', {
       user_id: userId,
       session_id: sessionId,
       idempotency_key: idempotencyKey,
       history,
+      ...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
     });
   }
 
@@ -778,7 +779,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const nativeSessionId = resumedState?.sessionId ?? (isolatedRoot ? `turn_${messageId}` : conversationId);
       const historyMessages = isolatedRoot && !request.rootContinuation
         ? await this.messageService.findAllByConversation(conversationId) : undefined;
-      const seedHistory = historyMessages ? completedTurnHistory(historyMessages, messageId) : undefined;
+      const seed = historyMessages ? completedTurnSeed(historyMessages, messageId) : undefined;
+      const seedHistory = seed?.history;
       const ongoingRequests = historyMessages ? ongoingRequestContext(historyMessages, messageId, conversationId) : undefined;
       if (this.bootstrapCancelRequested.has(streamKey)) {
         if (resumedState) await this.rootWorkService!.completeExecution(resumedState.scope.executionId, 'cancelled', null);
@@ -1008,6 +1010,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         seedHistory,
         ongoingRequests,
         conversation,
+        seed?.sourceSessionId,
       );
       assertLeaseOwned();
       if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
@@ -1152,7 +1155,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return snapshots;
   }
 
-  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext, preloadedConversation?: ConversationRecord): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId, originAssistantMessageId?: string, seedHistory?: ConversationHistoryEntry[], ongoingRequests?: OngoingRequestContext, preloadedConversation?: ConversationRecord, sourceSessionId?: string): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = preloadedConversation ?? await this.conversationService.getConversationDocument(conversationId);
     const continuation = request.rootContinuation && this.rootWorkService
@@ -1317,7 +1320,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             rootContext: rootDelegation.rootContext,
             invocationId: null,
             sessionId,
-            ...(seedHistory ? { sessionSeed: { idempotencyKey: `turn_${originAssistantMessageId}`, history: seedHistory } } : {}),
+            ...(seedHistory ? { sessionSeed: { idempotencyKey: `turn_${originAssistantMessageId}`, history: seedHistory, ...(sourceSessionId ? { sourceSessionId } : {}) } } : {}),
             pendingInputs: [],
             ...(originMessage ? { origin: { assistantMessageId: originAssistantMessageId!,
               ...(originMessage.questionMessageId ? { questionMessageId: String(originMessage.questionMessageId) } : {}) } } : {}),
@@ -1439,7 +1442,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         beginBackendPreAdkStage('rootSessionSeedMs');
         try {
           await this.seedConversationSession(userId, sessionId, admittedNativeState.sessionSeed.idempotencyKey,
-            admittedNativeState.sessionSeed.history);
+            admittedNativeState.sessionSeed.history, admittedNativeState.sessionSeed.sourceSessionId);
           endBackendPreAdkStage('rootSessionSeedMs');
         } catch (error) {
           await this.rootWorkService!.completeExecution(admittedNativeState.scope.executionId, 'failed', null);

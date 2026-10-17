@@ -95,6 +95,15 @@ found no critical/major issues. Live provider/deployment verification is separat
 
 ## gRPC (NestJS ↔ ADK)
 
+Conversation Responses continuity (2026-10-17): the mirrored `chatbot.proto`
+`SeedConversationSessionRequest.source_session_id` is optional. Backend derives
+it from the completed history snapshot; Python reads only the same app/user
+session and copies only transcript-verified private Responses state. Missing
+sources retain normal local-history seeding. The typed `RootExecutionContext`
+adds `visible_user_message` for the original text before backend page hints; it is an exact
+private receipt for comparison, never a parsed authorization source. See proposed
+[ADR-0020](../decisions/ADR-0020-conversation-responses-history-controls.md).
+
 Proto pairs (both copies authoritative; drift-tested where noted):
 
 | Domain | Backend copy | ADK copy | Notes |

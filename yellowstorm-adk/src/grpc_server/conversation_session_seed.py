@@ -50,8 +50,17 @@ class ConversationSessionSeedService:
         session_id: str,
         idempotency_key: str,
         history: Iterable[tuple[str, str]],
+        source_session_id: str = "",
     ) -> bool:
         entries = [(role, text.strip()) for role, text in history if text.strip()]
+        state = {SEED_KEY_STATE: idempotency_key}
+        if source_session_id and source_session_id != session_id:
+            from src.smart_rag.infrastructure.monitoring.responses_history import seed_private_history
+            source = await self._session_service.get_session(
+                app_name=APP_NAME, user_id=user_id, session_id=source_session_id,
+            )
+            if source is not None:
+                state.update(seed_private_history(source, entries))
 
         # Create first: seeds almost always target a new id, and create_session
         # already checks for a duplicate, so the full session read (state plus
@@ -61,7 +70,7 @@ class ConversationSessionSeedService:
                 app_name=APP_NAME,
                 user_id=user_id,
                 session_id=session_id,
-                state={SEED_KEY_STATE: idempotency_key},
+                state=state,
             )
         except AlreadyExistsError:
             existing = await self._session_service.get_session(

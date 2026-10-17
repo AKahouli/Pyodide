@@ -33,13 +33,71 @@ def projection(items):
     return result
 
 
+def seed_private_history(source_session, history):
+    """Carry only verified private context into an isolated successor turn.
+
+    The caller selects a completed ancestor under the same app and user. Its
+    complete visible transcript must match the supplied local seed exactly;
+    edits, truncation and intermediate text conservatively start a fresh chain.
+    Tool and reasoning items remain private and keep their original ordering.
+    """
+    if not source_session:
+        return {}
+    saved = source_session.state.get(STATE_KEY)
+    if not saved or not saved.get('response_id'):
+        return {}
+    visible = []
+    for event in source_session.events or []:
+        if getattr(event, 'partial', False) or not event.content:
+            continue
+        text = ''.join(part.text or '' for part in event.content.parts or []
+                       if not part.thought and not part.function_call
+                       and not part.function_response).strip()
+        receipt = saved.get('user_message') or {}
+        if event.content.role == 'user' and text == receipt.get('rendered'):
+            text = receipt['original'].strip()
+        if text:
+            visible.append(('user' if event.content.role == 'user' else 'assistant', text))
+    entries = [(role, text.strip()) for role, text in history if text.strip()]
+    if not entries or visible != entries:
+        return {}
+    # Use the pinned adapter's exact input shape. The signature is still checked
+    # by prepare() against the successor's actual model, instructions and tools.
+    seeded = copy.deepcopy(saved)
+    seeded['projection'] = seed_projection(entries, 'assistant')
+    seeded['seed_history'] = entries
+    return {STATE_KEY: seeded}
+
+
+def seed_projection(entries, agent_name):
+    from google.adk.events import Event
+    from google.adk.flows.llm_flows.contents import _get_contents
+    from google.adk.integrations.openai import OpenAIResponsesLlm
+    from google.adk.models.llm_request import LlmRequest
+    from google.genai import types
+    events = [Event(author='user' if role == 'user' else 'assistant',
+                    content=types.Content(role='user' if role == 'user' else 'model',
+                                          parts=[types.Part(text=text)])) for role, text in entries]
+    # ADK presents seed events authored by "assistant" as another agent's
+    # context when the current agent has a different name. Match that exact
+    # pinned conversion instead of assuming model-role messages survive it.
+    contents = _get_contents(None, events, agent_name=agent_name)
+    return projection(OpenAIResponsesLlm(model='seed_projection')
+                      ._get_response_input(LlmRequest(contents=contents)))
+
+
 def prepare(model, request, kwargs):
     current = kwargs['input']
     saved = getattr(request, '_responses_history', None) or {}
+    instructions = kwargs.get('instructions')
+    timestamp = getattr(request, '_responses_timestamp', None)
+    if timestamp and isinstance(instructions, str):
+        instructions = instructions.replace(timestamp, '{time}')
     signature = hashlib.sha256(canonical({
         'model': kwargs['model'], 'endpoint': str(model.client.base_url),
         'scope': getattr(request, '_responses_scope', ''),
-        'instructions': kwargs.get('instructions'), 'tools': kwargs.get('tools'),
+        'instructions': instructions, 'tools': kwargs.get('tools'),
+        'instruction_template': getattr(request, '_responses_instruction_template', None),
         'reasoning': kwargs.get('reasoning'), 'history': model.history_mode,
         'replay': model.reasoning_history,
     }).encode()).hexdigest()
@@ -58,7 +116,9 @@ def prepare(model, request, kwargs):
         kwargs['input'] = delta
     else:
         kwargs['input'] = select_reasoning(items, model.reasoning_history)
-    return {'signature': signature, 'projection': projected, 'items': items}
+    return {'signature': signature, 'projection': projected, 'items': items,
+            'provider_chained': bool(kwargs.get('previous_response_id')),
+            'user_message': getattr(request, '_responses_user_message', None)}
 
 
 def select_reasoning(items, policy):
@@ -70,15 +130,29 @@ def select_reasoning(items, policy):
             or (policy in ('auto', 'last') and index > last_user)]
 
 
-def install_history_callbacks(agent, conversation_api, scope):
+def install_history_callbacks(agent, conversation_api, scope, user_message=None):
     """Append to existing callbacks, preserving image injection and instrumentation."""
     async def before(callback_context, llm_request):
         if conversation_api != 'responses':
             if callback_context.state.get(STATE_KEY):
                 await persist_private(callback_context, {})
             return None
-        object.__setattr__(llm_request, '_responses_history', copy.deepcopy(callback_context.state.get(STATE_KEY, {})))
+        saved = copy.deepcopy(callback_context.state.get(STATE_KEY, {}))
+        seeded = saved.pop('seed_history', None)
+        if seeded:
+            saved['projection'] = seed_projection(seeded, callback_context.agent_name)
+        object.__setattr__(llm_request, '_responses_history', saved)
         object.__setattr__(llm_request, '_responses_scope', scope)
+        # Only this known runtime timestamp substitution is volatile. Every
+        # other instruction change still invalidates the configuration guard.
+        template = getattr(agent, 'instruction', None)
+        if isinstance(template, str) and '{time}' in template:
+            object.__setattr__(llm_request, '_responses_instruction_template', template)
+            object.__setattr__(llm_request, '_responses_timestamp', str(callback_context.state.get('time') or ''))
+        if user_message is not None:
+            rendered, original = user_message
+            object.__setattr__(llm_request, '_responses_user_message',
+                               {'rendered': rendered.strip(), 'original': original.strip()})
         return None
 
     async def after(callback_context, llm_response):

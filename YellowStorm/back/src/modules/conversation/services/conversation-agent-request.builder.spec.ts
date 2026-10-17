@@ -5,6 +5,8 @@ import {
   type RootDelegationContext,
 } from './conversation-agent-request.builder';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
+import { loadSync, type ServiceDefinition } from '@grpc/proto-loader';
+import { join } from 'node:path';
 
 describe('ConversationAgentRequestBuilder', () => {
   it('keeps the native profile digest stable across acting-user tool credential refresh', () => {
@@ -189,19 +191,32 @@ describe('ConversationAgentRequestBuilder', () => {
       stopRequestId: '018f0000-0000-7000-8000-000000000000',
       rootContext: {
         root_agent_id: 'r1', policy_version: '1', max_depth: 1,
+        visible_user_message: 'stale content must be overwritten',
         catalog: [{ agent_id: 'a1', name: 'S', configuration_mode: 'native' }],
       },
       candidates: [{ id: 'a1', name: 'S' }],
     };
     const result = new ConversationAgentRequestBuilder().build({
-      userId: 'user-1', conversationId: 'conv-1', request,
+      userId: 'user-1', conversationId: 'conv-1', request: { ...request, clientContext: {
+        contextVersion: 1, route: '/conversation', module: 'other', surface: 'conversation',
+        availableActions: [], hasUnsavedChanges: false, locale: 'en',
+      } },
       workspaceContexts: [], agents: [{ id: 'root-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
       rootDelegation,
       executionScope: rootDelegation.scope,
     });
     expect(result.rpc).toBe('RunSingleAgent');
-    expect(result.payload.root_context).toEqual(rootDelegation.rootContext);
+    expect(result.payload.root_context).toEqual({ ...rootDelegation.rootContext, visible_user_message: request.content });
+    expect(result.payload.query).toContain('<contextual_page_hint>');
+    expect(rootDelegation.rootContext.visible_user_message).toBe('stale content must be overwritten');
     expect(result.payload.delegate_candidates).toEqual([{ id: 'a1', name: 'S' }]);
     expect(result.payload.execution_scope).toEqual(expect.objectContaining({ execution_role: 1, conversation_epoch: 3 }));
+    const service = loadSync(join(__dirname, '../proto/chatbot.proto'), { keepCase: true })['chatbot.ChatbotService'] as ServiceDefinition;
+    const method = service.RunSingleAgent;
+    const wire = method.requestDeserialize(method.requestSerialize(result.payload)) as {
+      root_context: { visible_user_message: string }; query: string;
+    };
+    expect(wire.root_context.visible_user_message).toBe(request.content);
+    expect(wire.query).toContain('<contextual_page_hint>');
   });
 });

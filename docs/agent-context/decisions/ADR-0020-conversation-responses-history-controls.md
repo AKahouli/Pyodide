@@ -29,6 +29,21 @@ recovery. Replay records live in existing ADK session state, keyed to model,
 gateway endpoint, agent scope, instructions, tools and reasoning policy. A
 projection prefix verifies that the transcript has not changed. Model/API/agent
 switches, edited/compacted history and configuration changes rebase the chain.
+Isolated root turns seed a fresh ADK session from local completed history. The
+existing seed contract optionally identifies the last included completed answer's
+source session. The runtime reads it under the same app/user, verifies its complete
+visible transcript against the seed, and copies only private Responses context.
+Its comparison projection is rebuilt for the text seed; original provider items
+and the model/configuration signature remain intact. Missing, edited or truncated
+source history starts a fresh chain; unrelated session state is never copied.
+Comparison follows the pinned ADK seed-author conversion. The known `{time}`
+runtime substitution is normalized for compatibility while the instruction
+template and all other instruction content remain fingerprinted; fresh instructions
+are still sent. A trusted private receipt maps the exact rendered current user
+message back to the original visible text for seed validation. The backend sends
+that original text in trusted root context before adding its client-page hint.
+This handles page hints and the runtime's ongoing-request wrapper without parsing or stripping arbitrary text;
+corrective replay does not issue such a receipt.
 Only explicit missing-response rejection is retried with full local context;
 uncertain dispatch and transport failures are not replayed on another API.
 
@@ -50,6 +65,26 @@ manager adapters remain unchanged.
 Focused model/DTO/construction and isolated transactional migration tests; Admin
 form tests; runtime tests for exact item replay, reconstructed adapters, tool
 loops, opaque-event isolation, policy/context resets and expired chain recovery.
+Seed-boundary tests cover ancestor selection, transcript mismatch, private-state
+isolation and fresh-turn projection. Deployment verification must exercise real
+isolated conversation turns, since a stable-session Runner alone cannot detect a
+missing seed handoff.
 Gateway qualification: `tests/wp10/qualify_native_responses.py` with application
 Responses, provider Responses and Chat Completions. Browser fixture uses real
 Admin components with isolated in-memory data, not a shared catalog migration.
+
+Deployment integration on 2026-10-17 applied 0051 in the current checkout and
+restarted backend, frontend and ADK. The three catalog columns and validated
+constraints were checked in the shared database. The integration follow-up passed
+158 focused backend/runtime tests, backend build, logging policy and independent
+source/documentation review. All nine backend readiness components passed,
+including LiteLLM, conversation gRPC and Playbook MCP. Gateway qualification
+passed application Responses, provider Responses and Chat Completions with two
+streamed turns, a tool call, instrumentation and capacity release in each case.
+The signed-in Admin UI persisted both history modes across reload and enforced
+provider Auto replay. Real isolated conversation turns confirmed stored provider
+continuation (`provider_chained=true`), then switching the same model to Chat
+Completions cleared private lineage while retaining the local transcript. The
+test model's original Chat Completions/application/auto/off settings were restored.
+Native summary delivery remains optional; the gateway qualification returned no
+summary text, while controlled native-stream tests covered summary On/Off.
