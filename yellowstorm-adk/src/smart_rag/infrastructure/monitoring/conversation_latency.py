@@ -128,6 +128,8 @@ class ConversationLatencyTrace:
     session_lookup_sequence: int = 0
     # First capacity-gated call only; diagnostics never serialized to protobuf.
     provider_timing: dict[str, int] = field(default_factory=dict)
+    provider_http_timing: dict[str, int] = field(default_factory=dict)
+    provider_http_metrics: dict[str, float] = field(default_factory=dict)
     # Diagnostic-only correlation for the runner_pre_model log; empty until a
     # run site notes it. Not part of protobuf/UI metrics.
     session_id: str = ""
@@ -179,6 +181,18 @@ class ConversationLatencyTrace:
         ]
         return {name: duration for name, start, end in stages
                 if (duration := self._monotonic_ms(start, end)) is not None}
+
+    def build_provider_http_breakdown(self) -> dict:
+        stamps = self.provider_http_timing
+        pairs = [
+            ('connect_tcp_ms', 'connection.connect_tcp.started', 'connection.connect_tcp.complete'),
+            ('tls_ms', 'connection.start_tls.started', 'connection.start_tls.complete'),
+            ('http_headers_ms', 'request_start', 'response_headers'),
+        ]
+        result = {name: duration for name, start, end in pairs
+                  if (duration := self._monotonic_ms(stamps.get(start), stamps.get(end))) is not None}
+        result.update(self.provider_http_metrics)
+        return result
 
     def mark_llm_first_delta(self) -> None:
         if self.llm_first_delta_perf_ns is None:

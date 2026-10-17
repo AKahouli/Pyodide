@@ -16,6 +16,13 @@ from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
 from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedResponsesLlm
 
 
+@pytest.fixture(autouse=True)
+async def close_factory_transport_after_test():
+    yield
+    from src.smart_rag.infrastructure.factories.llm_factory import close_shared_gateway_http_client
+    await close_shared_gateway_http_client()
+
+
 def request(text='Hello'):
     return LlmRequest(contents=[types.Content(role='user', parts=[types.Part(text=text)])])
 
@@ -330,3 +337,108 @@ def test_provider_timing_omits_missing_and_invalid_intervals():
     trace.provider_timing = {"acquire_start": 20_000_000, "acquire_end": 10_000_000,
                              "dispatch": 20_000_000, "first_chunk": 70_000_000_000}
     assert trace.build_provider_timing_breakdown() == {"capacity_running_transition_ms": 10.0}
+
+
+@pytest.mark.asyncio
+async def test_responses_http_diagnostics_are_first_request_numeric_and_preserve_trace(monkeypatch):
+    import httpx
+    from src.smart_rag.infrastructure.monitoring import conversation_latency as latency
+    from src.smart_rag.infrastructure.monitoring import latency_diagnostics as diag
+    ticks = iter([1, 2, 5, 6, 10, 20])
+    monkeypatch.setattr(diag.time, 'perf_counter_ns', lambda: next(ticks) * 1_000_000)
+    logs = []
+    monkeypatch.setattr(diag, '_emit', lambda *args: logs.append(args))
+    trace = latency.ConversationLatencyTrace('r', 'a', None)
+    token = latency.current_conversation_latency_trace.set(trace)
+    prior = AsyncMock()
+    request = httpx.Request('POST', 'https://private.test/responses', extensions={'trace': prior})
+    try:
+        await diag.trace_responses_http_request(request)
+        for event in ('connection.connect_tcp.started', 'connection.connect_tcp.complete',
+                      'connection.start_tls.started', 'connection.start_tls.complete'):
+            await request.extensions['trace'](event, {'secret': 'not logged'})
+        response = httpx.Response(200, request=request, headers={
+            'x-litellm-overhead-duration-ms': '12.3',
+            'x-litellm-response-duration-ms': 'NaN', 'Authorization': 'not logged',
+        })
+        await diag.trace_responses_http_response(response)
+        assert trace.build_provider_http_breakdown() == {
+            'connect_tcp_ms': 3.0, 'tls_ms': 4.0, 'http_headers_ms': 19.0,
+            'gateway_overhead_ms': 12.3, 'http2': 0,
+        }
+        assert prior.await_count == 4
+        second = httpx.Request('POST', 'https://private.test/responses')
+        await diag.trace_responses_http_request(second)
+        assert 'trace' not in second.extensions
+        assert 'private.test' not in str(logs) and 'not logged' not in str(logs)
+        diag.emit_provider_usage_log(trace, SimpleNamespace(
+            prompt_token_count=123, cached_content_token_count=0, thoughts_token_count=7,
+            candidates_token_count=8, secret='not logged'))
+        assert logs[-1][2] == {'request_id': 'r', 'assistant_message_id': 'a',
+                              'input_tokens': 123, 'cached_input_tokens': 0,
+                              'reasoning_tokens': 7, 'output_tokens': 8}
+    finally:
+        latency.current_conversation_latency_trace.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_responses_http_diagnostics_without_trace_leave_request_unchanged():
+    import httpx
+    from src.smart_rag.infrastructure.monitoring import conversation_latency as latency
+    from src.smart_rag.infrastructure.monitoring.latency_diagnostics import trace_responses_http_request
+    token = latency.current_conversation_latency_trace.set(None)
+    request = httpx.Request('POST', 'https://private.test/responses')
+    try:
+        await trace_responses_http_request(request)
+        assert request.extensions == {}
+    finally:
+        latency.current_conversation_latency_trace.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_shared_gateway_transport_keeps_turn_clients_headers_and_cookies_isolated():
+    from src.smart_rag.infrastructure.factories import llm_factory as factory
+    seen = []
+    async def handler(req):
+        seen.append((req.headers.get('authorization'), req.headers.get('cookie')))
+        return httpx.Response(200, json=response(), headers={'set-cookie': 'private_turn=one; Path=/'})
+    owner = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    factory._gateway_http_owners[asyncio.get_running_loop()] = owner
+    clients = [AsyncOpenAI(api_key=key, base_url='https://gateway.invalid/v1',
+                          http_client=factory._responses_http_client(), max_retries=0)
+               for key in ('actor-one', 'actor-two')]
+    try:
+        await clients[0].responses.create(model='fixture', input='one')
+        await clients[0].close()
+        assert clients[0].is_closed() and not owner.is_closed
+        await clients[1].responses.create(model='fixture', input='two')
+        assert seen == [('Bearer actor-one', None), ('Bearer actor-two', None)]
+        assert clients[0]._client.cookies is not clients[1]._client.cookies
+    finally:
+        await clients[1].close()
+        await factory.close_shared_gateway_http_client()
+    assert owner.is_closed
+    assert asyncio.get_running_loop() not in factory._gateway_http_owners
+
+
+@pytest.mark.asyncio
+async def test_shared_gateway_transport_preserves_owner_routing_and_shutdown(monkeypatch):
+    from src.smart_rag.infrastructure.factories import llm_factory as factory
+    client = factory._responses_http_client()
+    owner = factory._gateway_http_owners[asyncio.get_running_loop()]
+    assert owner._transport._pool._http2 is True
+    assert owner._transport._pool._keepalive_expiry == 5.0  # Preserve SDK default idle expiry.
+    route = httpx.MockTransport(lambda req: httpx.Response(200, json={'ok': True}))
+    urls = []
+    def select(url):
+        urls.append(str(url))
+        return route
+    monkeypatch.setattr(owner, '_transport_for_url', select)
+    try:
+        assert (await client.get('https://gateway.invalid/fixture')).json() == {'ok': True}
+        assert urls == ['https://gateway.invalid/fixture']
+        await client.aclose()
+        assert not owner.is_closed
+    finally:
+        await factory.close_shared_gateway_http_client()
+    assert owner.is_closed

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+import math
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
@@ -320,3 +321,59 @@ def emit_provider_timing_log(trace: ConversationLatencyTrace) -> None:
         "assistant_message_id": trace.assistant_message_id,
         **{name: round(value, 1) for name, value in trace.build_provider_timing_breakdown().items()},
     })
+
+
+async def trace_responses_http_request(request) -> None:
+    """Attach numeric-only httpcore tracing to the first request of this turn."""
+    trace = get_current_conversation_latency_trace()
+    if trace is None or trace.provider_http_timing:
+        return
+    trace.provider_http_timing['request_start'] = time.perf_counter_ns()
+    previous = request.extensions.get('trace')
+    async def observe(name, info):
+        if previous is not None:
+            await previous(name, info)
+        if name in {'connection.connect_tcp.started', 'connection.connect_tcp.complete',
+                    'connection.start_tls.started', 'connection.start_tls.complete'}:
+            trace.provider_http_timing.setdefault(name, time.perf_counter_ns())
+    request.extensions['trace'] = observe
+    request.extensions['_yellowstorm_latency_trace'] = trace
+
+
+async def trace_responses_http_response(response) -> None:
+    trace = response.request.extensions.get('_yellowstorm_latency_trace')
+    if trace is None:
+        return
+    trace.provider_http_timing.setdefault('response_headers', time.perf_counter_ns())
+    trace.provider_http_metrics['http2'] = int(response.http_version == 'HTTP/2')
+    for header, metric in (
+        ('x-litellm-overhead-duration-ms', 'gateway_overhead_ms'),
+        ('x-litellm-response-duration-ms', 'gateway_response_ms'),
+    ):
+        try:
+            value = float(response.headers.get(header, ''))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and 0 <= value <= 600_000:
+            trace.provider_http_metrics[metric] = value
+    _emit('conversation_latency_diag.provider_http', 20, {
+        'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id,
+        **{name: round(value, 1) for name, value in trace.build_provider_http_breakdown().items()},
+    })
+
+
+def emit_provider_usage_log(trace: ConversationLatencyTrace, usage) -> None:
+    values = {}
+    for field, metric in (
+        ('prompt_token_count', 'input_tokens'),
+        ('cached_content_token_count', 'cached_input_tokens'),
+        ('thoughts_token_count', 'reasoning_tokens'),
+        ('candidates_token_count', 'output_tokens'),
+    ):
+        value = getattr(usage, field, None)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            values[metric] = value
+    if values:
+        _emit('conversation_latency_diag.provider_usage', 20, {
+            'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id, **values,
+        })

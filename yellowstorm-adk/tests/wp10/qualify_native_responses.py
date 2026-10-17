@@ -201,6 +201,8 @@ async def main(args):
     finally:
         if native:
             await model.client.close()
+        from src.smart_rag.infrastructure.factories.llm_factory import close_shared_gateway_http_client
+        await close_shared_gateway_http_client()
         if settings.ROOT_WORK_LLM_CAPACITY_ENABLED:
             from src.root_runtime.model_capacity import capacity_pool
             await capacity_pool().engine.dispose()
@@ -355,6 +357,8 @@ async def qualify_switches(args, settings):
         for api, model in models:
             if api == 'responses':
                 await model.client.close()
+        from src.smart_rag.infrastructure.factories.llm_factory import close_shared_gateway_http_client
+        await close_shared_gateway_http_client()
         if pool:
             pool.acquire, pool.transition = acquire, transition
             await pool.engine.dispose()

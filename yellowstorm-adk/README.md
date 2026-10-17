@@ -38,6 +38,14 @@ qualification supports `--deferred-tools` in `tests/wp10/qualify_native_response
 Capacity diagnostics separately record admission and dispatch-to-first-response time;
 the existing public provider TTFT metric keeps its original meaning.
 
+Responses clients now borrow loop-owned HTTP/2-capable connections while retaining
+separate per-turn headers, credentials and cookies. SDK pool limits/five-second idle
+expiry remain unchanged; lifespan shutdown closes the pool after gRPC stops. Install
+the pinned `httpx[http2]` requirement. Chat Completions keeps its existing transport.
+Numeric HTTP and usage diagnostics distinguish gateway overhead, connection setup,
+cached input and model response time. No reasoning, tool, history or capacity setting
+changes; warm connection reuse saves roughly 180 ms, not the entire provider delay.
+
 The single-agent conversation parent uses the model's **Admin > Models > Conversation API**
 selection: Chat Completions (the default, including existing models) retains
 `InstrumentedLiteLlm`; Responses uses ADK `OpenAIResponsesLlm` through the configured

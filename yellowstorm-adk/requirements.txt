@@ -38,7 +38,7 @@ langgraph-checkpoint-sqlite==3.1.0
 psycopg[binary,pool]==3.3.4
 mcp>=1.24,<2.0.0
 a2a-sdk[http-server]==0.3.26
-httpx==0.28.1
+httpx[http2]==0.28.1
 markdown==3.10.3
 greenlet>=3.0.0
 

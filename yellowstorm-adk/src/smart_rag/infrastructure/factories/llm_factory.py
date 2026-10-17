@@ -13,6 +13,8 @@ from src.config.settings import get_settings
 from src.middleware.correlation import get_user_label
 from src.logger.logging import get_logger
 import os
+import asyncio
+from weakref import WeakKeyDictionary
 from typing import Dict, Any
 from src.smart_rag.infrastructure.model_parameters import get_reasoning_effort_for_model, normalize_temperature_for_model, resolve_model_config
 
@@ -27,6 +29,43 @@ os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
 
 LLM_REQUEST_TIMEOUT_SECONDS = 90
 LLM_REQUEST_NUM_RETRIES = 1
+_gateway_http_owners = WeakKeyDictionary()
+
+
+def _responses_http_client():
+    """Borrow connections, never another turn's HTTP headers or cookie jar."""
+    import httpx
+    from openai import DefaultAsyncHttpxClient
+    from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+        trace_responses_http_request, trace_responses_http_response,
+    )
+    hooks = {'request': [trace_responses_http_request], 'response': [trace_responses_http_response]}
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return DefaultAsyncHttpxClient(http2=True, event_hooks=hooks)
+    owner = _gateway_http_owners.get(loop)
+    if owner is None or owner.is_closed:
+        owner = DefaultAsyncHttpxClient(http2=True)
+        _gateway_http_owners[loop] = owner
+
+    class BorrowedTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            # Keep HTTPX's configured environment-proxy routing. Calling only
+            # the transport avoids sharing the owner's cookies/headers/auth.
+            return await owner._transport_for_url(request.url).handle_async_request(request)
+
+        async def aclose(self):
+            # The lifespan owns the pool; a completed turn closes only its client.
+            pass
+
+    return DefaultAsyncHttpxClient(transport=BorrowedTransport(), event_hooks=hooks)
+
+
+async def close_shared_gateway_http_client():
+    owner = _gateway_http_owners.pop(asyncio.get_running_loop(), None)
+    if owner is not None:
+        await owner.aclose()
 
 
 def _resolve_model_config(model_name: str | dict) -> str:
@@ -80,6 +119,7 @@ class LLMFactory:
         return InstrumentedResponsesLlm(
             model=model.model,
             client=AsyncOpenAI(
+                http_client=_responses_http_client(),
                 base_url=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 timeout=args.get('timeout', LLM_REQUEST_TIMEOUT_SECONDS),

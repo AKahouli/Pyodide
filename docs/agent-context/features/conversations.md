@@ -64,6 +64,23 @@ retains its earlier boundary. An SDK lifecycle event can arrive before model out
 The live activity panel confirmed schema loading without executing the connector
 action; a fresh same-agent marker was saved and recalled exactly on the next turn.
 
+Follow-up upstream investigation (2026-10-17) identified avoidable HTTP/1.1 reconnects
+after the installed SDK ends SSE at `[DONE]`. Responses now borrows HTTP/2-capable
+network connections across per-turn clients; credentials, headers and cookies remain
+separate. SDK five-second idle expiry is retained. Controlled gateway comparisons
+isolated about 180 ms saved per reused connection, with all permits released and
+unchanged reasoning, tools and history. Both Responses history modes and Chat
+Completions passed two-turn deferred-tool checks; native high-effort summaries and
+encrypted replay were observed. See proposed
+[ADR-0022](../decisions/ADR-0022-conversation-responses-http2-pool.md).
+Deployed Luna greetings negotiated HTTP/2 and returned normally. Warm calls reported
+6–9 ms gateway overhead, at least 97% cached input, and dispatch-to-first-ADK-response
+2.51–4.08 s; reasoning usage varied from zero to nineteen tokens without changing
+effort. These UI calls exceeded the five-second reuse window and still paid TCP/TLS,
+so their latency changes are not evidence of handshake savings. The matched factory
+probes demonstrate that saving. Most remaining delay is outside measured gateway
+overhead; transport reuse does not eliminate provider variability.
+
 | Workflow | Existing behavior and source |
 | --- | --- |
 | Start and revisit a conversation | New-thread landing, history and paginated messages; [new page](../../../YellowStorm/front/src/modules/conversation/NewConversationPage.tsx), [store](../../../YellowStorm/front/src/modules/conversation/store.ts) |

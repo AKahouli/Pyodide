@@ -26,6 +26,24 @@ sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
 
 ### Admission timing and connector schema disclosure (2026-10-17)
 
+Subsequent upstream profiling found 4–8 ms reported LiteLLM overhead in matched
+synthetic calls. The installed SDK's SSE completion closes HTTP/1.1 before body EOF,
+so even a reused client paid ~183 ms TCP/TLS setup again. Native Responses now uses
+loop-owned HTTP/2-capable connections with independent per-turn SDK/HTTP identity,
+headers and cookie jars. A borrowed transport preserves owner proxy routing; turn
+closure does not close the shared pool. The lifespan drains gRPC before closing it.
+SDK pool limits and five-second idle expiry remain unchanged; idle/HTTP1 fallback
+requests still pay connection setup. A matched pair isolated ~177 ms saved while
+provider processing stayed essentially equal. See proposed
+[ADR-0022](../decisions/ADR-0022-conversation-responses-http2-pool.md) for lifecycle,
+pinned private HTTPX routing dependency, tests and rollback. Chat Completions retains
+its existing transport. Neither mode changes reasoning, tools, retries or capacity.
+
+`conversation_latency_diag.provider_http` adds numeric TCP/TLS/header timing,
+HTTP/2 negotiation and finite allowlisted gateway timing headers; `provider_usage`
+records final primary-call input/cached/reasoning/output token counts in both APIs.
+These diagnostics do not serialize HTTP requests or change public latency fields.
+
 The first capacity-gated call now records monotonic acquisition, durable running
 transition, dispatch-to-first-SDK-event and dispatch-to-first-ADK-response timings
 in `conversation_latency_diag.provider_timing`. The existing public provider TTFT

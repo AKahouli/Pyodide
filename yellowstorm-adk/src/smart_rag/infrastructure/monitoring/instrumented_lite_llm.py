@@ -79,6 +79,7 @@ class InstrumentedLiteLlm(LiteLlm):
         from src.root_runtime.model_capacity import CapacityClient
         capacity = self.llm_client if isinstance(self.llm_client, CapacityClient) else None
         token = capacity.begin() if capacity else None
+        primary_usage = None
         try:
             provider = self
             if not any(tool.function_declarations for tool in llm_request.config.tools or []):
@@ -92,10 +93,17 @@ class InstrumentedLiteLlm(LiteLlm):
                 async for response in responses:
                     if is_primary_call:
                         trace.mark_llm_first_delta()
+                        if response.usage_metadata is not None:
+                            primary_usage = response.usage_metadata
                     yield response
         finally:
-            if capacity:
-                await capacity.end(token)
+            try:
+                if capacity:
+                    await capacity.end(token)
+            finally:
+                if primary_usage is not None:
+                    from .latency_diagnostics import emit_provider_usage_log
+                    emit_provider_usage_log(trace, primary_usage)
 
 
 class InstrumentedResponsesLlm(OpenAIResponsesLlm):
@@ -143,6 +151,7 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         token = capacity.begin() if capacity else None
         streams = []
         native_summary_delta = False
+        primary_usage = None
         async def create(**kwargs):
             from openai import BadRequestError, NotFoundError
             try:
@@ -229,6 +238,8 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                                                     'activity_kind': 'reasoning_summary'}
                     if primary:
                         trace.mark_llm_first_delta()
+                        if response.usage_metadata is not None:
+                            primary_usage = response.usage_metadata
                     yield response
         finally:
             try:
@@ -238,3 +249,6 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
             finally:
                 if capacity:
                     await capacity.end(token)
+                if primary_usage is not None:
+                    from .latency_diagnostics import emit_provider_usage_log
+                    emit_provider_usage_log(trace, primary_usage)

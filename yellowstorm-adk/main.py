@@ -212,6 +212,8 @@ async def lifespan(app: FastAPI):
 
     # Dispose the shared ADK session service, then its engine exactly once.
     # gRPC is stopped above, so no in-flight request still holds the service.
+    from src.smart_rag.infrastructure.factories.llm_factory import close_shared_gateway_http_client
+    await close_shared_gateway_http_client()
     await dispose_shared_database_session_service()
     await dispose_shared_engine()
 
