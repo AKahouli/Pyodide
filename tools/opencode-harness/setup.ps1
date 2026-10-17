@@ -16,11 +16,18 @@ function Update-SetupPath {
     $env:PATH = ($setupPaths | Select-Object -Unique) -join ';'
 }
 function Install-SetupPrerequisite([string]$Command, [string]$Package) {
+    Update-SetupPath
     if (Get-Command $Command -ErrorAction SilentlyContinue) { return }
     if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
         throw "Missing $Command and WinGet. Follow docs/DEVELOPER-SETUP.md, then rerun."
     }
-    Invoke-SetupNative winget.exe @('install','--id',$Package,'--exact','--source','winget','--accept-package-agreements','--accept-source-agreements') | Out-Host
+    try {
+        Invoke-SetupNative winget.exe @('install','--id',$Package,'--exact','--source','winget','--accept-package-agreements','--accept-source-agreements') | Out-Host
+    } catch {
+        Update-SetupPath
+        if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) { throw }
+        return
+    }
     Update-SetupPath
     if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) { throw "$Command is not on PATH yet. Open a new terminal and rerun." }
 }
@@ -47,14 +54,14 @@ function Backup-SetupSettings([string]$ConfigDirectory, [string]$BackupDirectory
 }
 function Start-SetupGraphWatcher {
     $graphState = Invoke-SetupNative uvx.exe @('--from','code-review-graph==2.3.9','code-review-graph','daemon','status')
-    if (($graphState -join [Environment]::NewLine) -match '(?m)^Daemon:\s+running\s*$') { return }
+    if (($graphState -join [Environment]::NewLine) -match '(?m)^Daemon:\s+running\b') { return }
     if (($graphState -join [Environment]::NewLine) -notmatch '(?m)^Daemon:\s+not running\s*$') { throw 'Unknown graph watcher state; inspect daemon status before starting another.' }
     $uvxExecutable = (Get-Command uvx.exe).Source
     $watcher = Start-Process -FilePath $uvxExecutable -WindowStyle Hidden -PassThru -ArgumentList @('--from','code-review-graph==2.3.9','code-review-graph','daemon','start','--foreground')
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         Start-Sleep -Milliseconds 500
         $ready = Invoke-SetupNative uvx.exe @('--from','code-review-graph==2.3.9','code-review-graph','daemon','status')
-        if (($ready -join [Environment]::NewLine) -match '(?m)^Daemon:\s+running\s*$') { return }
+        if (($ready -join [Environment]::NewLine) -match '(?m)^Daemon:\s+running\b') { return }
         if ($watcher.HasExited) { break }
     }
     throw 'Graph watcher did not report readiness. Inspect daemon status before retrying; no existing process was stopped.'
@@ -82,8 +89,8 @@ fi
     $temporaryScript = [IO.Path]::GetTempFileName()
     try {
         [IO.File]::WriteAllText($temporaryScript, $wslSetup.Replace([string][char]13,''), [Text.UTF8Encoding]::new($false))
-        $linuxScript = (Invoke-SetupNative wsl.exe @('-d',$Distribution,'--','wslpath','-a','-u',$temporaryScript) -join '').Trim()
-        Invoke-SetupNative wsl.exe @('-d',$Distribution,'--','bash',$linuxScript) | Out-Host
+        $linuxScript = (Invoke-SetupNative wsl.exe @('-d',$Distribution,'-e','wslpath','-a','-u',$temporaryScript) -join '').Trim()
+        Invoke-SetupNative wsl.exe @('-d',$Distribution,'-e','bash',$linuxScript) | Out-Host
     } finally { Remove-Item -LiteralPath $temporaryScript -Force }
 }
 function Start-HarnessSetup([string]$Root, [string]$MemoryChoice, [string]$Distribution = 'Ubuntu-22.04') {

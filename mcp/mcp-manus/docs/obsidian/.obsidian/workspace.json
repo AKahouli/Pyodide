@@ -1,0 +1,206 @@
+{
+  "main": {
+    "id": "c27607e18b530cc3",
+    "type": "split",
+    "children": [
+      {
+        "id": "babba45803e1c682",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "cc2ae76cc9eea014",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Concepts/Sandbox routing and lifecycle.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Sandbox routing and lifecycle"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "7613b0a75e5d4659",
+    "type": "split",
+    "children": [
+      {
+        "id": "d1ac0ad6e1b4795a",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b78b1ff9c9b94bb8",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "9a9a5823e72ea83c",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "6c007c8fb4233481",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "5d85191d8f052b21",
+    "type": "split",
+    "children": [
+      {
+        "id": "86a87380b5cf58f2",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d5a83cde3bd7e1cb",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Concepts/Sandbox routing and lifecycle.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for Sandbox routing and lifecycle"
+            }
+          },
+          {
+            "id": "17decc1d38901ae5",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Concepts/Sandbox routing and lifecycle.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from Sandbox routing and lifecycle"
+            }
+          },
+          {
+            "id": "0cfa1de35f3e2555",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "3e0b4c5da8a864fd",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "43598106af717592",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Concepts/Sandbox routing and lifecycle.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of Sandbox routing and lifecycle"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "cc2ae76cc9eea014",
+  "lastOpenFiles": [
+    "Concepts/Request context and headers.md",
+    "Tools/file_find.md",
+    "Tools/sandbox_destroy.md.tmp.284348.dcfaca44269a",
+    "Tools/sandbox_info.md.tmp.284348.6e6d4b5f9004",
+    "Tools/sandbox_create.md.tmp.284348.7de27b92055f",
+    "MCP Server Tools.md.tmp.284348.810c929c6de5",
+    "Concepts/Sandbox routing and lifecycle.md",
+    "Concepts/Sandbox routing and lifecycle.md.tmp.284348.bccbed5f74dc",
+    "Tools/file_download_base64.md",
+    "Tools/file_delete.md",
+    "Tools/sandbox_create.md",
+    "MCP Server Tools.md.tmp.284348.e58b540d624c",
+    "MCP Server Tools.md.tmp.284348.ebcda99391a0",
+    "Tools.base.tmp.284348.dce268d7cd00",
+    "Tools/file_download_base64.md.tmp.284348.a22d905535aa",
+    "Tools/file_upload_base64.md.tmp.284348.ed3a8e83ac49",
+    "MCP Server Tools.md"
+  ]
+}

@@ -1,6 +1,6 @@
 # Component responsibilities and data ownership
 
-Inspection date: 2026-10-13. Verified against source listings; one-line roles are
+Inspection date: 2026-10-16. Verified against source listings; one-line roles are
 summaries — owning module READMEs, source, schemas, and tests are authoritative.
 No behavior was changed by this baseline.
 
@@ -89,6 +89,10 @@ Protos owned: `grpc/proto/chatbot.proto`, `a2a_admin.proto`, `playbook-flow.prot
 | `mcp-playbook` | FastMCP Streamable HTTP adapter (`:8025`); calls NestJS Playbook-assistant REST (`server.py:55-57,187-221`); NestJS authoritative for access/validation/execution; Bearer or JWT ingress; Yellowmind allowlist enforced |
 | `mcp-agent` | Agent vertical adapter (see `mcp/mcp-agent/README.md`) |
 | `mcp-semantic-model` | Semantic-model adapter (see module/README) |
+| `mcp-outlook` | Microsoft Graph Outlook/calendar connector; ingress auth is separate from the server-side Graph provider credential |
+| `mcp-team` | Microsoft Graph Teams connector; source repository is `YellowsysOrg/mcp-teams` because the requested `mcp-team` URL is unavailable |
+| `mcp-sharepoint` | Microsoft Graph SharePoint/OneDrive connector with bounded Ceph run storage |
+| `mcp-manus` | Firecracker sandbox connector; uses the upstream `sandbox_mcp` runtime and required internal API-key ingress |
 
 ## Supporting services
 

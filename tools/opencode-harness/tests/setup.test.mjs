@@ -304,20 +304,88 @@ test('graph watcher requires observed readiness without spawning processes in te
       'function Start-Process { $script:launches++; [pscustomobject]@{ HasExited = $false } }',
       'function Invoke-SetupNative {',
       '  $script:statusCalls++',
-      "  if ($env:TEST_SCENARIO -eq 'ready' -and $script:statusCalls -gt 1) { return 'Daemon: running' }",
-      "  return 'Daemon: not running'",
+      "  if ($env:TEST_SCENARIO -eq 'running') { return 'Daemon:  running (PID 4242)' }",
+      "  if ($env:TEST_SCENARIO -eq 'ready' -and $script:statusCalls -gt 1) { return 'Daemon:  running (PID 4242)' }",
+      "  return 'Daemon:  not running'",
       '}',
       '$failed = $false',
       'try { Start-SetupGraphWatcher } catch { $failed = $true }',
       '@{ failed = $failed; launches = $script:launches; statusCalls = $script:statusCalls } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_RESULT',
     ].join('\n'));
-    for (const scenario of ['ready', 'failed']) {
+    const expected = {
+      running: { failed: false, launches: 0, statusCalls: 1 },
+      ready: { failed: false, launches: 1, statusCalls: 2 },
+      failed: { failed: true, launches: 1, statusCalls: 4 },
+    };
+    for (const scenario of ['running', 'ready', 'failed']) {
       const result = path.join(f.root, scenario + '.json');
       execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { env: { ...process.env, TEST_SETUP_SCRIPT: fileURLToPath(new URL('../setup.ps1', import.meta.url)), TEST_SCENARIO: scenario, TEST_RESULT: result }, stdio: 'pipe' });
       const report = JSON.parse(readFileSync(result, 'utf8').replace(/^\uFEFF/, ''));
-      assert.equal(report.failed, scenario === 'failed');
-      assert.equal(report.launches, 1);
-      assert.equal(report.statusCalls, scenario === 'ready' ? 2 : 4);
+      assert.equal(report.failed, expected[scenario].failed, scenario);
+      assert.equal(report.launches, expected[scenario].launches, scenario);
+      assert.equal(report.statusCalls, expected[scenario].statusCalls, scenario);
     }
+  } finally { f.cleanup(); }
+});
+
+test('prerequisite install refreshes PATH and tolerates an already-installed package', { skip: process.platform !== 'win32' }, () => {
+  const f = fixture();
+  try {
+    const script = path.join(f.root, 'mock-prerequisite.ps1');
+    writeFileSync(script, [
+      '. $env:TEST_SETUP_SCRIPT',
+      '$script:wingetCalls = 0; $script:refreshed = 0',
+      'function Update-SetupPath { $script:refreshed++ }',
+      'function Get-Command {',
+      '  [CmdletBinding()] param([string]$Name)',
+      "  if ($Name -eq 'winget.exe') { return [pscustomobject]@{ Source = 'winget.exe' } }",
+      "  $needed = if ($env:TEST_SCENARIO -eq 'loaded') { 1 } elseif ($env:TEST_SCENARIO -eq 'installed') { 2 } else { 99 }",
+      '  if ($script:refreshed -ge $needed) { return [pscustomobject]@{ Source = $Name } }',
+      '  return $null',
+      '}',
+      'function Invoke-SetupNative([string]$Command, [string[]]$Arguments) {',
+      "  if ($Command -eq 'winget.exe') { $script:wingetCalls++; throw 'winget.exe failed (exit -1978335189).' }",
+      '}',
+      '$failed = $false',
+      "try { Install-SetupPrerequisite 'uvx.exe' 'astral-sh.uv' } catch { $failed = $true }",
+      '@{ failed = $failed; wingetCalls = $script:wingetCalls; refreshed = $script:refreshed } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_RESULT',
+    ].join('\n'));
+    const expected = {
+      loaded: { failed: false, wingetCalls: 0, refreshed: 1 },
+      installed: { failed: false, wingetCalls: 1, refreshed: 2 },
+      missing: { failed: true, wingetCalls: 1, refreshed: 2 },
+    };
+    for (const scenario of ['loaded', 'installed', 'missing']) {
+      const result = path.join(f.root, scenario + '.json');
+      execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { env: { ...process.env, TEST_SETUP_SCRIPT: fileURLToPath(new URL('../setup.ps1', import.meta.url)), TEST_SCENARIO: scenario, TEST_RESULT: result }, stdio: 'pipe' });
+      const report = JSON.parse(readFileSync(result, 'utf8').replace(/^\uFEFF/, ''));
+      assert.deepEqual({ failed: report.failed, wingetCalls: report.wingetCalls, refreshed: report.refreshed }, expected[scenario], scenario);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('WSL memory install converts the script path with exec semantics', { skip: process.platform !== 'win32' }, () => {
+  const f = fixture();
+  try {
+    const script = path.join(f.root, 'mock-wsl.ps1');
+    writeFileSync(script, [
+      '. $env:TEST_SETUP_SCRIPT',
+      '$global:LASTEXITCODE = 0',
+      '$script:calls = [Collections.Generic.List[object]]::new()',
+      "function wsl.exe { return $env:TEST_DISTRIBUTION }",
+      'function Invoke-SetupNative([string]$Command, [string[]]$Arguments) {',
+      '  $script:calls.Add([pscustomobject]@{ command = $Command; arguments = $Arguments })',
+      "  if ($Arguments -contains 'wslpath') { return '/mnt/c/tmp/harness-script.sh' }",
+      '  return',
+      '}',
+      "Install-SetupWslMemory 'Ubuntu-22.04'",
+      '@{ calls = @($script:calls | ForEach-Object { $_.command + " " + ($_.arguments -join " ") }) } | ConvertTo-Json | Set-Content -LiteralPath $env:TEST_RESULT',
+    ].join('\n'));
+    const result = path.join(f.root, 'wsl.json');
+    execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { env: { ...process.env, TEST_SETUP_SCRIPT: fileURLToPath(new URL('../setup.ps1', import.meta.url)), TEST_DISTRIBUTION: 'Ubuntu-22.04', TEST_RESULT: result }, stdio: 'pipe' });
+    const calls = JSON.parse(readFileSync(result, 'utf8').replace(/^\uFEFF/, '')).calls;
+    assert.ok(calls.some(call => call.startsWith('wsl.exe -d Ubuntu-22.04 -e wslpath -a -u ')), JSON.stringify(calls));
+    assert.ok(calls.some(call => call === 'wsl.exe -d Ubuntu-22.04 -e bash /mnt/c/tmp/harness-script.sh'), JSON.stringify(calls));
+    assert.ok(calls.every(call => !call.includes(' -- ')), 'path conversion must bypass the default shell: ' + JSON.stringify(calls));
   } finally { f.cleanup(); }
 });
