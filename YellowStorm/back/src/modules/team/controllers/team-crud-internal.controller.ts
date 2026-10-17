@@ -14,20 +14,20 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
-import { AgentCrudActorGuard, actingUserIdFrom } from '../../auth/guards/agent-crud-actor.guard';
+import { DelegatedActorGuard, actingUserIdFrom } from '../../auth/guards/delegated-actor.guard';
 import { TeamService } from '../team.service';
 import { CreateTeamDto, UpdateTeamDto, UpdateHierarchyDto } from '../dto';
 import { ITeamResponse, ITeamWithAgentsResponse } from '../interfaces/team.interface';
 
 /**
  * Trusted service-to-service team CRUD surface for the mcp-agent MCP server
- * (Streamable HTTP connector `agent-mcp`). Runs as the acting user from the
- * trusted identity headers.
+ * (Streamable HTTP connector `agent-mcp`). Runs as the verified delegated actor
+ * from the backend-signed assertion (ADR-0024), like the agent CRUD routes.
  */
 @ApiTags('Team CRUD Internal')
 @Public()
 @Controller('internal/agent-crud')
-@UseGuards(InternalServiceGuard, AgentCrudActorGuard)
+@UseGuards(InternalServiceGuard, DelegatedActorGuard)
 export class TeamCrudInternalController {
   constructor(private readonly teamService: TeamService) {}
 

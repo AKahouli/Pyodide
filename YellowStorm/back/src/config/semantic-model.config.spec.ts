@@ -67,36 +67,4 @@ describe('semanticModelConfig', () => {
     });
     expect(invalid.error?.message).toContain('SEMANTIC_MODEL_REALTIME_ENABLED');
   });
-
-  it('requires JWT MCP auth mode in production and rejects Bearer there (WP06.1)', () => {
-    // Satisfies the schema's other production-only requirements so the ONLY
-    // variable under test is the MCP auth mode.
-    const production = {
-      NODE_ENV: 'production',
-      ENCRYPTION_KEY: 'a'.repeat(64),
-      JWT_SECRET: 'j'.repeat(32),
-      SEMANTIC_MODEL_MCP_SERVICE_TOKEN: 'semantic-mcp-principal-secret-1',
-      APP_RUNTIME_BIND_TOKEN: 'app-runtime-bind-secret-01',
-    };
-    const productionJwt = configValidationSchema.validate({
-      ...production,
-      SEMANTIC_MODEL_MCP_AUTH_MODE: 'JWT',
-    }, { allowUnknown: true });
-    expect(productionJwt.error).toBeUndefined();
-
-    // A conditional .valid must REPLACE the allowlist in production, not
-    // union with it: Bearer stays acceptable only outside production.
-    const productionBearer = configValidationSchema.validate({
-      ...production,
-      SEMANTIC_MODEL_MCP_AUTH_MODE: 'Bearer',
-    }, { allowUnknown: true });
-    expect(productionBearer.error).toBeDefined();
-    expect(productionBearer.error?.message).toContain('SEMANTIC_MODEL_MCP_AUTH_MODE');
-
-    const devBearer = configValidationSchema.validate({
-      NODE_ENV: 'development',
-      SEMANTIC_MODEL_MCP_AUTH_MODE: 'Bearer',
-    }, { allowUnknown: true });
-    expect(devBearer.error).toBeUndefined();
-  });
 });

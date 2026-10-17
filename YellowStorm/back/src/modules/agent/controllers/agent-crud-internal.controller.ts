@@ -15,7 +15,7 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
-import { AgentCrudActorGuard, actingUserIdFrom } from '../../auth/guards/agent-crud-actor.guard';
+import { DelegatedActorGuard, actingUserIdFrom } from '../../auth/guards/delegated-actor.guard';
 import { AgentService } from '../agent.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { ModelsService } from '../../models/models.service';
@@ -28,13 +28,13 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 /**
  * Trusted service-to-service agent CRUD surface for the mcp-agent MCP server
  * (Streamable HTTP connector `agent-mcp`). Authenticated with X-Internal-Token
- * plus the acting user identity stamped on the connector binding; every
- * operation runs as that user through the same services as the REST API.
+ * plus the backend-signed delegated actor assertion (ADR-0024); every operation
+ * runs as the verified user through the same services as the REST API.
  */
 @ApiTags('Agent CRUD Internal')
 @Public()
 @Controller('internal/agent-crud')
-@UseGuards(InternalServiceGuard, AgentCrudActorGuard)
+@UseGuards(InternalServiceGuard, DelegatedActorGuard)
 export class AgentCrudInternalController {
   constructor(
     private readonly agentService: AgentService,

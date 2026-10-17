@@ -5,7 +5,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from auth import TrustedIdentityMiddleware
+from auth import TrustedIdentityMiddleware, actor_context, verified_mcp_jwt
 from test_auth import app
 
 
@@ -61,3 +61,34 @@ async def test_rejects_static_bearer_wrong_signature_and_duplicate_auth(keys):
         "iat": now, "exp": now + 300}, other, algorithm="RS256")
     assert (await request(keys, token=token))[0]["status"] == 401
     assert (await request(keys, extra_headers=[(b"authorization", b"Bearer another")]))[0]["status"] == 401
+
+
+@pytest.mark.asyncio
+async def test_jwt_stores_assertion_and_fills_trace_fallbacks(keys):
+    seen = {}
+
+    async def probe_app(_scope, _receive, send):
+        seen["assertion"] = verified_mcp_jwt.get()
+        seen["context"] = actor_context.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    now = int(time.time())
+    token = jwt.encode({"sub": "user-1", "iss": "yellowstorm", "aud": "mcp-playbook",
+        "iat": now, "exp": now + 300}, keys[0], algorithm="RS256")
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    middleware = TrustedIdentityMiddleware(probe_app, "ingress-secret", auth_mode="JWT",
+        jwt_public_key=keys[1], jwt_issuer="yellowstorm")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", f"Bearer {token}".encode())
+    ]}, lambda: None, send)
+
+    assert sent[0]["status"] == 200
+    assert seen["assertion"] == token
+    assert seen["context"].correlation_id == "unknown-correlation"
+    # The assertion must not leak into the ambient context after the request.
+    assert verified_mcp_jwt.get() is None

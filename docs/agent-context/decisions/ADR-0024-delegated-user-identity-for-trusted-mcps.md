@@ -215,14 +215,19 @@ Delivered in the semantic-model migration:
   connector and semantic-assistant suites (130 tests) pass; `tsconfig.build.json`
   type-check passes.
 
-Not yet migrated (still on a naked `x-yellowstorm-user-id` header, therefore a
-separate increment that must change both the backend header producers in
-`agent.service.ts`/`evaluation.service.ts` and the `mcp-playbook`/`mcp-agent`/
-`mcp-team` servers to forward the assertion before their guards can be deleted):
-`PlaybookAssistantActorGuard` and `AgentCrudActorGuard`. Until then those
-surfaces are outside this record's guarantee.
+Migrated in the same increment (both ends plus connector policy): the playbook and
+agent-crud surfaces. `PlaybookAssistantInternalController` and the agent-crud +
+team-crud controllers (`internal/agent-crud`, connector `agent-mcp`) now use
+`DelegatedActorGuard`; `PlaybookAssistantActorGuard`, `AgentCrudActorGuard` and their
+specs are deleted, and `actingUserIdFrom` moved next to the shared guard. The
+`mcp-playbook` and `mcp-agent` servers take the actor from the verified inbound JWT
+and forward it as `X-YellowStorm-Mcp-Assertion`; their connectors must carry
+`internal_jwt` + `verified_user` (+ matching audience) policy for the backend to mint
+the assertion. Deployment order: MCP servers first (forwarding is additive and
+backward compatible), then the connector policy flip together with the backend guard
+swap.
 
-Retained deliberately for now, no longer read by the backend guard:
-`SEMANTIC_MODEL_MCP_AUTH_MODE` / `SEMANTIC_MODEL_MCP_JWT_AUDIENCE` remain in the
-config schema as the mirror of the receiving MCP server's ingress mode and its
-production-must-be-JWT validation contract.
+Removed: `SEMANTIC_MODEL_MCP_AUTH_MODE` and `SEMANTIC_MODEL_MCP_JWT_AUDIENCE` are
+gone from the backend config schema and its production-mirror test. The semantic MCP
+server keeps its own ingress-mode variables and enforces production-must-be-JWT
+itself.

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from auth import PlatformActorContext, actor_context
+from auth import PlatformActorContext, actor_context, verified_mcp_jwt
 from clients.yellowstorm_agent_client import AgentBackendError, YellowStormAgentClient
 
 
@@ -71,3 +71,35 @@ async def test_delete_returns_unwrapped_body_for_204():
         await client.close()
     finally:
         actor_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_forwards_verified_assertion_header_when_present():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-YellowStorm-Mcp-Assertion"] == "signed.jwt.token"
+        return httpx.Response(200, json={"success": True, "data": {"id": "agent-1"}})
+
+    actor = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    assertion = verified_mcp_jwt.set("signed.jwt.token")
+    try:
+        client = YellowStormAgentClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        assert await client.get("/agents/agent-1", "user-1") == {"id": "agent-1"}
+        await client.close()
+    finally:
+        verified_mcp_jwt.reset(assertion)
+        actor_context.reset(actor)
+
+
+@pytest.mark.asyncio
+async def test_omits_assertion_header_when_absent():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert "X-YellowStorm-Mcp-Assertion" not in request.headers
+        return httpx.Response(200, json={"success": True, "data": {"id": "agent-1"}})
+
+    actor = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        client = YellowStormAgentClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        assert await client.get("/agents/agent-1", "user-1") == {"id": "agent-1"}
+        await client.close()
+    finally:
+        actor_context.reset(actor)

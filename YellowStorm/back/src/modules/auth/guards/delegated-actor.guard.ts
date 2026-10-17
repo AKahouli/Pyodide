@@ -100,3 +100,12 @@ export class DelegatedActorGuard implements CanActivate {
     return true;
   }
 }
+
+/**
+ * Read the acting user id pinned by {@link DelegatedActorGuard}: the guard
+ * overwrites `x-yellowstorm-user-id` with the verified signed subject, so
+ * downstream helpers can keep reading the header (ADR-0024).
+ */
+export function actingUserIdFrom(headers: Record<string, string | string[] | undefined>): string {
+  return String(headers['x-yellowstorm-user-id']);
+}

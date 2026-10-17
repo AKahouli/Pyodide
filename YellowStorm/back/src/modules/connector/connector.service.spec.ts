@@ -1107,7 +1107,6 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
       createPlaybookBindingSyncServiceMock() as any,
       { get: (key: string, fallback?: string) => (
         key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp'
-          : key === 'SEMANTIC_MODEL_MCP_AUTH_MODE' ? 'JWT'
           : fallback
       ) } as any,
     );
@@ -1133,7 +1132,6 @@ describe('ConnectorService MCP inspection transport guard (SEC-01 / WP-01)', () 
       createPlaybookBindingSyncServiceMock() as any,
       { get: (key: string, fallback?: string) => (
         key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp'
-          : key === 'SEMANTIC_MODEL_MCP_AUTH_MODE' ? 'Bearer'
           : fallback
       ) } as any,
     );

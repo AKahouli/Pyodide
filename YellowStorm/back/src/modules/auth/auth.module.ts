@@ -7,7 +7,6 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
-import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
 import { PgSessionStore } from './persistence/pg-session.store';
 import { JWT_ALGORITHM } from './constants/jwt.constants';
 import { AuthThrottleService } from './throttle/auth-throttle.service';
@@ -46,13 +45,12 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     JwtStrategy,
     JwtAuthGuard,
     InternalServiceGuard,
-    AgentCrudActorGuard,
     AuthThrottleService,
     LoginLockoutService,
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     PgSessionStore,
   ],
-  exports: [AuthService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
+  exports: [AuthService, AuthThrottleService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, JwtModule],
 })
 // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- Nest module: configuration lives in the decorator
 export class AuthModule {}

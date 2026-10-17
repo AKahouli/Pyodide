@@ -25,7 +25,7 @@ import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execut
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookAssistantContextService } from '../assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { PlaybookAssistantActorGuard } from '../guards/playbook-assistant-actor.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
 import { UserService } from '@modules/user';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
@@ -33,7 +33,7 @@ import { hasPermission, Permissions } from '@modules/authorization/constants/per
 @Public()
 @ApiTags('Playbook Assistant Internal')
 @Controller('internal/playbook-assistant')
-@UseGuards(InternalServiceGuard, PlaybookAssistantActorGuard)
+@UseGuards(InternalServiceGuard, DelegatedActorGuard)
 export class PlaybookAssistantInternalController {
   private readonly logger = new Logger(PlaybookAssistantInternalController.name);
 

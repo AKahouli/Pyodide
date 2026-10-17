@@ -133,7 +133,9 @@ import { PlaybookAssistantService } from './assistant/playbook-assistant.service
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
 import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-request.service';
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
-import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
+import { DelegatedActorGuard } from '@modules/auth/guards/delegated-actor.guard';
+import { McpJwtService } from '@modules/connector/services/mcp-jwt.service';
+import { PgConnectorStore } from '@modules/connector/persistence/pg-connector.store';
 import { PlaybookAssistantAttachmentService } from './assistant/playbook-assistant-attachment.service';
 import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-sources.service';
 
@@ -276,7 +278,11 @@ import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-
 
     PlaybookAssistantRequestService,
     PlaybookAssistantHistoryService,
-    PlaybookAssistantActorGuard,
+    // ADR-0024: the shared delegated-user guard; registered locally (like the
+    // semantic module) so it can verify the actor assertion with the shared key.
+    McpJwtService,
+    PgConnectorStore,
+    DelegatedActorGuard,
     PlaybookAssistantAttachmentService,
     PlaybookAssistantSourcesService,
   ],

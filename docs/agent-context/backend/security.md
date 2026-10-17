@@ -69,9 +69,11 @@ platform-trusted MCP surface: the actor comes only from the signed assertion, a
 naked user-id header is never an identity source, and the absence of an assertion
 fails closed. It applies no per-route audience fence, so a trusted MCP may act for
 the verified user on any internal route — always bounded by that user's own
-permissions. Playbook and agent-crud internal surfaces are not migrated yet: they
-still take the acting user from the forwarded header and require both the header
-producers and their MCP servers to adopt the assertion first.
+permissions. The semantic-model, playbook and agent-crud surfaces use it; for
+agent-crud that is the agent and team routes under `internal/agent-crud` served for
+connector `agent-mcp`. Every migrated connector must carry `internal_jwt` +
+`verified_user` policy so the backend mints the assertion the MCP server forwards as
+`X-YellowStorm-Mcp-Assertion`.
 
 **Issuance/renewal:** user issuance derives the subject from authenticated application
 identity. `src/mcp/jwt_auth.py` renews under the dedicated ADK principal using
@@ -108,14 +110,16 @@ require resolved auth that is actually attached, not raw secret headers that the
 transport intentionally strips. DNS-rebinding
 between validation and connection still requires deployment network egress controls.
 
-**Semantic MCP ingress modes:** `SEMANTIC_MODEL_MCP_AUTH_MODE` explicitly selects
-`JWT` or `Bearer` in production; development retains its Bearer default. Bearer
-requires its separate ingress secret and production HTTPS at the deployment ingress.
-Both modes still require the matching backend/MCP `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`.
-A static ingress token does not establish a verified user: Bearer mode does not
-supply the signed actor assertion required by backend semantic-assistant operations.
-The existing delegated-user path therefore uses JWT; enabling Bearer ingress does
-not relax backend actor authorization, connector policy or egress controls.
+**Semantic MCP ingress modes:** the semantic MCP server selects `JWT` or `Bearer`
+from its own configuration (`SEMANTIC_MODEL_MCP_AUTH_MODE` in `mcp/mcp-semantic-model`);
+production must be `JWT` and that contract is enforced there, not in the backend.
+Bearer requires its separate ingress secret and production HTTPS at the deployment
+ingress. Both modes still require the matching backend/MCP
+`SEMANTIC_MODEL_MCP_SERVICE_TOKEN`. A static ingress token does not establish a
+verified user: Bearer mode does not supply the signed actor assertion required by
+backend semantic-assistant operations. The existing delegated-user path therefore
+uses JWT; enabling Bearer ingress does not relax backend actor authorization,
+connector policy or egress controls.
 
 **Rollout:** apply `0049` through the existing migration process, provision the
 dedicated renewal secret on backend/ADK, configure signer/verifier and explicitly

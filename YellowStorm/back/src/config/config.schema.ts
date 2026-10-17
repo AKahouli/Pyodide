@@ -418,19 +418,9 @@ export const configValidationSchema = Joi.object({
   MCP_JWT_ISSUER: Joi.string().allow('').default(''),
   ADK_RUNTIME_MCP_RENEWAL_TOKEN: Joi.string().min(16).allow('').default(''),
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  // WP06.1/WP07.6: the conditional REPLACES the schema in production (a
-  // nested .valid would union with the base allowlist and still accept
-  // Bearer), so the developer-only naked user-id fallback cannot exist next
-  // to the service credential.
-  SEMANTIC_MODEL_MCP_AUTH_MODE: Joi.string().when('NODE_ENV', {
-    is: 'production',
-    then: Joi.string().required().valid('JWT'),
-    otherwise: Joi.string().valid('JWT', 'Bearer').default('Bearer'),
-  }),
   // The signer accepts these legacy keys or the shared MCP_JWT_* keys and validates the active pair at startup.
   SEMANTIC_MODEL_MCP_JWT_PRIVATE_KEY_FILE: Joi.string().allow('').default(''),
   SEMANTIC_MODEL_MCP_JWT_ISSUER: Joi.string().allow('').default(''),
-  SEMANTIC_MODEL_MCP_JWT_AUDIENCE: Joi.string().default('mcp-semantic-model'),
   // Scoped internal service principal for the semantic MCP server (WP07.2):
   // semantic assistant + MCP token renewal only; distinct from the legacy
   // INTERNAL_SERVICE_SECRET and from APP_RUNTIME_BIND_TOKEN (app runtime only).

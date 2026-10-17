@@ -12,6 +12,14 @@ from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 
+# JWT mode fallbacks for the optional trace fields: the acting user id is the
+# only security-relevant identity; agent/conversation/correlation are
+# traceability aids, and the backend delegated-actor guard (ADR-0024) requires a
+# non-empty correlation id.
+_UNKNOWN_AGENT = "unknown-agent"
+_UNKNOWN_CONVERSATION = "unknown-conversation"
+_UNKNOWN_CORRELATION = "unknown-correlation"
+
 
 @dataclass(frozen=True)
 class PlatformActorContext:
@@ -23,6 +31,9 @@ class PlatformActorContext:
 
 actor_context: ContextVar[PlatformActorContext | None] = ContextVar("playbook_actor_context", default=None)
 acting_user_id: ContextVar[str | None] = ContextVar("playbook_acting_user_id", default=None)
+# The verified, backend-issued MCP JWT of the current call (ADR-0024). Forwarded
+# to the backend as the signed actor assertion; never logged.
+verified_mcp_jwt: ContextVar[str | None] = ContextVar("playbook_verified_mcp_jwt", default=None)
 
 
 def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: str) -> bool:
@@ -59,21 +70,21 @@ class TrustedIdentityMiddleware:
         self.jwt_issuer = jwt_issuer
         self.jwt_audience = jwt_audience
 
-    def _jwt_user_id(self, headers: list[tuple[bytes, bytes]]) -> str:
+    def _jwt_identity(self, headers: list[tuple[bytes, bytes]]) -> tuple[str, str]:
         values = [value for name, value in headers if name.lower() == b"authorization"]
         if len(values) != 1:
-            return ""
+            return "", ""
         parts = values[0].decode("utf-8", errors="replace").split()
         if len(parts) != 2 or parts[0].lower() != "bearer":
-            return ""
+            return "", ""
         try:
             claims = jwt.decode(parts[1], self.jwt_public_key, algorithms=["RS256"],
                 issuer=self.jwt_issuer, audience=self.jwt_audience,
                 options={"require": ["sub", "iss", "aud", "iat", "exp"]})
             user_id = claims["sub"]
-            return user_id if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ""
+            return (user_id, parts[1]) if isinstance(user_id, str) and _IDENTIFIER.fullmatch(user_id) else ("", "")
         except (jwt.InvalidTokenError, TypeError, ValueError, OverflowError):
-            return ""
+            return "", ""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -94,7 +105,7 @@ class TrustedIdentityMiddleware:
             await self.app(scope, receive, send)
             return
         headers = {key.lower(): value for key, value in raw_headers}
-        jwt_user_id = self._jwt_user_id(raw_headers) if self.auth_mode == "JWT" else ""
+        jwt_user_id, assertion = self._jwt_identity(raw_headers) if self.auth_mode == "JWT" else ("", "")
         values = {
             "user_id": jwt_user_id if self.auth_mode == "JWT" else headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
@@ -115,6 +126,12 @@ class TrustedIdentityMiddleware:
             await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
             return
 
+        if self.auth_mode == "JWT":
+            # The signed sub already carries the identity; fill the trace fields
+            # so the forwarded headers stay well-formed for the backend guard.
+            values["agent_id"] = values["agent_id"] or _UNKNOWN_AGENT
+            values["conversation_id"] = values["conversation_id"] or _UNKNOWN_CONVERSATION
+            values["correlation_id"] = values["correlation_id"] or _UNKNOWN_CORRELATION
         complete_actor = self.auth_mode == "JWT" and bool(values["user_id"]) or all(values[key] for key in (
             "user_id",
             "agent_id",
@@ -129,6 +146,7 @@ class TrustedIdentityMiddleware:
         ) if complete_actor else None
         user_token = acting_user_id.set(values["user_id"] or None)
         actor_token = actor_context.set(context)
+        jwt_token = verified_mcp_jwt.set(assertion or None)
         # Unified-logging context (plan P05): the SDK merges these contextvars at
         # emit time, so every envelope from this tool call carries the actor.
         bound = bind_contextvars(
@@ -143,6 +161,7 @@ class TrustedIdentityMiddleware:
             unbind_contextvars(*bound)
             actor_context.reset(actor_token)
             acting_user_id.reset(user_token)
+            verified_mcp_jwt.reset(jwt_token)
 
 
 def require_actor_context() -> PlatformActorContext:
