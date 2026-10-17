@@ -101,6 +101,18 @@ describe('McpJwtService current-policy boundary', () => {
     row = { ...row, id: 'connector-2' };
     await expect(service.renew('connector-2', token)).rejects.toThrow();
   });
+  it('verifies the ADR-0024 delegated credential without an audience fence, keeping connector and revision authority', async () => {
+    const { token } = await service.issue('connector-1', 'user-1');
+    // No per-route audience: the same credential is accepted on any internal route.
+    expect(await service.verifyDelegatedActor(token)).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    // Connector/revision authority is unchanged: a stale policy stops working.
+    row.securityRevision = 2;
+    expect(await service.verifyDelegatedActor(token)).toBeNull();
+    // The audience-bound path (renewal) still requires its trusted audience.
+    row.securityRevision = 1;
+    expect(await service.verifyMcpAssertion(token, 'recipient')).toEqual({ sub: 'user-1', connectorId: 'connector-1' });
+    expect(await service.verifyMcpAssertion(token, '')).toBeNull();
+  });
   it('rejects expired proof and cannot bootstrap from arbitrary unsigned identity', async () => {
     const now = Math.floor(Date.now() / 1000);
     const expired = sign({ sub: 'user-1', connectorId: 'connector-1', securityRevision: 1,

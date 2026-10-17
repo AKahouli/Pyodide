@@ -112,15 +112,37 @@ export class McpJwtService {
    * backend-issued JWT of the user the MCP server acts for. Returns the signed
    * subject, or null when the assertion is missing, unsigned by this backend,
    * foreign-audience or expired. The token itself is never logged.
+   *
+   * Connector-scoped callers (renewal, inspection, runtime binding) keep the
+   * trusted expected audience here: the connector and this route must agree.
    */
   async verifyMcpAssertion(token: string | undefined, expectedAudience: string): Promise<{ sub: string; connectorId: string } | null> {
-    if (!token || !this.publicKey || !this.issuer || !expectedAudience) return null;
+    if (!expectedAudience) return null;
+    return this.verifyAssertion(token, expectedAudience);
+  }
+
+  /**
+   * Verify the delegated-user credential on the platform-trusted internal MCP
+   * surface (ADR-0024). Same credential and the same signature/lifetime/
+   * connector/revision authority as {@link verifyMcpAssertion}, without a
+   * per-route audience fence: a trusted MCP may act for the verified user on
+   * any internal route, always bounded by that user's own permissions. The
+   * audience claim stays in the token but is not enforced here.
+   */
+  async verifyDelegatedActor(token: string | undefined): Promise<{ sub: string; connectorId: string } | null> {
+    return this.verifyAssertion(token);
+  }
+
+  private async verifyAssertion(token: string | undefined, expectedAudience?: string): Promise<{ sub: string; connectorId: string } | null> {
+    if (!token || !this.publicKey || !this.issuer) return null;
     try {
       const claims = this.jwt.verify(token, {
         publicKey: this.publicKey,
         algorithms: ['RS256'],
         issuer: this.issuer,
-        audience: expectedAudience,
+        // Omitted for the ADR-0024 delegated credential; jsonwebtoken then does
+        // not enforce an audience at all.
+        ...(expectedAudience ? { audience: expectedAudience } : {}),
         // Backend minting allows at most five minutes; reject anything longer
         // even if it carries a valid signature.
         maxAge: '300s',
@@ -131,8 +153,9 @@ export class McpJwtService {
         || claims.iat! > Math.floor(Date.now() / 1000) || claims.exp! <= claims.iat! || claims.exp! - claims.iat! > 300) return null;
       const connector = await this.load(claims.connectorId);
       const policy = await this.assertConnectorAccess(connector, claims.sub);
-      if (policy.profile !== 'internal_jwt' || policy.audience !== expectedAudience
-        || policy.actorDelegation !== 'verified_user' || claims.securityRevision !== (connector.securityRevision ?? 1)) return null;
+      if (policy.profile !== 'internal_jwt' || policy.actorDelegation !== 'verified_user'
+        || (expectedAudience !== undefined && policy.audience !== expectedAudience)
+        || claims.securityRevision !== (connector.securityRevision ?? 1)) return null;
       return { sub: claims.sub, connectorId: connector.id };
     } catch {
       return null;

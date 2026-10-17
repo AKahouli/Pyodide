@@ -60,11 +60,18 @@ backend-issued RS256 JWTs (C1 maximum 300s, trusted issuer/audience, duplicate
 Authorization rejection). Verification does not mutate ambient context; actor,
 assertion and logging values are reset on every exit. Application conversations are
 not transport sessions. The verified token is forwarded as `X-YellowStorm-Mcp-Assertion`
-under a separate authenticated semantic service principal. `McpJwtService` and
-`SemanticAssistantActorGuard` check the trusted expected audience, current connector
-ID/revision, active account, required permissions and verified-user delegation before
-domain resource checks. A naked user-id header remains developer Bearer compatibility
-only; production Semantic MCP requires JWT.
+under a separate authenticated semantic service principal. `McpJwtService` verifies
+the credential and re-checks the current connector ID/revision, active account,
+required permissions and verified-user delegation before domain resource checks.
+
+`DelegatedActorGuard` (ADR-0024) is the single shared delegated-user guard for the
+platform-trusted MCP surface: the actor comes only from the signed assertion, a
+naked user-id header is never an identity source, and the absence of an assertion
+fails closed. It applies no per-route audience fence, so a trusted MCP may act for
+the verified user on any internal route — always bounded by that user's own
+permissions. Playbook and agent-crud internal surfaces are not migrated yet: they
+still take the acting user from the forwarded header and require both the header
+producers and their MCP servers to adopt the assertion first.
 
 **Issuance/renewal:** user issuance derives the subject from authenticated application
 identity. `src/mcp/jwt_auth.py` renews under the dedicated ADK principal using

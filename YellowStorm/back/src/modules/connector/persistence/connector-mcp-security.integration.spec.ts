@@ -33,7 +33,7 @@ describeIntegration('connector MCP security revision CAS (isolated POSTGRES_TEST
     await database.db.insert(integrationsConnectors).values({ id: connectorId, slug: connectorId,
       name: 'MCP security CAS fixture', description: '', createdBy: randomBytes(12).toString('hex'),
       mcpServerUrl: 'https://example.test/mcp',
-      mcpSecurityPolicy: { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: true, requiredPermissions: [] },
+      mcpSecurityPolicy: { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: true, allowInsecureHttp: false, requiredPermissions: [] },
     });
   });
   afterAll(async () => {
