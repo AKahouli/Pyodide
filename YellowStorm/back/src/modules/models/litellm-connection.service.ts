@@ -70,6 +70,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
   private isConnected = false;
   private isConnecting = false;
+  private destroyed = false;
   private lastError: string | null = null;
   private lastCheckedAt: Date | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
@@ -115,17 +116,20 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async onModuleInit(): Promise<void> {
-    await this.connect();
+  onModuleInit(): void {
+    // Optional proxy readiness must not delay HTTP availability (including login).
+    void this.connect();
     this.startHealthCheck();
   }
 
   onModuleDestroy(): void {
+    this.destroyed = true;
     this.stopHealthCheck();
     this.reconnect.clear();
   }
 
   async connect(): Promise<void> {
+    if (this.destroyed) return;
     if (this.isConnecting) {
       this.logger.debug('Connection attempt already in progress');
       return;
@@ -156,6 +160,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
       // Test connection with health check
       await this.httpClient.get(this.healthEndpoint);
+      if (this.destroyed) return;
 
       this.isConnected = true;
       this.lastError = null;
@@ -166,6 +171,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
         apiUrl: this.maskUrl(this.apiUrl),
       });
     } catch (error) {
+      if (this.destroyed) return;
       const errorMessage = this.extractErrorMessage(error);
       this.isConnected = false;
       this.lastError = errorMessage;
@@ -183,6 +189,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
   }
 
   async verifyConnection(): Promise<boolean> {
+    if (this.destroyed) return false;
     if (!this.httpClient) {
       this.isConnected = false;
       this.lastError = 'HTTP client not initialized';
@@ -192,6 +199,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
     try {
       await this.httpClient.get(this.healthEndpoint);
+      if (this.destroyed) return false;
 
       const wasDisconnected = !this.isConnected;
       this.isConnected = true;
@@ -205,6 +213,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
       return true;
     } catch (error) {
+      if (this.destroyed) return false;
       const errorMessage = this.extractErrorMessage(error);
       const wasConnected = this.isConnected;
 

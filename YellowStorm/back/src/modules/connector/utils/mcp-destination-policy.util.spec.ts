@@ -1,3 +1,4 @@
+import * as dns from 'dns/promises';
 import {
   assertMcpDestinationAllowed,
   assertMcpDestinationUrl,
@@ -8,6 +9,12 @@ import {
 } from './mcp-destination-policy.util';
 
 type FakeResolver = { resolve4: jest.Mock; resolve6: jest.Mock };
+
+jest.mock('dns/promises', () => ({
+  ...jest.requireActual('dns/promises'),
+  lookup: jest.fn(),
+}));
+const lookupMock = dns.lookup as jest.Mock;
 
 const fakeResolver = (ipv4: string[] | Error, ipv6: string[] | Error = []): FakeResolver => ({
   resolve4: jest.fn().mockImplementation((host: string) =>
@@ -94,6 +101,106 @@ describe('McpDestinationPolicy URL-shape validation (WP05.1)', () => {
     expect(assertMcpDestinationUrl('https://2130706433/mcp').hostname).toBe('127.0.0.1');
     expect(assertMcpDestinationUrl('https://mcp.example.test./mcp').hostname).toBe('mcp.example.test.');
     expect(assertMcpDestinationUrl('https://ünicode.test/mcp').hostname).toBe('xn--nicode-2ya.test');
+  });
+});
+
+describe('McpDestinationPolicy default OS resolution', () => {
+  beforeEach(() => {
+    lookupMock.mockReset();
+    jest.spyOn(dns.Resolver.prototype, 'resolve4').mockRejectedValue(new Error('ECONNREFUSED'));
+    jest.spyOn(dns.Resolver.prototype, 'resolve6').mockRejectedValue(new Error('ECONNREFUSED'));
+    lookupMock.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: '2606:4700::1111', family: 6 },
+    ]);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  it('uses every OS lookup address without requiring direct DNS queries', async () => {
+    await expect(assertMcpDestinationAllowed('https://mcp.example.test/mcp'))
+      .resolves.toEqual(['93.184.216.34', '2606:4700::1111']);
+    expect(dns.lookup).toHaveBeenCalledWith('mcp.example.test', { all: true });
+    expect(dns.Resolver.prototype.resolve4).not.toHaveBeenCalled();
+    expect(dns.Resolver.prototype.resolve6).not.toHaveBeenCalled();
+  });
+
+  it.each(['10.0.0.1', '169.254.169.254', 'fd00:ec2::254', 'fe80::1', 'not-an-ip'])(
+    'rejects mixed public and forbidden OS records containing %s', async address => {
+      lookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }, { address, family: address.includes(':') ? 6 : 4 }]);
+      await expect(assertMcpDestinationAllowed('https://mcp.example.test/mcp'))
+        .rejects.toMatchObject({ reason: 'forbidden_address' });
+      expect(dns.Resolver.prototype.resolve4).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['169.254.169.254', '168.63.129.16', '0.0.0.0', '224.0.0.1', 'fd00:ec2::254', 'fe80::1', 'not-an-ip'])(
+    'does not grant exact private endpoints access to OS record %s', async address => {
+      const endpoint = 'https://mcp.internal.example/mcp';
+      lookupMock.mockResolvedValue([{ address: '10.0.0.1', family: 4 }, { address, family: address.includes(':') ? 6 : 4 }]);
+      await expect(assertMcpDestinationAllowed(endpoint, { allowExactEndpoints: [endpoint] }))
+        .rejects.toMatchObject({ reason: 'forbidden_address' });
+    },
+  );
+
+  it('rejects OS lookup failure without falling back to direct DNS', async () => {
+    lookupMock.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    await expect(assertMcpDestinationAllowed('https://mcp.example.test/mcp'))
+      .rejects.toMatchObject({ reason: 'dns_failure' });
+    expect(dns.Resolver.prototype.resolve4).not.toHaveBeenCalled();
+    expect(dns.Resolver.prototype.resolve6).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty OS lookup result', async () => {
+    lookupMock.mockResolvedValue([]);
+    await expect(assertMcpDestinationAllowed('https://mcp.example.test/mcp'))
+      .rejects.toMatchObject({ reason: 'dns_failure' });
+  });
+
+  it('bounds OS lookup wait and ignores late completion', async () => {
+    jest.useFakeTimers();
+    let complete!: (records: { address: string; family: number }[]) => void;
+    lookupMock.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+    const check = expect(assertMcpDestinationAllowed('https://mcp.example.test/mcp'))
+      .rejects.toMatchObject({ reason: 'dns_failure' });
+    await jest.advanceTimersByTimeAsync(6000);
+    await check;
+    expect(jest.getTimerCount()).toBe(0);
+    complete([{ address: '93.184.216.34', family: 4 }]);
+    await Promise.resolve();
+  });
+
+  it.each([false, true])('cleans up the timeout after OS lookup settles (failure=%s)', async failure => {
+    jest.useFakeTimers();
+    if (failure) lookupMock.mockRejectedValue(new Error('ENOTFOUND'));
+    const result = assertMcpDestinationAllowed('https://mcp.example.test/mcp');
+    if (failure) await expect(result).rejects.toMatchObject({ reason: 'dns_failure' });
+    else await expect(result).resolves.toEqual(['93.184.216.34', '2606:4700::1111']);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('does not grant localhost authority unless the endpoint is exactly approved', async () => {
+    lookupMock.mockResolvedValue([{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }]);
+    await expect(assertMcpDestinationAllowed('https://localhost/mcp'))
+      .rejects.toMatchObject({ reason: 'forbidden_address' });
+    const endpoint = 'http://localhost:8027/mcp';
+    await expect(assertMcpDestinationAllowed(endpoint, { allowExactEndpoints: [endpoint] }))
+      .resolves.toEqual(['127.0.0.1', '::1']);
+    lookupMock.mockClear();
+    await expect(assertMcpDestinationAllowed(endpoint, { allowExactEndpoints: [endpoint], requireTls: true }))
+      .rejects.toMatchObject({ reason: 'insecure_http' });
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
+  it('never looks up literal public or approved private IPs', async () => {
+    await expect(assertMcpDestinationAllowed('https://8.8.8.8/mcp')).resolves.toEqual(['8.8.8.8']);
+    const endpoint = 'http://127.0.0.1:8027/mcp';
+    await expect(assertMcpDestinationAllowed(endpoint, { allowExactEndpoints: [endpoint] }))
+      .resolves.toEqual(['127.0.0.1']);
+    expect(lookupMock).not.toHaveBeenCalled();
   });
 });
 

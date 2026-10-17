@@ -350,4 +350,59 @@ describe('usePlatformCopilotConversation', () => {
     await act(async () => { expect(await result.current.send('Find it')).toBe(false); });
     expect(result.current.error).toEqual(expect.objectContaining({ message: 'POST failed' }));
   });
+
+  it('surfaces localized stream errors after POST and discards queued chunks', async () => {
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
+    await act(async () => { await result.current.send('Find it'); });
+    act(() => {
+      mocks.listener?.({ type: 'stream_chunk', data: { conversationId: 'conversation-1', messageId: 'ai-1', action: 'add', component: { id: 'stale', type: 'text', data: { content: 'stale' } } } });
+      mocks.listener?.({ type: 'stream_error', data: { conversationId: 'conversation-1', messageId: 'ai-1', errorCode: 'ERR_1417', message: 'unlocalized backend detail' } });
+    });
+    expect(result.current.error).toEqual({ code: 'ERR_1417', statusCode: 500 });
+    expect(result.current.loading).toBe(false);
+    expect(result.current.streamingMessageId).toBeUndefined();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(result.current.streamingComponents).toEqual([]);
+    expect(mocks.fetchMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['stream_error', 'stream_complete'] as const)('does not revive a stream when %s precedes the POST response', async (type) => {
+    const response = await mocks.sendMessage();
+    let resolveSend!: (value: typeof response) => void;
+    mocks.sendMessage.mockImplementationOnce(() => new Promise((resolve) => { resolveSend = resolve; }));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
+    let pending!: Promise<boolean>;
+    act(() => { pending = result.current.send('Find it'); });
+    await act(async () => {
+      mocks.listener?.(type === 'stream_error'
+        ? { type, data: { conversationId: 'conversation-1', messageId: 'ai-1', errorCode: 'ERR_1417', message: 'failed' } }
+        : { type, data: { conversationId: 'conversation-1', messageId: 'ai-1' } });
+    });
+    await act(async () => { resolveSend(response); await pending; });
+    expect(result.current.streamingMessageId).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.streamingComponents).toEqual([]);
+    if (type === 'stream_error') expect(result.current.error).toEqual({ code: 'ERR_1417', statusCode: 500 });
+    // Terminal IDs are scoped to a send, not retained indefinitely.
+    await act(async () => { await result.current.send('Try again'); });
+    expect(result.current.streamingMessageId).toBe('ai-1');
+    expect(result.current.error).toBeUndefined();
+  });
+
+  it('ignores another conversation terminal error while POST is pending', async () => {
+    const response = await mocks.sendMessage();
+    let resolveSend!: (value: typeof response) => void;
+    mocks.sendMessage.mockImplementationOnce(() => new Promise((resolve) => { resolveSend = resolve; }));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
+    let pending!: Promise<boolean>;
+    act(() => { pending = result.current.send('Find it'); });
+    act(() => mocks.listener?.({ type: 'stream_error', data: { conversationId: 'other', messageId: 'ai-1', errorCode: 'ERR_1417', message: 'failed' } }));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.error).toBeUndefined();
+    await act(async () => { resolveSend(response); await pending; });
+    expect(result.current.streamingMessageId).toBe('ai-1');
+  });
 });

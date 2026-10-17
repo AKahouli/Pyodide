@@ -78,7 +78,11 @@ immediate revocation mechanism at an independent receiving MCP.
 `connector/utils/mcp-destination-policy.util.ts` before credential resolution.
 Production requires TLS, including internal exceptions. Public destinations use the
 port allowlist and deny private/reserved addresses. Approved exact private targets
-still resolve DNS and reject metadata/link-local/reserved destinations; lookalike
+still resolve hostnames and reject metadata/link-local/reserved destinations. Default
+resolution uses the OS resolver with all returned addresses checked, including system
+hostname mappings; direct DNS queries are not required. Resolution errors, empty
+results and a six-second caller deadline fail closed. The deadline does not cancel
+the underlying OS lookup. Lookalike
 hosts, paths and redirects inherit nothing. Backend inspection refuses redirects
 including the SSE hop. Runtime clients reject redirects for every profile and check
 destinations before attaching credentials: Streamable HTTP binds origin/path/query;

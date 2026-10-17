@@ -427,9 +427,14 @@ validation are separate gates; this accepted decision is not a compliance certif
 ## Rollout and compatibility
 
 Apply migration `YellowStorm/back/drizzle/0049_connector_mcp_security.sql` through
-the existing operational migration process before starting the new backend. Only
-the isolated test database was used for migration/CAS testing; this task does not
-apply it to a live `agentstore`. Provision the same dedicated
+the existing operational migration process before starting the new backend. Initial
+migration/CAS testing used only an isolated test database. In the separately
+user-approved local rollout on 2026-10-16, the missing Drizzle journal registration
+was corrected and migration `0049` was applied to the configured runtime `agentstore`
+using the standard migrator. Read-only postchecks verified both columns, conservative
+defaults, the positive-revision constraint and one matching ledger entry. This
+application grants no connector trust and does not certify JWT execution or renewal.
+Provision the same dedicated
 `ADK_RUNTIME_MCP_RENEWAL_TOKEN` in backend and ADK deployment secret configuration,
 and configure signer/receiving verifier independently. Restart/rebind old runtime
 workers; user-ID-only renewal is intentionally incompatible and fails closed.

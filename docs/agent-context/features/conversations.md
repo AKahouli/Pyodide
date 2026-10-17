@@ -97,6 +97,16 @@ interval). PostgreSQL regression coverage is in
 - Latency UI is controlled by [features.ts](../../../YellowStorm/front/src/modules/conversation/features.ts); metrics depend on backend/runtime instrumentation and may be absent on historical messages.
 - Frontend text uses the module EN/FR translations; shared auth, notification and error conventions remain authoritative.
 
+The Yellowmind platform-copilot panel surfaces terminal stream errors through the
+existing localized error-code pipeline, without rendering raw backend text. It
+clears pending chunks and streaming state on failure. A terminal error or completion
+received before the message POST resolves must not let that late response revive
+the spinner; stale responses must not update another conversation. This uses the
+shared stream connection, with bounded tracking only during the pending send.
+Source and regression coverage: `front/src/modules/platform-copilot/`
+`usePlatformCopilotConversation.ts` and `usePlatformCopilotConversation.test.tsx`
+(2026-10-16).
+
 ## Conversation images (2026-10-15 implementation update)
 
 The assigned `generate_image` tool accepts saved `generated-image:<id>` references,

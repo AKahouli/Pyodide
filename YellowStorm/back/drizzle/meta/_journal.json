@@ -402,6 +402,13 @@
       "breakpoints": true
     },
     {
+      "idx": 56,
+      "version": "7",
+      "when": 1792420000000,
+      "tag": "0049_connector_mcp_security",
+      "breakpoints": true
+    },
+    {
       "idx": 57,
       "version": "7",
       "when": 1792454400000,

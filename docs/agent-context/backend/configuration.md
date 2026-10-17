@@ -4,6 +4,8 @@ Read only the sections needed for the changed behavior. Paths such as `src/`, `d
 
 ## 4. Bootstrap (`main.ts`)
 
+- `npm start` and `npm run start:prod` run the existing compiled `dist/main` directly, without recompiling. Run `npm run build` after source changes and before starting; a fresh checkout needs this build too. Use `npm run start:dev` for compilation/watch/restarts during development. This avoids a second full compilation when a developer already rebuilt before restarting.
+
 Global config applied once — **do not** re-apply per-controller:
 - `helmet()` with CSP (default-src `'self'`, style-src inline, img-src `'self' data: https:`).
 - `compression()` is **disabled** (commented out) — it buffers SSE responses. Do not re-enable without verifying all SSE streams.
@@ -13,6 +15,7 @@ Global config applied once — **do not** re-apply per-controller:
 - URI versioning `/v1/`, global prefix `api` → `/api/v1/<resource>`.
 - Global `ValidationPipe` (see [related guidance](api-contracts.md)), `SwaggerModule.setup('docs', ...)` in non-prod only.
 - Nest boots with `bufferLogs: true` and then installs `LoggerService`; do not add a second logger bootstrap path.
+- LiteLLM proxy health initialization runs in the background: HTTP startup/login does not wait for the optional proxy. The HTTP client is created before the health request, connection status remains disconnected until it succeeds, and existing retry/periodic health checks continue. Shutdown prevents late health results from scheduling retries. Workspace startup backfill remains unchanged.
 - HTTP server timeout is 5 minutes to support long-running orchestration requests; do not lower it without checking streaming and runtime callbacks.
 - Graceful shutdown on `SIGTERM`, `SIGINT`, `uncaughtException`, `unhandledRejection`.
 

@@ -14,7 +14,7 @@ from src.middleware import add_middleware
 #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
 
 from src.logger.setup_logging import setup_logging
 from src.logger.logging import get_logger
@@ -233,7 +233,7 @@ app = FastAPI(
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.exception("Validation error on request")
     return JSONResponse(
-        status_code=HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=HTTP_422_UNPROCESSABLE_CONTENT,
         content={"detail": exc.errors()},
     )
 

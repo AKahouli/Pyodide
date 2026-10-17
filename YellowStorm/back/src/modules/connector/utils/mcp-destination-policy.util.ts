@@ -1,4 +1,4 @@
-import { Resolver } from 'dns/promises';
+import { lookup, Resolver } from 'dns/promises';
 import { isIP } from 'net';
 
 /**
@@ -66,13 +66,40 @@ export interface McpDestinationPolicyOptions {
     * DNS and metadata/link-local prohibitions still apply. Lookalikes inherit nothing.
    */
   allowExactEndpoints?: string[];
-  /** DNS resolver; overridable for tests. */
+  /** Optional direct-DNS override; the default uses OS hostname resolution. */
   resolver?: Pick<Resolver, 'resolve4' | 'resolve6'>;
 }
 
 const DEFAULT_PORTS = [80, 443, 8443];
 
-const DEFAULT_RESOLVER = new Resolver({ timeout: 3000, tries: 2 });
+const DEFAULT_LOOKUP_TIMEOUT_MS = 6000;
+
+async function resolveDestinationAddresses(host: string, resolver?: McpDestinationPolicyOptions['resolver']): Promise<string[]> {
+  if (resolver) {
+    return (await Promise.all([
+      resolver.resolve4(host).catch(() => [] as string[]),
+      resolver.resolve6(host).catch(() => [] as string[]),
+    ])).flat();
+  }
+
+  // Use the same OS getaddrinfo path as ordinary connections (including hosts
+  // files/system resolver configuration), not standalone direct DNS queries.
+  // Bound the caller's wait; lookup itself cannot be cancelled. Late completion
+  // cannot authorize transport, and every returned address is checked by callers.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      lookup(host, { all: true }).then(records => records.map(record => record.address)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new McpDestinationPolicyError('dns_failure', host)), DEFAULT_LOOKUP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    throw new McpDestinationPolicyError('dns_failure', host);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** Loopback, unspecified, RFC1918, CGNAT 100.64/10, benchmarking 198.18/15, link-local
  * (includes cloud metadata 169.254.169.254), reserved/documentation ranges, multicast,
@@ -196,8 +223,8 @@ export function assertMcpDestinationUrl(serverUrl: string, options: McpDestinati
 }
 
 /**
- * Full destination check: URL shape, then resolution of ALL A and AAAA
- * records with every address checked against the forbidden ranges. Resolves
+  * Full destination check: URL shape, then all OS-resolved addresses (or all A
+  * and AAAA records from an injected resolver), checked against forbidden ranges. Resolves
  * with the validated address list or throws {@link McpDestinationPolicyError}.
  */
 /** Shape checks that apply to EVERY destination, including exact configured
@@ -267,11 +294,7 @@ export async function assertMcpDestinationAllowed(serverUrl: string, options: Mc
   // URLs inherit nothing.
   if (matchesExactEndpoint(serverUrl, options.allowExactEndpoints)) {
     if (options.requireTls && parsed.protocol !== 'https:') throw new McpDestinationPolicyError('insecure_http', host);
-    const resolver = options.resolver ?? DEFAULT_RESOLVER;
-    const addresses = isIP(host) ? [host] : (await Promise.all([
-      resolver.resolve4(host).catch(() => [] as string[]),
-      resolver.resolve6(host).catch(() => [] as string[]),
-    ])).flat();
+    const addresses = isIP(host) ? [host] : await resolveDestinationAddresses(host, options.resolver);
     if (!addresses.length) throw new McpDestinationPolicyError('dns_failure', host);
     if (addresses.some(address => isForbiddenEgressIp(address) && !isApprovedPrivateAddress(address))) {
       throw new McpDestinationPolicyError('forbidden_address', host);
@@ -295,12 +318,7 @@ export async function assertMcpDestinationAllowed(serverUrl: string, options: Mc
     }
     return [host];
   }
-  const resolver = options.resolver ?? DEFAULT_RESOLVER;
-  const [ipv4, ipv6] = await Promise.all([
-    resolver.resolve4(host).catch(() => [] as string[]),
-    resolver.resolve6(host).catch(() => [] as string[]),
-  ]);
-  const addresses = [...ipv4, ...ipv6];
+  const addresses = await resolveDestinationAddresses(host, options.resolver);
   if (addresses.length === 0) {
     throw new McpDestinationPolicyError('dns_failure', host);
   }
@@ -318,6 +336,7 @@ function isApprovedPrivateAddress(address: string): boolean {
     return [['10.0.0.0', 8], ['127.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16]]
       .some(([base, bits]) => inSubnet(value, ipv4ToInt(String(base)), Number(bits)));
   }
+  if (isIP(address) !== 6) return false;
   const value = ipv6ToBigInt(address);
   if (value === ipv6ToBigInt('fd00:ec2::254')) return false;
   return value === 1n || inSubnet6(value, ipv6ToBigInt('fc00::'), 7);
