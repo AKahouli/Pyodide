@@ -71,3 +71,17 @@ errors in unchanged semantic-model localization code. Browser QA was blocked by
 the isolated Vite harness dependency/startup failures; no browser success or
 deployed end-to-end validation is claimed. The broad AgentService suite also has
 existing connector fixture failures; its five affected model-mapping tests passed.
+
+Subsequent integration on 2026-10-17 applied migration 0050 to the local application
+database and rebuilt/restarted backend, frontend and ADK. The migration journal
+reserves idx56 for the checkout's existing connector migration and idx57 for 0050.
+All 120 existing model rows received the Chat Completions default; the constraint
+is validated and no migration remains pending. Live Admin > Models browser QA
+saved GPT 5.4 Mini as Responses, reloaded/reopened it, then saved Chat Completions
+and verified it after a second reload. Its original setting was restored. The
+integrated checkout passed 43 affected ADK regressions and three Admin form tests.
+ADK readiness and backend conversation/gateway checks passed; overall backend
+readiness remained degraded by the separate Playbook MCP readiness check.
+Both gateway smoke scenarios also passed again from the integrated checkout:
+three provider requests, one tool call, two streamed turns, history/instrumentation
+checks and all three owned permits released for each API.
