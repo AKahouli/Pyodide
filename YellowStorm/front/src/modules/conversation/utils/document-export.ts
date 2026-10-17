@@ -79,11 +79,18 @@ export async function buildStructuredExportBlocks(
     const components: MessageComponent[] = [];
     for (const component of message.components ?? []) {
       if (component.type === 'text' && isOpenUiProgram(component.data?.content)) {
-        const projectedParts = await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages));
+        const chartImages = new Set<string>();
+        const projectedParts = await projectOpenUiProgram(String(component.data?.content), savedViewState(message, component.id, submissionMessages), async (name, props) => {
+          const { captureOpenUiChartPng } = await import('./docx-capture');
+          const image = await captureOpenUiChartPng(name, props);
+          if (!image) throw new Error('OpenUI chart capture failed');
+          chartImages.add(image.dataUrl);
+          return image.dataUrl;
+        });
         for (const part of projectedParts) {
           if (part.kind !== 'image') { parts.push(part); continue; }
-          if (!resolveImage) throw new Error('OpenUI export image resolver required');
-          const source = await resolveImage(part.source, component, message);
+          if (!chartImages.has(part.source) && !resolveImage) throw new Error('OpenUI export image resolver required');
+          const source = chartImages.has(part.source) ? part.source : await resolveImage!(part.source, component, message);
           if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(source)) throw new Error('Invalid resolved OpenUI export image');
           parts.push({ ...part, source });
         }

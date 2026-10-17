@@ -87,12 +87,19 @@ const INTERACTIVE = /^(?:Action|Button|FollowUp|Form|Input|Select|Checkbox|Radio
 
 /** Parsing never executes queries/mutations. Partial/dynamic content fails explicitly
  * rather than producing a plausible but incomplete document. */
-export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>): Promise<OpenUiExportPart[]> {
+export async function projectOpenUiProgram(program: string, viewState?: Record<string, unknown>, renderChart?: (name: string, props: Record<string, unknown>) => Promise<string>): Promise<OpenUiExportPart[]> {
   const [{ createParser }, { chatLibrary, reportLibrary, presentationLibrary }] = await Promise.all([
     import('@openuidev/lang-core'), import('@openuidev/thesys'),
   ]);
   const split = splitReportProgram(program);
   const parts: OpenUiExportPart[] = [];
+  const charts: Array<{ part: Extract<OpenUiExportPart, { kind: 'image' }>; name: string; props: Record<string, unknown> }> = [];
+  const chartImage = (name: string, props: Record<string, unknown>) => {
+    if (!renderChart) return;
+    const part = { kind: 'image' as const, source: '', caption: '' };
+    parts.push(part);
+    charts.push({ part, name, props });
+  };
   let chatExploration = false;
   const add = (markdown: string) => { if (markdown.trim()) parts.push({ kind: 'markdown', markdown }); };
   const cell = (value: unknown): string => {
@@ -104,7 +111,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     `| ${headers.map(cell).join(' | ')} |`, `| ${headers.map(() => '---').join(' | ')} |`,
     ...rows.map((row) => `| ${row.map(cell).join(' | ')} |`),
   ].join('\n'));
-  const walk = (value: unknown, depth = 0): void => {
+  const walk = (value: unknown, depth = 0, chartRenderer?: { name: string; props: Record<string, unknown> }): void => {
     if (depth > 100) throw new Error('OpenUI export nesting limit');
     if (Array.isArray(value)) { value.forEach((entry) => walk(entry, depth + 1)); return; }
     if (!value || typeof value !== 'object') return;
@@ -118,9 +125,9 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     if (/ChartV2$/.test(name)) {
       const chartData = props.chartData as { data?: Record<string, unknown> | unknown[]; unit?: string } | undefined;
       const data = chartData?.data;
-      walk({ type: 'element', typeName: name.replace(/V2$/, ''), props: {
-        ...(Array.isArray(data) ? { slices: data } : data), unit: chartData?.unit, xLabel: props.xAxisLabel, yLabel: props.yAxisLabel,
-      } }, depth + 1);
+      walk({ type: 'element', typeName: name === 'BarChartV2' && props.isHorizontal ? 'HorizontalBarChart' : name.replace(/V2$/, ''), props: {
+        ...(Array.isArray(data) ? { slices: data } : data), unit: chartData?.unit, xLabel: props.xAxisLabel, yLabel: props.yAxisLabel, variant: props.variant,
+      } }, depth + 1, { name, props });
       return;
     }
     if (name === 'Table') {
@@ -144,12 +151,14 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
       const supported = chatExploration && ['BarChart', 'HorizontalBarChart', 'LineChart'].includes(name);
       const data = supported ? getChartData(props.labels, originalSeries, saved?.componentType === 'ChartView' ? saved.value : undefined)
         : { labels: props.labels, series: originalSeries };
+      chartImage(chartRenderer?.name ?? name, chartRenderer?.props ?? { ...props, labels: data.labels, series: data.series });
       table(['', ...data.series.map((entry) => entry.category ?? '')], data.labels.map((label, index) => [label, ...data.series.map((entry) => entry.values?.[index])]));
       return;
     }
     if (/Chart$/.test(name) && Array.isArray(props.slices)) {
       if (typeof props.heading === 'string') add(`## ${props.heading}`);
       if (typeof props.description === 'string') add(props.description);
+      chartImage(chartRenderer?.name ?? name, chartRenderer?.props ?? props);
       add(`\`\`\`json\n${JSON.stringify({ chart: name, unit: props.unit, variant: props.variant })}\n\`\`\``);
       table(['Category', 'Value'], (props.slices as Array<{ category: string; value: number }>).map((slice) => [slice.category, slice.value]));
       return;
@@ -157,6 +166,7 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     if (/Chart$/.test(name) && Array.isArray(props.datasets)) {
       if (typeof props.heading === 'string') add(`## ${props.heading}`);
       if (typeof props.description === 'string') add(props.description);
+      chartImage(chartRenderer?.name ?? name, chartRenderer?.props ?? props);
       add(`\`\`\`json\n${JSON.stringify({ chart: name, xLabel: props.xLabel, yLabel: props.yLabel, unit: props.unit })}\n\`\`\``);
       table(['Series', 'x', 'y', 'z'], (props.datasets as Array<{ name: string; points: Array<{ x: number; y: number; z?: number }> }>).flatMap((dataset) => dataset.points.map((point) => [dataset.name, point.x, point.y, point.z])));
       return;
@@ -190,6 +200,9 @@ export async function projectOpenUiProgram(program: string, viewState?: Record<s
     if (!parsed.root || parsed.meta.incomplete || parsed.meta.errors.length || parsed.meta.unresolved.length || Object.keys(parsed.stateDeclarations).length || parsed.queryStatements.length || parsed.mutationStatements.length) throw new Error('Invalid or interactive OpenUI export');
     walk(parsed.root);
   }
+  // Capture only after the complete saved program has passed validation. Keep
+  // captures sequential so their offscreen theme/style scopes cannot race.
+  for (const chart of charts) chart.part.source = await renderChart!(chart.name, chart.props);
   return parts;
 }
 

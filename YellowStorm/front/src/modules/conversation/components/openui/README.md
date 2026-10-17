@@ -128,8 +128,10 @@ copied verbatim, no sources list, no `sources` on Card). Re-run `npm run openui:
 
 ## Copy and export
 
-An OpenUI answer is stored as a program, so copy / HTML / DOCX / PDF export read the rendered answer back from the DOM
-(`plain-text.ts`: blocks become lines, table rows `a | b`, citation chips `[n]`, charts omitted). When the message is not
-rendered the stored text is used unchanged. A folded `SectionBlock` unmounts its closed sections, so when one is closed the DOM is
-not the whole answer and the projection falls back to the program strings (without table cells).
-A report lives in its panel, not in the message, so its text always comes from the program strings (`programToPlainText`), appended after the rendered answer.
+Copy reads mounted content with a stored-program fallback. Document exports parse the saved program, including folded
+sections and reports, and hydrate only accepted table/chart submissions from message history. DOCX, HTML and PDF share
+`buildStructuredExportBlocks`: charts are rendered offscreen with the native stock chart under an isolated light theme,
+then captured as embedded PNGs including legends. The applied chart subset and filtered/sorted table are used; local
+unsubmitted edits never affect exports. The editable chart data table and metadata remain alongside the chart image.
+Capture failure fails the export explicitly. Captures do not depend on virtualized/mounted answer DOM or execute actions.
+MCP manifests retain their existing chart metadata and editable data tables without raster capture.

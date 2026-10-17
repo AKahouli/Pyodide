@@ -3,6 +3,11 @@ import type { Message } from '../types';
 import { buildMcpExportManifest, buildStructuredExportBlocks } from './document-export';
 import { exportPartsToMarkdown, projectOpenUiProgram } from '../components/openui/plain-text';
 import { exportBlocksToHtml } from './html-export';
+import { captureOpenUiChartPng } from './docx-capture';
+
+vi.mock('./docx-capture', () => ({
+  captureOpenUiChartPng: vi.fn(async (): Promise<{ dataUrl: string; width: number; height: number } | null> => ({ dataUrl: 'data:image/png;base64,Y2hhcnQ=', width: 640, height: 320 })),
+}));
 
 const receipt = 'generated-image:123456789012345678901234';
 const image = 'data:image/png;base64,aGVsbG8=';
@@ -34,6 +39,18 @@ describe('saved OpenUI export projection', () => {
     expect(all).toContain('| Jan | 2 | 4 |');
     expect(all).toContain('| Mar | 0 | 8 |');
   });
+  it('embeds rendered chart PNGs in HTML and PDF markdown without resolving them as conversation assets', async () => {
+    const resolver = vi.fn();
+    const [block] = await buildStructuredExportBlocks(messages(chartProgram), { user: 'U', assistant: 'A' }, undefined, resolver);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(block.markdown).toContain('![](data:image/png;base64,Y2hhcnQ=)');
+    const html = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(exportBlocksToHtml([block], 'Chart')); });
+    expect(html).toContain('src="data:image/png;base64,Y2hhcnQ="');
+  });
+  it('fails explicitly when a chart cannot be rendered rather than silently omitting it', async () => {
+    vi.mocked(captureOpenUiChartPng).mockResolvedValueOnce(null);
+    await expect(buildStructuredExportBlocks(messages(chartProgram), { user: 'U', assistant: 'A' })).rejects.toThrow('chart capture failed');
+  });
   it('uses saved chart selections after reload in both structured documents and MCP manifests', async () => {
     const answer = { ...messages(chartProgram)[0], conversationId: 'conversation' };
     const saved = JSON.parse(JSON.stringify([{ id: 'chart-saved', conversationId: 'conversation', conversationType: 'user', createdAt: '2026-10-16T13:00:00Z', interaction: {
@@ -41,7 +58,9 @@ describe('saved OpenUI export projection', () => {
     } }])) as Message[];
     const [block] = await buildStructuredExportBlocks([answer], { user: 'U', assistant: 'A' }, undefined, undefined, saved);
     expect(block.markdown).toContain('| Mar | 0 |');
-    expect((await buildMcpExportManifest(answer, saved)).parts).toEqual(block.parts?.map(part => ({ ...part, componentId: 'part' })));
+    expect(captureOpenUiChartPng).toHaveBeenCalledWith('BarChart', expect.objectContaining({ labels: ['Mar'], series: [{ category: 'Visits', values: [0] }] }));
+    expect(block.parts).toContainEqual({ kind: 'image', source: 'data:image/png;base64,Y2hhcnQ=', caption: '' });
+    expect((await buildMcpExportManifest(answer, saved)).parts).toEqual(block.parts?.filter(part => part.kind !== 'image').map(part => ({ ...part, componentId: 'part' })));
     expect(exportBlocksToHtml([block], 'Selected chart')).toBeInstanceOf(Blob);
   });
   const tableProgram = 'root = Card([table])\ntable = Table([Col("City"),Col("Visits", "number")], [["Tokyo",2],["Paris",10],["Kyoto",0],["Osaka",5]])';
@@ -166,6 +185,13 @@ describe('saved OpenUI export projection', () => {
     expect(parts).toContainEqual({ kind: 'markdown', markdown: '## Visits' });
     expect(parts).toContainEqual({ kind: 'markdown', markdown: 'Exact source [1]' });
     expect(parts.some((part) => part.kind === 'markdown' && part.markdown.includes('| Jan | 2 |'))).toBe(true);
+  });
+  it('renders report charts with their original V2 component and props', async () => {
+    const render = vi.fn(async () => image);
+    const source = 'root = Presentation({title: "Japan"}, [slide])\nslide = Slide("s1", content)\ncontent = ChartWithContext("Visits", chart, "Source")\nchart = BarChartV2({data: {labels: ["Jan"], series: [{category: "Visits", values: [2]}]}})';
+    const parts = await projectOpenUiProgram(source, undefined, render);
+    expect(render).toHaveBeenCalledWith('BarChartV2', expect.objectContaining({ chartData: { data: { labels: ['Jan'], series: [{ category: 'Visits', values: [2] }] } } }));
+    expect(parts.filter(part => part.kind === 'image')).toHaveLength(1);
   });
 
   it('keeps the resolved image in standalone HTML while rejecting active URL schemes', async () => {

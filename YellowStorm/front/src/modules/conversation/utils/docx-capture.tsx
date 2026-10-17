@@ -108,6 +108,47 @@ export async function captureChartPng(chart: ChartComponentData): Promise<Captur
   }
 }
 
+/** Render saved, already-filtered OpenUI data with the stock chart, independent
+ * of the virtualized chat DOM and any unsubmitted exploration controls. */
+export async function captureOpenUiChartPng(name: string, props: Record<string, unknown>): Promise<CapturedImage | null> {
+  const [{ chatLibrary, reportLibrary }, { ThemeProvider }, { OPENUI_COMPACT_THEME }] = await Promise.all([
+    import('@openuidev/thesys'), import('@openuidev/react-ui'), import('../components/openui/theme'),
+    import('@openuidev/react-ui/styles/index.css'), import('@openuidev/thesys/styles.css'),
+  ]);
+  const definition = (name.endsWith('V2') ? reportLibrary : chatLibrary).components[name];
+  if (!definition) return null;
+  const Chart = definition.component;
+  const host = document.createElement('div');
+  const scope = `export-chart-${crypto.randomUUID()}`;
+  host.id = scope;
+  host.style.cssText = `position:fixed;left:-9999px;top:0;width:${CHART_WIDTH}px;background:#ffffff;color:#172033;`;
+  document.body.appendChild(host);
+  let root: Root | null = null;
+  try {
+    root = createRoot(host);
+    root.render(<ThemeProvider mode='light' lightTheme={OPENUI_COMPACT_THEME} cssSelector={`#${scope}`}>
+      <Chart props={{ ...props, heading: undefined, description: undefined }} renderNode={() => null} />
+    </ThemeProvider>);
+    const svg = await waitFor(() => {
+      const candidate = host.querySelector('.c1-chart-wrapper svg, .c1-report-chart svg');
+      return candidate && candidate.getBoundingClientRect().height > 50 ? candidate : null;
+    });
+    if (!svg) return null;
+    await document.fonts?.ready;
+    // Legends are HTML siblings of the SVG. Capture the native wrapper, not
+    // just the SVG, so series labels and colors remain in every export.
+    const wrapper = host.querySelector<HTMLElement>('.c1-chart-wrapper, .c1-report-chart');
+    if (!wrapper) return null;
+    const { toPng } = await import('html-to-image');
+    const height = Math.ceil(wrapper.getBoundingClientRect().height);
+    const dataUrl = await toPng(wrapper, { backgroundColor: '#ffffff', pixelRatio: CAPTURE_SCALE, width: CHART_WIDTH, height });
+    return { dataUrl, width: CHART_WIDTH, height };
+  } finally {
+    root?.unmount();
+    host.remove();
+  }
+}
+
 export async function captureWebPreviewPng(html: string): Promise<CapturedImage | null> {
   if (!html.trim()) return null;
   // Same isolation the chat UI uses for generated previews: CSP meta injected

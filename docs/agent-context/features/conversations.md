@@ -366,9 +366,12 @@ Applying a chart view saves `ChartView` values under the existing `__ysExplore`
 form state and submits original numeric series/category indices and selected point
 values, including zero. Accepted views hydrate after reload using the same
 effect-time default-registration guard as tables. Unsubmitted changes are local.
-Saved-answer exports project only the applied chart subset into the existing
-chart data-table representation; reports, presentations and unsupported chart types
-retain their existing export behavior. The controls do not run model-authored code.
+Saved-answer DOCX, HTML and PDF exports render the applied chart subset as an embedded
+PNG using the native chart and its legend under a scoped light theme. The existing
+editable chart data table and metadata remain included; table filters/sort order use
+the accepted saved view. Capture uses saved program data, independently of mounted
+chat DOM, and fails explicitly when rendering fails. MCP manifests retain metadata
+and editable data tables. The controls and export path do not execute component actions.
 
 Maintainer source review covers `ChartExplorer.tsx`, `data-exploration.ts`, chat
 library overrides and `plain-text.ts`. Regression definitions in
