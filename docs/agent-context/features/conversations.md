@@ -81,6 +81,21 @@ so their latency changes are not evidence of handshake savings. The matched fact
 probes demonstrate that saving. Most remaining delay is outside measured gateway
 overhead; transport reuse does not eliminate provider variability.
 
+Follow-up first-event profiling (2026-10-17) retained Luna Medium, Auto summaries,
+all tools and the existing conversation history. Two greetings completed normally:
+dispatch-to-useful-ADK output was 2.75/3.09 s. Upload-to-headers took 1.78/1.76 s;
+headers-to-first-body 87.5/85.3 ms; first-body-to-native-event 71.8/2.1 ms (first
+process call versus warm). The first lifecycle event preceded answer text by
+368.4/1009.1 ms, while useful native output reached ADK in 0.5/0.2 ms. Both turns
+used 13 reasoning tokens and at least 97% cached input. These results show remote
+waiting/generation rather than local useful-output buffering; they are not a new
+latency reduction claim. No effort, output limit, history or tool changes were made.
+The SDK already caches parsing schemas; speculative private-SDK prewarming was not
+added. Gateway-side queue/TTFT metrics are needed to separate queueing from compute:
+the current gateway `/metrics` endpoint returned 404. Numeric stream diagnostics
+preserve public TTFT semantics. Both APIs, tools, application encrypted replay and
+provider chaining passed real-gateway qualification with all 12 permits released.
+
 | Workflow | Existing behavior and source |
 | --- | --- |
 | Start and revisit a conversation | New-thread landing, history and paginated messages; [new page](../../../YellowStorm/front/src/modules/conversation/NewConversationPage.tsx), [store](../../../YellowStorm/front/src/modules/conversation/store.ts) |

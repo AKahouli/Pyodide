@@ -152,7 +152,9 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         streams = []
         native_summary_delta = False
         primary_usage = None
+        observed_stream = False
         async def create(**kwargs):
+            nonlocal observed_stream
             from openai import BadRequestError, NotFoundError
             try:
                 result = await resource.create(**kwargs)
@@ -172,9 +174,14 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                 if not capacity:
                     result = ResponsesStream(result)
                 streams.append(result)
+                observe = primary and not observed_stream
+                observed_stream = True
                 async def observed_events():
                     nonlocal native_summary_delta
                     async for event in result:
+                        if observe:
+                            from .latency_diagnostics import observe_responses_event
+                            observe_responses_event(trace, event)
                         event_type = event.get('type') if isinstance(event, dict) else getattr(event, 'type', None)
                         native_summary_delta = event_type == 'response.reasoning_summary_text.delta'
                         yield event
@@ -249,6 +256,9 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
             finally:
                 if capacity:
                     await capacity.end(token)
+                if primary:
+                    from .latency_diagnostics import emit_provider_stream_log
+                    emit_provider_stream_log(trace)
                 if primary_usage is not None:
                     from .latency_diagnostics import emit_provider_usage_log
                     emit_provider_usage_log(trace, primary_usage)

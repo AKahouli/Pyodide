@@ -44,6 +44,18 @@ HTTP/2 negotiation and finite allowlisted gateway timing headers; `provider_usag
 records final primary-call input/cached/reasoning/output token counts in both APIs.
 These diagnostics do not serialize HTTP requests or change public latency fields.
 
+First-event profiling adds `conversation_latency_diag.provider_stream` for the
+primary Responses stream only. It separates dispatch/upload, upload-to-headers,
+headers-to-first-body, first-body-to-native-event delivery, native reasoning/summary/text/tool milestones
+and useful-native-to-ADK delivery. The HTTP body observer forwards bytes immediately
+and delegates close; it never retains bytes. Event observers retain only fixed
+monotonic timestamps, never payloads. Later model calls do not overwrite the first
+stream. Public TTFT, terminal validation, retries and capacity remain unchanged.
+These client intervals cannot distinguish remote queueing from prefill/generation.
+LiteLLM 1.101 computes queue metadata internally but its ordinary duration headers
+do not expose queue time. The configured gateway's `/metrics` returned 404 during
+qualification; exact queue attribution needs gateway-side queue/TTFT metrics.
+
 The first capacity-gated call now records monotonic acquisition, durable running
 transition, dispatch-to-first-SDK-event and dispatch-to-first-ADK-response timings
 in `conversation_latency_diag.provider_timing`. The existing public provider TTFT

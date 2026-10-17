@@ -396,6 +396,74 @@ async def test_responses_http_diagnostics_without_trace_leave_request_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_responses_body_probe_forwards_chunks_and_close_without_buffering(monkeypatch):
+    from src.smart_rag.infrastructure.monitoring import conversation_latency as latency
+    from src.smart_rag.infrastructure.monitoring import latency_diagnostics as diag
+    trace = latency.ConversationLatencyTrace('r', 'a', None)
+    token = latency.current_conversation_latency_trace.set(trace)
+    closed = []
+    released = asyncio.Event()
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: first\n\n'
+            await released.wait()
+            yield b'data: second\n\n'
+        async def aclose(self):
+            closed.append(True)
+    monkeypatch.setattr(diag, '_emit', lambda *args: None)
+    req = httpx.Request('POST', 'https://private.invalid/responses')
+    try:
+        await diag.trace_responses_http_request(req)
+        await req.extensions['trace']('http2.send_request_body.complete', {})
+        resp = httpx.Response(200, request=req, stream=Body())
+        await diag.trace_responses_http_response(resp)
+        iterator = resp.aiter_bytes()
+        assert await asyncio.wait_for(anext(iterator), 1) == b'data: first\n\n'
+        first = trace.provider_http_timing['first_body']
+        released.set()
+        assert await anext(iterator) == b'data: second\n\n'
+        assert trace.provider_http_timing['first_body'] == first
+        await resp.aclose()
+        assert closed == [True]
+        assert trace.provider_http_timing['request_sent'] <= trace.provider_http_timing['response_headers'] <= first
+    finally:
+        latency.current_conversation_latency_trace.reset(token)
+
+
+def test_native_stream_milestones_separate_reasoning_wait_from_local_delivery(monkeypatch):
+    from src.smart_rag.infrastructure.monitoring import conversation_latency as latency
+    from src.smart_rag.infrastructure.monitoring import latency_diagnostics as diag
+    trace = latency.ConversationLatencyTrace('r', 'a', None)
+    ticks = iter([10, 20, 30, 50, 60, 70, 80, 90])
+    monkeypatch.setattr(diag.time, 'perf_counter_ns', lambda: next(ticks) * 1_000_000)
+    events = [
+        SimpleNamespace(type='response.created'),
+        SimpleNamespace(type='response.output_item.added', item=SimpleNamespace(type='reasoning')),
+        {'type': 'response.reasoning_summary_text.delta', 'delta': ''},
+        SimpleNamespace(type='response.reasoning_summary_text.delta', delta='private summary'),
+        SimpleNamespace(type='response.output_text.delta', delta='private answer'),
+        SimpleNamespace(type='response.function_call_arguments.delta', delta='private tool payload'),
+        SimpleNamespace(type='response.completed'),
+        SimpleNamespace(type='response.output_text.delta', delta='later call'),
+    ]
+    for event in events:
+        diag.observe_responses_event(trace, event)
+    trace.llm_first_delta_perf_ns = 51_000_000
+    assert trace.build_provider_stream_breakdown() == {
+        'native_to_reasoning_item_ms': 10.0, 'native_to_summary_ms': 40.0,
+        'native_to_text_ms': 50.0, 'native_to_tool_ms': 60.0,
+        'useful_native_to_adk_ms': 1.0, 'native_to_terminal_ms': 70.0,
+    }
+    logs = []
+    monkeypatch.setattr(diag, '_emit', lambda *args: logs.append(args))
+    diag.emit_provider_stream_log(trace)
+    assert 'private' not in str(logs) and 'later call' not in str(logs)
+    assert all(isinstance(value, (int, float)) for key, value in logs[0][2].items()
+               if key not in ('request_id', 'assistant_message_id'))
+    assert latency.ConversationLatencyTrace('r', 'a', None).build_provider_stream_breakdown() == {}
+
+
+@pytest.mark.asyncio
 async def test_shared_gateway_transport_keeps_turn_clients_headers_and_cookies_isolated():
     from src.smart_rag.infrastructure.factories import llm_factory as factory
     seen = []

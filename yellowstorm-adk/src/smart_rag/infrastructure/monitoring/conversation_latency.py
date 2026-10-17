@@ -130,6 +130,7 @@ class ConversationLatencyTrace:
     provider_timing: dict[str, int] = field(default_factory=dict)
     provider_http_timing: dict[str, int] = field(default_factory=dict)
     provider_http_metrics: dict[str, float] = field(default_factory=dict)
+    provider_stream_timing: dict[str, int] = field(default_factory=dict)
     # Diagnostic-only correlation for the runner_pre_model log; empty until a
     # run site notes it. Not part of protobuf/UI metrics.
     session_id: str = ""
@@ -193,6 +194,24 @@ class ConversationLatencyTrace:
                   if (duration := self._monotonic_ms(stamps.get(start), stamps.get(end))) is not None}
         result.update(self.provider_http_metrics)
         return result
+
+    def build_provider_stream_breakdown(self) -> dict:
+        """Client-observed intervals, never an estimate of remote queue time."""
+        http, stream = self.provider_http_timing, self.provider_stream_timing
+        pairs = [
+            ('dispatch_to_request_sent_ms', self.provider_timing.get('dispatch'), http.get('request_sent')),
+            ('request_sent_to_headers_ms', http.get('request_sent'), http.get('response_headers')),
+            ('headers_to_first_body_ms', http.get('response_headers'), http.get('first_body')),
+            ('first_body_to_native_event_ms', http.get('first_body'), stream.get('first_event')),
+            ('native_to_reasoning_item_ms', stream.get('first_event'), stream.get('reasoning_item')),
+            ('native_to_summary_ms', stream.get('first_event'), stream.get('summary')),
+            ('native_to_text_ms', stream.get('first_event'), stream.get('text')),
+            ('native_to_tool_ms', stream.get('first_event'), stream.get('tool')),
+            ('useful_native_to_adk_ms', stream.get('useful'), self.llm_first_delta_perf_ns),
+            ('native_to_terminal_ms', stream.get('first_event'), stream.get('terminal')),
+        ]
+        return {name: duration for name, start, end in pairs
+                if (duration := self._monotonic_ms(start, end)) is not None}
 
     def mark_llm_first_delta(self) -> None:
         if self.llm_first_delta_perf_ns is None:

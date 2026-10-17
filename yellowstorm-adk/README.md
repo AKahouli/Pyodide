@@ -46,6 +46,14 @@ Numeric HTTP and usage diagnostics distinguish gateway overhead, connection setu
 cached input and model response time. No reasoning, tool, history or capacity setting
 changes; warm connection reuse saves roughly 180 ms, not the entire provider delay.
 
+`conversation_latency_diag.provider_stream` further separates upload, headers,
+first body bytes, native lifecycle/reasoning/text/tool events and useful ADK output
+for the first Responses stream. It records numeric durations without buffering or
+logging payloads. Client-side timings do not measure remote queue time; use gateway
+queue/TTFT metrics for that attribution. The current gateway returned 404 at
+`/metrics`. Luna profiling measured only 0.2–0.5 ms useful-event-to-ADK delivery;
+remaining seconds are not a local useful-output buffer. Model settings are unchanged.
+
 The single-agent conversation parent uses the model's **Admin > Models > Conversation API**
 selection: Chat Completions (the default, including existing models) retains
 `InstrumentedLiteLlm`; Responses uses ADK `OpenAIResponsesLlm` through the configured

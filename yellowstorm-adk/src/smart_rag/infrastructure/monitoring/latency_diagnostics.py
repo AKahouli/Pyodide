@@ -336,6 +336,8 @@ async def trace_responses_http_request(request) -> None:
         if name in {'connection.connect_tcp.started', 'connection.connect_tcp.complete',
                     'connection.start_tls.started', 'connection.start_tls.complete'}:
             trace.provider_http_timing.setdefault(name, time.perf_counter_ns())
+        elif name in {'http11.send_request_body.complete', 'http2.send_request_body.complete'}:
+            trace.provider_http_timing.setdefault('request_sent', time.perf_counter_ns())
     request.extensions['trace'] = observe
     request.extensions['_yellowstorm_latency_trace'] = trace
 
@@ -345,6 +347,21 @@ async def trace_responses_http_response(response) -> None:
     if trace is None:
         return
     trace.provider_http_timing.setdefault('response_headers', time.perf_counter_ns())
+    if not response.is_stream_consumed:
+        import httpx
+        original = response.stream
+
+        class ObservedBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                async for chunk in original:
+                    if chunk:
+                        trace.provider_http_timing.setdefault('first_body', time.perf_counter_ns())
+                    yield chunk
+
+            async def aclose(self):
+                await original.aclose()
+
+        response.stream = ObservedBody()
     trace.provider_http_metrics['http2'] = int(response.http_version == 'HTTP/2')
     for header, metric in (
         ('x-litellm-overhead-duration-ms', 'gateway_overhead_ms'),
@@ -360,6 +377,40 @@ async def trace_responses_http_response(response) -> None:
         'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id,
         **{name: round(value, 1) for name, value in trace.build_provider_http_breakdown().items()},
     })
+
+
+def observe_responses_event(trace: ConversationLatencyTrace, event) -> None:
+    """First-write numeric milestones only; never retain event payloads."""
+    stamps = trace.provider_stream_timing
+    now = time.perf_counter_ns()
+    stamps.setdefault('first_event', now)
+    get = event.get if isinstance(event, dict) else lambda key: getattr(event, key, None)
+    event_type = get('type')
+    item = get('item')
+    item_type = item.get('type') if isinstance(item, dict) else getattr(item, 'type', None)
+    if event_type == 'response.output_item.added' and item_type == 'reasoning':
+        stamps.setdefault('reasoning_item', now)
+    if event_type == 'response.output_item.added' and item_type == 'function_call':
+        stamps.setdefault('tool', now)
+        stamps.setdefault('useful', now)
+    category = {
+        'response.reasoning_summary_text.delta': 'summary',
+        'response.output_text.delta': 'text',
+        'response.function_call_arguments.delta': 'tool',
+    }.get(event_type)
+    if category and get('delta'):
+        stamps.setdefault(category, now)
+        stamps.setdefault('useful', now)
+    if event_type in ('response.completed', 'response.incomplete', 'response.failed', 'error'):
+        stamps.setdefault('terminal', now)
+
+
+def emit_provider_stream_log(trace: ConversationLatencyTrace) -> None:
+    if trace.provider_stream_timing:
+        _emit('conversation_latency_diag.provider_stream', 20, {
+            'request_id': trace.request_id, 'assistant_message_id': trace.assistant_message_id,
+            **{name: round(value, 1) for name, value in trace.build_provider_stream_breakdown().items()},
+        })
 
 
 def emit_provider_usage_log(trace: ConversationLatencyTrace, usage) -> None:
