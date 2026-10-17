@@ -192,6 +192,30 @@ describe('ModelsService', () => {
     expect((await svc.findById('legacy'))?.conversationApi).toBe('chat_completions');
   });
 
+  it('preserves Responses controls through gateway sync and API switches', async () => {
+    store.rows.set('model', row({ modelId: 'model' }));
+    const settings = { responsesHistoryMode: 'application' as const, reasoningHistory: 'last' as const, reasoningSummary: 'detailed' as const };
+    expect(await svc.updateModel('model', { conversationApi: 'responses', ...settings })).toMatchObject(settings);
+    fetchModels.mockResolvedValue([entry('model', 'chat')]);
+    await svc.syncModels();
+    expect(await svc.findById('model')).toMatchObject(settings);
+    expect(await svc.updateModel('model', { conversationApi: 'chat_completions' })).toMatchObject(settings);
+  });
+
+  it('validates Responses provider replay against merged PATCH settings', async () => {
+    store.rows.set('model', row({ conversationApi: 'responses', responsesHistoryMode: 'provider', reasoningHistory: 'auto' }));
+    await expect(svc.updateModel('model', { reasoningHistory: 'last' })).rejects.toThrow('automatic reasoning history');
+    expect(await svc.updateModel('model', { reasoningSummary: 'auto' })).toMatchObject({ reasoningHistory: 'auto' });
+    expect(await svc.updateModel('model', { conversationApi: 'chat_completions', reasoningHistory: 'none' })).toMatchObject({ reasoningHistory: 'none' });
+    await expect(svc.updateModel('model', { conversationApi: 'responses' })).rejects.toThrow('automatic reasoning history');
+    expect(await svc.updateModel('model', { conversationApi: 'responses', reasoningHistory: 'auto' })).toMatchObject({ responsesHistoryMode: 'provider' });
+  });
+
+  it('supplies backward-compatible defaults for legacy Responses controls', async () => {
+    store.rows.set('model', row({}));
+    expect(await svc.findById('model')).toMatchObject({ responsesHistoryMode: 'application', reasoningHistory: 'auto', reasoningSummary: 'off' });
+  });
+
   describe('syncModels', () => {
     it('ingests ALL model types, not just chat (no more chat-only filter)', async () => {
       fetchModels.mockResolvedValue([entry('gpt-4o', 'chat'), entry('text-embedding-3', 'embedding'), entry('dall-e-3', 'image_generation')]);

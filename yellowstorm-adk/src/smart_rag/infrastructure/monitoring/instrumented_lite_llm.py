@@ -18,6 +18,7 @@ from typing import AsyncGenerator, Optional, Tuple
 from contextlib import aclosing
 from functools import cached_property
 from types import SimpleNamespace
+from typing import Literal
 
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
@@ -98,7 +99,11 @@ class InstrumentedLiteLlm(LiteLlm):
 
 
 class InstrumentedResponsesLlm(OpenAIResponsesLlm):
-    """Native Responses with application-owned history and the conversation gates."""
+    """Native Responses with private session history and conversation gates."""
+
+    history_mode: Literal['application', 'provider'] = 'application'
+    reasoning_history: Literal['none', 'last', 'all', 'auto'] = 'none'
+    summary_mode: Literal['off', 'auto', 'concise', 'detailed'] = 'off'
 
     @cached_property
     def _openai_client(self):
@@ -113,9 +118,9 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         # Never mutate a shared request or attach provider-owned conversation state.
         request = llm_request.model_copy(update={'previous_interaction_id': None})
         kwargs = super()._get_response_create_kwargs(request, stream=stream)
-        kwargs['store'] = False
-        kwargs.pop('previous_response_id', None)
-        kwargs.pop('conversation', None)
+        from .responses_history import prepare
+        pending = prepare(self, llm_request, kwargs)
+        object.__setattr__(llm_request, '_responses_pending', pending)
         if not kwargs.get('tools'):
             kwargs.pop('parallel_tool_calls', None)
             kwargs.pop('tool_choice', None)
@@ -138,7 +143,20 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
         token = capacity.begin() if capacity else None
         streams = []
         async def create(**kwargs):
-            result = await resource.create(**kwargs)
+            from openai import BadRequestError, NotFoundError
+            try:
+                result = await resource.create(**kwargs)
+            except (BadRequestError, NotFoundError) as error:
+                # Retry only an explicit rejected/expired lineage, never an
+                # uncertain dispatch, a tool failure or an alternate API.
+                if not kwargs.get('previous_response_id') or error.code not in (
+                    'previous_response_not_found', 'response_not_found',
+                ):
+                    raise
+                from .responses_history import select_reasoning
+                kwargs.pop('previous_response_id')
+                kwargs['input'] = select_reasoning(llm_request._responses_pending['items'], self.reasoning_history)
+                result = await resource.create(**kwargs)
             if kwargs.get('stream'):
                 if not capacity:
                     result = ResponsesStream(result)
@@ -151,6 +169,31 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                 super(InstrumentedResponsesLlm, provider).generate_content_async, llm_request, stream, self.model,
             )) as responses:
                 async for response in responses:
+                    # Capture the original ordered provider output before stripping
+                    # opaque replay material from every public ADK event.
+                    metadata = (response.custom_metadata or {}).get('openai_response', {})
+                    if metadata.get('status') == 'completed' and 'output' in metadata:
+                        import copy
+                        from .responses_history import projection
+                        pending = copy.deepcopy(getattr(llm_request, '_responses_pending', {}))
+                        if pending:
+                            output = metadata['output']
+                            pending['items'].extend(output)
+                            if response.content:
+                                projected = super()._get_response_input(LlmRequest(contents=[response.content]))
+                                pending['projection'].extend(projection(projected))
+                            pending['response_id'] = metadata.get('id')
+                            object.__setattr__(response, '_responses_commit', pending)
+                    if response.content:
+                        for part in response.content.parts or []:
+                            part.thought_signature = None
+                        if self.summary_mode == 'off':
+                            response.content.parts = [part for part in response.content.parts or [] if not part.thought]
+                    if response.custom_metadata and 'openai_response' in response.custom_metadata:
+                        # Only lifecycle metadata is needed by the activity renderer.
+                        response.custom_metadata = {'openai_response': {
+                            key: metadata[key] for key in ('id', 'status', 'stream_event') if key in metadata
+                        }}
                     if primary:
                         trace.mark_llm_first_delta()
                     yield response

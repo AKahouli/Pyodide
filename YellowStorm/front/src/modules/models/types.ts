@@ -19,6 +19,9 @@ export interface Model {
   isConversationV2Default: boolean;
   omitTemperature: boolean;
   conversationApi?: 'chat_completions' | 'responses';
+  responsesHistoryMode?: 'application' | 'provider';
+  reasoningHistory?: 'none' | 'last' | 'all' | 'auto';
+  reasoningSummary?: 'off' | 'auto' | 'concise' | 'detailed';
   inputModalities: Array<'text' | 'image'>;
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

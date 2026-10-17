@@ -117,6 +117,9 @@ function normalizeModel(model: AdminModelResponse): AdminModelResponse {
   return {
     ...model,
     conversationApi: model.conversationApi === 'responses' ? 'responses' : 'chat_completions',
+    responsesHistoryMode: model.responsesHistoryMode ?? 'application',
+    reasoningHistory: model.responsesHistoryMode === 'provider' ? 'auto' : model.reasoningHistory ?? 'auto',
+    reasoningSummary: model.reasoningSummary ?? 'off',
     types: Array.isArray(model.types) ? model.types : model.type ? [model.type] : [],
     inputModalities: Array.isArray(model.inputModalities) && model.inputModalities.includes('text')
       ? model.inputModalities
@@ -147,6 +150,9 @@ export function ModelsPage() {
     types: [] as ModelType[],
     omitTemperature: false,
     conversationApi: 'chat_completions' as 'chat_completions' | 'responses',
+    responsesHistoryMode: 'application' as 'application' | 'provider',
+    reasoningHistory: 'auto' as 'none' | 'last' | 'all' | 'auto',
+    reasoningSummary: 'off' as 'off' | 'auto' | 'concise' | 'detailed',
     inputModalities: ['text'] as ModelInputModality[],
     reasoningEfforts: '',
     defaultReasoningEffort: '',
@@ -289,6 +295,9 @@ export function ModelsPage() {
       types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
       omitTemperature: model.omitTemperature,
       conversationApi: model.conversationApi ?? 'chat_completions',
+      responsesHistoryMode: model.responsesHistoryMode ?? 'application',
+      reasoningHistory: model.responsesHistoryMode === 'provider' ? 'auto' : model.reasoningHistory ?? 'auto',
+      reasoningSummary: model.reasoningSummary ?? 'off',
       inputModalities: model.inputModalities,
       reasoningEfforts: model.reasoning.efforts.map((effort) => effort.id).join(', '),
       defaultReasoningEffort: model.reasoning.defaultEffort || '',
@@ -319,6 +328,9 @@ export function ModelsPage() {
         types: editFormData.types,
         omitTemperature: editFormData.omitTemperature,
         conversationApi: editFormData.conversationApi,
+        responsesHistoryMode: editFormData.responsesHistoryMode,
+        reasoningHistory: editFormData.responsesHistoryMode === 'provider' ? 'auto' : editFormData.reasoningHistory,
+        reasoningSummary: editFormData.reasoningSummary,
         inputModalities: editFormData.inputModalities,
         reasoningEfforts: editFormData.reasoningEfforts.split(',').map((id) => id.trim()).filter(Boolean).map((id) => ({
           id,
@@ -630,6 +642,53 @@ export function ModelsPage() {
                 </Select>
                 <p id="conversationApi-help" className="text-xs text-muted-foreground">{t('models.edit.fields.conversationApiHelper')}</p>
               </div>
+              {editFormData.conversationApi === 'responses' && (
+                <div className="space-y-4 rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">{t('models.edit.fields.responsesSettingsHelper')}</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="responsesHistoryMode">{t('models.edit.fields.responsesHistoryMode')}</Label>
+                    <Select value={editFormData.responsesHistoryMode} onValueChange={(value) => {
+                      if (value === 'application' || value === 'provider') {
+                        setEditFormData((prev) => ({ ...prev, responsesHistoryMode: value, reasoningHistory: value === 'provider' ? 'auto' : prev.reasoningHistory }));
+                      }
+                    }}>
+                      <SelectTrigger id="responsesHistoryMode" aria-describedby="responsesHistoryMode-help"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(['application', 'provider'] as const).map((value) => <SelectItem key={value} value={value}>{t(`models.edit.fields.responsesHistoryMode.${value}`)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p id="responsesHistoryMode-help" className="text-xs text-muted-foreground">{t('models.edit.fields.responsesHistoryModeHelper')}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reasoningHistory">{t('models.edit.fields.reasoningHistory')}</Label>
+                    <Select value={editFormData.reasoningHistory} disabled={editFormData.responsesHistoryMode === 'provider'} onValueChange={(value) => {
+                      if (value === 'none' || value === 'last' || value === 'all' || value === 'auto') {
+                        setEditFormData((prev) => ({ ...prev, reasoningHistory: value }));
+                      }
+                    }}>
+                      <SelectTrigger id="reasoningHistory" aria-describedby="reasoningHistory-help"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(['auto', 'last', 'all', 'none'] as const).map((value) => <SelectItem key={value} value={value}>{t(`models.edit.fields.reasoningHistory.${value}`)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p id="reasoningHistory-help" className="text-xs text-muted-foreground">{t(editFormData.responsesHistoryMode === 'provider' ? 'models.edit.fields.reasoningHistoryProviderHelper' : 'models.edit.fields.reasoningHistoryHelper')}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reasoningSummary">{t('models.edit.fields.reasoningSummary')}</Label>
+                    <Select value={editFormData.reasoningSummary} onValueChange={(value) => {
+                      if (value === 'off' || value === 'auto' || value === 'concise' || value === 'detailed') {
+                        setEditFormData((prev) => ({ ...prev, reasoningSummary: value }));
+                      }
+                    }}>
+                      <SelectTrigger id="reasoningSummary" aria-describedby="reasoningSummary-help"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(['off', 'auto', 'concise', 'detailed'] as const).map((value) => <SelectItem key={value} value={value}>{t(`models.edit.fields.reasoningSummary.${value}`)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p id="reasoningSummary-help" className="text-xs text-muted-foreground">{t('models.edit.fields.reasoningSummaryHelper')}</p>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="providers">{t('models.edit.fields.providers')}</Label>
                 <Input

@@ -33,10 +33,21 @@ to Chat Completions. Model names do not determine the API. Workers and manager/t
 paths are unchanged. No service or protobuf field is added; existing parameter maps
 carry the setting. Deploy backend migration `0050_model_conversation_api.sql` first.
 
-Every call replays application/ADK history with `store=false` and no provider
-response/conversation linkage. The pinned adapter skips reasoning-item replay;
-cross-call reasoning continuity is not promised. Per-turn SDK clients close in the
-orchestrator's `finally` path. MCP tools and identity are unchanged.
+Models additionally select Responses history (application/provider), reasoning
+replay (none/last/all/auto) and summaries (off/auto/concise/detailed), defaulting to
+application/auto/off. Application mode retains `store=false`; the adapter preserves
+original ordered provider items in private existing ADK session state to restore
+reasoning the pinned converter otherwise skips. Last/Auto preserve the current
+tool loop; All permits compatible cross-turn reasoning. Provider mode requires
+Auto, uses `store=true` and response-ID chaining with delta input. Local history
+remains available in both modes. API/model/agent/configuration or transcript changes
+reset lineage; an explicit missing-response rejection rebases once. Chat Completions
+retains application-managed history and clears stale lineage. Native summaries use
+the existing activity panel; encrypted state never enters yielded answer events.
+Apply migration `0051_model_responses_history_controls.sql`. See proposed
+[ADR-0020](../decisions/ADR-0020-conversation-responses-history-controls.md).
+Per-turn SDK clients close in the orchestrator's `finally` path. MCP identity and
+tools are unchanged.
 
 Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
 calls use `CapacityClient.create()` with retries disabled when capacity is enabled.

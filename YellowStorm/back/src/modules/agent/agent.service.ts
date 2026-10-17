@@ -825,13 +825,16 @@ export class AgentService {
     const toolsMap = new Map<string, IToolResponse>();
     for (const t of fetchedTools) toolsMap.set(t.id, t);
 
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; responsesHistoryMode: string; reasoningHistory: string; reasoningSummary: string; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
     for (const m of modelResults) {
       if (m) {
         modelMap.set(m.id, {
           model: m.id,
           omitTemperature: m.omitTemperature,
           conversationApi: m.conversationApi ?? 'chat_completions',
+          responsesHistoryMode: m.responsesHistoryMode ?? 'application',
+          reasoningHistory: m.reasoningHistory ?? 'auto',
+          reasoningSummary: m.reasoningSummary ?? 'off',
           inputModalities: m.inputModalities,
           maxInputTokens: m.maxInputTokens,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
@@ -1024,6 +1027,9 @@ export class AgentService {
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             ...(semanticModel ? { semantic_model_id: semanticModel.id } : {}),
             conversation_api: resolvedModel?.conversationApi ?? 'chat_completions',
+            responses_history_mode: resolvedModel?.responsesHistoryMode ?? 'application',
+            reasoning_history: resolvedModel?.reasoningHistory ?? 'auto',
+            reasoning_summary: resolvedModel?.reasoningSummary ?? 'off',
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }
               : { temperature: String(agent.temperature) }),
@@ -1124,7 +1130,7 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean),
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; conversationApi: 'chat_completions' | 'responses'; responsesHistoryMode: string; reasoningHistory: string; reasoningSummary: string; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
@@ -1134,6 +1140,9 @@ export class AgentService {
           model: m.id,
           omitTemperature: m.omitTemperature,
           conversationApi: m.conversationApi ?? 'chat_completions',
+          responsesHistoryMode: m.responsesHistoryMode ?? 'application',
+          reasoningHistory: m.reasoningHistory ?? 'auto',
+          reasoningSummary: m.reasoningSummary ?? 'off',
           inputModalities: m.inputModalities,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
           maxInputTokens: m.maxInputTokens ?? undefined,
@@ -1279,6 +1288,9 @@ export class AgentService {
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
               conversation_api: resolvedModel?.conversationApi ?? 'chat_completions',
+              responses_history_mode: resolvedModel?.responsesHistoryMode ?? 'application',
+              reasoning_history: resolvedModel?.reasoningHistory ?? 'auto',
+              reasoning_summary: resolvedModel?.reasoningSummary ?? 'off',
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),

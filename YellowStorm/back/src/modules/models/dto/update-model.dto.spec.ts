@@ -2,6 +2,19 @@ import { validate } from 'class-validator';
 import { UpdateModelDto } from './update-model.dto';
 
 describe('UpdateModelDto', () => {
+  it.each([
+    ['responsesHistoryMode', ['application', 'provider']],
+    ['reasoningHistory', ['none', 'last', 'all', 'auto']],
+    ['reasoningSummary', ['off', 'auto', 'concise', 'detailed']],
+  ])('validates %s controls without accepting null or unsupported values', async (field, values) => {
+    for (const value of values) {
+      expect(await validate(Object.assign(new UpdateModelDto(), { [field]: value }))).toHaveLength(0);
+    }
+    for (const value of [null, '', true, 'unsupported']) {
+      expect(await validate(Object.assign(new UpdateModelDto(), { [field]: value }))).not.toHaveLength(0);
+    }
+  });
+
   it.each(['chat_completions', 'responses'])('accepts conversation API %s', async (conversationApi) => {
     await expect(validate(Object.assign(new UpdateModelDto(), { conversationApi }))).resolves.toHaveLength(0);
   });

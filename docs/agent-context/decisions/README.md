@@ -6,6 +6,7 @@ records and check any superseding decision before editing. Do not load every ADR
 
 | Decision | Status | Applies when | Constraint to verify |
 | --- | --- | --- | --- |
+| [ADR-0020: conversation Responses history controls](ADR-0020-conversation-responses-history-controls.md) | proposed | Model-level Responses replay, provider history and summaries | Local transcript retained, opaque state private, provider mode requires Auto, completions stays application-managed |
 | [ADR-0019: conversation native Responses](ADR-0019-conversation-native-responses.md) | proposed | Single-agent conversation parent provider migration | Application-owned history, native stream terminal validation and existing capacity ownership; proposed record does not override accepted decisions |
 | [ADR-0015: runtime-owned semantic AI extraction](ADR-0015-runtime-owned-semantic-ai-extraction.md) | accepted | Semantic-model AI extraction, backend/runtime/ADK ownership or their contracts | Semantic runtime owns inference execution; verify the record's boundary and rollout constraints |
 | [ADR-0017: MCP security and authentication](ADR-0017-mcp-security-and-authentication-baseline.md) | accepted | MCP servers/clients, transport, credentials, identity or authorization | Select the applicable transport/deployment profile and verify its controls; do not apply one profile universally |

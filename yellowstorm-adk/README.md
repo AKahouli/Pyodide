@@ -40,10 +40,15 @@ tools, callbacks and sessions stay unchanged; leaf workers and manager/team
 execution retain their existing adapters.
 
 `LLMFactory.for_conversation()` adapts the built model at the single-agent runner
-boundary. History stays in the application/ADK session: every request replays its
-contents with `store=false` and no provider response/conversation linkage. The
-pinned native adapter does not replay reasoning items; this migration does not
-provide cross-call reasoning-state continuity.
+boundary. Admin Models also controls history mode, reasoning replay and summaries.
+Application mode uses `store=false` and original ordered encrypted reasoning items
+from private ADK session state. Auto/Last preserve the current tool loop; All
+retains compatible cross-turn reasoning; None excludes reasoning. Provider mode
+requires Auto and uses stored response-ID chains with delta input. The local
+transcript remains available; API/model/agent/configuration/history changes rebase
+lineage. Summaries are independent of replay and render in existing activity rows
+only when the provider returns them. Opaque state is never yielded with answers.
+Apply `0051_model_responses_history_controls.sql` before deploying these controls.
 
 The instrumented adapter preserves latency diagnostics and empty-response recovery.
 When `ROOT_WORK_LLM_CAPACITY_ENABLED` is enabled, native requests use the existing

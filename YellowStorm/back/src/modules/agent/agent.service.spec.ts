@@ -763,6 +763,7 @@ describe('AgentService connector skill inheritance', () => {
       { agentTypeId: 'type-mono', modelId: 'selected-model' },
     ]);
     expect(result[0].chatbot.model).toBe('selected-model');
+    expect(result[0].agent_params?.params).toMatchObject({ conversation_api: 'chat_completions', responses_history_mode: 'application', reasoning_history: 'auto', reasoning_summary: 'off' });
   });
 
   it.each([[true, true], [false, false], [undefined, false]])('appends the OpenUI output format to the agent prompt only when genUiEnabled is %s', async (genUiEnabled, appended) => {
@@ -796,7 +797,7 @@ describe('AgentService connector skill inheritance', () => {
     jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue(implicitRoot ? [monoAgent] : []);
     jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
     modelsService.findById.mockResolvedValue({
-      id: 'selected-model', omitTemperature: false, conversationApi: 'responses', inputModalities: ['text'], maxInputTokens: null,
+      id: 'selected-model', omitTemperature: false, conversationApi: 'responses', responsesHistoryMode: 'provider', reasoningHistory: 'auto', reasoningSummary: 'detailed', inputModalities: ['text'], maxInputTokens: null,
       supportsReasoning: true,
       reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
     });
@@ -815,6 +816,7 @@ describe('AgentService connector skill inheritance', () => {
 
     expect(result[0].chatbot.reasoning_effort).toBe('high');
     expect(result[0].agent_params?.params.conversation_api).toBe('responses');
+      expect(result[0].agent_params?.params).toMatchObject({ responses_history_mode: 'provider', reasoning_history: 'auto', reasoning_summary: 'detailed' });
   });
 
   it.each([1, 2])('preserves configured models when explicitly tagging %s agents', async (count) => {
@@ -1072,7 +1074,7 @@ describe('AgentService connector skill inheritance', () => {
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
     const { service, agentRepository, modelsService, agentTypeService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true, conversationApi: 'responses' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true, conversationApi: 'responses', responsesHistoryMode: 'application', reasoningHistory: 'all', reasoningSummary: 'concise' } as any);
 
     const objectId = new Types.ObjectId();
     agentRepository.findByIds.mockResolvedValue([
@@ -1097,7 +1099,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
-    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true', conversation_api: 'responses' }));
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true', conversation_api: 'responses', responses_history_mode: 'application', reasoning_history: 'all', reasoning_summary: 'concise' }));
     expect(result[0].agent_params?.params.temperature).toBeUndefined();
   });
 

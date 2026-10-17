@@ -53,12 +53,20 @@ Single-agent conversation parents use the explicit **Conversation API** choice
 configured per model in **Admin > Models**. Chat Completions is the default for
 existing/new models; Responses opts into native ADK Responses through the existing
 LiteLLM gateway. The choice is independent of model name and is not an automatic
-fallback. Application/ADK history
-remains authoritative; provider storage and conversation linkage are disabled.
+fallback. Application/ADK history remains authoritative for display and recovery.
+Responses-only model controls select application or provider-managed inference
+history, reasoning replay (none/last/all/auto), and native summaries. Defaults are
+application/auto/off. Provider mode requires Auto and chains stored response IDs;
+application mode replays private encrypted items with provider storage disabled.
+Changing API/model/agent/configuration or edited/compacted history resets the chain.
+Summaries use existing expandable activity rows, independently of replay; a model
+may return no summary. Chat Completions ignores dormant Responses controls and
+continues application-managed history. Encrypted state is never answer content.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
 Workers and manager/team execution retain their adapters. Truncated native streams fail
-instead of finalizing partial text/tool calls. Cross-call reasoning-state replay
-is not provided by the pinned adapter. See the runtime architecture record.
+instead of finalizing partial text/tool calls. A private session adapter restores
+reasoning replay omitted by the pinned ADK converter. See the runtime architecture
+record and proposed ADR-0020.
 
 1. The [hash router](../../../YellowStorm/front/src/Router.tsx) lazy-loads the new/existing conversation pages.
 2. [ConversationPage](../../../YellowStorm/front/src/modules/conversation/ConversationPage.tsx) loads thread state and dispatches group threads to the group page.

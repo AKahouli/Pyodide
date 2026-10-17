@@ -50,7 +50,8 @@ class LLMFactory:
         create_no_tool_calls_llm: Creates LLM instance without tool calling capabilities.
     """
     @staticmethod
-    def for_conversation(model, conversation_api='chat_completions'):
+    def for_conversation(model, conversation_api='chat_completions', *,
+                         responses_history_mode='application', reasoning_history='auto', reasoning_summary='off'):
         """Use the catalog's explicit API selection; legacy models keep completions."""
         from google.adk.models.lite_llm import LiteLlm
         from openai import AsyncOpenAI
@@ -59,7 +60,16 @@ class LLMFactory:
             raise ValueError('Unsupported conversation API')
         if conversation_api == 'chat_completions' or not isinstance(model, LiteLlm):
             return model
+        if responses_history_mode not in ('application', 'provider') or reasoning_history not in ('none', 'last', 'all', 'auto'):
+            raise ValueError('Unsupported Responses history policy')
+        if reasoning_summary not in ('off', 'auto', 'concise', 'detailed'):
+            raise ValueError('Unsupported reasoning summary')
+        if responses_history_mode == 'provider' and reasoning_history != 'auto':
+            raise ValueError('Provider-managed history requires automatic reasoning history')
         args = model._additional_args
+        reasoning = {'effort': args['reasoning_effort']} if args.get('reasoning_effort') else {}
+        if reasoning_summary != 'off':
+            reasoning['summary'] = reasoning_summary
         extra = {'max_output_tokens': args.get('max_completion_tokens', 20000)}
         for key in ('temperature', 'user'):
             if key in args:
@@ -76,8 +86,12 @@ class LLMFactory:
                 max_retries=0 if getattr(get_settings(), 'ROOT_WORK_LLM_CAPACITY_ENABLED', False) else args.get('num_retries', LLM_REQUEST_NUM_RETRIES),
             ),
             store=False,
+            history_mode=responses_history_mode,
+            reasoning_history=reasoning_history,
+            summary_mode=reasoning_summary,
+            include=['reasoning.encrypted_content'] if reasoning_history != 'none' else None,
             parallel_tool_calls=args.get('parallel_tool_calls'),
-            reasoning={'effort': args['reasoning_effort']} if args.get('reasoning_effort') else None,
+            reasoning=reasoning or None,
             extra_request_args=extra,
         )
 
