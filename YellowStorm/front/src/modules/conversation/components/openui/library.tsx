@@ -11,6 +11,9 @@ import { OpenUiSubmissionContext } from './actions';
 import { useModuleTranslation } from '@/modules/localization';
 import { withDataTable } from './DataTable';
 import { withChartExplorer } from './ChartExplorer';
+import { miniAppComponents } from './MiniApp';
+import { askAgentAction } from './mini-app-definitions';
+import { miniAppFunctions } from './mini-app-functions';
 
 /**
  * The thesys chat component library (root `Card`, SectionBlock, the card blocks, charts, FollowUpBlock),
@@ -102,10 +105,12 @@ const IMAGE_COMPONENTS = new Set(['Image', 'ImageBlock', 'ImageGallery', 'ImageT
 export const openUiLibrary = createLibrary({
   root: chatLibrary.root,
   componentGroups: chatLibrary.componentGroups,
-  components: Object.values(chatLibrary.components).map((definition) => {
+  components: [...Object.values(chatLibrary.components).map((definition) => {
     const override = overrides[definition.name];
     let component = override ? override(definition.component as StockComponent) : definition.component as StockComponent;
     if (IMAGE_COMPONENTS.has(definition.name)) component = withDocumentImages(component, definition.name);
     return { ...definition, component } as DefinedComponent;
-  }),
+  }), ...miniAppComponents],
+  functions: miniAppFunctions,
+  actions: [askAgentAction],
 });

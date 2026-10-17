@@ -70,6 +70,18 @@ export function formatFormValues(state: Record<string, unknown>): string[] {
  * Unknown action types are ignored rather than guessed at.
  */
 export function toFollowUpMessage(event: ActionEvent, artifacts: readonly ArtifactActivityData[] = []): FollowUp {
+  if (event.type === 'AskAgent') {
+    const instruction = event.params?.instruction;
+    if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 2000) throw new Error('Invalid app instruction');
+    const inputs = typedActionData(event.params?.inputs);
+    const label = event.humanFriendlyMessage?.trim() || instruction.trim();
+    // Same authorized conversation turn and typed persistence contract as ordinary forms.
+    // Including JSON in the readable turn lets the existing agent act on the exact inputs.
+    const formState = typedActionData(event.formState ?? {});
+    return { kind: 'message', content: `${label}\n\n${instruction.trim()}\n\nInputs (JSON):\n${JSON.stringify(inputs)}`,
+      submission: { ...(event.formName ? { formName: event.formName } : {}), label, formState,
+        params: typedActionData({ instruction: instruction.trim(), inputs }) } };
+  }
   // Resolve only artifacts persisted on this answer. A model-provided path/URL is never fetched.
   if (['download_artifact', 'download_file', 'download', OPEN_URL].includes(event.type)) {
     const reference = event.params?.artifactId ?? event.params?.filename ?? event.params?.fileName ?? event.params?.path ?? event.params?.url;

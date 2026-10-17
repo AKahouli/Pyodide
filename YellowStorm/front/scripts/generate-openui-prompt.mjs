@@ -16,15 +16,32 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createParser, generateSystemPrompt } from '@openuidev/lang-core';
+import { createLibrary, createParser, generateSystemPrompt } from '@openuidev/lang-core';
 import { chatLibrary, reportLibrary, presentationLibrary } from '@openuidev/thesys';
+import ts from 'typescript';
 
 /** The block is added to every run of an enabled agent: a hard cap keeps its token cost bounded. */
 const MAX_PROMPT_LENGTH = 60000;
-/** Soft target: a longer prompt still works, but it is time to drop an example or a rule. */
-const TARGET_PROMPT_LENGTH = 45000;
+/** Includes the 1.0 bindings grammar and reusable mini-app spec; the hard cap stays 60k. */
+const TARGET_PROMPT_LENGTH = 55000;
 
 const here = dirname(fileURLToPath(import.meta.url));
+// Reuse the host's exact schemas/functions on Node 20 as well as newer Node versions.
+// TypeScript is already a frontend build dependency; generated modules are git-ignored.
+async function loadDefinitions(filename) {
+  const source = resolve(here, '../src/modules/conversation/components/openui', `${filename}.ts`);
+  const output = resolve(here, 'generated', `${filename}.mjs`);
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, ts.transpileModule(readFileSync(source, 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText);
+  return import(new URL(`./generated/${filename}.mjs`, import.meta.url).href);
+}
+const { miniAppDefinitions, askAgentAction } = await loadDefinitions('mini-app-definitions');
+const { miniAppFunctions } = await loadDefinitions('mini-app-functions');
+const { miniAppExamples } = await loadDefinitions('mini-app-examples');
+const generationLibrary = createLibrary({ root: chatLibrary.root, componentGroups: chatLibrary.componentGroups,
+  components: [...Object.values(chatLibrary.components), ...miniAppDefinitions], functions: miniAppFunctions, actions: [askAgentAction] });
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
 const target = args.find((arg) => !arg.startsWith('--')) ?? resolve(here, 'generated', 'openui-system-prompt.txt');
@@ -51,6 +68,10 @@ const citationRules = [
  * follow-ups) is written here, against the signatures of the library we render.
  */
 const usageRules = [
+  'When the user requests a working interactive tool or mini-app, compose MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput and MiniList inside the normal Card. These are reusable primitives, not named task-specific apps. Use stable $variables declared after the root line, native arithmetic/conditional expressions, registered @functions, and explicit Action([@Set(...)]) / Action([@Reset(...)]) for local controls. Local updates do not run inference. Do not use eval, JavaScript, HTML, Query, Mutation or @Run; no tool provider is exposed.',
+  'Mini-app inputs must bind their value argument directly to a $variable. Derived MiniOutput and MiniList values may use expressions or registered functions. Guard numeric null/blank, division by zero and invalid ranges with conditional expressions; never treat blank as zero. Use concise labels, min/max/required validation and a reset control. Keep lists under 200 items and text under 5000 characters per input. Pure functions only compute locally; they cannot read files or produce AI summaries.',
+  'Agent work is explicit: MiniButton("Run", Action([@AskAgent("Specific instruction", {source: $source, length: $length})]), true). The host validates the panel, sends exact typed inputs through the existing conversation agent and shows submission status. Results arrive in a new answer. For a document summarizer, compose source-text or document-name input, length/style/language selections, optional toggles, a text-count preview, Run and reset. Summarize pasted text or documents already authorized in the conversation/workspace using existing tools; request attachment when unavailable. Never invent document IDs, access foreign files, claim a local text counter summarized a file, or imply that every keystroke invokes AI.',
+  'Mini-app changes are local until an agent submission is accepted. Reload restores only the last submitted bindings; unsubmitted drafts reset. Do not claim autosave, background jobs, in-place asynchronous results or dynamic-app exports. If a user requests export, use the agent to produce a separate static answer/report or an existing authorized document artifact. Preserve the source app when acknowledging actions rather than recreating it.',
   'Assign explorable chat BarChart, HorizontalBarChart and LineChart components to stable named statements. The host provides series selection and category drill-down controls, with an explicit Apply chart view action returning exact original indices and numeric values. Acknowledge applied selections without recreating the source chart.',
   'Assign each explorable chat Table to a stable named statement (for example cities = Table(...)); the host provides row filtering, column sorting, row selection and an explicit Apply table view action. Keep numeric cells as numbers. Applied view state and original selected row identities are returned as typed interaction data; do not recreate the source table when acknowledging its selection.',
   'Answer with a Card program by default: `root = Card(...)` is the first line. Order: Header(title, subtitle), a one or two sentence TextContent that gives the answer itself, then the supporting blocks, then a FollowUpBlock of two or three useful next questions. Keep every text short and never repeat the same facts in two blocks.',
@@ -68,7 +89,7 @@ const usageRules = [
   'Image argument order depends on the active library: CHAT uses Image(alt, src), while REPORT uses Image(src, alt). In a Report program write Image("generated-image:RETURNED_ID", "Exact caption") or Image("[1]", "Original PDF figure"). Never copy the chat argument order into a Report. Follow the presentation schema for slide image fields.',
   'Generated file downloads: after send_file_to_user succeeds, a Button may use {type: "download_artifact", params: {filename: "exact-returned-filename.docx"}} as its action. The interface resolves only ready artifacts attached to this answer and signs a fresh URL on click, including after reload. Never use sandbox/storage paths or signed URLs as download links; do not offer downloads before successful file delivery. Keep every image caption paired with its exact reuse receipt; use generated=false for originals and generated=true for edits, including PDF pages. Never infer original versus edited from reference order or image dimensions.',
   'Interactive answers: give each Form a stable unique name and each field a stable name. Wrap fields in FormControl and declare appropriate rules (required, numeric, min/max, email, etc.). Use a primary Button for validated submission. Filter, chart and table follow-up actions may pass typed JSON params (row IDs, ranges, selections); preserve booleans, numbers, arrays and explicit empty values. Submitted form state and params are saved as typed data, with visible submission status and hydration after reload. Never claim a submission succeeded before the interface accepts it.',
-  'Do not use forms or buttons unless the user asked for something to fill in, except generated file download buttons. Do not stack more than six blocks after the Header; pick the ones the answer needs.',
+  'Do not use forms or buttons unless the user asked for something to fill in or a working interactive app, except generated file download buttons. Do not stack more than six blocks after the Header; pick the ones the answer needs.',
 ];
 
 /** How to deliver a report next to the chat answer (see ReportBlock.tsx and report-program.ts in the front end). */
@@ -164,8 +185,11 @@ s4 = Slide("s4", takeaway)
 takeaway = HeadlineStatement("Next step", "Prioritize the busiest regions", "title-top")`,
 ];
 
+examples.push(`Example 5 — A generated local mini-app\n${miniAppExamples.converter}`,
+  `Example 6 — A generated document summarizer with an explicit agent action\n${miniAppExamples.summarizer}`);
+
 /** Each example must parse without error against the library it targets, so a library upgrade fails loudly here. */
-const chatParser = createParser(chatLibrary.toJSONSchema());
+const chatParser = createParser(generationLibrary.toJSONSchema());
 const reportParser = createParser(reportLibrary.toJSONSchema());
 const presentationParser = createParser(presentationLibrary.toJSONSchema());
 function assertValid(label, parser, program) {
@@ -194,8 +218,10 @@ function withoutCardSources(spec) {
 }
 
 const chatPrompt = generateSystemPrompt({
-  library: withoutCardSources(chatLibrary.toSpec()),
+  library: withoutCardSources(generationLibrary.toSpec()),
   promptOptions: {
+    bindings: true,
+    toolCalls: false,
     examples: examples.map((example, index) => example.replace(/^Example \d+/, `Example ${index + 1}`)),
     additionalRules: [...usageRules, ...citationRules, ...reportRules],
   },

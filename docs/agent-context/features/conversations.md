@@ -10,6 +10,30 @@
 
 ## Purpose and workflows
 
+### Reusable OpenUI mini-apps (2026-10-17)
+
+With the agent's existing generative-UI option enabled, the shared library now
+provides `MiniApp`, bound input/select/toggle controls, action buttons, outputs
+and lists. Agents compose these into unrelated apps without application-specific
+screens. Four pure functions format numbers, count text, filter lists and join
+text; each validates its arguments and result inside the implementation because
+the SDK does not consistently enforce declared function schemas.
+
+Local bindings, expressions and Set/Reset actions need no inference. Explicit
+`AskAgent` actions validate the enclosing form and use the existing typed,
+authorized conversation-submission path. Accepted submissions restore their
+bindings after reload; subsequent unsubmitted drafts do not persist. Document
+summarization accepts pasted text or requests existing authorized conversation
+documents through a normal agent turn. There is no new document execution bridge,
+generated JavaScript or dynamic mini-app export contract. The static summary
+remains a normal exportable answer. See the
+[implementation and remaining phases](../architecture/openui-mini-apps-plan.md#phase-2-implementation-and-qualification).
+
+Live qualification used conversation `0a36aab51f702536578737aa`: a converter,
+discount scenario and city filter ran locally, and a document summarizer returned
+a factual French paragraph from pasted source text. Reload retained submitted
+values, including the unchecked bullets option, and discarded a later draft.
+
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an
 uploaded file; nonempty plain text takes precedence over Office clipboard bitmaps.

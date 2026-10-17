@@ -1,6 +1,6 @@
 # OpenUI 1.0 migration assessment and general mini-app plan
 
-Status: **phase 1 dependency migration qualified; phases 2–7 remain proposed**.
+Status: **phases 1 and 2 qualified; phases 3–7 remain proposed**.
 Assessed 2026-10-17 against this branch after chart-export commit `2f2e303c4`.
 Other dirty work in the checkout is outside this assessment. Package versions below
 are an assessment-date snapshot, not a claim about future registry releases.
@@ -30,8 +30,8 @@ peer overrides, React 18 and Zustand 5. No new schema, service, execution bridge
 or persistence contract is introduced; no accepted platform ADR adds a constraint
 to this dependency-only scope. Preserve legacy component signatures and programs.
 
-Regenerating the output-format prompt produces no change. General bindings,
-functions and tool calls are not added to the production generation library.
+At the phase 1 commit, regenerating the output-format prompt produced no change.
+General bindings, functions and tool calls were not added to the production generation library.
 A test-only 1.0 library qualifies reactive registered functions, local `@Set`,
 numeric custom actions and JSON-roundtripped zero-valued state hydration.
 Mounted legacy suites and browser/export checks qualify the retained libraries;
@@ -74,6 +74,82 @@ Initial reload required sign-in; after the user restored the session, the final
 Japan reload and both exports succeeded. This phase does not requalify remote MCP
 sandbox creation/delivery or add dynamic mini-app snapshot exports. The retained
 legacy export projection and its failure/cancellation paths are covered by tests.
+
+## Phase 2 implementation and qualification
+
+The authorized phase 2 extends the existing Conversation OpenUI library with
+`MiniApp`, `MiniInput`, `MiniSelect`, `MiniToggle`, `MiniButton`, `MiniOutput` and
+`MiniList`. Programs compose these controls inside the existing `Card` root;
+there are no app-specific calculator, scenario, list or summarizer screens.
+Inputs bind directly to `$variables`, native expressions compute local results,
+and `@Set`/`@Reset` perform local actions without inference. Numeric blank remains
+null rather than becoming zero. Required/min/max form validation is enforced
+before an `AskAgent` action independently of its generated validation flag;
+local reset remains available on invalid input. Streaming and submission disable
+the controls and reuse the existing interaction status/retry handling.
+
+Four pure functions are registered: `FormatNumber`, `TextMetrics`, `FilterText`
+and `JoinText`. Each function validates arguments and results inside its
+implementation. A mounted regression exposed that the SDK's declared parameter
+schemas did not enforce the decimal precision refinement before executing
+`FormatNumber(1, 13)`. Internal Zod parsing now rejects invalid calls; the SDK
+isolates the throw as null and `MiniOutput` displays a localized invalid/empty
+result while a valid sibling remains visible. Inputs/results require finite
+numbers, precision 0–12, lists of at most 200 strings and combined text of at
+most 20,000 UTF-16 code units. Join separators are capped at 100 code units and
+the joined output has the same text cap. Input controls accept at most 5,000 code
+units each. No arbitrary code, HTML execution, tool provider or document access
+is exposed through these functions.
+
+`AskAgent` submits an explicit instruction and typed JSON inputs through the
+existing `continue_conversation`/`openUiSubmission` contract. The backend retains
+its bounded JSON/source-answer/conversation authorization checks and supplies
+the canonical interaction to the normal agent turn. A document summarizer can
+submit pasted text or identify an already authorized conversation/workspace
+document for the agent's existing tools to read. It requests an attachment when
+the source is missing/inaccessible and returns a grounded answer separately.
+Text metrics are not a local AI summary. This phase adds no document selector,
+execution bridge, asynchronous in-place result service or storage contract.
+
+Local unsubmitted changes reset after reload. The existing accepted-submission
+history rehydrates submitted bindings, including zero/false/empty values; draft
+autosave, viewer state/CAS and dynamic snapshot exports remain later proposals.
+Users can ask the normal agent to export a separate static answer/report or an
+existing authorized artifact. Existing saved roots and legacy component schemas
+remain unchanged.
+
+The prompt generator transpiles the exact shared TypeScript component/function
+definitions using the existing TypeScript dependency, including on Node 20.
+Bindings are enabled and tool calls disabled. The generated prompt is 54,709
+characters against a 55,000 soft target and 60,000 hard cap. No new dependency,
+schema, service, runtime or applicable accepted platform ADR was introduced.
+
+Current qualification: the final frontend run passes 251 tests in 31 files,
+including 12 focused pure-function/mounted tests covering
+converter/scenario/list/document-summary compositions, blank versus zero,
+validation, reset, typed explicit submission, accepted-state hydration,
+pending/streaming controls and invalid-function isolation. Existing compatibility
+suites remain passing. Final TypeScript, production build and 14 backend
+typed-contract tests pass; independent implementation/documentation review found
+no blocking issues.
+
+Live browser QA passed in conversation `0a36aab51f702536578737aa`:
+
+- One natural-language request generated four different composed apps. Local
+  conversion (100 Celsius to 212.00 Fahrenheit and reset to 32.00), discounted
+  scenario total (18.00) and list filter (`Os` to Osaka) retained one assistant
+  turn; these interactions did not trigger inference.
+- The document-summary controls counted 171 source characters and 28 words.
+  Selecting Detailed/French/bullets=false and explicitly submitting produced
+  a new grounded French Card answer, including the source's zero-euro budget.
+  Controls disabled while submitting and displayed the saved status afterward.
+- Changing the source to an unsubmitted draft and reloading restored the
+  accepted original source, Detailed/French/false choices and the summary.
+  Scenario total 18.00 and the `Os` filter also restored because the accepted
+  submission captured those bindings; this does not establish draft autosave.
+- An actual 1,176-byte downloaded static HTML summary retained its title,
+  paragraphs and zero-euro fact. This verifies export of the separate result,
+  not a dynamic mini-app snapshot or a new document execution bridge.
 
 ## Verified assessment findings (before migration)
 
@@ -373,5 +449,7 @@ conversation; the subsequent authorized phase 1 package migration is recorded ab
 Before implementing phase 3, approve/revise the named
 `conversation.openui_app_states` + per-viewer CAS API design. Before phase 6,
 approve/revise `OpenUiHtmlSandbox` and its capability/snapshot constraints separately.
-Phase 1 must pass the mounted-library compatibility gate before enabling new app
-generation; the later phases remain proposed.
+Phase 1 passed the mounted-library compatibility gate. Phase 2's implemented
+declarative library and passed live browser qualification are recorded above;
+the final production build and independent review also passed.
+Phases 3–7 remain proposed and retain their separate approval boundaries.

@@ -45,10 +45,9 @@ Thesys remains **0.14.0**: its published peer ranges do not certify this combina
 SDK runtime and the application's Zustand 5 store; mounted legacy component/provider tests qualify this integration locally.
 Keep these tests as upgrade gates, including reports, slide previews, forms, images and exports. React remains 18.
 
-This dependency migration preserves existing component signatures, persisted programs and accepted interaction state. It does
-not enable general mini-app generation or autosave. `migration-compatibility.test.tsx` separately qualifies the 1.0 function,
-local `@Set`, typed action and state-hydration APIs using a test-only library. The generated agent prompt remains unchanged
-after regeneration; new bindings/tool capabilities require their own implementation and qualification.
+The phase 1 dependency migration preserved existing component signatures, persisted programs and accepted interaction state.
+Its generated prompt was unchanged. `migration-compatibility.test.tsx` separately qualified the 1.0 function, local `@Set`,
+typed action and state-hydration APIs before phase 2 exposed the bounded declarative primitives below. Autosave remains separate work.
 
 Known upstream limitation: core 1.0.1's `library.extend()` calls `zod/v4/core.util.mergeDefs`, which is absent from Zod
 3.25.76's bundled v4 bridge. Vite warns about that export. Our libraries and prompt generator use `createLibrary` with
@@ -67,6 +66,48 @@ that argument from the spec.
 package; the ones in `@openuidev/react-ui` target its own library with other signatures). The generator therefore builds the prompt with
 `generateSystemPrompt` from the stock spec and layers our own `additionalRules` (stat cards, charts, icon lists, tags, image cards, citations,
 reports) and `examples`, each example parsed against the library at generation time.
+
+### Reusable declarative mini-apps (phase 2)
+
+The agent composes `MiniApp`, `MiniInput`, `MiniSelect`, `MiniToggle`, `MiniButton`, `MiniOutput` and `MiniList` inside the
+existing `Card` root. These are general controls, not calculator, scenario or summarizer screens. Inputs bind directly to
+OpenUI `$variables`; native expressions and local `@Set`/`@Reset` actions update the panel without an inference turn.
+Numeric blank is `null`, distinct from zero. Required fields and numeric ranges are checked before `AskAgent` even when the
+generated button omits its validation flag. Fields disable during streaming/submission; existing submission status and retry
+handling are reused. Local reset does not require the form to be valid.
+
+Four registered pure functions support composition: `FormatNumber`, `TextMetrics`, `FilterText` and `JoinText`.
+Every implementation validates both arguments and results internally: the SDK's declared schemas alone do not reliably
+enforce refinements at execution time. Numbers must be finite, decimal precision is 0–12, lists contain at most 200 strings,
+and combined function text is limited to 20,000 UTF-16 code units. Join separators have at most 100 code units and joined
+output is bounded too. Invalid calls throw into the SDK's isolated error path and become `null`; `MiniOutput` shows the
+localized invalid/empty-result message while valid sibling output remains visible. Text input controls cap each value at
+5,000 code units. There is no model-supplied JavaScript, `eval`, HTML execution or direct tool/file capability.
+
+`AskAgent(instruction, inputs)` is an explicit action, normalized to the existing typed `continue_conversation` submission.
+Bounded JSON inputs and binding state retain numbers, booleans, arrays, null and empty strings. The existing backend verifies
+the source answer/component and conversation access, then places the canonical typed submission in an ordinary agent turn.
+A document summarizer therefore uses pasted text or names a document already authorized in that conversation/workspace;
+the conversation agent reads it with its existing tools and answers separately. Missing or inaccessible documents require
+an attachment or clarification. `TextMetrics` only counts text; it does not summarize documents. No document picker,
+new execution bridge or in-place asynchronous result service was added.
+
+Unsubmitted changes remain local and reset after reload. Only bindings from accepted explicit submissions rehydrate through
+the existing interaction history; this is not draft autosave or a new persistence contract. Dynamic mini-app snapshot exports
+remain deferred. Export requests can produce a separate static answer/report or authorized artifact through the existing agent.
+
+The generator transpiles the exact shared TypeScript definitions with the installed TypeScript dependency for Node 20,
+enables bindings and disables tool calls. The phase 2 prompt is 54,709 characters (55,000 soft target; 60,000 hard cap).
+Focused verification covers four unrelated generated compositions and an explicit document-summary request: the final frontend
+run passes 251 tests in 31 files, including the 12 function/mounted tests, and the final production build passes.
+Live browser QA in conversation `0a36aab51f702536578737aa` generated all four apps from one natural-language request:
+100 Celsius displayed 212.00 Fahrenheit, reset restored 32.00, the discounted scenario displayed 18.00, and `Os` filtered
+the list to Osaka without another assistant turn. An explicit summary request with Detailed/French/bullets=false produced
+a grounded French answer, including the source's zero-euro budget. Controls disabled while submitting. After changing the
+source to an unsubmitted draft and reloading, the accepted original source, Detailed/French/false choices and summary returned;
+the scenario/list bindings captured in that accepted submission also restored. A downloaded 1,176-byte static HTML summary
+retained the title, paragraphs and zero-euro fact. Final TypeScript and 14 backend contract tests pass. Independent implementation
+and documentation review found no blocking issues.
 
 thesys's stylesheet is imported next to the react-ui one in OpenUiRenderer.tsx. Both live in the lazy chunk, and
 `devtools-off.ts` must stay the first import of anything that loads react-lang (thesys does, so a new entry point has to import it first).
@@ -134,7 +175,8 @@ so `library.tsx` swaps the renderer of the text-bearing components, using the st
 unchanged): TextContent is reimplemented around `CitationMarkdown`; Header and Table keep the stock component and are fed chip
 elements (or a marked cell resolved by `renderNode`); CalloutV2, StepsItem, Text, BoldText, IconText (the text of every card block),
 InlineHeader, List and EntityList are in `inline-text.tsx`, used only when a string carries a `[n]` marker and the answer has citations.
-Names, schemas and prompt are unchanged (spec-equality test). Each known marker becomes our `SingleInlineCitation` chip (hover
+Stock component names and schemas remain unchanged; the library adds the separate mini-app definitions and their prompt spec.
+Each known marker becomes our `SingleInlineCitation` chip (hover
 card, document viewer, record drawer, web link). Components that render plain strings (Tag, TagBlock, ImageText, MetricIndicator*,
 FollowUpBlock texts, Steps/Tabs/Accordion headings, SectionBlockItem and tab/accordion triggers, chart labels, Col labels,
 buttons) show the marker literally or drop it; the prompt tells the agent to avoid them. A `CardSourceProvider` gives the stock inline

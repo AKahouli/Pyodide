@@ -6,6 +6,16 @@ const submission = () => ({ type: 'openui', schemaVersion: 1, sourceMessageId: '
   formState: { enabled: { componentType: 'Checkbox', value: false }, count: 0, ratio: 1.25, empty: '',
     optional: null, values: ['x', 2, true, null], nested: { list: [] } }, params: {} });
 describe('OpenUI submission transport bounds', () => {
+  it('accepts a mini-app agent action without coercing its submitted values', async () => {
+    const inputs = { sourceText: 'Pilot budget: 0 euros.', length: 'detailed', bullets: false, count: 0 };
+    const input = { content: 'Summarize', openUiSubmission: { ...submission(), formName: 'summary',
+      label: 'Summarize', formState: { ...inputs, optional: null },
+      params: { instruction: 'Summarize the supplied text.', inputs } } };
+    const dto = plainToInstance(SendMessageDto, input);
+    expect(await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+    expect(dto.openUiSubmission).toEqual(input.openUiSubmission);
+    expect(dto.openUiSubmission?.params?.inputs).toEqual(inputs);
+  });
   it('retains typed JSON through DTO transformation and validation', async () => {
     const input = { content: '', openUiSubmission: submission() };
     const dto = plainToInstance(SendMessageDto, input);
