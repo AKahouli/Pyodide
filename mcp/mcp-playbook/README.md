@@ -40,6 +40,11 @@ The YellowStorm Playbook canvas uses its JWT-authenticated `/api/v1/playbooks/:p
 
 ## Operations
 
+- Local platform startup includes this service: `scripts/restart-platform.ps1`
+  and `scripts/restart-core.ps1`. Restart only this MCP with
+  `./scripts/restart-platform.ps1 -Only playbook` (alias `mcp-playbook`). The local
+  scripts expect port 8025; keep `MCP_PORT` and backend `PLAYBOOK_MCP_SERVER_URL`
+  aligned. Hidden service logs are under `%TEMP%\YellowStorm-platform`.
 - Liveness: `GET /health/live`.
 - Readiness: `GET /health/ready`; readiness fails when required secrets or bounded settings are invalid.
 - Inject the internal service token and the configured ingress credential through the deployment secret manager. Never put real values in images, manifests, logs, browser configuration, or connector persistence.

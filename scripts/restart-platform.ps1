@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-  Restart the full YellowStorm platform (backend, ADK, front, mcp-semantic-model, semantic-runtime).
+  Restart the full YellowStorm platform, including both MCP services.
 
 .DESCRIPTION
-  1. Kills whatever listens on the platform ports (3000, 5173, 8001, 50051, 8027, 8010)
+  1. Kills whatever listens on the platform ports (3000, 5173, 8001, 50051, 8025, 8027, 8010)
      plus stale semantic-runtime Celery workers.
-  2. Starts the 5 services again, each in its own console window, in dependency order:
-     semantic-runtime -> mcp-semantic-model -> adk -> backend -> front.
+  2. Starts the 6 services again in hidden processes, in dependency order:
+     semantic-runtime -> mcp-semantic-model -> mcp-playbook -> adk -> backend -> front.
+     Logs are written under $env:TEMP\YellowStorm-platform.
 
   Mirrors the currently observed local startup commands:
     back    : npm run start:prod            (node dist/main, port 3000)
@@ -35,7 +36,7 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('back', 'backend', 'adk', 'front', 'frontend', 'mcp', 'mcp-semantic-model', 'runtime', 'semantic-runtime', 'semantic-model-runtime')]
+  [ValidateSet('back', 'backend', 'adk', 'front', 'frontend', 'mcp', 'mcp-semantic-model', 'playbook', 'mcp-playbook', 'runtime', 'semantic-runtime', 'semantic-model-runtime')]
   [string[]]$Only = @(),
 
   [switch]$KillOnly,
@@ -50,16 +51,18 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $BackDir  = Join-Path $RepoRoot 'YellowStorm\back'
 $McpDir   = Join-Path $RepoRoot 'mcp\mcp-semantic-model'
+$PlaybookMcpDir = Join-Path $RepoRoot 'mcp\mcp-playbook'
 $AdkDir   = Join-Path $RepoRoot 'yellowstorm-adk'
 $FrontDir = Join-Path $RepoRoot 'YellowStorm\front'
 $SemDir   = Join-Path $RepoRoot 'YellowStorm\semantic-model-runtime'
 
 # Canonical service definitions. Ports come from each service's .env / settings:
 # back PORT=3000 | front VITE_PORT=5173 | adk PORT=8001 + GRPC_PORT=50051 |
-# mcp MCP_PORT=8027 | semantic-runtime default 8010 (main.py DEFAULT_PORT).
+# mcp MCP_PORT=8027 | playbook MCP_PORT=8025 | semantic-runtime default 8010.
 $Services = @(
   @{ Key = 'runtime'; Label = 'semantic-runtime'; Dir = $SemDir;  Ports = @(8010) },
   @{ Key = 'mcp';     Label = 'mcp-semantic-model'; Dir = $McpDir; Ports = @(8027) },
+  @{ Key = 'playbook'; Label = 'mcp-playbook'; Dir = $PlaybookMcpDir; Ports = @(8025) },
   @{ Key = 'adk';     Label = 'adk';               Dir = $AdkDir;  Ports = @(8001, 50051) },
   @{ Key = 'back';    Label = 'backend';            Dir = $BackDir; Ports = @(3000) },
   @{ Key = 'front';   Label = 'front';             Dir = $FrontDir; Ports = @(5173) }
@@ -70,6 +73,7 @@ function Test-Selected([string]$Key) {
   $aliases = @{
     'back' = @('back', 'backend'); 'adk' = @('adk'); 'front' = @('front', 'frontend');
     'mcp' = @('mcp', 'mcp-semantic-model'); 'runtime' = @('runtime', 'semantic-runtime', 'semantic-model-runtime')
+    'playbook' = @('playbook', 'mcp-playbook')
   }
   foreach ($wanted in $Only) {
     if ($aliases[$Key] -contains $wanted) { return $true }
@@ -140,12 +144,10 @@ function Wait-PortListening([int]$Port, [int]$TimeoutSec = 45) {
 }
 
 function Start-ServiceWindow([string]$Title, [string]$WorkDir, [string]$Command) {
-  # Each service gets its own console window; the window stays open (-NoExit)
-  # so logs remain visible. Single quotes inside the command are escaped.
-  $safe = $Command -replace "'", "''"
-  $inner = 'Set-Location ''' + $WorkDir + '''; $Host.UI.RawUI.WindowTitle = ''' + $Title + '''; ' + $safe
-  Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit', '-Command', $inner) -WorkingDirectory $WorkDir | Out-Null
-  Write-Host ('  started [{0}] in a new window' -f $Title)
+  $logDir = Join-Path $env:TEMP 'YellowStorm-platform'
+  New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', $Command) -WorkingDirectory $WorkDir -RedirectStandardOutput (Join-Path $logDir "$Title.log") -RedirectStandardError (Join-Path $logDir "$Title.err.log") | Out-Null
+  Write-Host ('  started [{0}]; logs: {1}' -f $Title, $logDir)
 }
 
 # --- preflight ---------------------------------------------------------------
@@ -198,7 +200,7 @@ if ($KillOnly) { Write-Host 'KillOnly: done.'; exit 0 }
 Write-Host '== Starting services =='
 
 if (Test-Selected 'runtime') {
-  Write-Host '[1/5] semantic-runtime (port 8010)...'
+  Write-Host '[1/6] semantic-runtime (port 8010)...'
   if (-not $NoWorkers) {
     Start-ServiceWindow 'semantic-datasource-worker' $SemDir "conda run -n meta --no-capture-output python -m celery -A app.workers.datasource_tasks:celery_app worker --loglevel=INFO --pool=solo --queues semantic-model-datasource.preview,semantic-model-datasource.batch --hostname 'semantic-datasource@%h'"
     Start-ServiceWindow 'semantic-population-worker' $SemDir "conda run -n meta --no-capture-output python -m celery -A app.workers.population_tasks:celery_app worker --loglevel=INFO --pool=solo --queues semantic-model-population.batch,semantic-model-population.corrections --hostname 'semantic-population@%h'"
@@ -208,17 +210,22 @@ if (Test-Selected 'runtime') {
 }
 
 if (Test-Selected 'mcp') {
-  Write-Host '[2/5] mcp-semantic-model (port 8027)...'
+  Write-Host '[2/6] mcp-semantic-model (port 8027)...'
   Start-ServiceWindow 'mcp-semantic-model' $McpDir 'conda run -n meta --no-capture-output python server.py'
 }
 
+if (Test-Selected 'playbook') {
+  Write-Host '[3/6] mcp-playbook (port 8025)...'
+  Start-ServiceWindow 'mcp-playbook' $PlaybookMcpDir 'conda run -n meta --no-capture-output python server.py'
+}
+
 if (Test-Selected 'adk') {
-  Write-Host '[3/5] adk (ports 8001 + 50051)...'
+  Write-Host '[4/6] adk (ports 8001 + 50051)...'
   Start-ServiceWindow 'adk' $AdkDir 'conda run -n meta --no-capture-output python main.py'
 }
 
 if (Test-Selected 'back') {
-  Write-Host '[4/5] backend (port 3000)...'
+  Write-Host '[5/6] backend (port 3000)...'
   if ($Build) {
     Write-Host '  building backend (npm run build)...'
     Push-Location $BackDir
@@ -234,7 +241,7 @@ if (Test-Selected 'back') {
 }
 
 if (Test-Selected 'front') {
-  Write-Host '[5/5] front (port 5173)...'
+  Write-Host '[6/6] front (port 5173)...'
   Start-ServiceWindow 'front' $FrontDir 'npm run dev'
 }
 
@@ -247,7 +254,7 @@ foreach ($svc in $Services) {
     if (Wait-PortListening $port $WaitSeconds) {
       Write-Host ('  OK   port {0} [{1}] listening' -f $port, $svc.Label)
     } else {
-      Write-Warning ('  MISS port {0} [{1}] not listening yet - check its window' -f $port, $svc.Label)
+      Write-Warning ('  MISS port {0} [{1}] not listening yet - check logs in %TEMP%\YellowStorm-platform' -f $port, $svc.Label)
       $failed += $port
     }
   }
@@ -255,9 +262,10 @@ foreach ($svc in $Services) {
 
 Write-Host ''
 Write-Host 'Health endpoints to confirm manually:'
-Write-Host '  back    http://localhost:3000/api/health (or /api/v1/health)'
+Write-Host '  back    http://localhost:3000/api/v1/health/ready'
 Write-Host '  front   http://localhost:5173/'
-Write-Host '  adk     http://localhost:8001/health (REST) + grpc localhost:50051'
+Write-Host '  adk     http://localhost:8001/health/ready + grpc localhost:50051'
+Write-Host '  playbook http://localhost:8025/health/ready'
 Write-Host '  mcp     http://localhost:8027/ (streamable-http) + /health/ready'
 Write-Host '  runtime http://127.0.0.1:8010/health (or /health/ready)'
 

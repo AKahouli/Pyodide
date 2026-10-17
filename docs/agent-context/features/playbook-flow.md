@@ -43,7 +43,20 @@ The feature lets users visually create and edit multi-step AI workflows, then ex
 
 ## Focused verification
 
-No verification was run. Select affected tests before making changes.
+Local readiness investigation on 2026-10-17 confirmed the configured MCP was not
+listening on port 8025 although its JWT configuration validated. The platform/core
+restart scripts had omitted this existing service. Both scripts now include it;
+targeted selection accepts `playbook` or `mcp-playbook`. Authentication, tools and
+readiness semantics are unchanged (ADR-0017). Hidden process logs are written under
+`%TEMP%\YellowStorm-platform`.
+
+The focused `scripts/test-restart-platform.ps1` regression checks full-service
+selection, both targeted aliases, the real launch block and core-script named
+parameter/switch forwarding without starting any service. Core forwarding now
+uses a named hashtable splat; its former positional array failed parameter binding.
+A real targeted restart passed. Local MCP `/health/ready` and backend
+`/api/v1/health/ready` returned HTTP 200 afterward, with all backend readiness
+components passing. No tool execution or frontend change was needed.
 
 | Area | Command, working directory and evidence/gap |
 | --- | --- |

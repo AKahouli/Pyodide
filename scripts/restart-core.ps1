@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Restart only backend + frontend + ADK (subset of restart-platform.ps1).
+  Restart backend + frontend + ADK + Playbook MCP (subset of restart-platform.ps1).
 #>
 [CmdletBinding()]
 param(
@@ -14,9 +14,9 @@ $ErrorActionPreference = 'Stop'
 $Platform = Join-Path $PSScriptRoot 'restart-platform.ps1'
 if (-not (Test-Path -LiteralPath $Platform)) { throw "Missing: $Platform" }
 
-$args_ = @('-Only', @('back', 'front', 'adk'), '-WaitSeconds', $WaitSeconds)
-if ($KillOnly) { $args_ += '-KillOnly' }
-if ($StartOnly) { $args_ += '-StartOnly' }
-if ($Build) { $args_ += '-Build' }
+$args_ = @{ Only = @('back', 'front', 'adk', 'playbook'); WaitSeconds = $WaitSeconds }
+if ($KillOnly) { $args_.KillOnly = $true }
+if ($StartOnly) { $args_.StartOnly = $true }
+if ($Build) { $args_.Build = $true }
 
 & $Platform @args_
