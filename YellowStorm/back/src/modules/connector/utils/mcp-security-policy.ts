@@ -4,31 +4,35 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
 import type { McpSecurityPolicy } from '../connector.types';
 import { canonicalMcpEndpoint as normalizeEndpoint } from './mcp-destination-policy.util';
+import type { McpDestinationPolicyOptions } from './mcp-destination-policy.util';
 
 export const DEFAULT_MCP_SECURITY_POLICY: McpSecurityPolicy = {
   version: 1, profile: 'configured', actorDelegation: 'none',
-  allowPrivateNetwork: false, requiredPermissions: [],
+  allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [],
 };
 
 export function normalizeMcpSecurityPolicy(value: unknown): McpSecurityPolicy {
   if (value === undefined) return { ...DEFAULT_MCP_SECURITY_POLICY, requiredPermissions: [] };
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const policy = value as Record<string, unknown>;
-  if (Object.keys(policy).some(key => !['version', 'profile', 'audience', 'actorDelegation', 'allowPrivateNetwork', 'requiredPermissions'].includes(key))) invalid();
+  if (Object.keys(policy).some(key => !['version', 'profile', 'audience', 'actorDelegation', 'allowPrivateNetwork', 'allowInsecureHttp', 'requiredPermissions'].includes(key))) invalid();
   if (policy.version !== 1 || typeof policy.profile !== 'string' || !['configured', 'internal_jwt', 'public'].includes(policy.profile)
     || typeof policy.actorDelegation !== 'string' || !['none', 'verified_user'].includes(policy.actorDelegation)
-    || typeof policy.allowPrivateNetwork !== 'boolean' || !Array.isArray(policy.requiredPermissions)
+    || typeof policy.allowPrivateNetwork !== 'boolean'
+    || (policy.allowInsecureHttp !== undefined && typeof policy.allowInsecureHttp !== 'boolean')
+    || !Array.isArray(policy.requiredPermissions)
     || policy.requiredPermissions.length > 100
     || policy.requiredPermissions.some(p => typeof p !== 'string' || !(Object.values(Permissions) as string[]).includes(p))) invalid();
   const audience = typeof policy.audience === 'string' ? policy.audience.trim() : '';
   if (policy.profile === 'internal_jwt') {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(audience)) invalid();
   } else if (policy.audience !== undefined || policy.actorDelegation !== 'none') invalid();
-  if (policy.profile === 'public' && policy.allowPrivateNetwork) invalid();
+  if (policy.profile === 'public' && (policy.allowPrivateNetwork || policy.allowInsecureHttp)) invalid();
   return {
     version: 1, profile: policy.profile as McpSecurityPolicy['profile'],
     ...(audience ? { audience } : {}), actorDelegation: policy.actorDelegation as McpSecurityPolicy['actorDelegation'],
     allowPrivateNetwork: policy.allowPrivateNetwork as boolean,
+    allowInsecureHttp: policy.allowInsecureHttp === true,
     requiredPermissions: [...new Set(policy.requiredPermissions as string[])].sort(),
   };
 }
@@ -38,8 +42,28 @@ function invalid(): never {
 }
 
 export function isPrivilegedMcpPolicy(policy: McpSecurityPolicy): boolean {
-  return policy.profile === 'internal_jwt' || policy.allowPrivateNetwork
+  return policy.profile === 'internal_jwt' || policy.allowPrivateNetwork || policy.allowInsecureHttp
     || policy.actorDelegation !== 'none' || policy.requiredPermissions.length > 0;
+}
+
+/**
+ * One destination-policy resolution shared by inspection, runtime and evidence
+ * paths, so a configured grant (e.g. development insecure HTTP) cannot diverge
+ * between enforcement points. `config` is the typed ConfigService.
+ */
+export function resolveMcpDestinationPolicyOptions(
+  policy: McpSecurityPolicy,
+  serverUrl: string,
+  config?: { get: <T = string>(propertyPath: string, defaultValue?: T) => T },
+): McpDestinationPolicyOptions {
+  const nodeEnv = config?.get<string>('NODE_ENV');
+  return {
+    ...(config ? { allowedPorts: config.get<string>('MCP_EGRESS_ALLOWED_PORTS', '80,443,8443').split(',').map(Number) } : {}),
+    allowInsecureHttp: nodeEnv !== 'production'
+      && (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) || policy.allowInsecureHttp),
+    requireTls: nodeEnv === 'production',
+    allowExactEndpoints: policy.allowPrivateNetwork ? [serverUrl] : [],
+  };
 }
 
 export function assertMcpSecurityManager(permissions: readonly string[] = []): void {

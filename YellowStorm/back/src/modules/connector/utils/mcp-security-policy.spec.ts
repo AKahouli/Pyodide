@@ -1,10 +1,12 @@
 import { BadRequestException, ForbiddenException } from '@modules/exceptions';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { assertMcpSecurityManager, assertNoReservedMcpOverrides, canonicalMcpEndpoint,
-  hasConfiguredMcpCredential, hasMcpCredentialHeaders, mcpBindingChanged, normalizeMcpSecurityPolicy } from './mcp-security-policy';
+  hasConfiguredMcpCredential, hasMcpCredentialHeaders, isPrivilegedMcpPolicy, mcpBindingChanged,
+  normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from './mcp-security-policy';
+import type { McpSecurityPolicy } from '../connector.types';
 
 describe('MCP security policy validation', () => {
-  const configured = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] };
+  const configured: McpSecurityPolicy = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
   it.each<Record<string, string>>([{}, { 'X-User-Id': 'user', 'X-Correlation-ID': 'trace' }, { Authorization: 'Bearer ' }, { Authorization: '' }])
   ('does not count missing credentials or trace headers as authentication (%j)', headers => {
     expect(hasMcpCredentialHeaders(headers)).toBe(false);
@@ -22,6 +24,23 @@ describe('MCP security policy validation', () => {
     expect(normalizeMcpSecurityPolicy(undefined)).toEqual(configured);
   });
 
+  it('treats a development insecure-HTTP grant as privileged destination authority', () => {
+    expect(isPrivilegedMcpPolicy(configured)).toBe(false);
+    expect(isPrivilegedMcpPolicy({ ...configured, allowInsecureHttp: true })).toBe(true);
+  });
+
+  it('resolves destination options once for inspection, runtime and evidence paths', () => {
+    const config = { get: jest.fn(<T = string>(path: string, defaultValue?: T) =>
+      path === 'NODE_ENV' ? 'production' as unknown as T : (defaultValue as T)) };
+    expect(resolveMcpDestinationPolicyOptions({ ...configured, allowPrivateNetwork: true, allowInsecureHttp: true },
+      'http://127.0.0.1:8027/mcp', config)).toEqual({
+      allowedPorts: [80, 443, 8443], allowInsecureHttp: false, requireTls: true,
+      allowExactEndpoints: ['http://127.0.0.1:8027/mcp'],
+    });
+    expect(resolveMcpDestinationPolicyOptions({ ...configured, allowInsecureHttp: true }, 'http://127.0.0.1:8027/mcp'))
+      .toEqual({ allowInsecureHttp: true, requireTls: false, allowExactEndpoints: [] });
+  });
+
   it.each([
     null, [], 'public', { ...configured, version: '1' }, { ...configured, allowPrivateNetwork: 'false' },
     { ...configured, profile: ['configured'] }, { ...configured, actorDelegation: ['none'] },
@@ -29,6 +48,8 @@ describe('MCP security policy validation', () => {
     { ...configured, requiredPermissions: Array(101).fill(Permissions.CONNECTORS_READ) },
     { ...configured, audience: 'unexpected' }, { ...configured, actorDelegation: 'verified_user' },
     { ...configured, profile: 'public', allowPrivateNetwork: true },
+    { ...configured, profile: 'public', allowInsecureHttp: true },
+    { ...configured, allowInsecureHttp: 'false' },
     { ...configured, profile: 'internal_jwt', audience: '' },
     { ...configured, profile: 'internal_jwt', audience: { toString: (): string => 'recipient' } },
     { ...configured, profile: 'internal_jwt', audience: 'bad audience' },
@@ -41,6 +62,18 @@ describe('MCP security policy validation', () => {
     expect(normalizeMcpSecurityPolicy({ ...configured, profile: 'internal_jwt', audience: ' recipient ',
       actorDelegation: 'verified_user', requiredPermissions: [Permissions.CONNECTORS_READ, Permissions.CONNECTORS_READ] }))
       .toEqual({ ...configured, profile: 'internal_jwt', audience: 'recipient', actorDelegation: 'verified_user', requiredPermissions: [Permissions.CONNECTORS_READ] });
+  });
+
+  it('round-trips the explicit development-only insecure HTTP grant', () => {
+    expect(normalizeMcpSecurityPolicy({ ...configured, allowInsecureHttp: true }))
+      .toEqual({ ...configured, allowInsecureHttp: true });
+    expect(normalizeMcpSecurityPolicy({ ...configured })).toEqual(configured);
+  });
+
+  it('defaults missing insecure HTTP on legacy policies instead of rejecting stored rows', () => {
+    const legacy = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] };
+    expect(normalizeMcpSecurityPolicy(legacy)).toEqual(configured);
+    expect(() => normalizeMcpSecurityPolicy({ ...legacy, allowInsecureHttp: 'false' })).toThrow(BadRequestException);
   });
 
   it('requires security management rather than ordinary editing authority', () => {

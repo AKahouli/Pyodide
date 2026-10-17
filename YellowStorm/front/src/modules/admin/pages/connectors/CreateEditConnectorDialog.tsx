@@ -268,7 +268,7 @@ export function CreateEditConnectorDialog({
   const savedSecurity = connector;
   const legacyAuth = !!connector && !['credential', 'connected_app', 'none'].includes(connector.authSourceType || 'credential');
   const destinationLocked = !canManageSecurity && (legacyAuth || (!!savedSecurity?.mcpSecurityPolicy &&
-    (savedSecurity.mcpSecurityPolicy.profile === 'internal_jwt' || savedSecurity.mcpSecurityPolicy.allowPrivateNetwork || savedSecurity.mcpSecurityPolicy.actorDelegation === 'verified_user' || savedSecurity.mcpSecurityPolicy.requiredPermissions.length > 0)));
+    (savedSecurity.mcpSecurityPolicy.profile === 'internal_jwt' || savedSecurity.mcpSecurityPolicy.allowPrivateNetwork || savedSecurity.mcpSecurityPolicy.allowInsecureHttp || savedSecurity.mcpSecurityPolicy.actorDelegation === 'verified_user' || savedSecurity.mcpSecurityPolicy.requiredPermissions.length > 0)));
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
@@ -360,7 +360,7 @@ export function CreateEditConnectorDialog({
           void refreshConnectionStatus(connector.connectedAppKey);
         }
       } else {
-        setForm({ ...defaultConnectorFormValues, authSourceType: canManageSecurity ? 'none' : 'credential', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] } : undefined });
+        setForm({ ...defaultConnectorFormValues, authSourceType: canManageSecurity ? 'none' : 'credential', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] } : undefined });
       }
     }
   }, [open, connector, refreshConnectionStatus]);
@@ -782,7 +782,7 @@ export function CreateEditConnectorDialog({
             <div className='grid grid-cols-2 gap-4'>
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.mcpSecurityPolicy?.profile === 'internal_jwt' ? 'internal_jwt' : form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value === 'internal_jwt' ? 'none' : value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: value === 'internal_jwt' ? 'internal_jwt' : value === 'none' ? 'public' : 'configured', actorDelegation: value === 'internal_jwt' ? 'verified_user' : 'none', allowPrivateNetwork: form.mcpSecurityPolicy?.allowPrivateNetwork ?? false, requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [], ...(value === 'internal_jwt' && form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}) } : form.mcpSecurityPolicy })} disabled={legacyAuth || destinationLocked || (!canManageSecurity && form.authSourceType === 'none')}>
+                <Select value={form.mcpSecurityPolicy?.profile === 'internal_jwt' ? 'internal_jwt' : form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value === 'internal_jwt' ? 'none' : value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '', mcpSecurityPolicy: canManageSecurity ? { version: 1, profile: value === 'internal_jwt' ? 'internal_jwt' : value === 'none' ? 'public' : 'configured', actorDelegation: value === 'internal_jwt' ? 'verified_user' : 'none', allowPrivateNetwork: value === 'none' ? false : form.mcpSecurityPolicy?.allowPrivateNetwork ?? false, allowInsecureHttp: value === 'none' ? false : form.mcpSecurityPolicy?.allowInsecureHttp ?? false, requiredPermissions: form.mcpSecurityPolicy?.requiredPermissions ?? [], ...(value === 'internal_jwt' && form.mcpSecurityPolicy?.audience ? { audience: form.mcpSecurityPolicy.audience } : {}) } : form.mcpSecurityPolicy })} disabled={legacyAuth || destinationLocked || (!canManageSecurity && form.authSourceType === 'none')}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
@@ -824,12 +824,16 @@ export function CreateEditConnectorDialog({
                   <Input id='connector-audience' maxLength={256} value={form.mcpSecurityPolicy.audience ?? ''} onChange={(event) => setForm({ ...form, mcpSecurityPolicy: { ...form.mcpSecurityPolicy!, audience: event.target.value } })} />
                 </div> : null}
                 <div className='flex items-center gap-2'>
-                  <Switch id='connector-private-network' checked={form.mcpSecurityPolicy?.allowPrivateNetwork ?? false} onCheckedChange={(checked) => setForm({ ...form, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', requiredPermissions: [], ...form.mcpSecurityPolicy, allowPrivateNetwork: checked } })} />
+                  <Switch id='connector-private-network' checked={form.mcpSecurityPolicy?.allowPrivateNetwork ?? false} onCheckedChange={(checked) => setForm({ ...form, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', requiredPermissions: [], allowInsecureHttp: false, ...form.mcpSecurityPolicy, allowPrivateNetwork: checked } })} />
                   <Label htmlFor='connector-private-network'>{t('connectors.form.security.allowPrivateNetwork')}</Label>
                 </div>
+                {form.authSourceType !== 'none' ? <div className='flex items-center gap-2'>
+                  <Switch id='connector-insecure-http' checked={form.mcpSecurityPolicy?.allowInsecureHttp ?? false} onCheckedChange={(checked) => setForm({ ...form, mcpSecurityPolicy: { version: 1, profile: 'configured', actorDelegation: 'none', requiredPermissions: [], allowPrivateNetwork: false, ...form.mcpSecurityPolicy, allowInsecureHttp: checked } })} />
+                  <Label htmlFor='connector-insecure-http'>{t('connectors.form.security.allowInsecureHttp')}</Label>
+                </div> : null}
                 <div>
                   <Label htmlFor='connector-permissions'>{t('connectors.form.security.requiredPermissions')}</Label>
-                  <Input id='connector-permissions' maxLength={4096} value={form.requiredPermissionsInput ?? form.mcpSecurityPolicy?.requiredPermissions.join(', ') ?? ''} onChange={(event) => setForm({ ...form, requiredPermissionsInput: event.target.value, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', allowPrivateNetwork: false, ...form.mcpSecurityPolicy, requiredPermissions: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) } })} />
+                  <Input id='connector-permissions' maxLength={4096} value={form.requiredPermissionsInput ?? form.mcpSecurityPolicy?.requiredPermissions.join(', ') ?? ''} onChange={(event) => setForm({ ...form, requiredPermissionsInput: event.target.value, mcpSecurityPolicy: { version: 1, profile: form.authSourceType === 'none' ? 'public' : 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, ...form.mcpSecurityPolicy, requiredPermissions: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) } })} />
                 </div>
               </div>
             </details> : null}

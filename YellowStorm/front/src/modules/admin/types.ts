@@ -1711,6 +1711,7 @@ export interface McpSecurityPolicy {
   audience?: string;
   actorDelegation: 'none' | 'verified_user';
   allowPrivateNetwork: boolean;
+  allowInsecureHttp: boolean;
   requiredPermissions: string[];
 }
 

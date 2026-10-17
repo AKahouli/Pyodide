@@ -8,7 +8,7 @@ import { ConnectorService } from '../connector.service';
 import type { ConnectorAuthService } from '../interfaces/connector-auth.interface';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { McpJwtService } from './mcp-jwt.service';
-import { hasMcpCredentialHeaders, normalizeMcpSecurityPolicy } from '../utils/mcp-security-policy';
+import { hasMcpCredentialHeaders, normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from '../utils/mcp-security-policy';
 import { assertMcpDestinationAllowed, McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
 import { denyRedirectFetch } from '../connector.service';
 
@@ -64,10 +64,8 @@ export class ConnectorMcpRuntimeService {
     // apply to runtime tool calls, before any transport is constructed. The
     // exact admin-configured internal endpoints (WP05.5) stay reachable.
     try {
-      await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-        allowExactEndpoints: policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [],
-        requireTls: this.config?.get<string>('NODE_ENV') === 'production',
-      });
+      await assertMcpDestinationAllowed(connector.mcpServerUrl,
+        resolveMcpDestinationPolicyOptions(policy, connector.mcpServerUrl, this.config));
     } catch (error) {
       if (error instanceof McpDestinationPolicyError) {
         this.logger.warn('Denied MCP runtime tool call destination', {

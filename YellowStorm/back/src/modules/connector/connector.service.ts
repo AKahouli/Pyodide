@@ -727,8 +727,9 @@ export class ConnectorService {
       .map((value) => Number.parseInt(value.trim(), 10))
       .filter((value) => Number.isInteger(value) && value > 0 && value < 65536);
     const nodeEnv = config?.get<string>('NODE_ENV', 'development');
-    const allowInsecureHttp = (config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false) && nodeEnv !== 'production';
     const policy = normalizeMcpSecurityPolicy(connector?.mcpSecurityPolicy);
+    const allowInsecureHttp = ((config?.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false) ?? false)
+      || policy.allowInsecureHttp) && nodeEnv !== 'production';
     return { allowedPorts: ports.length ? ports : [80, 443, 8443], allowInsecureHttp, requireTls: nodeEnv === 'production',
       allowExactEndpoints: connector && policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [] };
   }

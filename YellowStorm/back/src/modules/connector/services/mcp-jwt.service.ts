@@ -11,7 +11,7 @@ import { AuthorizationService } from '@modules/authorization/authorization.servi
 import { hasPermission } from '@modules/authorization/constants/permissions';
 import { PgConnectorStore } from '../persistence/pg-connector.store';
 import type { ConnectorRow } from '../persistence/connector.store';
-import { canonicalMcpEndpoint, normalizeMcpSecurityPolicy } from '../utils/mcp-security-policy';
+import { canonicalMcpEndpoint, normalizeMcpSecurityPolicy, resolveMcpDestinationPolicyOptions } from '../utils/mcp-security-policy';
 import { assertMcpDestinationAllowed } from '../utils/mcp-destination-policy.util';
 
 /** Bounded deployment compatibility only: remove after legacy signer keys migrate.
@@ -64,13 +64,8 @@ export class McpJwtService {
   async checkDestination(connector: ConnectorRow): Promise<void> {
     const policy = normalizeMcpSecurityPolicy(connector.mcpSecurityPolicy);
     canonicalMcpEndpoint(connector.mcpServerUrl);
-    await assertMcpDestinationAllowed(connector.mcpServerUrl, {
-      allowedPorts: this.config.get<string>('MCP_EGRESS_ALLOWED_PORTS', '80,443,8443').split(',').map(Number),
-      allowInsecureHttp: this.config.get<string>('NODE_ENV') !== 'production'
-        && this.config.get<boolean>('MCP_EGRESS_ALLOW_INSECURE_HTTP', false),
-      requireTls: this.config.get<string>('NODE_ENV') === 'production',
-      allowExactEndpoints: policy.allowPrivateNetwork ? [connector.mcpServerUrl] : [],
-    });
+    await assertMcpDestinationAllowed(connector.mcpServerUrl,
+      resolveMcpDestinationPolicyOptions(policy, connector.mcpServerUrl, this.config));
   }
 
   async assertConnectorAccess(connector: ConnectorRow, userId: string) {
@@ -81,10 +76,17 @@ export class McpJwtService {
     if (typeof userId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(userId)) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid MCP actor');
     }
-    const user = await this.users.findById(userId);
+    // Independent reads, refreshed on every check. Preserve account-denial
+    // priority even if the speculative role read fails first.
+    const [userResult, rolesResult] = await Promise.allSettled([
+      this.users.findById(userId), this.authorization.getUserRoles(userId),
+    ]);
+    if (userResult.status === 'rejected') throw userResult.reason;
+    const user = userResult.value;
     if (!user) throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     assertAccountApproved(user);
-    const roles = await this.authorization.getUserRoles(userId);
+    if (rolesResult.status === 'rejected') throw rolesResult.reason;
+    const roles = rolesResult.value;
     const permissions = await this.authorization.getUserPermissions(roles.map(role => role.id));
     if (policy.requiredPermissions.some(permission => !hasPermission(permissions, permission))) this.deny();
     if (policy.profile === 'internal_jwt') this.assertSignerConfigured();

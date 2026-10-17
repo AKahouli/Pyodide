@@ -83,7 +83,7 @@ describe('CreateEditConnectorDialog tool table', () => {
     }
   });
 
-  const internalPolicy: ConnectorSecurityPolicy = { version: 1, profile: 'internal_jwt', audience: 'custom-recipient', actorDelegation: 'verified_user', allowPrivateNetwork: false, requiredPermissions: ['connectors.read'] };
+  const internalPolicy: ConnectorSecurityPolicy = { version: 1, profile: 'internal_jwt', audience: 'custom-recipient', actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: ['connectors.read'] };
 
   it('starts with secondary sections collapsed and no unrelated connected account dropdown', () => {
     renderCollapsed(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={vi.fn()} />);
@@ -100,7 +100,7 @@ describe('CreateEditConnectorDialog tool table', () => {
     await user.type(screen.getByPlaceholderText('connectors.form.fields.name.placeholder'), 'Public tools');
     await user.type(screen.getByLabelText('connectors.form.fields.serverUrl.label'), 'https://mcp.example.test');
     await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.create' }));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpSecurityPolicy: { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] } }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpSecurityPolicy: { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] } }));
     const method = screen.getByText('connectors.form.auth.publicAccess').closest('button')!;
     await user.click(method);
     await user.click(screen.getByRole('option', { name: 'connectors.form.auth.connectedAccount' }));
@@ -122,10 +122,32 @@ describe('CreateEditConnectorDialog tool table', () => {
   it.each([
     { actorDelegation: 'verified_user' as const, requiredPermissions: [] },
     { actorDelegation: 'none' as const, requiredPermissions: ['connectors.read'] },
+    { actorDelegation: 'none' as const, requiredPermissions: [], allowInsecureHttp: true },
   ])('locks configured privileged destinations for ordinary editors: %j', (flags) => {
     hasPermission.mockReturnValue(false);
     render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', audience: undefined, ...flags } }} onSave={vi.fn()} />);
     expect(screen.getByLabelText('connectors.form.fields.serverUrl.label')).toBeDisabled();
+  });
+
+  it('preserves the insecure-HTTP toggle through an authorized save', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'credential', credentialConfigured: true, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', audience: undefined, allowInsecureHttp: true } }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.security.details'));
+    expect(screen.getByLabelText('connectors.form.security.allowInsecureHttp')).toBeChecked();
+    await user.click(screen.getByLabelText('connectors.form.security.allowInsecureHttp'));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ mcpSecurityPolicy: expect.objectContaining({ allowInsecureHttp: false }) }));
+  });
+
+  it('clears the insecure-HTTP grant when the method changes to public access', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={{ ...connector, authSourceType: 'credential', credentialConfigured: true, mcpSecurityPolicy: { ...internalPolicy, profile: 'configured', audience: undefined, allowInsecureHttp: true } }} onSave={onSave} />);
+    await user.click(screen.getByText('connectors.form.auth.savedCredential').closest('button')!);
+    await user.click(screen.getByRole('option', { name: 'connectors.form.auth.publicAccess' }));
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ authSourceType: 'none', mcpSecurityPolicy: expect.objectContaining({ profile: 'public', allowInsecureHttp: false }) }));
   });
 
   it('allows ordinary configured credentials without submitting hidden security policy', async () => {

@@ -631,6 +631,7 @@
   "connectors.form.security.details": "Security policy",
   "connectors.form.security.audience": "MCP token audience",
   "connectors.form.security.allowPrivateNetwork": "Allow this exact private-network endpoint",
+  "connectors.form.security.allowInsecureHttp": "Allow insecure HTTP (development only)",
   "connectors.form.security.requiredPermissions": "Required platform permissions (comma-separated)",
   "connectors.form.security.audienceRequired": "Enter the audience configured on the receiving MCP server.",
   "connectors.form.inspect.saveFirst": "Save connection, authentication and security changes before testing. The test uses the saved configuration.",

@@ -74,10 +74,18 @@ backend policy is read without an authority cache; already-authorized in-flight
 operations are not retroactively canceled. Short-lived JWT expiry alone is not an
 immediate revocation mechanism at an independent receiving MCP.
 
-**MCP egress:** current connector policy supplies exact exceptions to
+ **MCP egress:** current connector policy supplies exact exceptions to
 `connector/utils/mcp-destination-policy.util.ts` before credential resolution.
 Production requires TLS, including internal exceptions. Public destinations use the
-port allowlist and deny private/reserved addresses. Approved exact private targets
+port allowlist and deny private/reserved addresses. A per-connector
+ `allowInsecureHttp` policy grant permits plain HTTP only outside production,
+alongside the legacy development environment flag; the privileged security
+permission gates it like other policy fields. Legacy rows without the key
+normalize to `false`; a stored grant is privileged destination authority, so
+ordinary connector editors cannot move or reactivate such connectors, and the
+shared destination-option resolution
+(`resolveMcpDestinationPolicyOptions`) applies the same grant to inspection,
+runtime tool calls and evidence execution. Approved exact private targets
 still resolve hostnames and reject metadata/link-local/reserved destinations. Default
 resolution uses the OS resolver with all returned addresses checked, including system
 hostname mappings; direct DNS queries are not required. Resolution errors, empty
@@ -92,6 +100,15 @@ avoid credential-bearing URL leakage; context is restored afterward. Evidence ca
 require resolved auth that is actually attached, not raw secret headers that their
 transport intentionally strips. DNS-rebinding
 between validation and connection still requires deployment network egress controls.
+
+**Semantic MCP ingress modes:** `SEMANTIC_MODEL_MCP_AUTH_MODE` explicitly selects
+`JWT` or `Bearer` in production; development retains its Bearer default. Bearer
+requires its separate ingress secret and production HTTPS at the deployment ingress.
+Both modes still require the matching backend/MCP `SEMANTIC_MODEL_MCP_SERVICE_TOKEN`.
+A static ingress token does not establish a verified user: Bearer mode does not
+supply the signed actor assertion required by backend semantic-assistant operations.
+The existing delegated-user path therefore uses JWT; enabling Bearer ingress does
+not relax backend actor authorization, connector policy or egress controls.
 
 **Rollout:** apply `0049` through the existing migration process, provision the
 dedicated renewal secret on backend/ADK, configure signer/verifier and explicitly

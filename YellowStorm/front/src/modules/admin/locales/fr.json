@@ -629,6 +629,7 @@
   "connectors.form.security.details": "Politique de sécurité",
   "connectors.form.security.audience": "Audience du jeton MCP",
   "connectors.form.security.allowPrivateNetwork": "Autoriser cette adresse exacte du réseau privé",
+  "connectors.form.security.allowInsecureHttp": "Autoriser HTTP non sécurisé (développement uniquement)",
   "connectors.form.security.requiredPermissions": "Permissions de plateforme requises (séparées par des virgules)",
   "connectors.form.security.audienceRequired": "Saisissez l'audience configurée sur le serveur MCP destinataire.",
   "connectors.form.inspect.saveFirst": "Enregistrez les modifications de connexion, d'authentification et de sécurité avant le test. Le test utilise la configuration enregistrée.",

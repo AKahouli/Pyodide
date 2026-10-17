@@ -35,6 +35,12 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        environment = os.getenv("ENVIRONMENT", "development")
+        auth_mode = os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE")
+        if auth_mode is None:
+            if environment == "production":
+                raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be explicitly set to JWT or Bearer in production")
+            auth_mode = "Bearer"
         return cls(
             backend_url=os.getenv("YELLOWSTORM_BACKEND_URL", "http://localhost:3000").rstrip("/"),
             internal_token=os.getenv("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", ""),
@@ -43,11 +49,11 @@ class Settings:
             port=int(os.getenv("MCP_PORT", "8027")),
             max_response_bytes=int(os.getenv("SEMANTIC_MODEL_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
             service_token=os.getenv("SEMANTIC_MODEL_MCP_SERVICE_TOKEN", ""),
-            auth_mode=os.getenv("SEMANTIC_MODEL_MCP_AUTH_MODE", "Bearer"),
+            auth_mode=auth_mode,
             jwt_public_key_file=os.getenv("SEMANTIC_MODEL_MCP_JWT_PUBLIC_KEY_FILE", ""),
             jwt_issuer=os.getenv("SEMANTIC_MODEL_MCP_JWT_ISSUER", ""),
             jwt_audience=os.getenv("SEMANTIC_MODEL_MCP_JWT_AUDIENCE", "mcp-semantic-model"),
-            environment=os.getenv("ENVIRONMENT", "development"),
+            environment=environment,
         )
 
     def validate(self) -> None:
@@ -61,11 +67,6 @@ class Settings:
         if self.auth_mode == "JWT":
             if not self.jwt_public_key_file or not self.jwt_issuer or not self.jwt_audience:
                 raise ValueError("JWT mode requires a public key file, issuer and audience")
-        elif self.environment == "production":
-            # WP06.1: the shared bearer token is a development-only mode; a
-            # production deployment must fail startup instead of silently
-            # falling back to it.
-            raise ValueError("SEMANTIC_MODEL_MCP_AUTH_MODE must be JWT in production (shared Bearer mode is development-only)")
         elif not self.ingress_token:
             raise ValueError("SEMANTIC_MODEL_MCP_INGRESS_TOKEN is required")
         if not self.backend_url.startswith(("http://", "https://")):

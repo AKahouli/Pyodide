@@ -1,13 +1,13 @@
 import { ConnectorMcpRuntimeService } from './connector-mcp-runtime.service';
 import { McpDestinationPolicyError } from '../utils/mcp-destination-policy.util';
 
-const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string]>();
+const assertMcpDestinationAllowed = jest.fn<Promise<string[]>, [string, unknown?]>();
 
 // Hermetic like the util's own spec: runtime tests stub resolution and prove
 // the wiring; the policy's decision logic has its own suite (WP-05).
 jest.mock('../utils/mcp-destination-policy.util', () => ({
   ...jest.requireActual('../utils/mcp-destination-policy.util'),
-  assertMcpDestinationAllowed: (serverUrl: string) => assertMcpDestinationAllowed(serverUrl),
+  assertMcpDestinationAllowed: (serverUrl: string, options?: unknown) => assertMcpDestinationAllowed(serverUrl, options),
 }));
 
 describe('ConnectorMcpRuntimeService', () => {
@@ -131,5 +131,51 @@ describe('ConnectorMcpRuntimeService', () => {
     })).rejects.toMatchObject({ code: 'ERR_3103' });
     expect(auth.resolveRuntimeAuth).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith('Denied MCP runtime tool call destination', expect.objectContaining({ reason: 'forbidden_address' }));
+  });
+
+  it('applies the connector insecure-HTTP grant to evidence execution like inspection', async () => {
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
+      id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'http://127.0.0.1:8132/mcp', mcpServerConfig: {},
+      mcpSecurityPolicy: { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: true, requiredPermissions: [] },
+      authSourceType: 'credential', createdBy: { toString: () => 'owner' },
+      actions: [{ key: 'hello', isEnabled: true, safety: 'read' }],
+    }) };
+    const auth = { resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer resolved' }, env: {} }), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
+    const service = new ConnectorMcpRuntimeService(connectors as never, auth as never,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never,
+      undefined,
+      { get: jest.fn(<T = string>(path: string, defaultValue?: T) => path === 'NODE_ENV' ? 'development' as unknown as T : (defaultValue as T)) } as never);
+    jest.spyOn(service as any, 'createTransport').mockRejectedValue(new Error('transport reached'));
+
+    await expect(service.callTool({ connectorId: 'connector-1', workspaceId: 'workspace-1',
+      authorizationUserId: 'requesting-user', toolName: 'hello', allowedTools: ['hello'], arguments: {},
+    })).rejects.toThrow('transport reached');
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://127.0.0.1:8132/mcp',
+      expect.objectContaining({ allowInsecureHttp: true, requireTls: false }));
+  });
+  it('keeps evidence execution HTTPS-only in production even with the connector grant', async () => {
+    const connectors = { getRuntimeById: jest.fn().mockResolvedValue({
+      id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'http://127.0.0.1:8132/mcp', mcpServerConfig: {},
+      mcpSecurityPolicy: { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: true, requiredPermissions: [] },
+      authSourceType: 'credential', createdBy: { toString: () => 'owner' },
+      actions: [{ key: 'hello', isEnabled: true, safety: 'read' }],
+    }) };
+    const service = new ConnectorMcpRuntimeService({ getRuntimeById: connectors.getRuntimeById } as never,
+      { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn() } as never,
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) } as never,
+      undefined,
+      { get: jest.fn(<T = string>(path: string, defaultValue?: T) => path === 'NODE_ENV' ? 'production' as unknown as T : (defaultValue as T)) } as never);
+    jest.spyOn(service as any, 'createTransport');
+    assertMcpDestinationAllowed.mockRejectedValue(new McpDestinationPolicyError('insecure_http', '127.0.0.1'));
+
+    await expect(service.callTool({ connectorId: 'connector-1', workspaceId: 'workspace-1',
+      authorizationUserId: 'requesting-user', toolName: 'hello', allowedTools: ['hello'], arguments: {},
+    })).rejects.toMatchObject({ code: 'ERR_3103' });
+    expect(assertMcpDestinationAllowed).toHaveBeenCalledWith('http://127.0.0.1:8132/mcp',
+      expect.objectContaining({ allowInsecureHttp: false, requireTls: true }));
   });
 });

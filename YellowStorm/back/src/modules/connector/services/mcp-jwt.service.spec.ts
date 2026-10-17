@@ -20,7 +20,7 @@ describe('McpJwtService current-policy boundary', () => {
     row = { id: 'connector-1', isActive: true, mcpTransportType: 'streamable_http',
       mcpServerUrl: 'https://example.com/mcp', securityRevision: 1,
       mcpSecurityPolicy: { version: 1, profile: 'internal_jwt', audience: 'recipient',
-        actorDelegation: 'verified_user', allowPrivateNetwork: false, requiredPermissions: [] } };
+        actorDelegation: 'verified_user', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] } };
     users.findById.mockResolvedValue({ id: 'user-1', status: 'active' });
     store.findById.mockImplementation(async id => id === row.id ? row : null);
     authorization.getUserRoles.mockResolvedValue([]);
@@ -32,7 +32,7 @@ describe('McpJwtService current-policy boundary', () => {
   });
   it.each(['configured', 'public'])('preserves %s SSE binding without granting JWT authority', async profile => {
     row.mcpTransportType = 'sse';
-    row.mcpSecurityPolicy = { version: 1, profile, actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] };
+    row.mcpSecurityPolicy = { version: 1, profile, actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
     const headers: Record<string, string> = profile === 'configured' ? { Authorization: 'Bearer saved' } : { Accept: 'text/event-stream' };
     const bound = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', headers, {});
     expect(bound).toEqual({ headers, env: {} });
@@ -60,7 +60,7 @@ describe('McpJwtService current-policy boundary', () => {
     expect(readFileSync).toHaveBeenLastCalledWith(shared ? 'shared.pem' : 'legacy.pem');
     const { token } = await compatible.issue('connector-1', 'user-1');
     expect(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).iss).toBe(shared ? 'shared-issuer' : 'legacy-issuer');
-    row.mcpSecurityPolicy = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] };
+    row.mcpSecurityPolicy = { version: 1, profile: 'configured', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
     await expect(compatible.issue('connector-1', 'user-1')).rejects.toThrow();
   });
   it.each(['production', 'development'])('limits insecure HTTP override in %s', async environment => {
@@ -68,6 +68,17 @@ describe('McpJwtService current-policy boundary', () => {
     values.MCP_EGRESS_ALLOW_INSECURE_HTTP = true;
     row.mcpServerUrl = 'http://8.8.8.8/mcp';
     // Exercise the real egress validator, not just the supplied option.
+    (assertMcpDestinationAllowed as jest.Mock).mockImplementationOnce(
+      jest.requireActual('../utils/mcp-destination-policy.util').assertMcpDestinationAllowed);
+    const check = service.checkDestination(row as never);
+    if (environment === 'production') await expect(check).rejects.toThrow(/https/);
+    else await expect(check).resolves.toBeUndefined();
+  });
+  it.each(['production', 'development'])('limits the per-connector insecure HTTP grant to %s', async environment => {
+    values.NODE_ENV = environment;
+    values.MCP_EGRESS_ALLOW_INSECURE_HTTP = false;
+    row.mcpServerUrl = 'http://8.8.8.8/mcp';
+    row.mcpSecurityPolicy = { ...(row.mcpSecurityPolicy as Record<string, unknown>), allowInsecureHttp: true };
     (assertMcpDestinationAllowed as jest.Mock).mockImplementationOnce(
       jest.requireActual('../utils/mcp-destination-policy.util').assertMcpDestinationAllowed);
     const check = service.checkDestination(row as never);
@@ -122,6 +133,35 @@ describe('McpJwtService current-policy boundary', () => {
     await expect(service.issue('connector-1', 'user-1')).rejects.toThrow('denied');
     expect(users.findById).not.toHaveBeenCalled();
   });
+  it('overlaps fresh account and role reads, then checks permissions before issuing', async () => {
+    let finishUser!: (value: unknown) => void;
+    let finishRoles!: (value: unknown[]) => void;
+    users.findById.mockReturnValueOnce(new Promise(resolve => { finishUser = resolve; }));
+    authorization.getUserRoles.mockReturnValueOnce(new Promise(resolve => { finishRoles = resolve; }));
+    const issuing = service.issue('connector-1', 'user-1');
+    // Drain the load and destination checks without a wall-clock timing assertion.
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    expect(users.findById).toHaveBeenCalledWith('user-1');
+    expect(authorization.getUserRoles).toHaveBeenCalledWith('user-1');
+    expect(authorization.getUserPermissions).not.toHaveBeenCalled();
+    finishRoles([{ id: 'role-1' }]);
+    finishUser({ id: 'user-1', status: 'active' });
+    expect((await issuing).token).toBeTruthy();
+    expect(authorization.getUserPermissions).toHaveBeenCalledWith(['role-1']);
+  });
+  it.each([null, { id: 'user-1', status: 'suspended' }])('retains account denial ahead of a concurrent role failure (%j)', async account => {
+    users.findById.mockResolvedValueOnce(account);
+    const roleFailure = new Error('role read failed');
+    authorization.getUserRoles.mockRejectedValueOnce(roleFailure);
+    await expect(service.issue('connector-1', 'user-1')).rejects.not.toBe(roleFailure);
+    expect(authorization.getUserPermissions).not.toHaveBeenCalled();
+  });
+  it('propagates role failures for an approved account without checking permissions', async () => {
+    const roleFailure = new Error('role read failed');
+    authorization.getUserRoles.mockRejectedValueOnce(roleFailure);
+    await expect(service.issue('connector-1', 'user-1')).rejects.toBe(roleFailure);
+    expect(authorization.getUserPermissions).not.toHaveBeenCalled();
+  });
   it('emits only connector renewal metadata, never user or principal secret', async () => {
     const auth = await service.bindingAuth(row.mcpServerUrl as string, 'user-1', 'connector-1', {}, {
       YELLOWSTORM_MCP_JWT_USER_ID: 'arbitrary', ADK_RUNTIME_MCP_RENEWAL_TOKEN: 'secret',
@@ -131,7 +171,7 @@ describe('McpJwtService current-policy boundary', () => {
   });
   it('does not issue for configured/public same-URL connectors', async () => {
     for (const profile of ['configured', 'public']) {
-      row.mcpSecurityPolicy = { version: 1, profile, actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] };
+    row.mcpSecurityPolicy = { version: 1, profile, actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] };
       await expect(service.issue('connector-1', 'user-1')).rejects.toThrow();
     }
     await expect(service.headers(row.mcpServerUrl as string, 'user-1', { Cookie: 'secret' }, 'connector-1')).rejects.toThrow();

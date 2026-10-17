@@ -155,7 +155,7 @@ describe('mcpToolSafety', () => {
 
 describe('ConnectorService security write contract', () => {
   const policy = { version: 1 as const, profile: 'configured' as const, actorDelegation: 'none' as const,
-    allowPrivateNetwork: true, requiredPermissions: [Permissions.CONNECTORS_READ] };
+    allowPrivateNetwork: true, allowInsecureHttp: false, requiredPermissions: [Permissions.CONNECTORS_READ] };
   const setup = (row = baseRow({ mcpSecurityPolicy: policy, mcpServerUrl: 'https://example.com/mcp' })) => {
     const store = connectorStoreMock({ findById: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue(row) });
     const service = new ConnectorService(store, categoryStoreMock(),
@@ -187,7 +187,7 @@ describe('ConnectorService security write contract', () => {
       mcpServerConfig: { headers: { Authorization: 'Bearer stored' } },
     }));
     const patch = { mcpSecurityPolicy: { version: 1 as const, profile: 'public' as const,
-      actorDelegation: 'none' as const, allowPrivateNetwork: false, requiredPermissions: [] },
+      actorDelegation: 'none' as const, allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
       authSourceType: ConnectorAuthSourceType.NONE, expectedSecurityRevision: 1 };
     await expect(service.update(row.id, patch, [Permissions.CONNECTORS_SECURITY_MANAGE])).rejects.toThrow('cannot inject');
     expect(store.update).not.toHaveBeenCalled();
@@ -230,6 +230,17 @@ describe('ConnectorService security write contract', () => {
     await service.assertRuntimeDestination({ ...row, mcpSecurityPolicy: { ...policy, allowPrivateNetwork: false } });
     expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(row.mcpServerUrl,
       expect.objectContaining({ allowExactEndpoints: [] }));
+  });
+
+  it('derives the development-only insecure HTTP grant from saved connector policy', async () => {
+    const { service, row } = setup();
+    assertMcpDestinationAllowed.mockResolvedValue([]);
+    await service.assertRuntimeDestination(row);
+    expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(row.mcpServerUrl,
+      expect.objectContaining({ allowInsecureHttp: false }));
+    await service.assertRuntimeDestination({ ...row, mcpSecurityPolicy: { ...policy, allowInsecureHttp: true } });
+    expect(assertMcpDestinationAllowed).toHaveBeenLastCalledWith(row.mcpServerUrl,
+      expect.objectContaining({ allowInsecureHttp: true }));
   });
 });
 
@@ -916,7 +927,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
         id: '507f1f77bcf86cd799439038',
         name: 'Code Interpreter',
         slug: 'code-interpreter',
-        mcpSecurityPolicy: { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, requiredPermissions: [] },
+        mcpSecurityPolicy: { version: 1, profile: 'public', actorDelegation: 'none', allowPrivateNetwork: false, allowInsecureHttp: false, requiredPermissions: [] },
         authSourceType: 'none',
         mcpTransportType: 'streamable_http',
         mcpServerUrl: 'https://ci/mcp',
