@@ -190,6 +190,21 @@ class InstrumentedResponsesLlm(OpenAIResponsesLlm):
                             part.thought_signature = None
                         if self.summary_mode == 'off':
                             response.content.parts = [part for part in response.content.parts or [] if not part.thought]
+                        elif response.partial is not True:
+                            # ADK emits each native summary section as a separate
+                            # Part in the final snapshot. The activity tracker
+                            # reconciles one complete snapshot, so retain every
+                            # adjacent section rather than replacing it per Part.
+                            parts = []
+                            for part in response.content.parts or []:
+                                if (parts and part.thought and part.text
+                                    and not part.function_call and not part.function_response
+                                    and parts[-1].thought and parts[-1].text
+                                    and not parts[-1].function_call and not parts[-1].function_response):
+                                    parts[-1].text += '\n\n' + part.text
+                                else:
+                                    parts.append(part)
+                            response.content.parts = parts
                     if response.custom_metadata and 'openai_response' in response.custom_metadata:
                         # Only lifecycle metadata is needed by the activity renderer.
                         response.custom_metadata = {'openai_response': {

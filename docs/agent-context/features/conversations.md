@@ -62,6 +62,17 @@ Changing API/model/agent/configuration or edited/compacted history resets the ch
 Summaries use existing expandable activity rows, independently of replay; a model
 may return no summary. Chat Completions ignores dormant Responses controls and
 continues application-managed history. Encrypted state is never answer content.
+Summary diagnostics (2026-10-17): native summaries were confirmed through the
+Azure-backed LiteLLM routes with GPT 5.4 Mini, GPT 6 Sol and GPT 5.6 Sol using
+High effort and a scheduling problem. Short marker-only prompts can legitimately
+return none. Stream startup must forward the composer's `reasoningEffort` into
+agent construction; omitting it caused displayed High to dispatch no effort and
+produce zero reasoning tokens. Private Responses state records only the requested
+effort/summary enums for diagnosis, never exposing opaque replay data. Output
+guardrails continue suppressing unreviewed thought activity.
+The native adapter joins adjacent summary sections in completed snapshots before
+the activity tracker reconciles them, so later sections do not overwrite earlier
+ones. Streaming deltas and tool boundaries retain their existing order.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
 Workers and manager/team execution retain their adapters. Truncated native streams fail
 instead of finalizing partial text/tool calls. A private session adapter restores

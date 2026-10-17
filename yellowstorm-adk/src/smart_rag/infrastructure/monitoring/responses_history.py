@@ -117,6 +117,8 @@ def prepare(model, request, kwargs):
     else:
         kwargs['input'] = select_reasoning(items, model.reasoning_history)
     return {'signature': signature, 'projection': projected, 'items': items,
+            'requested_reasoning': {key: value for key, value in (kwargs.get('reasoning') or {}).items()
+                                    if key in ('effort', 'summary')},
             'provider_chained': bool(kwargs.get('previous_response_id')),
             'user_message': getattr(request, '_responses_user_message', None)}
 

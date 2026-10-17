@@ -200,6 +200,7 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
         assert any(item.get('encrypted_content') == 'opaque_secret_1' for item in sent[1]['input'])
     session = await sessions.get_session(app_name='test', user_id='user', session_id=session_id)
     assert 'opaque_secret_3' in json.dumps(session.state[STATE_KEY])
+    assert session.state[STATE_KEY]['requested_reasoning']['summary'] == 'auto'
     # The Chat Completions callback clears lineage without changing its request.
     completion_agent = Agent(name='agent_one', model='placeholder')
     install_history_callbacks(completion_agent, 'chat_completions', 'agent_one')
@@ -213,7 +214,9 @@ async def test_runner_persists_private_items_across_reconstructed_adapter_and_to
 @pytest.mark.parametrize('summary', ['off', 'auto'])
 async def test_native_stream_summary_is_independent_of_private_replay(summary):
     from tests.test_native_responses import response
-    reasoning = {'type': 'reasoning', 'id': 'rs_stream', 'summary': [{'type': 'summary_text', 'text': 'Checking facts'}],
+    reasoning = {'type': 'reasoning', 'id': 'rs_stream', 'summary': [
+                    {'type': 'summary_text', 'text': 'Checking facts'},
+                    {'type': 'summary_text', 'text': 'Comparing evidence'}],
                  'encrypted_content': 'opaque_secret_stream'}
     final = response([reasoning, {'type': 'message', 'id': 'msg_stream', 'role': 'assistant', 'status': 'completed',
         'content': [{'type': 'output_text', 'text': 'Answer', 'annotations': []}]}])
@@ -222,6 +225,8 @@ async def test_native_stream_summary_is_independent_of_private_replay(summary):
         {'type': 'response.output_item.added', 'output_index': 0, 'item': {**reasoning, 'summary': []}},
         {'type': 'response.reasoning_summary_text.delta', 'item_id': 'rs_stream', 'output_index': 0,
          'summary_index': 0, 'delta': 'Checking facts'},
+        {'type': 'response.reasoning_summary_text.delta', 'item_id': 'rs_stream', 'output_index': 0,
+         'summary_index': 1, 'delta': 'Comparing evidence'},
         {'type': 'response.output_item.done', 'output_index': 0, 'item': reasoning},
         {'type': 'response.output_text.delta', 'item_id': 'msg_stream', 'output_index': 1, 'content_index': 0, 'delta': 'Answer'},
         {'type': 'response.completed', 'response': final},
@@ -238,6 +243,12 @@ async def test_native_stream_summary_is_independent_of_private_replay(summary):
     assert 'opaque_secret_stream' not in public
     assert ('Checking facts' in public) is (summary != 'off')
     assert 'Answer' in public
+    final_thoughts = [part.text for result in results if result.partial is not True
+                     for part in getattr(result.content, 'parts', None) or [] if part.thought]
+    assert final_thoughts == (['Checking facts\n\nComparing evidence'] if summary == 'auto' else [])
+    streamed_thoughts = [part.text for result in results if result.partial is True
+                        for part in getattr(result.content, 'parts', None) or [] if part.thought]
+    assert streamed_thoughts == (['Checking facts', 'Comparing evidence'] if summary == 'auto' else [])
     commit = next(result._responses_commit for result in results if hasattr(result, '_responses_commit'))
     assert any(item.get('encrypted_content') == 'opaque_secret_stream' for item in commit['items'])
     await client.close()

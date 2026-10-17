@@ -100,8 +100,13 @@ async def main(args):
     marker = 'fixture_' + run_id[:12]
     text_counts = []
     summary_events = 0
+    # Marker echo/tool plumbing alone may require no reasoning and legitimately
+    # return no summary. Require actual reasoning work for summary qualification.
+    summary_task = ('First solve this scheduling puzzle: A precedes C, B follows D, '
+        'C immediately precedes E, and D is neither first nor last. Find all valid '
+        'orders of A B C D E and check completeness. Then ' if args.require_summary else '')
     try:
-        for prompt in (f'Call lookup_marker with value {marker}. Then reply with its marker.',
+        for prompt in (summary_task + f'Call lookup_marker with value {marker}. Then reply with its marker.',
                        'Without calling any tool, repeat the marker from our previous turn.'):
             token = start_conversation_latency_trace(run_id, uuid4().hex, None)
             try:

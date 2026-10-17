@@ -688,12 +688,13 @@ describe('StreamService guardrail metadata buffering', () => {
         {
           content: 'hello',
           playbookHandoffId: 'handoff-1',
+          reasoningEffort: 'high',
         },
         'request-1',
       ),
     ).rejects.toThrow('lease was lost');
 
-    expect((service as any).buildAgentExecutionRequest).toHaveBeenCalledWith('user-1', 'conversation-1', expect.objectContaining({ playbookHandoffId: 'handoff-1' }), undefined, undefined, expect.objectContaining({ requestId: 'request-1' }), 'conversation-1', '507f1f77bcf86cd799439011', '507f1f77bcf86cd799439011', undefined, undefined, expect.any(Object));
+    expect((service as any).buildAgentExecutionRequest).toHaveBeenCalledWith('user-1', 'conversation-1', expect.objectContaining({ playbookHandoffId: 'handoff-1', reasoningEffort: 'high' }), undefined, undefined, expect.objectContaining({ requestId: 'request-1' }), 'conversation-1', '507f1f77bcf86cd799439011', '507f1f77bcf86cd799439011', undefined, undefined, expect.any(Object), undefined);
     expect(executeGrpcStream).not.toHaveBeenCalled();
     expect(releaseStreamExecution).toHaveBeenCalledWith('507f1f77bcf86cd799439011', expect.any(String));
   });

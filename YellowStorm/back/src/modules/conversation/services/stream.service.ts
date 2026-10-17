@@ -992,6 +992,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           webConnectorAccessEnabled: request.webConnectorAccessEnabled ?? true,
           deepSearchEnabled: request.deepSearchEnabled ?? false,
           modelId: request.modelId,
+          reasoningEffort: request.reasoningEffort,
           semanticModelId: request.semanticModelId,
           agentIds: request.agentIds ?? [],
           teamId: request.teamId,

@@ -88,3 +88,24 @@ Completions cleared private lineage while retaining the local transcript. The
 test model's original Chat Completions/application/auto/off settings were restored.
 Native summary delivery remains optional; the gateway qualification returned no
 summary text, while controlled native-stream tests covered summary On/Off.
+
+Follow-up summary investigation (2026-10-17): reasoning-heavy raw gateway probes
+returned native summaries for GPT 5.4 Mini, GPT 6 Sol and GPT 5.6 Sol. The earlier
+marker-only workload did not establish summary support. A live conversation also
+revealed that stream bootstrap omitted `reasoningEffort` from its rebuilt request;
+forwarding it preserves the selected effort for both API modes. The summary-required
+gateway qualification now includes a scheduling puzzle, retaining its existing
+stream/tool/instrumentation/capacity assertions. Private replay state records only
+the effective requested effort/summary settings to distinguish parameter loss from
+optional upstream omission. Existing output guardrail suppression remains intact.
+Native completed snapshots can contain multiple summary text parts. Adjacent
+thought parts are combined into one complete snapshot before activity tracking;
+otherwise each part replaces the same row and only the last survives. Streamed
+deltas, tool boundaries, private raw output and summary Off remain unchanged.
+
+Live follow-up verification passed with GPT 5.4 Mini, High effort and Auto summary:
+eight native sections (3,880 provider characters; 3,894 with snapshot separators)
+remained visible after conversation reload. The gateway qualifier passed 428 native
+summary events, a tool call, instrumentation and all three capacity releases.
+Focused checks passed 90 backend stream tests and 39 runtime tests; independent
+review found no critical/major issues. Temporary model settings were restored.
