@@ -38,6 +38,23 @@ character instruction limit does not apply to it); an agent such as `openui-expe
 
 ## Component library
 
+### OpenUI 1.0 migration
+
+The frontend pins `lang-core`/`react-lang` to **1.0.1** and `react-ui`/`react-headless` to **0.18.1**.
+Thesys remains **0.14.0**: its published peer ranges do not certify this combination. Existing package overrides retain one
+SDK runtime and the application's Zustand 5 store; mounted legacy component/provider tests qualify this integration locally.
+Keep these tests as upgrade gates, including reports, slide previews, forms, images and exports. React remains 18.
+
+This dependency migration preserves existing component signatures, persisted programs and accepted interaction state. It does
+not enable general mini-app generation or autosave. `migration-compatibility.test.tsx` separately qualifies the 1.0 function,
+local `@Set`, typed action and state-hydration APIs using a test-only library. The generated agent prompt remains unchanged
+after regeneration; new bindings/tool capabilities require their own implementation and qualification.
+
+Known upstream limitation: core 1.0.1's `library.extend()` calls `zod/v4/core.util.mergeDefs`, which is absent from Zod
+3.25.76's bundled v4 bridge. Vite warns about that export. Our libraries and prompt generator use `createLibrary` with
+complete definitions, so the affected extension path is not invoked. Do not adopt `library.extend()` without qualifying
+a compatible scoped Zod dependency and an extension regression; upgrading the application's Zod 3 forms is separate work.
+
 The renderer uses the **thesys chat library** (`chatLibrary` of `@openuidev/thesys`): the root is `Card`, answers can use
 `SectionBlock`, `Tabs`, the card blocks, `InlineHeader`, `List`, charts, and end with a `FollowUpBlock` (its texts raise a plain
 `continue_conversation` action, sent as a user message like a button). It runs on our `react-lang` and `react-ui`: package.json
