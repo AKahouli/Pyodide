@@ -1,6 +1,6 @@
 ---
 id: ADR-0023
-status: proposed
+status: accepted
 scope: mcp-static-credential-ingress-with-user-attribution
 source_paths:
   - YellowStorm/back/src/modules/connector/services/mcp-jwt.service.ts
@@ -11,18 +11,19 @@ source_paths:
   - mcp/mcp-semantic-model/server.py
   - YellowStorm/front/src/modules/admin/pages/connectors/CreateEditConnectorDialog.tsx
 proposed_at: 2026-10-17
+accepted_at: 2026-10-17
 ---
 
 # Two-header assertion authentication for static-credential MCP ingress
 
 ## Status and scope
 
-Proposed, not approved policy. This record extends — it does not supersede —
-[ADR-0017](ADR-0017-mcp-security-and-authentication-baseline.md) and
-[ADR-0018](ADR-0018-connector-managed-mcp-security.md). Implementation requires
-explicit user approval of this named design under
-[change control](../architecture/change-control.md). Nothing here is implemented;
-current behavior is the verified gap below.
+Accepted. The user confirmed this named design on 2026-10-17 ("ADR-0023
+approval"), extending — not superseding — [ADR-0017](ADR-0017-mcp-security-and-authentication-baseline.md)
+and [ADR-0018](ADR-0018-connector-managed-mcp-security.md). Acceptance enables
+implementation; deployment certification and the verification gates below remain
+separate. Nothing here was implemented at acceptance time; current behavior is
+the verified gap below.
 
 Scope: connectors that authenticate with a connector-managed static credential
 (Saved credential / `configured` profile) whose receiving MCP needs verified
