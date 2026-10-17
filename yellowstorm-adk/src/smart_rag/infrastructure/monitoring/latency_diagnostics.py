@@ -311,3 +311,12 @@ def emit_runner_pre_model_log(
     runtime_ms = fields.get("adk_runtime_pre_model_ms")
     level = 30 if runtime_ms is not None and runtime_ms >= SLOW_RUNNER_PRE_MODEL_MS else 20
     _emit(RUNNER_PRE_MODEL_EVENT, level, fields)
+
+
+def emit_provider_timing_log(trace: ConversationLatencyTrace) -> None:
+    """Numeric-only decomposition of the first capacity-gated provider call."""
+    _emit("conversation_latency_diag.provider_timing", 20, {
+        "request_id": trace.request_id,
+        "assistant_message_id": trace.assistant_message_id,
+        **{name: round(value, 1) for name, value in trace.build_provider_timing_breakdown().items()},
+    })

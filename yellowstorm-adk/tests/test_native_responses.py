@@ -257,3 +257,76 @@ async def test_clean_truncated_sse_never_completes_or_releases_capacity(monkeypa
             assert pool.transition.await_args.args == ('permit', 'outcome_unknown')
     finally:
         await model.client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_capacity_timing_separates_admission_from_first_sdk_event(monkeypatch, native, streaming):
+    from src.smart_rag.infrastructure.monitoring import conversation_latency as latency
+    from src.smart_rag.infrastructure.monitoring import latency_diagnostics
+    clock = [0]
+    monkeypatch.setattr(latency.time, "perf_counter_ns", lambda: clock[0] * 1_000_000)
+    logs = []
+    monkeypatch.setattr(latency_diagnostics, "_emit", lambda *args: logs.append(args))
+    trace = latency.ConversationLatencyTrace("request", "assistant", None)
+    trace.mark_llm_request_start()
+    token = latency.current_conversation_latency_trace.set(trace)
+    async def acquire():
+        clock[0] += 10
+        return "permit"
+    transitions = []
+    async def transition(permit, status):
+        transitions.append((permit, status))
+        if status == "running":
+            clock[0] += 20
+    async def chunks():
+        clock[0] += 50
+        yield SimpleNamespace(type="response.created")
+        clock[0] += 10
+        yield SimpleNamespace(type="response.completed")
+    async def create(**kwargs):
+        clock[0] += 20
+        if streaming:
+            return chunks()
+        clock[0] += 50
+        return "response"
+    pool = SimpleNamespace(acquire=acquire, transition=transition)
+    gate = CapacityClient(SimpleNamespace(create=create, acompletion=create), pool)
+    call = gate.create if native else gate.acompletion
+    try:
+        response = await call(stream=streaming)
+        if streaming:
+            assert "first_chunk" not in trace.provider_timing
+            assert len([event async for event in response]) == 2
+        clock[0] = 150
+        trace.mark_llm_first_delta()
+        assert trace.build_provider_timing_breakdown() == {
+            "capacity_acquire_ms": 10.0,
+            "capacity_running_transition_ms": 20.0,
+            "upstream_first_chunk_ms": 70.0,
+            "upstream_to_adk_response_ms": 120.0,
+            "sdk_first_chunk_to_adk_response_ms": 50.0,
+            "adapter_to_capacity_ms": 0.0,
+        }
+        assert logs[0][0] == "conversation_latency_diag.provider_timing"
+        assert logs[0][2]["upstream_first_chunk_ms"] == 70.0
+        first = dict(trace.provider_timing)
+        response = await call(stream=streaming)
+        if streaming:
+            assert len([event async for event in response]) == 2
+        trace.mark_llm_first_delta()
+        assert trace.provider_timing == first
+        assert len(logs) == 1
+        assert transitions == [("permit", "running"), ("permit", "free")] * 2
+    finally:
+        latency.current_conversation_latency_trace.reset(token)
+
+
+def test_provider_timing_omits_missing_and_invalid_intervals():
+    from src.smart_rag.infrastructure.monitoring.conversation_latency import ConversationLatencyTrace
+    trace = ConversationLatencyTrace("r", "a", None)
+    assert trace.build_provider_timing_breakdown() == {}
+    trace.provider_timing = {"acquire_start": 20_000_000, "acquire_end": 10_000_000,
+                             "dispatch": 20_000_000, "first_chunk": 70_000_000_000}
+    assert trace.build_provider_timing_breakdown() == {"capacity_running_transition_ms": 10.0}

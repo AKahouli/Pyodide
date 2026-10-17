@@ -126,6 +126,8 @@ class ConversationLatencyTrace:
     session_runner_setup: SessionRunnerSetupMilestones = field(default_factory=SessionRunnerSetupMilestones)
     diagnostics: RunnerPreModelDiagnostics = field(default_factory=RunnerPreModelDiagnostics)
     session_lookup_sequence: int = 0
+    # First capacity-gated call only; diagnostics never serialized to protobuf.
+    provider_timing: dict[str, int] = field(default_factory=dict)
     # Diagnostic-only correlation for the runner_pre_model log; empty until a
     # run site notes it. Not part of protobuf/UI metrics.
     session_id: str = ""
@@ -151,10 +153,40 @@ class ConversationLatencyTrace:
             self.llm_request_start_perf_ns = time.perf_counter_ns()
             self.llm_request_start_epoch_ms = time.time_ns() / 1_000_000
 
+    def claim_provider_timing(self) -> bool:
+        if self.provider_timing:
+            return False
+        self.provider_timing["acquire_start"] = time.perf_counter_ns()
+        return True
+
+    def mark_provider_timing(self, milestone: str) -> None:
+        self.provider_timing.setdefault(milestone, time.perf_counter_ns())
+
+    def build_provider_timing_breakdown(self) -> dict:
+        """Separate admission from gateway dispatch without redefining provider_ttft.
+
+        First SDK event can precede text/reasoning; upstream time includes SDK,
+        network and gateway time, rather than claiming pure model inference.
+        """
+        stamps = self.provider_timing
+        stages = [
+            ("capacity_acquire_ms", stamps.get("acquire_start"), stamps.get("acquire_end")),
+            ("capacity_running_transition_ms", stamps.get("acquire_end"), stamps.get("dispatch")),
+            ("upstream_first_chunk_ms", stamps.get("dispatch"), stamps.get("first_chunk")),
+            ("upstream_to_adk_response_ms", stamps.get("dispatch"), self.llm_first_delta_perf_ns),
+            ("sdk_first_chunk_to_adk_response_ms", stamps.get("first_chunk"), self.llm_first_delta_perf_ns),
+            ("adapter_to_capacity_ms", self.llm_request_start_perf_ns, stamps.get("acquire_start")),
+        ]
+        return {name: duration for name, start, end in stages
+                if (duration := self._monotonic_ms(start, end)) is not None}
+
     def mark_llm_first_delta(self) -> None:
         if self.llm_first_delta_perf_ns is None:
             self.llm_first_delta_perf_ns = time.perf_counter_ns()
             self.llm_first_delta_epoch_ms = time.time_ns() / 1_000_000
+            if self.provider_timing:
+                from .latency_diagnostics import emit_provider_timing_log
+                emit_provider_timing_log(self)
 
     def mark_adk_first_delta_forwarded(self) -> None:
         if self.adk_first_delta_forwarded_perf_ns is None:

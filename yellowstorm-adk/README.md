@@ -28,6 +28,16 @@ document extraction features below are separate capabilities.
 
 ## Native Responses for the conversation agent
 
+Single-agent conversation parents advertise a compact complete connector catalog
+through `load_connector_tools`, loading original schemas on demand for both APIs.
+All authorized actions remain reachable through their existing execution wrappers;
+first use can add a loading step. Worker and manager/team declarations are unchanged.
+Responses replay fingerprints the complete catalog, preserving reasoning and provider
+chains when a subset is loaded. No migration or new setting is required. Gateway
+qualification supports `--deferred-tools` in `tests/wp10/qualify_native_responses.py`.
+Capacity diagnostics separately record admission and dispatch-to-first-response time;
+the existing public provider TTFT metric keeps its original meaning.
+
 The single-agent conversation parent uses the model's **Admin > Models > Conversation API**
 selection: Chat Completions (the default, including existing models) retains
 `InstrumentedLiteLlm`; Responses uses ADK `OpenAIResponsesLlm` through the configured

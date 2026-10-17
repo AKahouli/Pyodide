@@ -24,6 +24,28 @@ sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
 
 ## Conversation native Responses boundary (2026-10-16)
 
+### Admission timing and connector schema disclosure (2026-10-17)
+
+The first capacity-gated call now records monotonic acquisition, durable running
+transition, dispatch-to-first-SDK-event and dispatch-to-first-ADK-response timings
+in `conversation_latency_diag.provider_timing`. The existing public provider TTFT
+keeps its original boundary. An early Responses SDK event can be lifecycle metadata,
+so dispatch-to-ADK-response is the useful model-output boundary; neither duration
+claims pure provider inference. Permit ownership, retries, fencing and uncertain
+outcome handling are unchanged. Real gateway tiny-prompt probes measured warm
+admission about 153 ms, separately from about 976/1,001 ms upstream-to-ADK response
+for Responses/Chat Completions. These are not full conversation timings.
+
+Conversation parents defer connector declarations through the native ADK toolset
+interface. A compact complete catalog loads selected original schemas for the next
+model step; all original authorized wrappers remain dispatchable. Invocation-local
+selection does not enter durable history. Other tools and worker paths are unchanged.
+Responses compatibility hashes the complete authorized catalog so disclosure changes
+do not discard reasoning or provider chains. Actual capability changes still rebase.
+First connector use can add one model round trip. See proposed
+[ADR-0021](../decisions/ADR-0021-conversation-deferred-connector-schemas.md) for measured
+schema reduction, gateway checks and rollback.
+
 `team_orchestrator.py` adapts the library-built single-agent parent with
 `LLMFactory.for_conversation()` with the model's explicit `conversation_api` agent
 parameter. Admin > Models persists `conversationApi` in the existing catalog;

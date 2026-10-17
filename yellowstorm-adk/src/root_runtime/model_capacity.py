@@ -101,10 +101,17 @@ class CapacityClient:
 
     async def _call(self, create, kwargs, stream_wrapper=None):
         pool = self.pool or capacity_pool()
+        from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+        trace = get_current_conversation_latency_trace()
+        timing = trace if trace is not None and trace.claim_provider_timing() else None
         permit = await pool.acquire()
+        if timing is not None:
+            timing.mark_provider_timing('acquire_end')
         dispatched = False
         try:
             await pool.transition(permit, 'running')
+            if timing is not None:
+                timing.mark_provider_timing('dispatch')
             dispatched = True
             # A timeout retry could overlap the original provider request.
             response = await create(**kwargs)
@@ -115,16 +122,19 @@ class CapacityClient:
         if kwargs.get('stream'):
             if stream_wrapper:
                 response = stream_wrapper(response)
-            stream = CapacityStream(response, pool, permit)
+            stream = CapacityStream(response, pool, permit, timing)
             if _streams.get() is not None:
                 _streams.get().append(stream)
             return stream
+        if timing is not None:
+            timing.mark_provider_timing('first_chunk')
         await _finish(pool, permit, 'free')
         return response
 
 
 class CapacityStream:
-    def __init__(self, stream, pool, permit):
+    def __init__(self, stream, pool, permit, timing=None):
+        self.timing = timing
         self.stream, self.pool, self.permit = stream, pool, permit
         self.iterator = stream.__aiter__()
         self.finished = False
@@ -137,7 +147,10 @@ class CapacityStream:
 
     async def __anext__(self):
         try:
-            return await self.iterator.__anext__()
+            chunk = await self.iterator.__anext__()
+            if self.timing is not None:
+                self.timing.mark_provider_timing('first_chunk')
+            return chunk
         except StopAsyncIteration:
             if not self.finished:
                 self.finished = True

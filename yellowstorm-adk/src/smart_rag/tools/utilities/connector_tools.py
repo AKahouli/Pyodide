@@ -9,6 +9,7 @@ from urllib.parse import quote
 import requests
 from hashlib import sha256
 from google.adk.tools.tool_context import ToolContext
+from google.adk.tools.base_toolset import BaseToolset
 
 from src.connector_tool_name import build_connector_tool_name
 from src.run_workspace import with_run_workspace_path
@@ -39,6 +40,78 @@ _RECORD_CITATION_GUIDANCE = (
     "never a record you did not read here."
 )
 _MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
+
+
+class DeferredConnectorToolset(BaseToolset):
+    """Advertise connector schemas on demand, retaining their original dispatch.
+
+    This object belongs to one freshly constructed conversation agent. Loaded
+    names are additionally keyed by invocation, never persisted in chat state.
+    """
+
+    def __init__(self, tools):
+        super().__init__()
+        self._use_invocation_cache = False
+        self._originals = {tool.name: tool for tool in tools}
+        self._loaded = {}
+        catalog = "\n".join(
+            f"{tool.name}: {' '.join(str(tool.custom_schema.get('description') or tool.description).split())[:160]}"
+            for tool in tools
+        )
+
+        async def load_connector_tools(tool_names: list[str], tool_context: ToolContext):
+            unknown = [name for name in tool_names if name not in self._originals]
+            if unknown:
+                return {"error": "Unknown connector tool names", "unknown": unknown}
+            self._loaded.setdefault(tool_context.invocation_id, set()).update(tool_names)
+            return {"loaded": tool_names, "instruction": "Call the loaded tools using their original schemas on the next step."}
+
+        self._loader = SearchToolADK(load_connector_tools, {"function": {
+            "name": "load_connector_tools",
+            "description": "Load original connector tool schemas before calling them. Select exact names from this complete authorized catalog:\n" + catalog,
+            "parameters": {"type": "object", "properties": {
+                "tool_names": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["tool_names"]},
+        }}, reject_unknown_args=True)
+        self._catalog_metadata = {
+            "names": [self._loader.name, *self._originals],
+            "signature": sha256(json.dumps(
+                [self._loader.custom_schema, *[tool.custom_schema for tool in tools]],
+                sort_keys=True, separators=(",", ":"), default=str,
+            ).encode()).hexdigest(),
+        }
+        self._tools = []
+        for original in tools:
+            original_process = original.process_llm_request
+
+            async def process_llm_request(*, tool_context, llm_request, original=original, original_process=original_process):
+                object.__setattr__(llm_request, "_deferred_connector_catalog", self._catalog_metadata)
+                if original.name in self._loaded.get(tool_context.invocation_id, set()):
+                    await original_process(tool_context=tool_context, llm_request=llm_request)
+                else:
+                    # ADK dispatch remains complete for historical calls/replays;
+                    # only the outgoing declaration is deferred.
+                    llm_request.tools_dict[original.name] = original
+
+            original.process_llm_request = process_llm_request
+            self._tools.append(original)
+
+    async def get_tools(self, readonly_context=None):
+        return [self._loader, *self._tools]
+
+
+def defer_connector_tool_schemas(tools):
+    """Wrap only trusted connector wrappers; leave built-ins and controls intact."""
+    connectors = [tool for tool in tools if isinstance(tool, SearchToolADK)
+                  and getattr(tool, "_conversation_connector", False)]
+    if not connectors:
+        return list(tools)
+    return [tool for tool in tools if tool not in connectors] + [DeferredConnectorToolset(connectors)]
+
+
+def install_deferred_connector_tools(agent):
+    """Install on a freshly constructed conversation parent; instructions stay intact."""
+    agent.tools = defer_connector_tool_schemas(agent.tools or [])
 
 
 @dataclass(frozen=True)
@@ -1378,6 +1451,7 @@ def create_connector_tools(
             }
             from src.root_runtime.leaf_tools import register_tool_execution_kind
             tool = SearchToolADK(_connector_tool, schema, reject_unknown_args=True)
+            tool._conversation_connector = True
             tools.append(register_tool_execution_kind(tool, action.get("execution_kind", "unknown")))
 
         logger.info(

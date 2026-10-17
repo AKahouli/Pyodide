@@ -121,6 +121,34 @@ def test_incompatible_context_never_reuses_provider_chain(change):
     assert kwargs['input']
 
 
+@pytest.mark.parametrize('mode', ['application', 'provider'])
+@pytest.mark.parametrize('change', ['loaded_subset', 'catalog', 'other_tool'])
+def test_deferred_schema_loading_preserves_replay_but_capability_changes_rebase(mode, change):
+    model = SimpleNamespace(client=SimpleNamespace(base_url='http://gateway/v1'),
+                            history_mode=mode, reasoning_history='all')
+    request = LlmRequest()
+    catalog = {'signature': 'full-trusted-catalog', 'names': ['load_connector_tools', 'lookup']}
+    object.__setattr__(request, '_deferred_connector_catalog', catalog)
+    kwargs = {'model': 'model', 'input': [message('user', 'Question')],
+              'tools': [{'type': 'function', 'name': 'load_connector_tools'}]}
+    saved = prepare(model, request, copy.deepcopy(kwargs))
+    saved['response_id'] = 'resp_one'
+    saved['items'].append({'type': 'reasoning', 'encrypted_content': 'private-fixture'})
+    object.__setattr__(request, '_responses_history', saved)
+    kwargs['tools'].append({'type': 'function', 'name': 'lookup'})
+    kwargs['input'].append({'type': 'function_call_output', 'call_id': 'one', 'output': 'loaded'})
+    if change == 'catalog':
+        catalog['signature'] = 'changed-schema-or-authorization'
+    if change == 'other_tool':
+        kwargs['tools'].append({'type': 'function', 'name': 'new_builtin'})
+    prepare(model, request, kwargs)
+    compatible = change == 'loaded_subset'
+    assert ('previous_response_id' in kwargs) == (compatible and mode == 'provider')
+    if mode == 'application':
+        assert any(item.get('encrypted_content') == 'private-fixture'
+                   for item in kwargs['input']) == compatible
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('isolated', [False, True])
 @pytest.mark.parametrize('mode,expired', [('application', False), ('provider', False), ('provider', True)])

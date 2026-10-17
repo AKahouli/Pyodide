@@ -96,6 +96,16 @@ async def main(args):
         return {'marker': value}
     agent = Agent(name='native_responses_smoke', model=model, tools=[lookup_marker],
                   instruction='Follow the user instructions exactly. Use lookup_marker when requested.')
+    if args.deferred_tools:
+        from src.smart_rag.tools.search.tools import SearchToolADK
+        from src.smart_rag.tools.utilities.connector_tools import install_deferred_connector_tools
+        tool = SearchToolADK(lookup_marker, {'function': {
+            'name': 'lookup_marker', 'description': 'Return a synthetic marker for this smoke test.',
+            'parameters': {'type': 'object', 'properties': {'value': {'type': 'string'}},
+                           'required': ['value']}}}, reject_unknown_args=True)
+        tool._conversation_connector = True
+        agent.tools = [tool]
+        install_deferred_connector_tools(agent)
     from src.smart_rag.infrastructure.monitoring.responses_history import install_history_callbacks, STATE_KEY
     install_history_callbacks(agent, args.api, 'smoke')
     sessions = InMemorySessionService()
@@ -105,13 +115,15 @@ async def main(args):
     marker = 'fixture_' + run_id[:12]
     text_counts = []
     summary_events = 0
+    provider_timings = []
     # Marker echo/tool plumbing alone may require no reasoning and legitimately
     # return no summary. Require actual reasoning work for summary qualification.
     summary_task = ('First solve this scheduling puzzle: A precedes C, B follows D, '
         'C immediately precedes E, and D is neither first nor last. Find all valid '
         'orders of A B C D E and check completeness. Then ' if args.require_summary or args.require_replay else '')
     try:
-        for prompt in (summary_task + f'Call lookup_marker with value {marker}. Then reply with its marker.',
+        load_task = ('First load lookup_marker using load_connector_tools. ' if args.deferred_tools else '')
+        for prompt in (summary_task + load_task + f'Call lookup_marker with value {marker}. Then reply with its marker.',
                        'Without calling any tool, repeat the marker from our previous turn.'):
             token = start_conversation_latency_trace(run_id, uuid4().hex, None)
             try:
@@ -128,11 +140,19 @@ async def main(args):
                 assert marker in text, 'Marker missing from answer'
                 trace = get_current_conversation_latency_trace()
                 assert trace.llm_request_start_perf_ns is not None and trace.llm_first_delta_perf_ns is not None
+                provider_timings.append(trace.build_provider_timing_breakdown())
                 text_counts.append(partials)
             finally:
                 reset_conversation_latency_trace(token)
         assert calls == [marker], 'Expected exactly one local tool execution'
         assert len(sent) >= 3
+        if args.deferred_tools:
+            def tool_names(body):
+                return [tool.get('name') or tool.get('function', {}).get('name')
+                        for tool in body.get('tools', [])]
+            assert tool_names(sent[0]) == ['load_connector_tools'], 'Full schema loaded before discovery'
+            assert any('lookup_marker' in tool_names(body) for body in sent[1:]), 'Requested schema never loaded'
+            assert tool_names(sent[-1]) == ['load_connector_tools'], 'Loaded schema leaked across turns'
         if native:
             state = (await sessions.get_session(app_name='native_responses_smoke', user_id='smoke', session_id=run_id)).state.get(STATE_KEY, {})
             print(json.dumps({'diagnostics': {'request_reasoning': [body.get('reasoning') for body in sent],
@@ -175,6 +195,7 @@ async def main(args):
                           'encrypted_replay_observed': any(item.get('type') == 'reasoning' and item.get('encrypted_content')
                               for body in sent for item in body.get('input', [])) if native else None,
                           'native_summary_events': summary_events, 'instrumentation': 'PASS',
+                          'deferred_tools': args.deferred_tools, 'provider_timings': provider_timings,
                           'capacity_enabled': settings.ROOT_WORK_LLM_CAPACITY_ENABLED,
                           'owned_capacity_released': len(owned)}))
     finally:
@@ -347,6 +368,7 @@ if __name__ == '__main__':
     parser.add_argument('--api', choices=['responses', 'chat_completions'], default='responses')
     parser.add_argument('--list-models', action='store_true')
     parser.add_argument('--capacity', action='store_true')
+    parser.add_argument('--deferred-tools', action='store_true', help='Qualify on-demand schema loading and per-turn reset')
     parser.add_argument('--history', choices=['application', 'provider'], default='application')
     parser.add_argument('--replay', choices=['none', 'last', 'all', 'auto'], default='auto')
     parser.add_argument('--summary', choices=['off', 'auto', 'concise', 'detailed'], default='off')

@@ -45,6 +45,25 @@ variation; controlled database measurements establish the append improvement.
 The follow-up also had source history to seed, so backend preparation is not a
 like-for-like comparison with the initial empty conversation.
 
+The subsequent catalog change (2026-10-17) replaces full initial connector schemas
+with a compact complete catalog and on-demand `load_connector_tools`. Original
+authorized actions and execution wrappers remain reachable in both APIs; selected
+schemas last only for the current invocation. First tool use can add a loading step.
+Responses fingerprints the full catalog, so loading preserves encrypted replay and
+provider-managed history; actual capability changes still reset lineage. See proposed
+[ADR-0021](../decisions/ADR-0021-conversation-deferred-connector-schemas.md).
+The configured 50-action fixture measured 83% less initial schema JSON. Three paired
+synthetic Luna greetings used 10,924 versus 2,268 input tokens and median elapsed time
+2.05 versus 1.53 s. In the user's existing conversation, sticky Yellowmind routing
+was retained for comparison: greeting input fell from 13.0–13.2K to 9.5–9.8K tokens
+with longer history. Warm deployed greetings took 4.62 and 6.37 s, so the local
+synthetic improvement is not a uniform end-to-end latency promise. Numeric runtime
+diagnostics now distinguish acquisition/running admission (~149–160 ms warm) from
+dispatch-to-first-ADK-response (3.33–5.05 s in those two turns). Existing public TTFT
+retains its earlier boundary. An SDK lifecycle event can arrive before model output.
+The live activity panel confirmed schema loading without executing the connector
+action; a fresh same-agent marker was saved and recalled exactly on the next turn.
+
 | Workflow | Existing behavior and source |
 | --- | --- |
 | Start and revisit a conversation | New-thread landing, history and paginated messages; [new page](../../../YellowStorm/front/src/modules/conversation/NewConversationPage.tsx), [store](../../../YellowStorm/front/src/modules/conversation/store.ts) |

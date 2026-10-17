@@ -93,10 +93,20 @@ def prepare(model, request, kwargs):
     timestamp = getattr(request, '_responses_timestamp', None)
     if timestamp and isinstance(instructions, str):
         instructions = instructions.replace(timestamp, '{time}')
+    tools = kwargs.get('tools')
+    deferred = getattr(request, '_deferred_connector_catalog', None)
+    if deferred:
+        # Loading a subset changes the wire declarations, not the authorized
+        # capabilities. Hash their complete trusted catalog so tool discovery
+        # preserves replay, while actual catalog/schema changes still rebase.
+        tools = {'connector_catalog': deferred['signature'], 'other_tools': [
+            tool for tool in tools or []
+            if not (tool.get('type') == 'function' and tool.get('name') in deferred['names'])
+        ]}
     signature = hashlib.sha256(canonical({
         'model': kwargs['model'], 'endpoint': str(model.client.base_url),
         'scope': getattr(request, '_responses_scope', ''),
-        'instructions': instructions, 'tools': kwargs.get('tools'),
+        'instructions': instructions, 'tools': tools,
         'instruction_template': getattr(request, '_responses_instruction_template', None),
         'reasoning': kwargs.get('reasoning'), 'history': model.history_mode,
         'replay': model.reasoning_history,

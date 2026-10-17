@@ -866,6 +866,10 @@ Do not render charts for single values or non-numeric content.
             if delegation_instruction:
                 agent.instruction += '\n' + delegation_instruction
 
+            if not worker_role:
+                from src.smart_rag.tools.utilities.connector_tools import install_deferred_connector_tools
+                install_deferred_connector_tools(agent)
+
             # Start MCP connect + tools/list now so it overlaps session and runner
             # setup instead of running lazily at the first model request.
             prewarm_mcp_toolsets(agent.tools or [])
