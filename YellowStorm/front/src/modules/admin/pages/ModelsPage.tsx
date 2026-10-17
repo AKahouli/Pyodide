@@ -116,6 +116,7 @@ function sortModels(models: AdminModelResponse[]): AdminModelResponse[] {
 function normalizeModel(model: AdminModelResponse): AdminModelResponse {
   return {
     ...model,
+    conversationApi: model.conversationApi === 'responses' ? 'responses' : 'chat_completions',
     types: Array.isArray(model.types) ? model.types : model.type ? [model.type] : [],
     inputModalities: Array.isArray(model.inputModalities) && model.inputModalities.includes('text')
       ? model.inputModalities
@@ -145,6 +146,7 @@ export function ModelsPage() {
     chefSlug: '',
     types: [] as ModelType[],
     omitTemperature: false,
+    conversationApi: 'chat_completions' as 'chat_completions' | 'responses',
     inputModalities: ['text'] as ModelInputModality[],
     reasoningEfforts: '',
     defaultReasoningEffort: '',
@@ -286,6 +288,7 @@ export function ModelsPage() {
       chefSlug: model.chefSlug,
       types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
       omitTemperature: model.omitTemperature,
+      conversationApi: model.conversationApi ?? 'chat_completions',
       inputModalities: model.inputModalities,
       reasoningEfforts: model.reasoning.efforts.map((effort) => effort.id).join(', '),
       defaultReasoningEffort: model.reasoning.defaultEffort || '',
@@ -315,6 +318,7 @@ export function ModelsPage() {
         providers,
         types: editFormData.types,
         omitTemperature: editFormData.omitTemperature,
+        conversationApi: editFormData.conversationApi,
         inputModalities: editFormData.inputModalities,
         reasoningEfforts: editFormData.reasoningEfforts.split(',').map((id) => id.trim()).filter(Boolean).map((id) => ({
           id,
@@ -607,6 +611,24 @@ export function ModelsPage() {
                 <p className="text-xs text-muted-foreground">
                   {t('models.edit.fields.typeHelper')}
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="conversationApi">{t('models.edit.fields.conversationApi')}</Label>
+                <Select
+                  value={editFormData.conversationApi}
+                  onValueChange={(value) => {
+                    if (value === 'chat_completions' || value === 'responses') {
+                      setEditFormData((prev) => ({ ...prev, conversationApi: value }));
+                    }
+                  }}
+                >
+                  <SelectTrigger id="conversationApi" aria-describedby="conversationApi-help"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="chat_completions">{t('models.edit.fields.conversationApi.chatCompletions')}</SelectItem>
+                    <SelectItem value="responses">{t('models.edit.fields.conversationApi.responses')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p id="conversationApi-help" className="text-xs text-muted-foreground">{t('models.edit.fields.conversationApiHelper')}</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="providers">{t('models.edit.fields.providers')}</Label>

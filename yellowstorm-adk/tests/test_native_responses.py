@@ -40,7 +40,7 @@ def test_factory_preserves_gateway_alias_and_parameters_and_other_providers():
     old = LiteLlm(model='azure/gpt-5.4-mini', max_completion_tokens=321,
                   temperature=1, reasoning_effort='high', parallel_tool_calls=True,
                   timeout=90, num_retries=1, user='fixture')
-    native = LLMFactory.for_conversation(old)
+    native = LLMFactory.for_conversation(old, 'responses')
     assert isinstance(native, InstrumentedResponsesLlm)
     assert native.model == old.model and native.store is False
     assert native.reasoning == {'effort': 'high'}
@@ -49,6 +49,20 @@ def test_factory_preserves_gateway_alias_and_parameters_and_other_providers():
     other = LiteLlm(model='ollama/llama3')
     assert LLMFactory.for_conversation(other) is other
     assert LLMFactory.for_conversation(native) is native
+
+
+@pytest.mark.asyncio
+async def test_explicit_api_selection_defaults_to_completions_and_supports_custom_alias():
+    for name in ('gpt-5.4-mini', 'azure/gpt-test', 'custom-gateway-alias', 'ollama/llama3'):
+        old = LiteLlm(model=name)
+        assert LLMFactory.for_conversation(old) is old
+        assert LLMFactory.for_conversation(old, 'chat_completions') is old
+        native = LLMFactory.for_conversation(old, 'responses')
+        assert isinstance(native, InstrumentedResponsesLlm)
+        assert native.model == name
+        await native.client.close()
+    with pytest.raises(ValueError, match='Unsupported conversation API'):
+        LLMFactory.for_conversation(old, 'automatic')
 
 
 @pytest.mark.asyncio

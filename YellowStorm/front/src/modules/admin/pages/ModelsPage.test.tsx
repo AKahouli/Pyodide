@@ -67,4 +67,23 @@ describe('ModelsPage', () => {
       expect.objectContaining({ inputModalities: ['text', 'image'], defaultReasoningEffort: null }),
     ));
   });
+  it.each([
+    { initial: undefined, selected: 'responses', initialLabel: 'chatCompletions', selectedLabel: 'responses' },
+    { initial: 'responses' as const, selected: 'chat_completions', initialLabel: 'responses', selectedLabel: 'chatCompletions' },
+  ])('saves the selected conversation API ($selected)', async ({ initial, selected, initialLabel, selectedLabel }) => {
+    vi.mocked(getAllModels).mockResolvedValue({ models: [{ ...model, conversationApi: initial }], total: 1 });
+    const { user } = renderWithProviders(<ModelsPage />);
+    await user.click(await screen.findByRole('button', { name: 'models.table.actions.edit' }));
+
+    const api = screen.getByRole('combobox', { name: 'models.edit.fields.conversationApi' });
+    expect(api).toHaveTextContent(`models.edit.fields.conversationApi.${initialLabel}`);
+    await user.click(api);
+    await user.click(await screen.findByRole('option', { name: `models.edit.fields.conversationApi.${selectedLabel}` }));
+    await user.click(screen.getByRole('button', { name: 'models.edit.actions.save' }));
+
+    await waitFor(() => expect(updateModel).toHaveBeenCalledWith(
+      'text-model', expect.objectContaining({ conversationApi: selected }),
+    ));
+  });
+
 });

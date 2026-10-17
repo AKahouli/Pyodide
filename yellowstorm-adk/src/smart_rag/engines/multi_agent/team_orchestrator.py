@@ -806,7 +806,10 @@ Do not render charts for single values or non-numeric content.
             if not worker_role:
                 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
                 original_model = agent.model
-                agent.model = LLMFactory.for_conversation(original_model)
+                agent.model = LLMFactory.for_conversation(
+                    original_model,
+                    agent_config.get('agent_params', {}).get('conversation_api', 'chat_completions'),
+                )
                 if agent.model is not original_model:
                     native_client = agent.model.client
             if await stopped_during_bootstrap():

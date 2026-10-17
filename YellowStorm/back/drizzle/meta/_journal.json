@@ -400,6 +400,13 @@
       "when": 1792380000000,
       "tag": "0048_agent_gen_ui",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792454400000,
+      "tag": "0050_model_conversation_api",
+      "breakpoints": true
     }
   ]
 }

@@ -172,8 +172,9 @@ class TestAutoAgentGenerationTeam:
         assert error_events == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("conversation_api", ['chat_completions', 'responses'])
     @pytest.mark.parametrize("role", [None, "ROOT", "ROOT_FANOUT", "LIBRARY_WORKER", "TEMPORARY_WORKER"])
-    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role, monkeypatch):
+    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self, role, conversation_api, monkeypatch):
         """Mono conversation parents should evaluate child results, not use child tools directly."""
         mock_config = MagicMock()
         from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
@@ -197,6 +198,7 @@ class TestAutoAgentGenerationTeam:
             "prompt": "Search prompt",
             "tools": [{"name": "search"}],
             "agent_params": {
+                "conversation_api": conversation_api,
                 "enable_temporary_child_agents": "true",
                 "max_temporary_child_agents": "2",
             },
@@ -251,6 +253,8 @@ class TestAutoAgentGenerationTeam:
 
         assert result == "parent answer"
         assert native_adapter.call_count == (0 if worker else 1)
+        if not worker:
+            assert native_adapter.call_args.args[1] == conversation_api
         assert native_model.client.close.await_count == (0 if worker else 1)
         if role in ('LIBRARY_WORKER', 'TEMPORARY_WORKER'):
             assert mock_agent.tools == [] and mock_agent.sub_agents == []

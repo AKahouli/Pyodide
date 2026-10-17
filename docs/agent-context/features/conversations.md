@@ -40,11 +40,14 @@ These are implemented entry points, not a guarantee that every deployment enable
 
 ## Ownership and request flow
 
-Single-agent conversation parents with recognized OpenAI/Azure model names use
-native ADK Responses through the existing LiteLLM gateway. Application/ADK history
+Single-agent conversation parents use the explicit **Conversation API** choice
+configured per model in **Admin > Models**. Chat Completions is the default for
+existing/new models; Responses opts into native ADK Responses through the existing
+LiteLLM gateway. The choice is independent of model name and is not an automatic
+fallback. Application/ADK history
 remains authoritative; provider storage and conversation linkage are disabled.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
-Workers and other providers retain their adapters. Truncated native streams fail
+Workers and manager/team execution retain their adapters. Truncated native streams fail
 instead of finalizing partial text/tool calls. Cross-call reasoning-state replay
 is not provided by the pinned adapter. See the runtime architecture record.
 

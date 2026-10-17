@@ -1031,6 +1031,7 @@ export interface AdminModelResponse {
   isDefault: boolean;
   isConversationV2Default: boolean;
   omitTemperature: boolean;
+  conversationApi?: 'chat_completions' | 'responses';
   inputModalities: ModelInputModality[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
@@ -1072,6 +1073,7 @@ export interface UpdateModelRequest {
   types?: ModelType[];
   isActive?: boolean;
   omitTemperature?: boolean;
+  conversationApi?: 'chat_completions' | 'responses';
   inputModalities?: ModelInputModality[];
   reasoningEfforts?: Array<{ id: string; name: string; description?: string }>;
   defaultReasoningEffort?: string | null;

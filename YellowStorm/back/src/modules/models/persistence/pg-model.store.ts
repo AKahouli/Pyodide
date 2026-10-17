@@ -30,6 +30,7 @@ function toRow(r: Row): ModelRow {
     isDefault: r.isDefault,
     isConversationV2Default: r.isConversationV2Default,
     omitTemperature: r.omitTemperature,
+    conversationApi: r.conversationApi,
     inputModalities: r.inputModalities ?? [],
     maxInputTokens: r.maxInputTokens,
     maxOutputTokens: r.maxOutputTokens,

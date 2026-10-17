@@ -28,11 +28,16 @@ document extraction features below are separate capabilities.
 
 ## Native Responses for the conversation agent
 
-The single-agent conversation parent uses ADK `OpenAIResponsesLlm` through the
-configured LiteLLM gateway for `gpt-*`, `o1*`, `o3*`, `o4*`, `openai/` and `azure/`
-model names. Its library-selected model alias, tools, callbacks and session stay
-unchanged. Leaf workers, other providers and manager/team execution retain their
-existing model adapters. No dependency upgrade or database migration is required.
+The single-agent conversation parent uses the model's **Admin > Models > Conversation API**
+selection: Chat Completions (the default, including existing models) retains
+`InstrumentedLiteLlm`; Responses uses ADK `OpenAIResponsesLlm` through the configured
+LiteLLM gateway. Selection is explicit, with no model-name heuristic or automatic
+fallback after dispatch. Custom gateway aliases can use either API when supported.
+The catalog's `conversationApi` travels in existing agent parameters as
+`conversation_api`. Apply backend migration `0050_model_conversation_api.sql` before
+deploying the backend. No dependency upgrade is required. Library-selected aliases,
+tools, callbacks and sessions stay unchanged; leaf workers and manager/team
+execution retain their existing adapters.
 
 `LLMFactory.for_conversation()` adapts the built model at the single-agent runner
 boundary. History stays in the application/ADK session: every request replays its
@@ -57,7 +62,8 @@ conda run -n meta python tests/wp10/qualify_native_responses.py --env-file <priv
 
 It never resets shared slots or edits application conversations. Treat an uncertain
 slot according to the existing capacity recovery process; never steal it to make
-a test pass. Review model-name routing when introducing a custom gateway alias.
+a test pass. Add `--api chat_completions` to run the same tool/history/capacity
+scenario through the completion adapter.
 
 ## Shared MCP connections and authentication
 

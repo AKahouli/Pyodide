@@ -2171,5 +2171,9 @@
   "workspaceSettings.storage.save": "Save workspace quota",
   "workspaceSettings.storage.saved": "Workspace quota updated",
   "workspaceSettings.storage.error": "Workspace quota could not be loaded or saved. Reload the workspace before retrying.",
-  "workspaceSettings.storage.invalid": "Enter a valid workspace ID and a whole-number quota between 1 and 1,048,576 MiB, at least equal to current usage."
+  "workspaceSettings.storage.invalid": "Enter a valid workspace ID and a whole-number quota between 1 and 1,048,576 MiB, at least equal to current usage.",
+  "models.edit.fields.conversationApi": "Conversation API",
+  "models.edit.fields.conversationApi.chatCompletions": "Chat Completions",
+  "models.edit.fields.conversationApi.responses": "Responses",
+  "models.edit.fields.conversationApiHelper": "API used by the conversation agent for this model. Choose Responses only when the model and gateway support it."
 }

@@ -18,6 +18,7 @@ export interface Model {
   isDefault: boolean;
   isConversationV2Default: boolean;
   omitTemperature: boolean;
+  conversationApi?: 'chat_completions' | 'responses';
   inputModalities: Array<'text' | 'image'>;
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

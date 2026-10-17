@@ -3,6 +3,8 @@
  * Mongo documents; the service maps rows to the public ModelResponse.
  */
 
+import type { ConversationApi } from '../interfaces/model.interface';
+
 export interface ModelRow {
   id: string;
   modelId: string;
@@ -17,6 +19,7 @@ export interface ModelRow {
   isDefault: boolean;
   isConversationV2Default: boolean;
   omitTemperature: boolean;
+  conversationApi: ConversationApi;
   inputModalities: string[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

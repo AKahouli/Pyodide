@@ -25,9 +25,13 @@ sites win on conflict. Semantic extraction ownership updated 2026-10-15 against
 ## Conversation native Responses boundary (2026-10-16)
 
 `team_orchestrator.py` adapts the library-built single-agent parent with
-`LLMFactory.for_conversation()`. Recognized OpenAI/Azure model names use the pinned
-ADK native Responses adapter through the existing LiteLLM gateway. Workers, other
-providers and manager/team paths are unchanged. No service or wire contract is added.
+`LLMFactory.for_conversation()` with the model's explicit `conversation_api` agent
+parameter. Admin > Models persists `conversationApi` in the existing catalog;
+`responses` selects the pinned native adapter through the LiteLLM gateway and
+`chat_completions` retains the instrumented LiteLLM adapter. Missing values default
+to Chat Completions. Model names do not determine the API. Workers and manager/team
+paths are unchanged. No service or protobuf field is added; existing parameter maps
+carry the setting. Deploy backend migration `0050_model_conversation_api.sql` first.
 
 Every call replays application/ADK history with `store=false` and no provider
 response/conversation linkage. The pinned adapter skips reasoning-item replay;

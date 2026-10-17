@@ -57,6 +57,7 @@ export const catalogAiModels = catalogSchema.table(
     isDefault: boolean('is_default').notNull().default(false),
     isConversationV2Default: boolean('is_conversation_v2_default').notNull().default(false),
     omitTemperature: boolean('omit_temperature').notNull().default(false),
+    conversationApi: varchar('conversation_api', { length: 32 }).$type<'chat_completions' | 'responses'>().notNull().default('chat_completions'),
     inputModalities: text('input_modalities').array().notNull().default(['text']),
     maxInputTokens: integer('max_input_tokens'),
     maxOutputTokens: integer('max_output_tokens'),
@@ -69,6 +70,7 @@ export const catalogAiModels = catalogSchema.table(
     ...timestamps(),
   },
   (t) => [
+    check('ai_models_conversation_api_check', sql`${t.conversationApi} IN ('chat_completions', 'responses')`),
     uniqueIndex('uq_ai_models_model_id').on(t.modelId),
     index('idx_ai_models_chef_active').on(t.chefSlug, t.isActive),
     index('idx_ai_models_type_active').on(t.type, t.isActive),

@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { LoggerService } from '../logger';
 import { LiteLLMClient } from './litellm.client';
 import { type ModelPatch,   type ModelRow,   type NewModelRow } from './persistence/model.store';
-import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot } from './interfaces/model.interface';
+import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot, ConversationApi } from './interfaces/model.interface';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { withTransaction } from '@common/postgres/transaction';
@@ -402,6 +402,7 @@ export class ModelsService implements OnApplicationBootstrap {
       types: string[];
       isActive: boolean;
       omitTemperature: boolean;
+      conversationApi: ConversationApi;
       inputModalities: ModelInputModality[];
       reasoningEfforts: ReasoningEffortOption[];
       defaultReasoningEffort: string | null;
@@ -555,6 +556,7 @@ export class ModelsService implements OnApplicationBootstrap {
       isDefault: (doc.isDefault as boolean) || false,
       isConversationV2Default: (doc.isConversationV2Default as boolean) || false,
       omitTemperature: (doc.omitTemperature as boolean) || false,
+      conversationApi: doc.conversationApi === 'responses' ? 'responses' : 'chat_completions',
       inputModalities,
       maxInputTokens: typeof doc.maxInputTokens === 'number' ? doc.maxInputTokens : null,
       maxOutputTokens: typeof doc.maxOutputTokens === 'number' ? doc.maxOutputTokens : null,

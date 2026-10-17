@@ -1,7 +1,7 @@
-import { ArrayContains, ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn, MaxLength, Matches, ValidateNested } from 'class-validator';
+import { ArrayContains, ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn, MaxLength, Matches, ValidateIf, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { MODEL_INPUT_MODALITIES, MODEL_TYPES, ModelInputModality } from '../interfaces/model.interface';
+import { CONVERSATION_APIS, ConversationApi, MODEL_INPUT_MODALITIES, MODEL_TYPES, ModelInputModality } from '../interfaces/model.interface';
 
 export class ReasoningEffortOptionDto {
   @ApiProperty({ maxLength: 50 })
@@ -72,6 +72,11 @@ export class UpdateModelDto {
   @IsBoolean()
   @IsOptional()
   omitTemperature?: boolean;
+
+  @ApiPropertyOptional({ description: 'API used for conversation inference', enum: CONVERSATION_APIS, default: 'chat_completions' })
+  @ValidateIf((_object, value: unknown) => value !== undefined)
+  @IsIn(CONVERSATION_APIS)
+  conversationApi?: ConversationApi;
 
   @ApiPropertyOptional({
     description: 'Input modalities supported by this model. Text is required.',

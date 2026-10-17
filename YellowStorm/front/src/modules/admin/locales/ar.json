@@ -2141,5 +2141,9 @@
   "connectors.workers.safety.read": "تقرأ البيانات",
   "connectors.workers.safety.write": "تغيّر البيانات",
   "connectors.workers.safety.delete": "تحذف البيانات",
-  "connectors.workers.launch": "تشغيل وكلاء آخرين"
+  "connectors.workers.launch": "تشغيل وكلاء آخرين",
+  "models.edit.fields.conversationApi": "واجهة API للمحادثة",
+  "models.edit.fields.conversationApi.chatCompletions": "Chat Completions",
+  "models.edit.fields.conversationApi.responses": "Responses",
+  "models.edit.fields.conversationApiHelper": "واجهة API التي يستخدمها وكيل المحادثة لهذا النموذج. اختر Responses فقط إذا كان النموذج والبوابة يدعمانها."
 }

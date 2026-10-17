@@ -370,6 +370,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
+    expect(result[0].agent_params?.params.conversation_api).toBe('chat_completions');
 
     connectorService.findIdsByCategoryName.mockResolvedValue(['connector-1']);
     const restricted = await service.buildAgentsForStream(
@@ -793,7 +794,7 @@ describe('AgentService connector skill inheritance', () => {
     jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
     jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
     modelsService.findById.mockResolvedValue({
-      id: 'selected-model', omitTemperature: false, inputModalities: ['text'], maxInputTokens: null,
+      id: 'selected-model', omitTemperature: false, conversationApi: 'responses', inputModalities: ['text'], maxInputTokens: null,
       supportsReasoning: true,
       reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
     });
@@ -811,6 +812,7 @@ describe('AgentService connector skill inheritance', () => {
     );
 
     expect(result[0].chatbot.reasoning_effort).toBe('high');
+    expect(result[0].agent_params?.params.conversation_api).toBe('responses');
   });
 
   it('preserves a tagged agent\'s native model over the selected model', async () => {
@@ -1057,6 +1059,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
     expect(result[0].agent_params?.params.temperature).toBe('0');
+    expect(result[0].agent_params?.params.conversation_api).toBe('chat_completions');
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: false });
   });
@@ -1064,7 +1067,7 @@ describe('AgentService connector skill inheritance', () => {
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
     const { service, agentRepository, modelsService, agentTypeService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true, conversationApi: 'responses' } as any);
 
     const objectId = new Types.ObjectId();
     agentRepository.findByIds.mockResolvedValue([
@@ -1089,7 +1092,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
-    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true', conversation_api: 'responses' }));
     expect(result[0].agent_params?.params.temperature).toBeUndefined();
   });
 

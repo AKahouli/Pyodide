@@ -50,15 +50,14 @@ class LLMFactory:
         create_no_tool_calls_llm: Creates LLM instance without tool calling capabilities.
     """
     @staticmethod
-    def for_conversation(model):
-        """Adapt the built OpenAI conversation model; keep other providers unchanged."""
+    def for_conversation(model, conversation_api='chat_completions'):
+        """Use the catalog's explicit API selection; legacy models keep completions."""
         from google.adk.models.lite_llm import LiteLlm
         from openai import AsyncOpenAI
         from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedResponsesLlm
-        if not isinstance(model, LiteLlm):
-            return model
-        name = model.model.lower()
-        if not name.startswith(('openai/', 'azure/', 'gpt-', 'o1', 'o3', 'o4')):
+        if conversation_api not in ('chat_completions', 'responses'):
+            raise ValueError('Unsupported conversation API')
+        if conversation_api == 'chat_completions' or not isinstance(model, LiteLlm):
             return model
         args = model._additional_args
         extra = {'max_output_tokens': args.get('max_completion_tokens', 20000)}

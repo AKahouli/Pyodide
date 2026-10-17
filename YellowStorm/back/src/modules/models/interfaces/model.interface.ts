@@ -42,6 +42,9 @@ export interface ReasoningEffortOption {
 }
 
 // Internal types
+export const CONVERSATION_APIS = ['chat_completions', 'responses'] as const;
+export type ConversationApi = (typeof CONVERSATION_APIS)[number];
+
 export interface ModelResponse {
   id: string;
   name: string;
@@ -55,6 +58,7 @@ export interface ModelResponse {
   isDefault: boolean;
   isConversationV2Default: boolean;
   omitTemperature: boolean;
+  conversationApi: ConversationApi;
   inputModalities: ModelInputModality[];
   maxInputTokens: number | null;
   maxOutputTokens: number | null;

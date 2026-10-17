@@ -1,4 +1,4 @@
-"""Opt-in gateway smoke: native streaming, local tools, history and capacity.
+"""Opt-in gateway smoke: selected API streaming, tools, history and capacity.
 
 Run from yellowstorm-adk with --env-file pointing to a private runtime .env.
 Only synthetic inputs are sent; no application conversations are read or changed.
@@ -45,10 +45,11 @@ async def main(args):
         settings.ROOT_WORK_LLM_CAPACITY_ENABLED = True
     model = LLMFactory.for_conversation(LLMFactory.create_parallel_tool_calls_llm(
         {'provider': args.model, 'reasoning_effort': 'low'}, temperature=None,
-        max_completion_tokens=1024))
-    assert model.__class__.__name__ == 'InstrumentedResponsesLlm'
+        max_completion_tokens=1024), args.api)
+    native = args.api == 'responses'
+    assert model.__class__.__name__ == ('InstrumentedResponsesLlm' if native else 'InstrumentedLiteLlm')
     if args.capacity:
-        assert isinstance(model._openai_client.responses, CapacityClient)
+        assert isinstance(model._openai_client.responses if native else model.llm_client, CapacityClient)
     owned = {}
     if settings.ROOT_WORK_LLM_CAPACITY_ENABLED:
         from src.root_runtime.model_capacity import capacity_pool
@@ -71,7 +72,17 @@ async def main(args):
             assert 'previous_response_id' not in body and 'conversation' not in body
             assert body['stream'] is True
             sent.append(body)
-    model.client._client.event_hooks['request'].append(inspect_request)
+    if native:
+        model.client._client.event_hooks['request'].append(inspect_request)
+    else:
+        # Inspect the actual LiteLLM completion boundary, preserving capacity ownership.
+        resource = model.llm_client
+        original_completion = resource.acompletion
+        async def inspect_completion(**kwargs):
+            assert kwargs['stream'] is True
+            sent.append(kwargs)
+            return await original_completion(**kwargs)
+        resource.acompletion = inspect_completion
     calls = []
     def lookup_marker(value: str) -> dict:
         """Return a synthetic marker for this smoke test."""
@@ -105,18 +116,24 @@ async def main(args):
             finally:
                 reset_conversation_latency_trace(token)
         assert calls == [marker], 'Expected exactly one local tool execution'
-        assert len(sent) >= 3 and any(item.get('type') == 'function_call_output'
-                                    for body in sent for item in body['input'])
+        assert len(sent) >= 3
+        if native:
+            assert any(item.get('type') == 'function_call_output'
+                       for body in sent for item in body['input'])
+        else:
+            assert any(message.get('role') == 'tool'
+                       for body in sent for message in body['messages'])
         assert all(count > 0 for count in text_counts), 'No partial text stream observed'
         if settings.ROOT_WORK_LLM_CAPACITY_ENABLED:
             assert len(owned) == len(sent) and all(status == 'free' for status in owned.values()), 'Owned capacity did not release'
-        print(json.dumps({'outcome': 'PASS', 'model': args.model, 'provider_requests': len(sent),
+        print(json.dumps({'outcome': 'PASS', 'model': args.model, 'api': args.api, 'provider_requests': len(sent),
                           'local_tool_calls': len(calls), 'partial_text_events_per_turn': text_counts,
                           'application_history': 'PASS', 'instrumentation': 'PASS',
                           'capacity_enabled': settings.ROOT_WORK_LLM_CAPACITY_ENABLED,
                           'owned_capacity_released': len(owned)}))
     finally:
-        await model.client.close()
+        if native:
+            await model.client.close()
         if settings.ROOT_WORK_LLM_CAPACITY_ENABLED:
             from src.root_runtime.model_capacity import capacity_pool
             await capacity_pool().engine.dispose()
@@ -126,6 +143,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--env-file', required=True)
     parser.add_argument('--model', default='gpt-5.4-mini')
+    parser.add_argument('--api', choices=['responses', 'chat_completions'], default='responses')
     parser.add_argument('--list-models', action='store_true')
     parser.add_argument('--capacity', action='store_true')
     try:

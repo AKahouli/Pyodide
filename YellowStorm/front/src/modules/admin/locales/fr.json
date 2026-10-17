@@ -2169,5 +2169,9 @@
   "workspaceSettings.storage.save": "Enregistrer le quota",
   "workspaceSettings.storage.saved": "Quota de l’espace mis à jour",
   "workspaceSettings.storage.error": "Impossible de charger ou d’enregistrer le quota. Rechargez l’espace avant de réessayer.",
-  "workspaceSettings.storage.invalid": "Saisissez un identifiant valide et un quota entier entre 1 et 1 048 576 Mio, au moins égal au stockage utilisé."
+  "workspaceSettings.storage.invalid": "Saisissez un identifiant valide et un quota entier entre 1 et 1 048 576 Mio, au moins égal au stockage utilisé.",
+  "models.edit.fields.conversationApi": "API de conversation",
+  "models.edit.fields.conversationApi.chatCompletions": "Chat Completions",
+  "models.edit.fields.conversationApi.responses": "Responses",
+  "models.edit.fields.conversationApiHelper": "API utilisée par l’agent de conversation pour ce modèle. Choisissez Responses uniquement si le modèle et la passerelle la prennent en charge."
 }

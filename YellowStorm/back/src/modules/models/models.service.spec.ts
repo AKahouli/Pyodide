@@ -43,6 +43,7 @@ function row(overrides: Partial<ModelRow>): ModelRow {
     isDefault: false,
     isConversationV2Default: false,
     omitTemperature: false,
+    conversationApi: 'chat_completions',
     inputModalities: ['text'],
     maxInputTokens: null,
     maxOutputTokens: null,
@@ -174,6 +175,21 @@ describe('ModelsService', () => {
     }).compile();
 
     svc = mod.get(ModelsService);
+  });
+
+  it('persists the admin API choice and preserves it through gateway sync', async () => {
+    store.rows.set('model', row({ modelId: 'model' }));
+    expect((await svc.updateModel('model', { conversationApi: 'responses' }))?.conversationApi).toBe('responses');
+    fetchModels.mockResolvedValue([entry('model', 'chat')]);
+    await svc.syncModels();
+    expect((await svc.findById('model'))?.conversationApi).toBe('responses');
+  });
+
+  it('defaults legacy model records to Chat Completions', async () => {
+    const legacy = row({ modelId: 'legacy' });
+    delete (legacy as Partial<ModelRow>).conversationApi;
+    store.rows.set('legacy', legacy);
+    expect((await svc.findById('legacy'))?.conversationApi).toBe('chat_completions');
   });
 
   describe('syncModels', () => {
