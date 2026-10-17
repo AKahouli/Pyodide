@@ -1,6 +1,11 @@
 # OpenUI 1.0 migration assessment and general mini-app plan
 
 Status: **phases 1–4 qualified; phases 5–7 remain proposed**.
+
+The [demo library reuse/migration map](openui-mini-app-library-map.md) proposes a
+general composition and styling upgrade within the existing library, preserving
+private drafts and document task results. It is a separate visual improvement;
+the dynamic export and generated-code sandbox phases below retain their scope.
 Assessed 2026-10-17 against this branch after chart-export commit `2f2e303c4`.
 Other dirty work in the checkout is outside this assessment. Package versions below
 are an assessment-date snapshot, not a claim about future registry releases.

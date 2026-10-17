@@ -1,0 +1,36 @@
+/* Scoped adaptation of open-intelligent-ui's layout, spacing and hierarchy. See MINI-APP-NOTICE.txt. */
+.ys-mini-app { color: var(--foreground); min-width: 0; width: 100%; margin-inline: auto; }
+.ys-mini-app[data-width='compact'], .ys-mini-panel[data-width='compact'] { max-width: 30rem; }
+.ys-mini-app[data-width='medium'], .ys-mini-panel[data-width='medium'] { max-width: 52rem; }
+.ys-mini-row, .ys-mini-column, .ys-mini-panel { display: flex; min-width: 0; }
+.ys-mini-column, .ys-mini-panel { flex-direction: column; }
+.ys-mini-row > *, .ys-mini-column > *, .ys-mini-grid > *, .ys-mini-panel > * { min-width: 0; max-width: 100%; }
+.ys-mini-row > :where(div, section) { flex: 1 1 12rem; }
+.ys-mini-grid { display: grid; min-width: 0; width: 100%; }
+.ys-mini-panel { width: 100%; margin-inline: auto; border-radius: 1rem; }
+.ys-mini-panel[data-surface='soft'] { background: var(--muted); }
+.ys-mini-panel[data-surface='outline'] { border: 1px solid var(--border); }
+.ys-mini-panel[data-radius='md'] { border-radius: .5rem; }
+.ys-mini-panel[data-radius='lg'] { border-radius: .75rem; }
+.ys-mini-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.6; }
+.ys-mini-text[data-kind='heading'] { font-size: 1.125rem; line-height: 1.4; font-weight: 600; }
+.ys-mini-text[data-kind='caption'] { font-size: .75rem; line-height: 1.5; }
+.ys-mini-text[data-kind='display'], .ys-mini-output[data-size='display'] output { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.15; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.ys-mini-text[data-tone='muted'] { color: var(--muted-foreground); }
+.ys-mini-text[data-tone='danger'] { color: var(--destructive); }
+.ys-mini-text[data-tone='success'] { color: var(--foreground); }
+.ys-mini-output[data-size='compact'] output { font-size: .75rem; }
+.ys-mini-output[data-size='display'] output { max-width: none; }
+.ys-mini-button[data-size='lg'] { min-height: 3rem; font-size: 1rem; }
+.ys-mini-button[data-variant='soft'] { background: var(--muted); color: var(--foreground); box-shadow: none; }
+.ys-mini-button[data-variant='soft']:hover { background: var(--accent); color: var(--accent-foreground); }
+.ys-mini-button[data-block='true'] { width: 100%; }
+.ys-mini-button[data-radius='lg'] { border-radius: .75rem; }
+.ys-mini-button[data-radius='full'] { border-radius: 9999px; }
+.ys-mini-app :where(input, textarea, select) { caret-color: var(--foreground); }
+.ys-mini-app :where(input, textarea, select, button):focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.ys-mini-app ::selection { background: var(--accent); color: var(--accent-foreground); }
+@media (max-width: 480px) {
+  .ys-mini-panel { max-width: 100%; }
+  .ys-mini-app[data-width] { max-width: 100%; }
+}

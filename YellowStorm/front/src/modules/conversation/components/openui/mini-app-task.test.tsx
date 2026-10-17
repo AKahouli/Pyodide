@@ -13,7 +13,9 @@ const id = '1'.repeat(24); const scope = { conversationId: 'conversation', actor
 const program = `root = Card([app])
 $document = "${id}"
 $length = "short"
-app = MiniApp("reader", "Document reader", "Read a selected document", [doc, length, run, result])
+app = MiniApp("reader", "Document reader", "Read a selected document", [layout])
+layout = MiniPanel([grid], "outline")
+grid = MiniGrid([doc, length, run, result], 2, 240)
 doc = MiniDocument("document", "Document", $document, true)
 length = MiniSelect("length", "Length", $length, [{value: "short", label: "Short"}, {value: "long", label: "Long"}])
 run = MiniButton("Read", Action([@AskAgent("Summarize the document", {documentId: $document, length: $length}, [$document])]), true)

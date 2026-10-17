@@ -49,7 +49,7 @@ export function domToPlainText(root: Element): string {
  * The names of the earlier react-ui chat library (CardHeader, Callout, SectionItem...) stay, so an answer stored
  * under it still projects.
  */
-const TEXT_CALL = /\b(TextContent|MarkDownRenderer|TextCallout|Callout|CalloutV2|CardHeader|Header|InlineHeader|StepsItem|SectionItem|SectionBlockItem|FollowUpItem|FollowUpBlock|ListItem|EntityList|BoldText|IconText|Text|Report|ReportView|StandardFrontPage|MinimalFrontPage|DramaticFrontPage|TableOfContentsPage|Headline|HeadlineStatement|KeyStatement|KeyMetrics|HeroMetric|NumberedKeyPoint|VisualCards|FeatureHighlight|SummaryGrid|ProfileTile|DataTile|Stats)\(((?:"(?:[^"\\]|\\.)*"|[^()"])*)\)/g;
+const TEXT_CALL = /\b(MiniText|TextContent|MarkDownRenderer|TextCallout|Callout|CalloutV2|CardHeader|Header|InlineHeader|StepsItem|SectionItem|SectionBlockItem|FollowUpItem|FollowUpBlock|ListItem|EntityList|BoldText|IconText|Text|Report|ReportView|StandardFrontPage|MinimalFrontPage|DramaticFrontPage|TableOfContentsPage|Headline|HeadlineStatement|KeyStatement|KeyMetrics|HeroMetric|NumberedKeyPoint|VisualCards|FeatureHighlight|SummaryGrid|ProfileTile|DataTile|Stats)\(((?:"(?:[^"\\]|\\.)*"|[^()"])*)\)/g;
 /** Leading string arguments that identify the call rather than say something (a section item's `value` id). */
 const LEADING_ID_ARGUMENTS: Readonly<Record<string, number>> = { SectionItem: 1, SectionBlockItem: 1 };
 /** Image sources (VisualCards, front pages) sit among the strings of a report call and say nothing. */
@@ -72,7 +72,13 @@ function decodeLiteral(inner: string): string {
  */
 export function programToPlainText(program: string): string {
   return Array.from(program.matchAll(TEXT_CALL))
-    .map((call) => Array.from(call[2].matchAll(STRING_LITERAL)).slice(LEADING_ID_ARGUMENTS[call[1]] ?? 0).map((literal) => decodeLiteral(literal[1]).trim()).filter((text) => text && !ENUM_ARGUMENT.test(text) && !IMAGE_URL.test(text)).join('\n'))
+    .map((call) => {
+      if (call[1] === 'MiniText') {
+        const literal = /^\s*"((?:[^"\\]|\\.)*)"\s*(?:,|$)/.exec(call[2]);
+        return literal ? decodeLiteral(literal[1]).trim() : '';
+      }
+      return Array.from(call[2].matchAll(STRING_LITERAL)).slice(LEADING_ID_ARGUMENTS[call[1]] ?? 0).map((literal) => decodeLiteral(literal[1]).trim()).filter((text) => text && !ENUM_ARGUMENT.test(text) && !IMAGE_URL.test(text)).join('\n');
+    })
     .filter(Boolean)
     .join('\n\n');
 }

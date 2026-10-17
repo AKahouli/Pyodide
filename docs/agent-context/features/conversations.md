@@ -55,6 +55,13 @@ Host draft revisions mark changed inputs stale; cancellation/failure/interruptio
 remain distinct from successful completion. No new table or service is introduced.
 See the [phase 4 contract and qualification](../architecture/openui-mini-apps-plan.md#phase-4-implementation-and-qualification).
 
+The composition/theme upgrade adds MiniRow, MiniColumn, MiniGrid, MiniPanel and
+MiniText, with optional width/button/output presentation props. They retain the
+existing MiniApp form, private autosave and document task/result identity. Names
+and previous positional signatures remain compatible. Semantic theme tokens and
+bounded numeric layout props support compact tools and responsive workflows.
+See the [demo library reuse map](../architecture/openui-mini-app-library-map.md).
+
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an
 uploaded file; nonempty plain text takes precedence over Office clipboard bitmaps.

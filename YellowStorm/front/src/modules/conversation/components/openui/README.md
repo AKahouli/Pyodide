@@ -204,6 +204,31 @@ MCP manifests retain their existing chart metadata and editable data tables with
 
 Phase 3 qualification: 264 distinct frontend tests and 23 backend tests pass, including real PostgreSQL isolation/concurrency checks. Production TypeScript checks pass. Live four-app drafts retain typed unsubmitted values after reload; two tabs detect stale writes and recover through load/reapply without inference. Independent source and documentation review passes.
 
+## Reusable composition and theme
+
+`MiniRow`, `MiniColumn`, `MiniGrid`, `MiniPanel` and `MiniText` compose arbitrary
+mini-app layouts without introducing another form or state owner. These adapt
+the upstream demo's layout algorithms and hierarchy; revision/license attribution
+is in `MINI-APP-NOTICE.txt`. All styles are scoped and use YellowStorm theme tokens.
+Spacing uses bounded 4px steps. Grid columns are 1–6, optional minimum child width
+is 80–640 px, and each layout accepts at most 40 direct children. Runtime numeric
+clamps supplement schema limits. Responsive grids shrink their column count;
+omitting minimum width supports a fixed keypad.
+
+Existing positional calls retain their defaults. Optional trailing MiniApp width
+is compact/medium/full. MiniButton adds solid/outline/soft/ghost appearance,
+sm/md/lg size, a finite icon name, disabled/block flags and md/lg/full radius after
+its existing validate argument. MiniOutput adds body/display/compact size and
+start/center/end alignment. MiniText offers heading/body/caption/display roles
+and citation-aware text. Local actions remain local, document tasks stay explicit,
+and layouts preserve private autosave and saved-result identity. New programs do
+not migrate old private drafts across program digests. Static MiniText fallback
+projection retains text while excluding presentation enums; dynamic app snapshots
+remain the separately scoped export phase.
+
+The generated prompt exposes exactly these schemas. Full worked generation
+examples and broader visual qualification remain the next migration-map commit.
+
 ## Document tasks (phase 4)
 
 `MiniDocument(name, label, $documentId, required)` lists completed conversation

@@ -5,10 +5,17 @@ import { isReactiveAssign, type ASTNode } from '@openuidev/lang-core';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { ArrowRight, Check, Copy, Download, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { MiniAppAutosaveContext, OpenUiSubmissionContext } from './actions';
 import { MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput, MiniList } from './mini-app-definitions';
 import { miniAppTaskComponents } from './mini-app-task';
+import { miniAppCompositionComponents } from './mini-app-composition';
+
+const buttonIcons = { plus: Plus, minus: Minus, check: Check, refresh: RotateCcw, 'arrow-right': ArrowRight,
+  download: Download, copy: Copy, x: X };
+const buttonVariants = { solid: 'default', outline: 'outline', soft: 'secondary', ghost: 'ghost' } as const;
+const buttonSizes = { sm: 'sm', md: 'default', lg: 'lg' } as const;
 
 function asksAgent(action: unknown): boolean {
   if (!action || typeof action !== 'object') return false;
@@ -29,6 +36,7 @@ function withNullInput(node: ASTNode): ASTNode {
 }
 
 export const miniAppComponents = [
+  ...miniAppCompositionComponents,
   ...miniAppTaskComponents,
   { ...MiniApp, component: ({ props, renderNode }: Parameters<typeof MiniApp.component>[0]) => {
     const { t } = useModuleTranslation('conversation');
@@ -36,7 +44,7 @@ export const miniAppComponents = [
     const autosave = useContext(MiniAppAutosaveContext);
     const streaming = useIsStreaming();
     return <FormNameContext.Provider value={props.name}>
-      <form aria-label={props.title} onSubmit={event => event.preventDefault()} className='space-y-4 py-2'>
+      <form aria-label={props.title} onSubmit={event => event.preventDefault()} className='ys-mini-app space-y-4 py-2' data-width={props.width}>
         <header><h3 className='text-lg font-semibold'>{props.title}</h3><p className='text-sm text-muted-foreground'>{props.description}</p></header>
         <fieldset disabled={streaming || status === 'submitting'} aria-busy={status === 'submitting'} className='min-w-0 space-y-4'>{renderNode(props.children)}</fieldset>
         <p className='text-xs text-muted-foreground'>{t(autosave ? 'openui.miniApp.autosaveHint' : 'openui.miniApp.localState')}</p>
@@ -76,15 +84,17 @@ export const miniAppComponents = [
   } },
   { ...MiniButton, component: ({ props }: Parameters<typeof MiniButton.component>[0]) => {
     const trigger = useTriggerAction(); const formName = useFormName();
-    return <Button type='button' onClick={event => {
+    const Icon = props.icon ? buttonIcons[props.icon] : undefined;
+    return <Button type='button' variant={buttonVariants[props.variant]} size={buttonSizes[props.size]} disabled={props.disabled}
+      className='ys-mini-button' data-variant={props.variant} data-size={props.size} data-block={props.block} data-radius={props.radius} onClick={event => {
       if ((props.validate || asksAgent(props.action)) && !event.currentTarget.closest('form')?.reportValidity()) return;
       trigger(props.label, formName, props.action);
-    }}>{props.label}</Button>;
+    }}>{Icon && <Icon aria-hidden='true' />}{props.label}</Button>;
   } },
   { ...MiniOutput, component: ({ props }: Parameters<typeof MiniOutput.component>[0]) => {
     const { t } = useModuleTranslation('conversation');
     const value = props.value == null ? t('openui.miniApp.emptyResult') : typeof props.value === 'object' ? JSON.stringify(props.value) : String(props.value);
-    return <div className='space-y-1'><p className='text-sm font-medium'>{props.label}</p><output aria-label={props.label} className='block max-w-prose whitespace-pre-wrap break-words text-sm tabular-nums'>{value}</output></div>;
+    return <div className='ys-mini-output space-y-1' data-size={props.size} data-align={props.align} style={{ textAlign: props.align }}><p className='text-sm font-medium'>{props.label}</p><output aria-label={props.label} className='block max-w-prose whitespace-pre-wrap break-words text-sm tabular-nums'>{value}</output></div>;
   } },
   { ...MiniList, component: ({ props }: Parameters<typeof MiniList.component>[0]) => Array.isArray(props.items) && props.items.length
     ? <ul className='list-disc space-y-1 break-words pl-5 text-sm'>{props.items.map((item, index) => <li key={index}>{item}</li>)}</ul>
