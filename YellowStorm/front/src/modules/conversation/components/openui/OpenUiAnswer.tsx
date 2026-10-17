@@ -61,14 +61,16 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const retries = useRef(new Map<string, string>());
   const accepted = useRef(new Map<string, string>());
-  const saved = useMemo(() => messages.filter(message => message.conversationType === 'user' && message.interaction?.type === 'openui'
-    && message.interaction.sourceMessageId === messageId && message.interaction.componentId === partId
-    && message.conversationId === conversationId && !message.id.startsWith('temp-'))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(message => message.interaction as OpenUiSubmission), [messages, messageId, partId, conversationId]);
-  const savedStateSignature = submissionSignature(Object.assign({}, ...saved.map(submission => submission.formState)));
-  const initialState = useMemo(() => JSON.parse(savedStateSignature) as Record<string, unknown>, [savedStateSignature]);
   const miniApp = !isStreaming && Boolean(partId && actorId) && /\bMiniApp\s*\(/.test(content);
   const [digest, setDigest] = useState<{ content: string; hash?: string; failed?: boolean }>();
+  const saved = useMemo(() => messages.filter(message => message.conversationType === 'user' && message.interaction?.type === 'openui'
+    && message.interaction.sourceMessageId === messageId && message.interaction.componentId === partId
+    && (!miniApp || (message.senderId === actorId
+      && (!message.interaction.appTask || message.interaction.appTask.programDigest === digest?.hash)))
+    && message.conversationId === conversationId && !message.id.startsWith('temp-'))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(message => message.interaction as OpenUiSubmission), [messages, messageId, partId, conversationId, miniApp, actorId, digest?.hash]);
+  const savedStateSignature = submissionSignature(Object.assign({}, ...saved.map(submission => submission.formState)));
+  const initialState = useMemo(() => JSON.parse(savedStateSignature) as Record<string, unknown>, [savedStateSignature]);
   const [hashAttempt, setHashAttempt] = useState(0);
   useEffect(() => {
     if (!miniApp) return;

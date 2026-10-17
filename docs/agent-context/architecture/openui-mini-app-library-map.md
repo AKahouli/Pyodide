@@ -1,6 +1,6 @@
 # OpenUI mini-app library reuse and migration map
 
-Status: **composition/theme qualified; generation guidance implemented and qualified; remaining integration phases proposed**.
+Status: **composition/theme, generation guidance and integration qualification complete; dynamic exports remain separately scoped**.
 Assessed 2026-10-17; composition phase authorized 2026-10-17.
 Scope: polished, reusable mini-apps in Conversation v1. A generated-code sandbox
 remains separately scoped.
@@ -111,7 +111,7 @@ expanding it. Do not solve prompt pressure by dropping access/state requirements
 
 ## Delivery and acceptance
 
-| Separate proposed commit | Work | Observable acceptance |
+| Separate commit | Work | Observable acceptance |
 | --- | --- | --- |
 | A — Composition and theme | Adapt bounded layout/text primitives, extend button/output presentation, map theme tokens and retain license attribution. | Same reusable primitives render a keypad, summarizer, planner and scenario panel; 390 px and desktop have no unintended horizontal overflow; keyboard focus remains visible; icon controls have labels; new large touch controls target at least 44 px. Existing saved Card/Mini* fixtures still render. |
 | B — Generation quality | Regenerate prompt from mounted definitions; add varied composition examples and concise design guidance. | Fresh agent requests generate four usable app types without app-specific screens or invented components/functions. Controls visibly change local state/results; no local interaction unexpectedly runs inference. Prompt remains within budget. |
@@ -160,7 +160,7 @@ calculator keyboard activation and nested document task/result behavior. Scoped
 component fixtures at 390/1024 px content widths have no horizontal overflow,
 responsive grids collapse from two columns to one, large buttons measure 48 px
 high, and light/dark themes render correctly. This is content-width qualification,
-not a repeat of the whole conversation shell at a mobile viewport. Commit B's generation examples are implemented; commit C's remaining qualification retains its scope.
+not a repeat of the whole conversation shell at a mobile viewport. Generation examples and the integration checks below complete commits B and C.
 
 Local entry points (repository-relative):
 
@@ -214,3 +214,42 @@ prompt-only phase. Independent source review accepts the guidance and examples.
 Generation remains model-dependent; these four checks qualify the tested model and
 requests, not every possible app. Calculator example scope is an integer keypad,
 not a full scientific calculator. Dynamic private-state exports remain phase 5.
+
+## Integration qualification (2026-10-18)
+
+ADR-0025 remains the governing private-state identity/CAS contract; document and
+MCP authorization under ADR-0017/0018 is unchanged. No schema, service, runtime or
+export format was added. This phase fixes the accepted-submission fallback in
+OpenUiAnswer: when there was no private draft, it previously combined submissions
+from any participant and could reuse an older task program. Mini-app fallback now
+requires the current actor and, for versioned task submissions, the current program
+digest. Same-actor legacy submissions without task metadata remain compatible;
+ordinary accepted form/table/chart views retain their existing shared behavior.
+
+Three focused regressions reproduce both foreign-actor and old-digest hydration
+before the fix (two failures, one positive compatibility pass), then all pass after
+it. The private-state database was already actor-scoped; this was a frontend
+hydration defect, not cross-user database reads or a file-storage isolation leak.
+
+| Boundary | Outcome and evidence |
+| --- | --- |
+| Database concurrency and identity | PASS: 161 backend tests across nine suites, including five real PostgreSQL tests in a separate test DB. Concurrent create/update admits one revision winner, separate actors/apps retain exact typed drafts, removed members cannot update prior drafts, changed sources get a new digest/revision zero and reject old writes. |
+| Frontend privacy and persistence | PASS: 148 distinct focused frontend tests across 13 suites, plus TypeScript. Covers late responses, typed null/zero/false/empty values, conflict/retry, explicit task flush, actor/program fallback, document/result remounts and existing export pipelines. |
+| Live conflicting tabs | PASS on the estimator/shortlist fixture: stale 22 cannot overwrite saved 11. Load saved restores 11. A second stale 23 is saved only after explicit Reapply; reload/reopen retains 23 and computed 62.10, query osa, quantity 3 and discount true. Source IDs and 21.3K usage remain unchanged. |
+| Live two-user boundaries | PASS: distinct English AG and French ZZ sessions each reject the other's private conversation. ZZ also cannot open the document-summary conversation. Its own fresh budget retains 77 x 2 = 154 after full reload with the same source and 20.8K usage. Shared-conversation private actor state is independently exercised by real PostgreSQL tests. |
+| Document results | PASS: the original reader restores selected scan/Short and actual Maple/Saturday/Rami result after reload/reopen without inference; unchanged 1.2M conversation usage. A second stored app with changed inputs correctly shows stale while the original full Willow answer remains available. Cancelled-result JSON roundtrip/remount is covered automatically and never shows partial success or executes an action. |
+| Existing exports | PASS: cold-loaded saved table filter a, Visits ascending and chart Visits/Osaka zero are preserved in downloaded DOCX and HTML. Both contain Osaka 0/600 then Paris 2/900, a rendered chart and no raw program. After full reload the Japan deck downloads PDF (four 960x540 pages, one image each) and image-based PPTX (four slides, one picture each). PDF pages visually inspected; titles/photos/text remain present. Image/report projection and missing-asset failure tests also pass. |
+
+Live fixtures: estimator `08bf56543d83bc5564b521f1`, second-user budget
+`f26e98d063b0df1da697db79`, document reader `f417e12e499dba83ffe99d10`,
+saved table/chart `c73786bee4cbcf72d2c23bae`, Japan `4e08cbf1405b0f44f76eb7f5`.
+Current downloads: Friendly-Greeting-Exchange-2026-10-17 (4).docx (22,364 bytes),
+(3).html (32,436 bytes), Japan-A-First-Trip-Guide-2026-10-17 (2).pdf (2,912,008 bytes)
+and (2).pptx (3,676,304 bytes). Export filenames use the existing UTC date behavior.
+
+The first account required sign-in after its session expired; checks resumed in
+the same QA context. No credentials were saved in source, tests or evidence.
+This qualifies existing static exports, not private dynamic-app snapshots or a new
+MCP editable-PPTX execution run. Those remain separately scoped. The live second
+user had a private conversation; shared-conversation actor-draft checks use the
+real database tests rather than an unapproved sharing/permission change.

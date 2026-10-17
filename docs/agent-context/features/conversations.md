@@ -66,6 +66,10 @@ apps and explicit document tasks through four parsed composition examples. Simpl
 requests can use these patterns without naming components. The document example
 uses MiniDocument plus matching typed AskAgent/MiniTaskResult inputs; local actions,
 private autosave and saved-result restoration retain their existing host ownership.
+Mini-app initial hydration from accepted submissions is restricted to the signed-in
+actor and the current task program digest. Same-actor legacy submissions remain a
+compatibility fallback; other participants and replaced task programs do not seed
+private drafts. Concurrent revision conflicts require explicit load or reapply.
 
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an

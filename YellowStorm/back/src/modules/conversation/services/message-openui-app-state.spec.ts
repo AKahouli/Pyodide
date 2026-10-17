@@ -41,6 +41,18 @@ describe('MessageService private OpenUI drafts', () => {
     await expect(service.getOpenUiAppState(actor, conversation, message, 'text')).rejects.toThrow();
     expect(store.getOpenUiAppState).not.toHaveBeenCalled();
   });
+  it('loads a replaced source under its new digest and rejects the old draft identity', async () => {
+    const replacement = 'root = Card([MiniApp("replacement", "New", "", [])])';
+    const replacementDigest = createHash('sha256').update(replacement).digest('hex');
+    const source = await store.findById();
+    store.findById.mockResolvedValue({ ...source, components: [{ id: 'text', type: 'text', data: { content: replacement } }] });
+    expect(await service.getOpenUiAppState(actor, conversation, message, 'text')).toMatchObject({
+      stateRevision: 0, state: {}, programDigest: replacementDigest });
+    expect(store.getOpenUiAppState).toHaveBeenCalledWith({ actorId: actor, conversationId: conversation,
+      sourceMessageId: message, componentId: 'text', programDigest: replacementDigest });
+    await expect(service.putOpenUiAppState(actor, conversation, message, 'text', dto())).rejects.toMatchObject({ status: 409 });
+    expect(store.putOpenUiAppState).not.toHaveBeenCalled();
+  });
   it('rejects stale programs and CAS conflicts without silently retrying', async () => {
     await expect(service.putOpenUiAppState(actor, conversation, message, 'text', { ...dto(), programDigest: '0'.repeat(64) })).rejects.toMatchObject({ status: 409 });
     expect(store.putOpenUiAppState).not.toHaveBeenCalled();

@@ -80,6 +80,16 @@ describe('generic mini-app document tasks', () => {
     await screen.findByText(`openui.task.${status === 'cancelled' ? 'cancelled' : 'error'}`);
     expect(screen.queryByText('Project Birch starts Friday with a zero euro budget.')).not.toBeInTheDocument();
   });
+
+  it('restores a persisted cancelled task after remount without executing or showing its partial answer', async () => {
+    const persisted = JSON.parse(JSON.stringify([question(), answer('cancelled')])) as Message[];
+    const onAction = vi.fn(); useConversationStore.setState({ messages: persisted });
+    const view = mount(onAction); await screen.findByText('openui.task.cancelled');
+    view.unmount(); useConversationStore.setState({ messages: JSON.parse(JSON.stringify(persisted)) });
+    mount(onAction); await screen.findByText('openui.task.cancelled');
+    expect(screen.queryByText('Project Birch starts Friday with a zero euro budget.')).not.toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalled(); expect(fetchMessage).not.toHaveBeenCalled();
+  });
   it('loads a missing saved answer through the authenticated read API, never execution', async () => {
     vi.mocked(fetchMessage).mockResolvedValue(answer()); useConversationStore.setState({ messages: [question()] });
     const onAction = vi.fn(); mount(onAction); await screen.findByText('Project Birch starts Friday with a zero euro budget.');

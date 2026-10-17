@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
 import { conversations, messages, openUiAppStates, conversationGroupMembers } from '../../../postgres/schema';
 import { PostgresMessageStore } from './postgres-message-store';
@@ -36,6 +36,18 @@ describeIntegration('OpenUI autosave typed state and atomic concurrency', () => 
     expect(await store.getOpenUiAppState({ ...key, componentId: 'other-app' })).toBeNull();
     expect(await store.putOpenUiAppState({ ...key, actorId: otherActor }, 0, { numeric: 100 })).toMatchObject({ stateRevision: 1 });
     expect((await store.getOpenUiAppState(key))?.state).toEqual(state);
+  });
+  it('rechecks removed membership before updating a previously saved private draft', async () => {
+    const owner = await seed(), memberId = id(), member = { ...owner, actorId: memberId };
+    await database.db.insert(conversationGroupMembers).values({ conversationId: owner.conversationId,
+      userId: memberId, position: 0, status: 'member', joinedAt: new Date() });
+    expect(await store.putOpenUiAppState(member, 0, { privateDraft: 'member' })).toMatchObject({ stateRevision: 1 });
+    await database.db.delete(conversationGroupMembers).where(and(eq(conversationGroupMembers.conversationId, owner.conversationId),
+      eq(conversationGroupMembers.userId, memberId)));
+    expect(await store.canWriteOpenUiAppState(owner.conversationId, memberId)).toBe(false);
+    expect(await store.putOpenUiAppState(member, 1, { privateDraft: 'revoked overwrite' })).toBeNull();
+    expect(await store.putOpenUiAppState(owner, 0, { privateDraft: 'owner' })).toMatchObject({ stateRevision: 1 });
+    expect(await store.getOpenUiAppState(owner)).toMatchObject({ state: { privateDraft: 'owner' } });
   });
   it('allows exactly one concurrent create/update and refuses stale overwrites', async () => {
     const key = await seed();

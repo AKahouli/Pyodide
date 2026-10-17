@@ -263,3 +263,12 @@ autosave/status, access checks and saved-result correlation. Generation must not
 invent documents, automatically summarize, write results into drafts or recreate
 the source app when answering a task. Static answer exports remain supported;
 private dynamic snapshots remain the separately scoped phase 5.
+
+### Accepted-submission fallback isolation
+
+When no private draft exists, MiniApp may hydrate this actor's accepted values.
+Versioned task submissions must also match the current program digest. Another
+participant's values and previous-program task values cannot seed a private draft.
+Same-actor legacy submissions remain compatible; ordinary form/chart/table accepted
+views keep their existing semantics. PostgreSQL draft access remains actor-scoped.
+See the reuse map's integration qualification for concurrency, access and exports.
