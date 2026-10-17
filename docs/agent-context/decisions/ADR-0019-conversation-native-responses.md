@@ -64,3 +64,10 @@ column migration passed against an isolated test-database schema with rollback,
 covering defaults for existing/new rows, both switches and invalid-value rejection.
 Focused backend DTO/catalog and agent-parameter tests passed. Independent review
 found no critical/major issues in the selection flow.
+
+An additional 54 factory/latency regressions and three Admin Models form tests
+passed; backend build typechecking passed. Full frontend typechecking reports
+errors in unchanged semantic-model localization code. Browser QA was blocked by
+the isolated Vite harness dependency/startup failures; no browser success or
+deployed end-to-end validation is claimed. The broad AgentService suite also has
+existing connector fixture failures; its five affected model-mapping tests passed.
