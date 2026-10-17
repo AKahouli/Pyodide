@@ -366,7 +366,27 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
+    expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toBeInTheDocument();
+  });
+
+  it('formats native summary previews and expanded Markdown without executing HTML', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1' messageId='message-1' isStreaming={false}
+      components={[{ id: 'summary-1', type: 'agentActivity', data: {
+        summary: '**Analyzing linear extensions**', status: 'completed',
+        detail: '**Analyzing linear extensions**\n\nCompare the *valid* schedules.\n\n## Results\n\n- First case\n- Second case\n\n<script>unsafe()</script>\n\n[Unsafe](javascript:alert(1))',
+      } }]}
+    />);
+    const trigger = screen.getByRole('button', { name: '**Analyzing linear extensions**, Completed. Show full reasoning' });
+    expect(trigger).toHaveTextContent('Analyzing linear extensions');
+    expect(trigger).not.toHaveTextContent('**');
+    expect(trigger.querySelector('strong')).toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('heading', { name: 'Results' })).toBeInTheDocument();
+    expect(screen.getByText('valid').tagName).toBe('EM');
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(container.querySelector('script')).toBeNull();
+    expect(screen.getByText('Unsafe').getAttribute('href')).not.toMatch(/^javascript:/);
   });
 
   it('renders expanded reasoning details verbatim', () => {

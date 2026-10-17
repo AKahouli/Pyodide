@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, Clock, Download, Eye, FileText, Loader2, MessageCircle } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { useAgentStore } from '@/modules/agent/store';
@@ -180,14 +182,18 @@ function AgentActivityRow({ data, isStreaming, isLatest, redactSensitiveText }: 
       <CollapsibleTrigger asChild>
         <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-start text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
-          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{summary}</span>
+          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>
+            <ReactMarkdown skipHtml allowedElements={['strong', 'em', 'code', 'del']} unwrapDisallowed>{summary}</ReactMarkdown>
+          </span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
           <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>
         <div data-agent-detail-card className='rounded-lg border border-border/70 bg-background/55 p-3 shadow-xs'>
-          <p className='whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground'>{detail}</p>
+          <div className='break-words text-sm leading-7 text-foreground [&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:font-semibold [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_code]:text-xs [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:pl-3'>
+            <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} disallowedElements={['img']}>{detail}</ReactMarkdown>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>

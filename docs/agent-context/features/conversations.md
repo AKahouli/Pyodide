@@ -73,6 +73,10 @@ guardrails continue suppressing unreviewed thought activity.
 The native adapter joins adjacent summary sections in completed snapshots before
 the activity tracker reconciles them, so later sections do not overwrite earlier
 ones. Streaming deltas and tool boundaries retain their existing order.
+Activity previews render inline Markdown; expanded summaries render safe
+Markdown with paragraph spacing, lists and compact headings. Raw HTML and external
+images are not rendered, and Markdown links retain the renderer's safe URL policy.
+This display formatting does not alter stored summary text or private replay state.
 Tools, callbacks, gRPC/SSE components and persistence ownership are preserved.
 Workers and manager/team execution retain their adapters. Truncated native streams fail
 instead of finalizing partial text/tool calls. A private session adapter restores
