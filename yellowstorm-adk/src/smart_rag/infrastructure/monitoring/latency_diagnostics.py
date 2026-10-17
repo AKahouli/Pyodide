@@ -95,6 +95,10 @@ class SessionLookupProfile:
 
 def _classify_statement(statement: str) -> str:
     stmt = (statement or "").lower()
+    # Joined session/app/user reads belong to the session-row bucket; do not
+    # misreport their entire duration as an independent app-state lookup.
+    if all(table in stmt for table in ("sessions", "app_states", "user_states")):
+        return "session_row"
     # app_states/user_states must be tested before the bare table names they contain.
     if "app_states" in stmt:
         return "app_state"

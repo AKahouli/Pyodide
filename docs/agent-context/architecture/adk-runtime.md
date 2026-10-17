@@ -80,6 +80,23 @@ ADK runtime before the model, 929 ms resolving workspace/agents, and 4.88 s wait
 for the provider's first token. Full Runner history reads and durable event appends
 remain necessary; their individual live costs were not captured by the local log sink.
 
+Further controlled real-database profiling (2026-10-17), using a synthetic session
+with all 16 Luna source events and a stub model, attributed warm pre-model time
+to the authoritative lookup (183.8 ms median) and durable append (197.6 ms).
+The existing instrumented session service now joins session/app/user state in one
+scoped LEFT JOIN instead of three sequential reads, followed by the complete
+timestamp/ID-ordered event query. SDK state merge and storage conversion preserve
+the revision marker; metadata-only reads use one query. Exact ADK 2.11.0 and class
+guards retain the public SDK lookup for upgrades and custom/fenced services.
+No cache, isolation change or write bypass is used. The same real-database Runner
+probe measured pre-model median 378.3 to 347.3 ms and lookup 183.8 to 150.7 ms;
+durable append stayed approximately 194–198 ms. Tests retain stale-write rejection
+and atomic state/event rollback. See the upgrade runbook before changing the guard.
+Live Luna marker recall passed after restart and on the next warm turn. The warm
+turn measured 555 ms runtime pre-model versus 599–605 ms before, with outer session
+lookup 134 ms and setup 135 ms. The first cold turn measured 727 ms runtime, so
+the improvement is modest and does not remove restart/network variability.
+
 Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
 calls use `CapacityClient.create()` with retries disabled when capacity is enabled.
 Stream validation requires a terminal Responses event before EOF. Truncated text

@@ -214,6 +214,7 @@ class TestStatementClassification:
         assert diag._classify_statement("select state from user_states") == "user_state"
         assert diag._classify_statement("SELECT * FROM events WHERE session_id = ?") == "events"
         assert diag._classify_statement("SELECT * FROM sessions") == "session_row"
+        assert diag._classify_statement("SELECT * FROM sessions LEFT JOIN app_states LEFT JOIN user_states") == "session_row"
         assert diag._classify_statement("CREATE TABLE alembic_version") == "metadata"
         assert diag._classify_statement("SELECT 1") == "other"
 
@@ -258,35 +259,162 @@ class TestInstrumentedServiceContract:
         finally:
             await engine.dispose()
 
-    @pytest.mark.asyncio
-    async def test_listener_registration_is_idempotent_per_engine(self):
-        from sqlalchemy import text
-        from sqlalchemy.ext.asyncio import create_async_engine
 
-        from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
-            InstrumentedDatabaseSessionService,
-        )
-        from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
-            SessionLookupProfile,
-            _current_session_lookup_profile,
-        )
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config", [None, {"num_recent_events": 0}, {"num_recent_events": 2},
+                                     {"after_timestamp": 101}, {"after_timestamp": 101, "num_recent_events": 1}])
+async def test_joined_read_matches_sdk_history_state_and_revision(config):
+    from google.adk.events import Event
+    from google.adk.sessions import DatabaseSessionService
+    from google.adk.sessions.base_session_service import GetSessionConfig
+    from google.genai import types
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import InstrumentedDatabaseSessionService
 
-        engine = create_async_engine("sqlite+aiosqlite://")
+    engine = create_async_engine("sqlite+aiosqlite://")
+    try:
+        sdk = DatabaseSessionService(db_engine=engine)
+        service = InstrumentedDatabaseSessionService(db_engine=engine)
+        session = await sdk.create_session(app_name="app", user_id="owner", session_id="same",
+                                          state={"app:shared": 1, "user:private": 2, "local": 3})
+        for event_id, timestamp in [("b", 100), ("a", 100), ("c", 101)]:
+            await sdk.append_event(session, Event(id=event_id, author="user", timestamp=timestamp,
+                content=types.Content(role="user", parts=[types.Part(text=event_id)])))
+        await sdk.create_session(app_name="other", user_id="owner", session_id="same", state={"app:shared": "wrong"})
+        await sdk.create_session(app_name="app", user_id="other", session_id="same", state={"user:private": "wrong"})
+        config = GetSessionConfig(**config) if config else None
+        expected = await sdk.get_session(app_name="app", user_id="owner", session_id="same", config=config)
+        await service.prepare_tables()
+        profile = SessionLookupProfile()
+        token = diag._current_session_lookup_profile.set(profile)
         try:
-            # Second construction on the same engine must not duplicate
-            # listeners (shared-engine deployments construct once, tests and
-            # hot reload may construct more).
-            InstrumentedDatabaseSessionService(db_engine=engine)
-            InstrumentedDatabaseSessionService(db_engine=engine)
-
-            profile = SessionLookupProfile()
-            token = _current_session_lookup_profile.set(profile)
-            try:
-                async with engine.connect() as conn:
-                    await conn.execute(text("SELECT 1"))
-            finally:
-                _current_session_lookup_profile.reset(token)
-
-            assert profile.sql_query_count == 1
+            actual = await service.get_session(app_name="app", user_id="owner", session_id="same", config=config)
         finally:
-            await engine.dispose()
+            diag._current_session_lookup_profile.reset(token)
+        assert actual.model_dump() == expected.model_dump()
+        assert actual._storage_update_marker == expected._storage_update_marker
+        assert actual.state == {"app:shared": 1, "user:private": 2, "local": 3}
+        assert profile.sql_query_count == (1 if config and config.num_recent_events == 0 else 2)
+        assert await service.get_session(app_name="app", user_id="missing", session_id="same") is None
+        assert await service.get_session(app_name="missing", user_id="owner", session_id="same") is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_joined_read_missing_global_state_matches_sdk():
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import InstrumentedDatabaseSessionService
+    engine = create_async_engine("sqlite+aiosqlite://")
+    try:
+        sdk = DatabaseSessionService(db_engine=engine)
+        service = InstrumentedDatabaseSessionService(db_engine=engine)
+        await sdk.create_session(app_name="app", user_id="owner", session_id="id", state={"local": 1})
+        schema = sdk._get_schema_classes()
+        async with sdk._rollback_on_exception_session() as db:
+            await db.execute(delete(schema.StorageUserState))
+            await db.execute(delete(schema.StorageAppState))
+            await db.commit()
+        actual = await service.get_session(app_name="app", user_id="owner", session_id="id")
+        expected = await sdk.get_session(app_name="app", user_id="owner", session_id="id")
+        assert actual.model_dump() == expected.model_dump()
+        assert actual._storage_update_marker == expected._storage_update_marker
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", ["custom", "version"])
+async def test_joined_read_falls_back_to_public_sdk(monkeypatch, fallback):
+    from unittest.mock import AsyncMock
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring import instrumented_database_session_service as module
+    class CustomService(module.InstrumentedDatabaseSessionService):
+        pass
+    engine = create_async_engine("sqlite+aiosqlite://")
+    try:
+        if fallback == "version":
+            monkeypatch.setattr(module, "_JOINED_READ_SUPPORTED", False)
+        service = (CustomService if fallback == "custom" else module.InstrumentedDatabaseSessionService)(db_engine=engine)
+        original = AsyncMock(return_value=None)
+        monkeypatch.setattr(DatabaseSessionService, "get_session", original)
+        assert await service.get_session(app_name="app", user_id="owner", session_id="id") is None
+        original.assert_awaited_once_with(app_name="app", user_id="owner", session_id="id", config=None)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_joined_session_keeps_durable_scoped_writes_stale_rejection_and_rollback():
+    from google.adk.events import Event, EventActions
+    from google.genai import types
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import InstrumentedDatabaseSessionService
+    engine = create_async_engine("sqlite+aiosqlite://")
+    service = InstrumentedDatabaseSessionService(db_engine=engine)
+    try:
+        await service.create_session(app_name="app", user_id="owner", session_id="id")
+        kwargs = dict(app_name="app", user_id="owner", session_id="id")
+        current = await service.get_session(**kwargs)
+        stale = await service.get_session(**kwargs)
+        def message(event_id, state):
+            return Event(id=event_id, author="user", actions=EventActions(state_delta=state),
+                         content=types.Content(role="user", parts=[types.Part(text=event_id)]))
+        await service.append_event(current, message("durable", {"app:a": 1, "user:u": 2, "s": 3}))
+        persisted = await service.get_session(**kwargs)
+        assert [e.id for e in persisted.events] == ["durable"]
+        assert persisted.state == {"app:a": 1, "user:u": 2, "s": 3}
+        with pytest.raises(ValueError, match="[Ss]tale|last_update_time|storage"):
+            await service.append_event(stale, message("stale", {"s": "wrong"}))
+        def fail_insert(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("INSERT INTO EVENTS"):
+                raise RuntimeError("simulated event insert failure")
+        event.listen(engine.sync_engine, "before_cursor_execute", fail_insert)
+        try:
+            with pytest.raises(RuntimeError, match="simulated"):
+                await service.append_event(persisted, message("rollback", {"app:a": 4, "user:u": 5, "s": 6}))
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", fail_insert)
+        reloaded = await service.get_session(**kwargs)
+        assert reloaded.state == {"app:a": 1, "user:u": 2, "s": 3}
+        assert [e.id for e in reloaded.events] == ["durable"]
+        assert reloaded._storage_update_marker == current._storage_update_marker
+    finally:
+        await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_listener_registration_is_idempotent_per_engine():
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+        InstrumentedDatabaseSessionService,
+    )
+    from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+        SessionLookupProfile,
+        _current_session_lookup_profile,
+    )
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    try:
+        # Second construction on the same engine must not duplicate
+        # listeners (shared-engine deployments construct once, tests and
+        # hot reload may construct more).
+        InstrumentedDatabaseSessionService(db_engine=engine)
+        InstrumentedDatabaseSessionService(db_engine=engine)
+
+        profile = SessionLookupProfile()
+        token = _current_session_lookup_profile.set(profile)
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        finally:
+            _current_session_lookup_profile.reset(token)
+
+        assert profile.sql_query_count == 1
+    finally:
+        await engine.dispose()

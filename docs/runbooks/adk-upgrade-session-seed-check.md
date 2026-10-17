@@ -18,6 +18,16 @@ The metadata-only bootstrap lookup uses public `GetSessionConfig(num_recent_even
 confirm it skips event SQL while the Runner's full lookup and resume retain all
 history. Query-count and ownership regressions cover these assumptions.
 
+The runtime's `InstrumentedDatabaseSessionService` also combines session/app/user
+state into one scoped LEFT JOIN while retaining the complete SDK event query,
+state merge, storage revision conversion and read transaction. This optimization
+is enabled only for the exact service class on ADK 2.11.0; upgrades use the SDK
+path until requalified. Run `tests/test_latency_diagnostics.py` to check full,
+metadata-only and filtered history equivalence, missing-state/ownership behavior,
+revision markers, durable scoped writes, stale rejection and rollback. Joined
+state SQL time is attributed to the session-row bucket. Do not remove the version
+guard without checking the installed `get_session()` and storage conversion.
+
 ## Prompt to paste into an agent after each upgrade
 
 ```

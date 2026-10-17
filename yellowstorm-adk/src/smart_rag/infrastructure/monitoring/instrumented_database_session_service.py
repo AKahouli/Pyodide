@@ -1,20 +1,21 @@
-"""DatabaseSessionService wrapper that profiles session lookups (log only).
+"""Profile session operations and combine state reads without caching history.
 
-Observes ``get_session()`` externally — no upstream ADK implementation is
-copied or forked — and classifies SQL durations by ADK table name through
-SQLAlchemy event listeners. All behavior is identical to the parent service;
-when no conversation latency trace is active the overrides are transparent
-pass-throughs, so this is inert when the Admin latency toggle is off.
+The joined read is verified against ADK 2.11.0; other versions and custom
+subclasses retain the SDK lookup. All durable writes remain SDK-owned.
 """
 
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
+from importlib.metadata import version
 from typing import Optional
 
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
+from google.adk.sessions import database_session_service as adk_database
 from google.adk.sessions.session import Session
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
@@ -26,6 +27,9 @@ from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
     emit_session_lookup_log,
     get_current_conversation_latency_trace,
 )
+
+_JOINED_READ_SUPPORTED = (version("google-adk") == "2.11.0"
+                          and callable(getattr(adk_database, "_merge_state", None)))
 
 
 class InstrumentedDatabaseSessionService(DatabaseSessionService):
@@ -71,7 +75,7 @@ class InstrumentedDatabaseSessionService(DatabaseSessionService):
     async def get_session(self, **kwargs) -> Optional[Session]:
         trace = get_current_conversation_latency_trace()
         if trace is None:
-            return await super().get_session(**kwargs)
+            return await self._read_session(**kwargs)
 
         profile = SessionLookupProfile(
             lookup_sequence=trace.next_session_lookup_sequence(),
@@ -80,7 +84,7 @@ class InstrumentedDatabaseSessionService(DatabaseSessionService):
         token = _current_session_lookup_profile.set(profile)
         start_ns = time.perf_counter_ns()
         try:
-            session = await super().get_session(**kwargs)
+            session = await self._read_session(**kwargs)
         finally:
             _current_session_lookup_profile.reset(token)
         total_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
@@ -98,6 +102,46 @@ class InstrumentedDatabaseSessionService(DatabaseSessionService):
         )
         attribute_lookup_to_trace(trace, profile, total_ms)
         return session
+
+    async def _read_session(self, *, app_name, user_id, session_id, config=None):
+        # Never bypass custom/fenced service behavior or silently assume a new
+        # SDK's storage/revision semantics. Upgrade checklist covers this gate.
+        if not _JOINED_READ_SUPPORTED or type(self) is not InstrumentedDatabaseSessionService:
+            return await super().get_session(
+                app_name=app_name, user_id=user_id, session_id=session_id, config=config,
+            )
+        await self.prepare_tables()
+        schema = self._get_schema_classes()
+        S, A, U, E = (schema.StorageSession, schema.StorageAppState,
+                      schema.StorageUserState, schema.StorageEvent)
+        async with self._rollback_on_exception_session(read_only=True) as db:
+            row = (await db.execute(
+                select(S, A, U)
+                .outerjoin(A, A.app_name == S.app_name)
+                .outerjoin(U, and_(U.app_name == S.app_name, U.user_id == S.user_id))
+                .where(S.app_name == app_name, S.user_id == user_id, S.id == session_id)
+            )).one_or_none()
+            if row is None:
+                return None
+            stored, app, user = row
+            events = []
+            if config is None or config.num_recent_events != 0:
+                stmt = select(E).where(
+                    E.app_name == app_name, E.user_id == user_id, E.session_id == session_id,
+                )
+                if config and config.after_timestamp:
+                    after = datetime.fromtimestamp(config.after_timestamp, tz=timezone.utc)
+                    if self._uses_naive_datetime():
+                        after = after.replace(tzinfo=None)
+                    stmt = stmt.where(E.timestamp >= after)
+                stmt = stmt.order_by(E.timestamp.desc(), E.id.desc())
+                if config and config.num_recent_events is not None:
+                    stmt = stmt.limit(config.num_recent_events)
+                events = (await db.execute(stmt)).scalars().all()
+            return stored.to_session(
+                state=adk_database._merge_state(app.state if app else {}, user.state if user else {}, stored.state),
+                events=[event.to_event() for event in reversed(events)],
+            )
 
     async def append_event(self, session: Session, event: Event) -> Event:
         # Aggregate pre-model session writes; first model call boundary ends
