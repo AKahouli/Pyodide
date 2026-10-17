@@ -6,23 +6,66 @@ import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { LoggerService } from '../../logger';
-import { BadRequestException, ConflictException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
-import { type MessageRecord} from '../persistence/message-store';
+import { type MessageRecord, type OpenUiAppStateKey } from '../persistence/message-store';
 import { ConversationUsageAccountingService } from './conversation-usage-accounting.service';
 import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
+import { createHash } from 'node:crypto';
+import { isValidOpenUiAppState, type OpenUiAppStateResponse, type PutOpenUiAppStateDto } from '../dto/openui-app-state.dto';
 
 const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
 @Injectable()
 export class MessageService {
   private readonly appUrl: string;
+
+  private async openUiAppStateKey(actorId: string, conversationId: string, messageId: string, componentId: string): Promise<OpenUiAppStateKey> {
+    if (!/^[a-f0-9]{24}$/.test(messageId) || !componentId || componentId.length > 128) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
+    }
+    // GET conversation authorization also admits project readers/invitees; private drafts do not.
+    if (!await this.messageStore.canWriteOpenUiAppState(conversationId, actorId)) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Private app state requires conversation membership');
+    }
+    const source = await this.messageStore.findById(messageId);
+    const component = source?.components?.find(item => item.id === componentId && item.type === 'text');
+    const content = component?.data?.content;
+    if (!source || source.conversationId !== conversationId || source.conversationType !== 'ai'
+      || source.isStreaming || !source.isComplete || typeof content !== 'string'
+      || !/^\s*root\s*=\s*[A-Z]\w*\(/m.test(content)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source');
+    }
+    return { actorId, conversationId, sourceMessageId: messageId, componentId,
+      programDigest: createHash('sha256').update(content, 'utf8').digest('hex') };
+  }
+
+  async getOpenUiAppState(actorId: string, conversationId: string, messageId: string, componentId: string): Promise<OpenUiAppStateResponse> {
+    const key = await this.openUiAppStateKey(actorId, conversationId, messageId, componentId);
+    const saved = await this.messageStore.getOpenUiAppState(key);
+    return { schemaVersion: 1, libraryVersion: 'yellowstorm-miniapp-v1', programDigest: key.programDigest,
+      stateRevision: saved?.stateRevision ?? 0, state: saved?.state ?? {}, updatedAt: saved?.updatedAt ?? null, canWrite: true };
+  }
+
+  async putOpenUiAppState(actorId: string, conversationId: string, messageId: string, componentId: string, dto: PutOpenUiAppStateDto): Promise<OpenUiAppStateResponse> {
+    if (dto.schemaVersion !== 1 || dto.libraryVersion !== 'yellowstorm-miniapp-v1'
+      || !Number.isSafeInteger(dto.expectedRevision) || dto.expectedRevision < 0 || dto.expectedRevision > 2_147_483_646
+      || !isValidOpenUiAppState(dto.state)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI app state');
+    }
+    const key = await this.openUiAppStateKey(actorId, conversationId, messageId, componentId);
+    if (key.programDigest !== dto.programDigest) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'OpenUI program changed');
+    const saved = await this.messageStore.putOpenUiAppState(key, dto.expectedRevision, dto.state);
+    if (!saved) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'OpenUI state changed; reload before saving');
+    return { schemaVersion: 1, libraryVersion: 'yellowstorm-miniapp-v1', programDigest: key.programDigest,
+      ...saved, canWrite: true };
+  }
 
   constructor(
     private readonly messageStore: PostgresMessageStore,

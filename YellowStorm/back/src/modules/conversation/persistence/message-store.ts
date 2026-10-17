@@ -86,7 +86,24 @@ export interface MessageCursorInput extends Omit<MessagePageInput, 'page'> {
   cursor?: string;
 }
 
+export interface OpenUiAppStateKey {
+  actorId: string;
+  conversationId: string;
+  sourceMessageId: string;
+  componentId: string;
+  programDigest: string;
+}
+
+export interface OpenUiAppStateRecord {
+  stateRevision: number;
+  state: Record<string, unknown>;
+  updatedAt: Date;
+}
+
 export interface MessageStore {
+  canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean>;
+  getOpenUiAppState(key: OpenUiAppStateKey): Promise<OpenUiAppStateRecord | null>;
+  putOpenUiAppState(key: OpenUiAppStateKey, expectedRevision: number, state: Record<string, unknown>): Promise<OpenUiAppStateRecord | null>;
   createUser(input: CreateUserMessageData): Promise<MessageRecord>;
   createAiPlaceholder(input: CreateAIPlaceholderData): Promise<MessageRecord>;
   /**

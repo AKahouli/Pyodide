@@ -1,4 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import type { OpenUiAppStateKey, OpenUiAppStateRecord } from '../message-store';
 import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
@@ -17,6 +19,52 @@ import type { ConversationUsageMetrics } from '../../utils/usage-metrics';
 @Injectable()
 export class PostgresMessageStore implements MessageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+
+  async canWriteOpenUiAppState(conversationId: string, actorId: string): Promise<boolean> {
+    const [row] = await this.db.select({ id: schema.conversations.id }).from(schema.conversations)
+      .where(and(eq(schema.conversations.id, conversationId), eq(schema.conversations.initializationStatus, 'ready'),
+        or(eq(schema.conversations.createdBy, actorId), sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm
+          WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${actorId})`))).limit(1);
+    return Boolean(row);
+  }
+
+  private openUiStateWhere(key: OpenUiAppStateKey) {
+    const table = schema.openUiAppStates;
+    return and(eq(table.actorId, key.actorId), eq(table.conversationId, key.conversationId),
+      eq(table.sourceMessageId, key.sourceMessageId), eq(table.componentId, key.componentId), eq(table.programDigest, key.programDigest));
+  }
+
+  async getOpenUiAppState(key: OpenUiAppStateKey): Promise<OpenUiAppStateRecord | null> {
+    const [row] = await this.db.select().from(schema.openUiAppStates).where(this.openUiStateWhere(key)).limit(1);
+    return row ?? null;
+  }
+
+  async putOpenUiAppState(key: OpenUiAppStateKey, expectedRevision: number, state: Record<string, unknown>): Promise<OpenUiAppStateRecord | null> {
+    return this.db.transaction(async tx => {
+      // Lock parent before message, matching cascade deletion order, and recheck write membership.
+      const [conversation] = await tx.select({ id: schema.conversations.id }).from(schema.conversations)
+        .where(and(eq(schema.conversations.id, key.conversationId), eq(schema.conversations.initializationStatus, 'ready'),
+          or(eq(schema.conversations.createdBy, key.actorId), sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm
+            WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${key.actorId})`))).limit(1).for('share');
+      if (!conversation) return null;
+      // Fence component replacement/deletion while validating and publishing the draft.
+      const [message] = await tx.select().from(schema.messages).where(and(eq(schema.messages.id, key.sourceMessageId),
+        eq(schema.messages.conversationId, key.conversationId))).limit(1).for('update');
+      const components = message?.components as MessageComponent[] | undefined;
+      const content = components?.find(component => component.id === key.componentId && component.type === 'text')?.data?.content;
+      if (!message || message.conversationType !== 'ai' || message.isStreaming || !message.isComplete
+        || typeof content !== 'string' || createHash('sha256').update(content, 'utf8').digest('hex') !== key.programDigest) return null;
+      const table = schema.openUiAppStates;
+      if (expectedRevision === 0) {
+        const [row] = await tx.insert(table).values({ ...key, state, stateRevision: 1 })
+          .onConflictDoNothing().returning();
+        return row ?? null;
+      }
+      const [row] = await tx.update(table).set({ state, stateRevision: sql`${table.stateRevision} + 1`, updatedAt: new Date() })
+        .where(and(this.openUiStateWhere(key), eq(table.stateRevision, expectedRevision))).returning();
+      return row ?? null;
+    });
+  }
 
   async createUser(input: Parameters<MessageStore['createUser']>[0]): Promise<MessageRecord> {
     return this.db.transaction(async (tx) => {

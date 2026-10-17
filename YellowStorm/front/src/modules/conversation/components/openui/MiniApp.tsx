@@ -1,11 +1,12 @@
 import './devtools-off';
 import { useContext, useId } from 'react';
 import { FormNameContext, useFormName, useIsStreaming, useStateField, useTriggerAction } from '@openuidev/react-lang';
+import { isReactiveAssign, type ASTNode } from '@openuidev/lang-core';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import { OpenUiSubmissionContext } from './actions';
+import { MiniAppAutosaveContext, OpenUiSubmissionContext } from './actions';
 import { MiniApp, MiniInput, MiniSelect, MiniToggle, MiniButton, MiniOutput, MiniList } from './mini-app-definitions';
 
 function asksAgent(action: unknown): boolean {
@@ -15,28 +16,48 @@ function asksAgent(action: unknown): boolean {
     step && typeof step === 'object' && step.type === 'custom_action' && step.name === 'AskAgent');
 }
 
+/** Substitute only the scoped input value; keep the SDK's binding expression and action evaluator. */
+function withNullInput(node: ASTNode): ASTNode {
+  const replace = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(replace);
+    if (!value || typeof value !== 'object') return value;
+    if ('k' in value && value.k === 'StateRef' && 'n' in value && value.n === '$value') return { k: 'Null' };
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replace(child)]));
+  };
+  return replace(node) as ASTNode;
+}
+
 export const miniAppComponents = [
   { ...MiniApp, component: ({ props, renderNode }: Parameters<typeof MiniApp.component>[0]) => {
     const { t } = useModuleTranslation('conversation');
     const status = useContext(OpenUiSubmissionContext)[props.name];
+    const autosave = useContext(MiniAppAutosaveContext);
     const streaming = useIsStreaming();
     return <FormNameContext.Provider value={props.name}>
       <form aria-label={props.title} onSubmit={event => event.preventDefault()} className='space-y-4 py-2'>
         <header><h3 className='text-lg font-semibold'>{props.title}</h3><p className='text-sm text-muted-foreground'>{props.description}</p></header>
         <fieldset disabled={streaming || status === 'submitting'} aria-busy={status === 'submitting'} className='min-w-0 space-y-4'>{renderNode(props.children)}</fieldset>
-        <p className='text-xs text-muted-foreground'>{t('openui.miniApp.localState')}</p>
+        <p className='text-xs text-muted-foreground'>{t(autosave ? 'openui.miniApp.autosaveHint' : 'openui.miniApp.localState')}</p>
         {status && <p role={status === 'error' ? 'alert' : 'status'} className='text-sm'>{t(`openui.interaction.${status}`)}</p>}
       </form>
     </FormNameContext.Provider>;
   } },
   { ...MiniInput, component: ({ props }: Parameters<typeof MiniInput.component>[0]) => {
     const id = useId(); const field = useStateField(props.name, props.value);
+    const trigger = useTriggerAction(); const formName = useFormName();
+    const setNumber = (value: number | null) => {
+      if (value === null && isReactiveAssign(props.value)) {
+        // OpenUI 1.0.1 resolves a null scoped $value through ?? to missing state.
+        // Keep the normal binding expression, but make its null fallback explicit.
+        trigger(props.label, formName, { steps: [{ type: 'set', target: props.value.target, valueAST: withNullInput(props.value.expr) }] });
+      } else field.setValue(value);
+    };
     const value = typeof field.value === 'string' || typeof field.value === 'number' ? field.value : '';
     return <div className='space-y-1.5'><label htmlFor={id} className='text-sm font-medium'>{props.label}</label>
       {props.kind === 'textarea'
         ? <Textarea id={id} name={props.name} value={value} required={props.required} maxLength={5000} rows={5} onChange={event => field.setValue(event.target.value)} />
         : <Input id={id} name={props.name} type={props.kind} value={value} required={props.required} min={props.min} max={props.max} maxLength={5000} step={props.kind === 'number' ? 'any' : undefined}
-          onChange={event => field.setValue(props.kind === 'number' ? (Number.isFinite(event.target.valueAsNumber) ? event.target.valueAsNumber : null) : event.target.value)} />}
+          onChange={event => props.kind === 'number' ? setNumber(Number.isFinite(event.target.valueAsNumber) ? event.target.valueAsNumber : null) : field.setValue(event.target.value)} />}
     </div>;
   } },
   { ...MiniSelect, component: ({ props }: Parameters<typeof MiniSelect.component>[0]) => {

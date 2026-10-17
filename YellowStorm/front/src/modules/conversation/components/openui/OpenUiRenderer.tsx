@@ -27,6 +27,7 @@ export interface OpenUiRendererProps {
   /** Tags the scope with the stored text component it renders (see plain-text.ts). */
   partId?: string;
   initialState?: Record<string, unknown>;
+  onStateUpdate?: (state: Record<string, unknown>) => void;
 }
 
 /** Scope for the `--openui-*` theme tokens, so ThemeProvider does not write onto <body>. */
@@ -42,7 +43,7 @@ export function resolveOpenUiMode(theme: string): 'light' | 'dark' {
  * Loaded lazily (see OpenUiAnswer): this is the only module that imports the
  * OpenUI runtime, component library and its stylesheet.
  */
-export default function OpenUiRenderer({ content, isStreaming, onAction, citations, citationScope, fallback, partId, initialState }: Readonly<OpenUiRendererProps>) {
+export default function OpenUiRenderer({ content, isStreaming, onAction, citations, citationScope, fallback, partId, initialState, onStateUpdate }: Readonly<OpenUiRendererProps>) {
   const { theme } = useContext(ThemeProviderContext);
   const mode = resolveOpenUiMode(theme);
   const [parsed, setParsed] = useState<ParseResult | null>(null);
@@ -71,7 +72,7 @@ export default function OpenUiRenderer({ content, isStreaming, onAction, citatio
               <>
                 {hasChat && (chatFallback
                   ? renderFallback(chat)
-                  : <Renderer response={chat} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} initialState={initialState} />)}
+                  : <Renderer response={chat} library={openUiLibrary} isStreaming={isStreaming} onAction={onAction} onParseResult={setParsed} initialState={initialState} onStateUpdate={onStateUpdate} />)}
                 {report !== null && (
                   <ReportBlock program={report} isStreaming={isStreaming} panelId={`${citationScope?.messageId ?? 'message'}:${partId ?? 'part'}`} citations={reportCitations} citationScope={citationScope} onParseResult={setReportParsed} />
                 )}

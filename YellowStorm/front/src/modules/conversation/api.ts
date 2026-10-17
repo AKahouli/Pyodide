@@ -1,7 +1,22 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
+import type { MiniAppStateIdentity, MiniAppStateSnapshot, MiniAppStateWrite } from './components/openui/mini-app-state';
 import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationUsageMetrics, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload, RecentConversationArtifact } from './types';
 
 // ===== Conversation APIs =====
+
+function miniAppStateUrl(identity: MiniAppStateIdentity): string {
+  return `/conversations/${encodeURIComponent(identity.conversationId)}/messages/${encodeURIComponent(identity.messageId)}/openui/${encodeURIComponent(identity.componentId)}/state`;
+}
+
+export async function fetchOpenUiAppState(identity: MiniAppStateIdentity, signal?: AbortSignal): Promise<MiniAppStateSnapshot> {
+  const response = await apiClient.get<ApiResponse<MiniAppStateSnapshot>>(miniAppStateUrl(identity), { signal });
+  return response.data.data;
+}
+
+export async function saveOpenUiAppState(identity: MiniAppStateIdentity, state: MiniAppStateWrite, signal?: AbortSignal): Promise<MiniAppStateSnapshot> {
+  const response = await apiClient.put<ApiResponse<MiniAppStateSnapshot>>(miniAppStateUrl(identity), state, { signal });
+  return response.data.data;
+}
 
 interface BackendPaginatedConversations<T extends Conversation | ConversationSummary> {
   conversations: T[];

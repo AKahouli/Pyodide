@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import OpenUiRenderer from './OpenUiRenderer';
 import { miniAppExamples } from './mini-app-examples';
 import { OpenUiSubmissionContext, toFollowUpMessage } from './actions';
+import { validateMiniAppState } from './mini-app-state';
 
 describe('composed OpenUI mini-apps', () => {
   it('converts locally, distinguishes blank from zero and resets without an inference action', async () => {
@@ -103,5 +104,32 @@ describe('composed OpenUI mini-apps', () => {
     render(<OpenUiRenderer content={'root = Card([bad, good])\nbad = MiniOutput("Invalid", @FormatNumber(1, 13))\ngood = MiniOutput("Valid", @FormatNumber(0, 2))'} isStreaming={false} onAction={vi.fn()} />);
     expect(await screen.findByLabelText('Invalid')).toHaveTextContent('openui.miniApp.emptyResult');
     expect(screen.getByLabelText('Valid')).toHaveTextContent('0.00');
+  });
+
+  it('round-trips unsubmitted numeric, boolean and text edits through the SDK state callback', async () => {
+    const user = userEvent.setup(); const update = vi.fn(); const onAction = vi.fn();
+    const view = render(<OpenUiRenderer content={miniAppExamples.scenario} isStreaming={false} onAction={onAction} onStateUpdate={update} />);
+    const price = await screen.findByRole('spinbutton', { name: 'Unit price' });
+    await user.clear(price);
+    expect(update.mock.calls.at(-1)![0].$price).toBeNull();
+    expect(() => validateMiniAppState(update.mock.calls.at(-1)![0])).not.toThrow();
+    await user.type(price, '0');
+    await user.click(screen.getByRole('checkbox', { name: 'Apply ten percent discount' }));
+    const state = update.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(state.$price).toBe(0); expect(state.$discount).toBe(true); expect(onAction).not.toHaveBeenCalled();
+    view.unmount();
+    render(<OpenUiRenderer content={miniAppExamples.scenario} isStreaming={false} onAction={onAction} initialState={JSON.parse(JSON.stringify(state))} />);
+    expect(await screen.findByRole('spinbutton', { name: 'Unit price' })).toHaveValue(0);
+    expect(screen.getByRole('checkbox')).toBeChecked();
+  });
+
+  it('preserves a transformed binding when clearing a numeric input', async () => {
+    const user = userEvent.setup(); const update = vi.fn(); const onAction = vi.fn();
+    render(<OpenUiRenderer content={'root = Card([app])\n$number = 7\napp = MiniApp("transformed", "Transformed", "", [field])\nfield = MiniInput("number", "Number", $number = ($value == null ? 0 : $value), "number")'} isStreaming={false} onAction={onAction} onStateUpdate={update} />);
+    const input = await screen.findByRole('spinbutton', { name: 'Number' });
+    await user.clear(input);
+    expect(input).toHaveValue(0);
+    expect(validateMiniAppState(update.mock.calls.at(-1)![0]).$number).toBe(0);
+    expect(onAction).not.toHaveBeenCalled();
   });
 });

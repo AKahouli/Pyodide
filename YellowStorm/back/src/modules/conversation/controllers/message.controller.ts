@@ -5,6 +5,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Body,
   Param,
   Query,
@@ -51,6 +52,8 @@ import {
 } from '../utils/backend-latency-tracker';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { ExportSlideImageDto } from '../dto/export-slide-image.dto';
+import { PutOpenUiAppStateDto, type OpenUiAppStateResponse } from '../dto/openui-app-state.dto';
+import { RateLimit } from '../../rate-limiter';
 
 /**
  * Surfacing a concurrently fetched read at its decision point: rejections are
@@ -67,6 +70,20 @@ function unwrapSettled<T>(result: PromiseSettledResult<T>): T {
 @ApiBearerAuth()
 @UseGuards(ConversationOwnerGuard)
 export class MessageController {
+  @Get(':messageId/openui/:componentId/state')
+  @RateLimit({ limit: 180, windowMs: 60_000, keyPrefix: 'conversation:openui-state-read' })
+  getOpenUiAppState(@CurrentUser() user: AuthUser, @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string, @Param('componentId') componentId: string): Promise<OpenUiAppStateResponse> {
+    return this.messageService.getOpenUiAppState(user._id.toString(), conversationId, messageId, componentId);
+  }
+
+  @Put(':messageId/openui/:componentId/state')
+  @RateLimit({ limit: 180, windowMs: 60_000, keyPrefix: 'conversation:openui-state-write' })
+  putOpenUiAppState(@CurrentUser() user: AuthUser, @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string, @Param('componentId') componentId: string, @Body() dto: PutOpenUiAppStateDto): Promise<OpenUiAppStateResponse> {
+    return this.messageService.putOpenUiAppState(user._id.toString(), conversationId, messageId, componentId, dto);
+  }
+
   constructor(
     private readonly messageService: MessageService,
     private readonly streamService: StreamService,

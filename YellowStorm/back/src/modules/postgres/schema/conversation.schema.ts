@@ -220,6 +220,29 @@ export const messages = conversationSchema.table(
   ],
 );
 
+export const openUiAppStates = conversationSchema.table('openui_app_states', {
+  actorId: char('actor_id', { length: 24 }).notNull(),
+  conversationId: char('conversation_id', { length: 24 }).notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  sourceMessageId: char('source_message_id', { length: 24 }).notNull().references(() => messages.id, { onDelete: 'cascade' }),
+  componentId: varchar('component_id', { length: 128 }).notNull(),
+  programDigest: char('program_digest', { length: 64 }).notNull(),
+  schemaVersion: integer('schema_version').notNull().default(1),
+  libraryVersion: varchar('library_version', { length: 40 }).notNull().default('yellowstorm-miniapp-v1'),
+  stateRevision: integer('state_revision').notNull().default(1),
+  state: jsonb('state').$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ columns: [t.actorId, t.conversationId, t.sourceMessageId, t.componentId, t.programDigest] }),
+  index('idx_openui_app_states_conversation').on(t.conversationId),
+  index('idx_openui_app_states_message').on(t.sourceMessageId),
+  check('openui_app_states_actor_id', objectIdCheck(t.actorId)),
+  check('openui_app_states_program_digest', sql`${t.programDigest} ~ '^[a-f0-9]{64}$'`),
+  check('openui_app_states_revision', sql`${t.stateRevision} > 0`),
+  check('openui_app_states_contract', sql`${t.schemaVersion} = 1 AND ${t.libraryVersion} = 'yellowstorm-miniapp-v1'`),
+  // PostgreSQL's canonical JSONB adds spaces; transport validation caps compact JSON at 20 KiB.
+  check('openui_app_states_json', sql`jsonb_typeof(${t.state}) = 'object' AND octet_length(${t.state}::text) <= 24576`),
+]);
+
 export const usageWindows = conversationSchema.table(
   'usage_windows',
   {

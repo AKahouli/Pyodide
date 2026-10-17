@@ -21,8 +21,10 @@ the SDK does not consistently enforce declared function schemas.
 
 Local bindings, expressions and Set/Reset actions need no inference. Explicit
 `AskAgent` actions validate the enclosing form and use the existing typed,
-authorized conversation-submission path. Accepted submissions restore their
-bindings after reload; subsequent unsubmitted drafts do not persist. Document
+authorized conversation-submission path. Private typed drafts now autosave after
+500 ms, including unsubmitted values; accepted submissions remain the initial
+fallback when no private draft exists. Expected revisions prevent stale writes.
+Both private reads and writes require current creator/member access. Document
 summarization accepts pasted text or requests existing authorized conversation
 documents through a normal agent turn. There is no new document execution bridge,
 generated JavaScript or dynamic mini-app export contract. The static summary
@@ -33,6 +35,14 @@ Live qualification used conversation `0a36aab51f702536578737aa`: a converter,
 discount scenario and city filter ran locally, and a document summarizer returned
 a factual French paragraph from pasted source text. Reload retained submitted
 values, including the unchecked bullets option, and discarded a later draft.
+
+Phase 3 then qualified quiet autosave across those four apps: reload retained
+unsubmitted zero/false/null/empty values and the summarizer's draft/options without
+another agent turn. Two tabs produced one winner and one recoverable conflict;
+both loading saved state and explicitly reapplying the whole local draft worked.
+Separate app components also save independently under real SQL concurrency tests.
+See [ADR-0025](../decisions/ADR-0025-openui-private-draft-state.md) for the approved
+private state boundary. Dynamic mini-app export snapshots remain a later phase.
 
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an

@@ -1,9 +1,12 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { ActionEvent } from '@openuidev/react-lang';
 import { AIMessageContent, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useConversationStore } from '../../store';
-import { OpenUiSubmissionContext, submissionKey, submissionSignature, toFollowUpMessage } from './actions';
+import { MiniAppAutosaveContext, OpenUiSubmissionContext, submissionKey, submissionSignature, toFollowUpMessage } from './actions';
+import { AuthContext } from '@/modules/auth/AuthContext';
+import { useMiniAppState } from './use-mini-app-state';
+import { Button } from '@/components/ui/button';
 import { OpenUiBoundary } from './OpenUiBoundary';
 import { loadOpenUiRenderer } from './preload';
 import { downloadArtifactFile, getArtifactDownloadUrl } from '../../api';
@@ -43,9 +46,11 @@ interface OpenUiAnswerProps {
  * user still reads the answer.
  */
 export function OpenUiAnswer(props: Readonly<OpenUiAnswerProps>) {
-  return <ScopedOpenUiAnswer key={`${props.conversationId}:${props.messageId}:${props.partId ?? ''}`} {...props} />;
+  const actorId = useContext(AuthContext)?.user?.id ?? '';
+  const sourceKey = !props.isStreaming && /\bMiniApp\s*\(/.test(props.content) ? props.content : '';
+  return <ScopedOpenUiAnswer key={`${actorId}:${props.conversationId}:${props.messageId}:${props.partId ?? ''}:${sourceKey}`} {...props} actorId={actorId} />;
 }
-function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, citations, artifacts, partId }: Readonly<OpenUiAnswerProps>) {
+function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, citations, artifacts, partId, actorId }: Readonly<OpenUiAnswerProps & { actorId: string }>) {
   const { t } = useModuleTranslation('conversation');
   const messages = useConversationStore(state => state.messages);
   const [localStatus, setLocalStatus] = useState<Record<string, 'submitting' | 'submitted' | 'error'>>({});
@@ -58,6 +63,22 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(message => message.interaction as OpenUiSubmission), [messages, messageId, partId, conversationId]);
   const savedStateSignature = submissionSignature(Object.assign({}, ...saved.map(submission => submission.formState)));
   const initialState = useMemo(() => JSON.parse(savedStateSignature) as Record<string, unknown>, [savedStateSignature]);
+  const miniApp = !isStreaming && Boolean(partId && actorId) && /\bMiniApp\s*\(/.test(content);
+  const [digest, setDigest] = useState<{ content: string; hash?: string; failed?: boolean }>();
+  const [hashAttempt, setHashAttempt] = useState(0);
+  useEffect(() => {
+    if (!miniApp) return;
+    let active = true;
+    setDigest(undefined);
+    void Promise.resolve().then(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(content))).then(bytes => {
+      if (active) setDigest({ content, hash: Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('') });
+    }).catch(() => { if (active) setDigest({ content, failed: true }); });
+    return () => { active = false; };
+  }, [content, miniApp, hashAttempt]);
+  const digestReady = digest?.content === content && Boolean(digest.hash);
+  const draft = useMiniAppState({ identity: { userId: actorId, conversationId, messageId, componentId: partId ?? '', programDigest: digest?.hash ?? '' },
+    enabled: miniApp && digestReady, fallbackState: initialState });
+  const draftStatus = digest?.failed ? 'error' : !digestReady ? 'loading' : draft.status;
   const statuses = useMemo(() => ({ ...Object.fromEntries(saved.map(submission => [submissionKey(submission), 'submitted' as const])), ...localStatus }), [saved, localStatus]);
   const handleAction = useCallback((event: ActionEvent) => {
     if (isStreaming) return;
@@ -110,10 +131,20 @@ function ScopedOpenUiAnswer({ content, isStreaming, conversationId, messageId, c
   return (
     <OpenUiBoundary resetKey={`${isStreaming}|${content}`} fallback={() => (isStreaming ? spinner : <div data-openui-fallback={partId ?? ''}>{renderMarkdown(content)}</div>)}>
       <Suspense fallback={spinner}>
+        {miniApp && <div className='mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground'>
+          <p role={['error', 'conflict'].includes(draftStatus) ? 'alert' : 'status'}>{t(`openui.draft.${draftStatus}`)}</p>
+          {draftStatus === 'error' && <Button size='sm' variant='outline' onClick={() => digest?.failed ? setHashAttempt(value => value + 1) : draft.retry()}>{t('openui.draft.retry')}</Button>}
+          {draftStatus === 'conflict' && <>
+            <Button size='sm' variant='outline' onClick={draft.reload}>{t('openui.draft.reload')}</Button>
+            <Button size='sm' variant='outline' onClick={draft.reapply}>{t('openui.draft.reapply')}</Button>
+          </>}
+        </div>}
         <OpenUiSubmissionContext.Provider value={statuses}>
-          <fieldset disabled={Object.values(localStatus).includes('submitting')} className='m-0 min-w-0 border-0 p-0'>
-            <OpenUiRenderer content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={renderMarkdown} partId={partId} initialState={initialState} />
-          </fieldset>
+          <MiniAppAutosaveContext.Provider value={miniApp}>
+            <fieldset disabled={Object.values(localStatus).includes('submitting') || (miniApp && draft.status === 'readonly')} className='m-0 min-w-0 border-0 p-0'>
+              {miniApp && (!digestReady || !draft.ready) ? null : <OpenUiRenderer key={miniApp ? draft.mountRevision : 'legacy'} content={content} isStreaming={isStreaming} onAction={handleAction} citations={citations} citationScope={citationScope} fallback={renderMarkdown} partId={partId} initialState={miniApp ? draft.initialState : initialState} onStateUpdate={miniApp ? draft.handleStateUpdate : undefined} />}
+            </fieldset>
+          </MiniAppAutosaveContext.Provider>
           {Object.values(localStatus).includes('error') && <p role='alert' className='mt-2 text-sm text-destructive'>{t('openui.interaction.error')}</p>}
         </OpenUiSubmissionContext.Provider>
       </Suspense>

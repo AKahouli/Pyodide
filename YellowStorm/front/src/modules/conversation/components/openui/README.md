@@ -92,14 +92,21 @@ the conversation agent reads it with its existing tools and answers separately. 
 an attachment or clarification. `TextMetrics` only counts text; it does not summarize documents. No document picker,
 new execution bridge or in-place asynchronous result service was added.
 
-Unsubmitted changes remain local and reset after reload. Only bindings from accepted explicit submissions rehydrate through
-the existing interaction history; this is not draft autosave or a new persistence contract. Dynamic mini-app snapshot exports
-remain deferred. Export requests can produce a separate static answer/report or authorized artifact through the existing agent.
+Phase 2 initially restored only accepted submissions. Phase 3 adds private autosave for completed `MiniApp` programs:
+the host loads actor/source/program-scoped state before enabling controls and saves changes after a 500 ms debounce.
+Unsubmitted numbers, booleans, null, empty strings, arrays and objects retain their JSON types. The existing accepted
+submission state remains the fallback when no private draft exists. Quiet saves never invoke the agent.
+
+The authenticated GET/PUT endpoint under `messages/:messageId/openui/:componentId/state` derives actor and source digest
+server-side; both operations require creator/member access. Atomic expected revisions reject stale writes. The host verifies
+SHA-256 of the exact saved program and scopes late responses to the actor/source. Saving, saved, retry, read-only and conflict
+states are visible. Conflicts require loading saved state or explicitly reapplying a draft against the current revision.
+Dynamic mini-app snapshot exports remain deferred. Export requests can produce a separate static answer/report or authorized
+artifact through the existing agent. See ADR-0025 and the phase plan for the persistence contract and qualification evidence.
 
 The generator transpiles the exact shared TypeScript definitions with the installed TypeScript dependency for Node 20,
-enables bindings and disables tool calls. The phase 2 prompt is 54,709 characters (55,000 soft target; 60,000 hard cap).
-Focused verification covers four unrelated generated compositions and an explicit document-summary request: the final frontend
-run passes 251 tests in 31 files, including the 12 function/mounted tests, and the final production build passes.
+enables bindings and disables tool calls. The phase 3 prompt is 54,799 characters (55,000 soft target; 60,000 hard cap).
+Phase 2 qualification covers four unrelated generated compositions and an explicit document-summary request: the frontend run passes 251 tests in 31 files, including the 12 function/mounted tests, and the final production build passes.
 Live browser QA in conversation `0a36aab51f702536578737aa` generated all four apps from one natural-language request:
 100 Celsius displayed 212.00 Fahrenheit, reset restored 32.00, the discounted scenario displayed 18.00, and `Os` filtered
 the list to Osaka without another assistant turn. An explicit summary request with Detailed/French/bullets=false produced
@@ -194,3 +201,5 @@ then captured as embedded PNGs including legends. The applied chart subset and f
 unsubmitted edits never affect exports. The editable chart data table and metadata remain alongside the chart image.
 Capture failure fails the export explicitly. Captures do not depend on virtualized/mounted answer DOM or execute actions.
 MCP manifests retain their existing chart metadata and editable data tables without raster capture.
+
+Phase 3 qualification: 264 distinct frontend tests and 23 backend tests pass, including real PostgreSQL isolation/concurrency checks. Production TypeScript checks pass. Live four-app drafts retain typed unsubmitted values after reload; two tabs detect stale writes and recover through load/reapply without inference. Independent source and documentation review passes.
