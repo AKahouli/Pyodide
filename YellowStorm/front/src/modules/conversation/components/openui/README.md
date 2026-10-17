@@ -248,3 +248,18 @@ also mark any changed component snapshot stale, even when generated inputs omit 
 changed field. Cancelled/failed/interrupted partial output is not a completed result.
 The normal conversation answer retains its full content and export actions; dynamic
 mini-app snapshot export remains phase 5. No result body is stored in private drafts.
+
+### Generation composition guidance
+
+The shared prompt now demonstrates four task-shaped compositions: compact keypad,
+responsive estimator, searchable shortlist and document workflow. These are example
+programs, not host screens or a closed app catalog. Definitions still come from the
+mounted library; the generator parses every example before writing the backend
+module. Legacy examples remain acceptance fixtures for existing signatures.
+
+Document generation uses MiniDocument with an empty initial ID, explicit validated
+AskAgent and a MiniTaskResult with matching typed inputs. The host owns private
+autosave/status, access checks and saved-result correlation. Generation must not
+invent documents, automatically summarize, write results into drafts or recreate
+the source app when answering a task. Static answer exports remain supported;
+private dynamic snapshots remain the separately scoped phase 5.

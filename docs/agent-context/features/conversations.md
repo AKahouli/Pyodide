@@ -61,6 +61,11 @@ existing MiniApp form, private autosave and document task/result identity. Names
 and previous positional signatures remain compatible. Semantic theme tokens and
 bounded numeric layout props support compact tools and responsive workflows.
 See the [demo library reuse map](../architecture/openui-mini-app-library-map.md).
+The shared generated prompt teaches compact tools, responsive workflows, search/list
+apps and explicit document tasks through four parsed composition examples. Simple
+requests can use these patterns without naming components. The document example
+uses MiniDocument plus matching typed AskAgent/MiniTaskResult inputs; local actions,
+private autosave and saved-result restoration retain their existing host ownership.
 
 Composer clipboard images use the same provider attachment/upload path for keyboard
 paste and the custom right-click Paste action. An image-only clipboard becomes an

@@ -6,6 +6,7 @@ import { MiniAppTaskContext, findMiniAppTask } from './mini-app-task-context';
 import { fetchConversationFiles, fetchMessage } from '../../api';
 import { useConversationStore } from '../../store';
 import type { Message } from '../../types';
+import { miniAppCompositionExamples } from './mini-app-examples';
 
 vi.mock('../../api', async original => ({ ...await original<typeof import('../../api')>(), fetchConversationFiles: vi.fn(), fetchMessage: vi.fn() }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }) }));
@@ -28,6 +29,26 @@ const answer = (status: Message['terminalStatus'] = 'completed'): Message => ({ 
 const mount = (onAction = vi.fn()) => render(<MiniAppTaskContext.Provider value={scope}><OpenUiRenderer content={program} isStreaming={false} onAction={onAction} /></MiniAppTaskContext.Provider>);
 
 describe('generic mini-app document tasks', () => {
+  it('validates the generation summarizer and restores its actual saved result without rerunning', async () => {
+    const user = userEvent.setup(); const onAction = vi.fn();
+    const props = { content: miniAppCompositionExamples.summarizer, isStreaming: false, onAction };
+    const view = render(<MiniAppTaskContext.Provider value={scope}><OpenUiRenderer {...props} /></MiniAppTaskContext.Provider>);
+    expect(await screen.findByRole('button', { name: 'Summarize' })).toBeDisabled();
+    await screen.findByRole('option', { name: 'brief.pdf' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Conversation document' }), id);
+    await user.click(screen.getByRole('button', { name: 'Summarize' }));
+    expect(onAction.mock.calls[0][0]).toMatchObject({ type: 'AskAgent', formName: 'summarizer', params: {
+      inputs: { documentId: id, length: 'short' }, documentIds: [id],
+    } });
+    const saved = question();
+    if (saved.interaction?.type === 'openui') saved.interaction.formName = 'summarizer';
+    useConversationStore.setState({ messages: [saved, answer()] }); view.unmount(); onAction.mockClear();
+    render(<MiniAppTaskContext.Provider value={scope}><OpenUiRenderer {...props} initialState={{ $document: id, $length: 'short' }} /></MiniAppTaskContext.Provider>);
+    await screen.findByText('Project Birch starts Friday with a zero euro budget.');
+    expect(onAction).not.toHaveBeenCalled();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Summary length' }), 'detailed');
+    await screen.findByText('openui.task.stale');
+  });
   beforeEach(() => {
     vi.clearAllMocks(); useConversationStore.setState({ messages: [] });
     vi.mocked(fetchConversationFiles).mockResolvedValue({ documents: [

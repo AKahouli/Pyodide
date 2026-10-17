@@ -1,6 +1,6 @@
 # OpenUI mini-app library reuse and migration map
 
-Status: **composition/theme implemented and qualified; generation guidance and remaining integration phases proposed**.
+Status: **composition/theme qualified; generation guidance implemented and qualified; remaining integration phases proposed**.
 Assessed 2026-10-17; composition phase authorized 2026-10-17.
 Scope: polished, reusable mini-apps in Conversation v1. A generated-code sandbox
 remains separately scoped.
@@ -160,8 +160,7 @@ calculator keyboard activation and nested document task/result behavior. Scoped
 component fixtures at 390/1024 px content widths have no horizontal overflow,
 responsive grids collapse from two columns to one, large buttons measure 48 px
 high, and light/dark themes render correctly. This is content-width qualification,
-not a repeat of the whole conversation shell at a mobile viewport. Commit B's broader
-generation examples and commit C's remaining qualification retain their scope.
+not a repeat of the whole conversation shell at a mobile viewport. Commit B's generation examples are implemented; commit C's remaining qualification retains its scope.
 
 Local entry points (repository-relative):
 
@@ -184,3 +183,34 @@ Official/upstream evidence:
   [style boundary](https://github.com/thesysdev/open-intelligent-ui/blob/03213439358bf3408ad61a46ec9e3230c5572e48/src/lib/components/style.ts),
   [generation examples](https://github.com/thesysdev/open-intelligent-ui/blob/03213439358bf3408ad61a46ec9e3230c5572e48/src/lib/prompt-options.ts)
 - [Upstream license](https://github.com/thesysdev/open-intelligent-ui/blob/03213439358bf3408ad61a46ec9e3230c5572e48/LICENSE)
+
+## Generation guidance qualification (2026-10-18)
+
+The existing shared generator now emits four composition patterns using the mounted
+Mini* vocabulary. Simple requests select a compact direct-manipulation tool,
+responsive assumptions/results workflow, search/list or explicit document task.
+Guidance covers width, hierarchy, semantic button roles, labels, null/zero handling,
+reset and user language. No new runtime, dependency, service, schema or app-specific
+screen is introduced. Legacy program examples remain compatibility fixtures.
+
+The prompt is 54,999 characters (55k soft target, 60k hard cap). Redundant stock
+examples/instructions were condensed while retaining citation, image, report,
+presentation, state and document-access contracts. All examples parse against their
+actual target libraries. Focused frontend tests: 45 PASS; backend enabled/disabled
+prompt assembly: 3 PASS. Production TypeScript check: PASS.
+
+Live GPT 6 Luna checks use simple user requests without component names. A fresh
+calculator generated a composed keypad and retains local 2+3=5 after full reload
+with the same source message and usage. Fresh estimator/shortlist apps retain price
+0, quantity 3, discount true and query osa/Osaka after full reload with unchanged
+message IDs/usage. The summarizer generated an empty required document selector,
+explicit disabled-until-selected action and saved-result panel; its unsubmitted
+DOCX/Detailed selection survives full reload without inference.
+
+The explicit DOCX run produced a grounded Willow summary (Tuesday, Lina, EUR 120,
+two-team review). After full reload, the new source app restores that actual saved result and
+DOCX/Detailed settings with the same task/answer IDs and 1.2M usage; no agent rerun. Existing document access/CAS boundaries were not changed by this
+prompt-only phase. Independent source review accepts the guidance and examples.
+Generation remains model-dependent; these four checks qualify the tested model and
+requests, not every possible app. Calculator example scope is an integer keypad,
+not a full scientific calculator. Dynamic private-state exports remain phase 5.

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import OpenUiRenderer from './OpenUiRenderer';
-import { miniAppExamples } from './mini-app-examples';
+import { miniAppExamples, miniAppCompositionExamples } from './mini-app-examples';
 import { MiniGrid, MiniPanel, MiniRow } from './mini-app-definitions';
 
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }) }));
@@ -20,6 +20,45 @@ plus = MiniButton("Add", Action([@Set($left, $number), @Set($number, 0)]), false
 equals = MiniButton("Equals", Action([@Set($number, $left + $number)]), false, "solid", "lg", null, false, true)`;
 
 describe('mini-app composition', () => {
+  it('runs the generation keypad locally, restores state and recovers from division by zero', async () => {
+    const user = userEvent.setup(); const onAction = vi.fn(); const update = vi.fn();
+    const props = { content: miniAppCompositionExamples.calculator, isStreaming: false, onAction, onStateUpdate: update };
+    const view = render(<OpenUiRenderer {...props} />);
+    for (const name of ['2', '+', '3', '=']) await user.click(await screen.findByRole('button', { name }));
+    expect(screen.getByLabelText('Result')).toHaveTextContent('5');
+    const state = update.mock.calls.at(-1)![0]; view.unmount();
+    render(<OpenUiRenderer {...props} initialState={state} />);
+    expect(await screen.findByLabelText('Result')).toHaveTextContent('5');
+    for (const name of ['÷', '0', '=']) await user.click(screen.getByRole('button', { name }));
+    expect(update.mock.calls.at(-1)![0].$value).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'AC' }));
+    expect(screen.getByLabelText('Result')).toHaveTextContent('0');
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['scenario', 'planner'] as const)('keeps generated %s unsubmitted values on remount', async app => {
+    const user = userEvent.setup(); const update = vi.fn(); const onAction = vi.fn();
+    const props = { content: miniAppCompositionExamples[app], isStreaming: false, onAction, onStateUpdate: update };
+    const view = render(<OpenUiRenderer {...props} />);
+    if (app === 'scenario') {
+      await user.clear(await screen.findByRole('spinbutton', { name: 'Unit price' }));
+      await user.type(screen.getByRole('spinbutton', { name: 'Unit price' }), '0');
+      await user.click(screen.getByRole('checkbox'));
+    } else await user.type(await screen.findByRole('textbox'), 'osa');
+    const state = update.mock.calls.at(-1)![0]; view.unmount();
+    render(<OpenUiRenderer {...props} initialState={state} />);
+    if (app === 'scenario') {
+      expect(await screen.findByRole('spinbutton', { name: 'Unit price' })).toHaveValue(0);
+      expect(screen.getByRole('checkbox')).toBeChecked();
+      expect(screen.getByLabelText('Estimated total')).toHaveTextContent('0.00');
+    } else {
+      expect(await screen.findByRole('textbox')).toHaveValue('osa');
+      expect(screen.getByRole('list')).toHaveTextContent('Osaka');
+      expect(screen.queryByText('Tokyo')).not.toBeInTheDocument();
+    }
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
   it('keeps nested keypad actions local and restores typed state without dispatching an agent', async () => {
     const user = userEvent.setup(); const onAction = vi.fn(); const onStateUpdate = vi.fn();
     const view = render(<OpenUiRenderer content={keypad} isStreaming={false} onAction={onAction} onStateUpdate={onStateUpdate} />);
