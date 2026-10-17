@@ -28,6 +28,17 @@ revision markers, durable scoped writes, stale rejection and rollback. Joined
 state SQL time is attributed to the session-row bucket. Do not remove the version
 guard without checking the installed `get_session()` and storage conversion.
 
+On PostgreSQL, session-only appends with an exact storage marker also combine
+required session/app/user reads. The joined query must use `FOR UPDATE OF` the
+session table only, explicitly require all three rows, and retain the SDK session
+lock, stale check, state/event atomic transaction and synchronous commit before
+publishing the in-memory event. Global app/user deltas, marker-less sessions,
+partial events, custom classes, other dialects and ADK upgrades use SDK append.
+Requalify against pinned `append_event()` too: run the durable-write regressions
+in `tests/test_latency_diagnostics.py`, then verify independent PostgreSQL writers
+produce one successful commit and one stale rejection, and injected insert/commit
+failures leave no state, event or revision advance. Keep pool pre-ping enabled.
+
 ## Prompt to paste into an agent after each upgrade
 
 ```

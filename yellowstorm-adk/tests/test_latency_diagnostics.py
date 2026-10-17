@@ -418,3 +418,113 @@ async def test_listener_registration_is_idempotent_per_engine():
         assert profile.sql_query_count == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["insert", "commit"])
+async def test_joined_append_is_durable_scoped_atomic_and_rejects_stale(monkeypatch, failure):
+    from google.adk.events import Event, EventActions
+    from sqlalchemy import event as sql_event
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import InstrumentedDatabaseSessionService
+    engine = create_async_engine("sqlite+aiosqlite://")
+    service = InstrumentedDatabaseSessionService(db_engine=engine)
+    try:
+        await service.create_session(app_name="app", user_id="owner", session_id="id", state={"app:a": 1, "user:u": 2})
+        await service.create_session(app_name="other", user_id="owner", session_id="id", state={"s": "other-app"})
+        await service.create_session(app_name="app", user_id="other", session_id="id", state={"s": "other-user"})
+        kwargs = dict(app_name="app", user_id="owner", session_id="id")
+        current, stale = await service.get_session(**kwargs), await service.get_session(**kwargs)
+        # Exercise write dispatch/transaction logic on SQLite; real PostgreSQL
+        # qualification additionally verifies FOR UPDATE and independent writers.
+        monkeypatch.setattr(service, "_can_join_write", lambda session, event: True)
+        profile = SessionLookupProfile()
+        token = diag._current_session_lookup_profile.set(profile)
+        try:
+            await service.append_event(current, Event(id="durable", author="user",
+                actions=EventActions(state_delta={"s": 3, "temp:scratch": 4})))
+        finally:
+            diag._current_session_lookup_profile.reset(token)
+        assert profile.sql_query_count == 3  # joined required rows, UPDATE, INSERT
+        assert current.state["temp:scratch"] == 4
+        assert "temp:scratch" not in current.events[-1].actions.state_delta
+        with pytest.raises(ValueError, match="[Ss]tale|storage"):
+            await service.append_event(stale, Event(author="user"))
+        def fail_insert(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("INSERT INTO EVENTS"):
+                raise RuntimeError("simulated insert failure")
+        def fail_commit(conn):
+            raise RuntimeError("simulated commit failure")
+        point, listener = ("before_cursor_execute", fail_insert) if failure == "insert" else ("commit", fail_commit)
+        sql_event.listen(engine.sync_engine, point, listener)
+        try:
+            with pytest.raises(RuntimeError, match="simulated"):
+                await service.append_event(current, Event(id="rollback", author="user", actions=EventActions(state_delta={"s": 99})))
+        finally:
+            sql_event.remove(engine.sync_engine, point, listener)
+        assert [event.id for event in current.events] == ["durable"]
+        reloaded = await service.get_session(**kwargs)
+        assert reloaded.state == {"app:a": 1, "user:u": 2, "s": 3}
+        assert [event.id for event in reloaded.events] == ["durable"]
+        assert reloaded._storage_update_marker == current._storage_update_marker
+        assert (await service.get_session(app_name="other", user_id="owner", session_id="id")).state["s"] == "other-app"
+        assert (await service.get_session(app_name="app", user_id="other", session_id="id")).state["s"] == "other-user"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", ["global_app", "global_user", "markerless", "partial", "version", "custom", "dialect"])
+async def test_joined_append_guard_retains_sdk_write_paths(monkeypatch, fallback):
+    from unittest.mock import AsyncMock
+    from google.adk.events import Event, EventActions
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring import instrumented_database_session_service as module
+    class CustomService(module.InstrumentedDatabaseSessionService):
+        pass
+    engine = create_async_engine("sqlite+aiosqlite://")
+    service = (CustomService if fallback == "custom" else module.InstrumentedDatabaseSessionService)(db_engine=engine)
+    try:
+        session = await service.create_session(app_name="app", user_id="owner", session_id="id")
+        if fallback != "dialect":
+            monkeypatch.setattr(engine.dialect, "name", "postgresql")
+        if fallback == "markerless":
+            session._storage_update_marker = None
+        if fallback == "version":
+            monkeypatch.setattr(module, "_JOINED_READ_SUPPORTED", False)
+        delta = {"app:a": 1} if fallback == "global_app" else {"user:u": 1} if fallback == "global_user" else {}
+        event = Event(author="user", partial=fallback == "partial", actions=EventActions(state_delta=delta))
+        original = AsyncMock(return_value=event)
+        monkeypatch.setattr(DatabaseSessionService, "append_event", original)
+        assert await service.append_event(session, event) is event
+        original.assert_awaited_once_with(session, event)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["session", "app", "user"])
+async def test_joined_append_requires_all_storage_rows(monkeypatch, missing):
+    from google.adk.events import Event
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import InstrumentedDatabaseSessionService
+    engine = create_async_engine("sqlite+aiosqlite://")
+    service = InstrumentedDatabaseSessionService(db_engine=engine)
+    try:
+        session = await service.create_session(app_name="app", user_id="owner", session_id="id")
+        schema = service._get_schema_classes()
+        model = {"session": schema.StorageSession, "app": schema.StorageAppState, "user": schema.StorageUserState}[missing]
+        async with service._rollback_on_exception_session() as db:
+            await db.execute(delete(model))
+            await db.commit()
+        monkeypatch.setattr(service, "_can_join_write", lambda session, event: True)
+        with pytest.raises(ValueError, match="[Mm]issing|not found"):
+            await service.append_event(session, Event(author="user"))
+        assert session.events == []
+        async with service._rollback_on_exception_session(read_only=True) as db:
+            from sqlalchemy import select
+            assert (await db.execute(select(schema.StorageEvent))).scalars().all() == []
+    finally:
+        await engine.dispose()

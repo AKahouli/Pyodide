@@ -24,6 +24,27 @@ Source: `front/src/components/ai-elements/input-context-menu.tsx` and
 
 Conversation provides persisted AI chat with streamed answers, agent routing, workspace context and collaboration.
 
+Greeting latency investigation (2026-10-17, Luna Responses/Medium): a first `hi`
+turn with no history, workspaces or files reported 25,917 input tokens and zero
+cached input. Its configured root instruction was 12,470 characters and four
+connector catalogs exposed 50 actions (65,003 stored JSON characters); these are
+structural prompt contributors, not an exact breakdown of transmitted tokens.
+The provider-first-delta interval was 5.68 s, ADK setup 668 ms and earlier backend
+preparation 2.05 s. Provider timing starts before durable capacity acquisition and
+the running transition, so it includes admission and request preparation rather
+than measuring only the upstream model. The reported 8.39 s stream duration
+starts after gRPC dispatch and excludes earlier backend preparation; first text
+can follow a native summary. Do not add component intervals to the stream duration.
+No evidence justified automatically removing tools or changing the selected
+reasoning effort for greetings. Source: conversation `stream.service.ts` timing
+boundaries and ADK `model_capacity.py`/`instrumented_lite_llm.py`.
+After the durable-write change, a `hi again` turn with the same capabilities and
+effort completed in 6.97 s, with provider-first-delta 4.35 s and ADK runtime
+513.7 ms (previous 525.3 ms). This live difference is dominated by provider timing
+variation; controlled database measurements establish the append improvement.
+The follow-up also had source history to seed, so backend preparation is not a
+like-for-like comparison with the initial empty conversation.
+
 | Workflow | Existing behavior and source |
 | --- | --- |
 | Start and revisit a conversation | New-thread landing, history and paginated messages; [new page](../../../YellowStorm/front/src/modules/conversation/NewConversationPage.tsx), [store](../../../YellowStorm/front/src/modules/conversation/store.ts) |

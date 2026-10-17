@@ -97,6 +97,25 @@ turn measured 555 ms runtime pre-model versus 599–605 ms before, with outer se
 lookup 134 ms and setup 135 ms. The first cold turn measured 727 ms runtime, so
 the improvement is modest and does not remove restart/network variability.
 
+Durable-append profiling on the same local database (2026-10-17) measured about
+193 ms total: connection pre-ping ~55 ms, required session/app/user reads ~74 ms,
+UPDATE/INSERT ~39 ms and actual COMMIT ~19 ms (small Python overhead and network
+variation account for the remainder). Asyncpg pre-ping uses three round trips to
+remain compatible with transaction-mode poolers; it stays enabled. For exact
+ADK 2.11.0 ordinary PostgreSQL sessions with a storage revision marker and only
+session/temporary deltas, the existing service joins required row reads under
+`FOR UPDATE OF` the session row. It still rejects missing app/user/session rows,
+holds the session lock, checks the exact revision and commits state plus event
+atomically before updating the in-memory event list. Global deltas and all other
+guarded cases use SDK append. Real PostgreSQL median append fell from 190.8 to
+157.6 ms (five SQL statements to three); actual commit and connection validation
+remain unchanged. Five races using independent services each produced exactly
+one durable event and one stale rejection; injected insert and post-flush commit
+failures rolled back state, events and revision. Requalification is in the upgrade runbook.
+A full Runner probe with a synthetic model and complete copied history measured
+warm pre-model median 300.0 ms (lookup 140.6 ms, append 156.6 ms), compared with
+347.3 ms before this write optimization; cold imports are excluded from that comparison.
+
 Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
 calls use `CapacityClient.create()` with retries disabled when capacity is enabled.
 Stream validation requires a terminal Responses event before EOF. Truncated text
