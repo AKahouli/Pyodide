@@ -58,6 +58,28 @@ projection while preserving raw ordered provider items and the configuration
 signature; edits, truncation or missing source safely rebase. No other source
 session state or event is copied.
 
+Conversation setup avoids redundant history materialization (2026-10-17): fresh
+bootstrap uses public `GetSessionConfig(num_recent_events=0)` for state/existence;
+the ADK Runner still performs its authoritative full read, and resume retains full
+events. On pinned ADK this skips one event query without caching session state.
+Private seed-source validation reads only same-app/user/session state and ordered
+events (two queries instead of four). This storage fast path is limited to the
+ordinary `DatabaseSessionService`; custom/fenced services retain their public
+ownership checks. Seed insertion updates its newly created target with scoped
+app/user/session predicates in the existing transaction instead of selecting it
+again. Public session creation, seed idempotency, transcript validation and runtime
+append revision/ownership checks remain unchanged.
+
+Local Luna verification on 2026-10-17 preserved multi-turn marker recall and private
+Responses continuity. A same-source read benchmark reduced median source loading
+from 189.7 to 150.4 ms (four interleaved samples per path). Live warm-turn seeding
+fell from 671.7 to 460.1 ms and outer session lookup from 214.6 to 159.8 ms;
+cold post-restart seeds stayed 658–668 ms, so these are observations rather than
+a guaranteed end-to-end improvement. The warm turn still spent 605 ms inside
+ADK runtime before the model, 929 ms resolving workspace/agents, and 4.88 s waiting
+for the provider's first token. Full Runner history reads and durable event appends
+remain necessary; their individual live costs were not captured by the local log sink.
+
 Latency/recovery and durable provider-slot ownership remain enforced. Native SDK
 calls use `CapacityClient.create()` with retries disabled when capacity is enabled.
 Stream validation requires a terminal Responses event before EOF. Truncated text

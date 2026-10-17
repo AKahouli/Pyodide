@@ -6,12 +6,13 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Iterable
+from types import SimpleNamespace
 
 from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.genai import types
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from yellowmind_observability import get_logger
 
@@ -56,9 +57,7 @@ class ConversationSessionSeedService:
         state = {SEED_KEY_STATE: idempotency_key}
         if source_session_id and source_session_id != session_id:
             from src.smart_rag.infrastructure.monitoring.responses_history import seed_private_history
-            source = await self._session_service.get_session(
-                app_name=APP_NAME, user_id=user_id, session_id=source_session_id,
-            )
+            source = await self._load_private_source(user_id, source_session_id)
             if source is not None:
                 state.update(seed_private_history(source, entries))
 
@@ -90,6 +89,32 @@ class ConversationSessionSeedService:
 
         return True
 
+    async def _load_private_source(self, user_id: str, session_id: str):
+        service = self._session_service
+        # Custom/fenced services must retain their public ownership checks.
+        if type(service) is not DatabaseSessionService or not all(
+            hasattr(service, hook) for hook in _DB_SEED_HOOKS
+        ):
+            return await service.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        await service.prepare_tables()
+        # Only source-local private state and its full transcript participate in
+        # continuity validation. App/user state is neither needed nor copied.
+        schema = service._get_schema_classes()
+        async with service._rollback_on_exception_session(read_only=True) as sql_session:
+            state = (await sql_session.execute(select(schema.StorageSession.state).where(
+                schema.StorageSession.app_name == APP_NAME,
+                schema.StorageSession.user_id == user_id,
+                schema.StorageSession.id == session_id,
+            ))).scalar_one_or_none()
+            if state is None:
+                return None
+            rows = (await sql_session.execute(select(schema.StorageEvent).where(
+                schema.StorageEvent.app_name == APP_NAME,
+                schema.StorageEvent.user_id == user_id,
+                schema.StorageEvent.session_id == session_id,
+            ).order_by(schema.StorageEvent.timestamp.asc(), schema.StorageEvent.id.asc()))).scalars().all()
+            return SimpleNamespace(state=state, events=[row.to_event() for row in rows])
+
     async def _append_history(
         self, session, entries: list[tuple[str, str]]
     ) -> None:
@@ -112,7 +137,7 @@ class ConversationSessionSeedService:
         if not events:
             return
         service = self._session_service
-        if isinstance(service, DatabaseSessionService) and all(
+        if type(service) is DatabaseSessionService and all(
             hasattr(service, hook) for hook in _DB_SEED_HOOKS
         ):
             await self._insert_events_in_one_transaction(service, session, events)
@@ -135,22 +160,17 @@ class ConversationSessionSeedService:
         """
         schema = service._get_schema_classes()
         async with service._rollback_on_exception_session() as sql_session:
-            row = (
-                await sql_session.execute(
-                    select(schema.StorageSession)
-                    .filter(schema.StorageSession.app_name == session.app_name)
-                    .filter(schema.StorageSession.user_id == session.user_id)
-                    .filter(schema.StorageSession.id == session.id)
-                )
-            ).scalars().one()
+            update_time = datetime.fromtimestamp(events[-1].timestamp, timezone.utc)
+            result = await sql_session.execute(update(schema.StorageSession).where(
+                schema.StorageSession.app_name == session.app_name,
+                schema.StorageSession.user_id == session.user_id,
+                schema.StorageSession.id == session.id,
+            ).values(update_time=(update_time.replace(tzinfo=None)
+                                  if service._uses_naive_datetime() else update_time)))
+            if result.rowcount != 1:
+                raise SessionSeedConflictError('Seed target disappeared before history insertion')
             for event in events:
                 sql_session.add(schema.StorageEvent.from_event(session, event))
-            update_time = datetime.fromtimestamp(events[-1].timestamp, timezone.utc)
-            row.update_time = (
-                update_time.replace(tzinfo=None)
-                if service._uses_naive_datetime()
-                else update_time
-            )
             await sql_session.commit()
 
     async def warm_up(self) -> None:

@@ -1594,3 +1594,27 @@ class TestAgentRunner:
         assert result[0] is None
         assert result[1] == []
         assert isinstance(result[2], dict)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('resuming', [False, True])
+async def test_bootstrap_reads_only_metadata_unless_resuming(resuming):
+    from types import SimpleNamespace
+    session = SimpleNamespace(events=[SimpleNamespace(invocation_id='invocation', content=None)], state={'citations': 'kept'})
+    storage = MagicMock()
+    storage.get_session = AsyncMock(return_value=session)
+    agent = MagicMock()
+    agent.name = 'TestAgent'
+    runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+    scope = SimpleNamespace(resume_intent='resume', native_session_id='target', native_invocation_id='invocation') if resuming else None
+    with patch('src.root_runtime.invocation.native_run_options', return_value={}), \
+         patch.object(runner, '_run_standard_agent', new_callable=AsyncMock, return_value=('Answer', [], {}, [])) as run:
+        await runner.run_agent_tool(agent=agent, message='Question', session_helper=storage,
+                                    user_id='owner', session_id='target', execution_scope=scope)
+    kwargs = storage.get_session.await_args.kwargs
+    assert kwargs['user_id'] == 'owner' and kwargs['session_id'] == 'target'
+    if resuming:
+        assert 'config' not in kwargs
+    else:
+        assert kwargs['config'].num_recent_events == 0
+    assert run.await_args.args[12] is session

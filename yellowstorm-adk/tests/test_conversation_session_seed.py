@@ -38,6 +38,7 @@ from src.grpc_server.conversation_session_seed import (
     APP_NAME,
     ConversationSessionSeedService,
     SessionSeedConflictError,
+    SEED_KEY_STATE,
 )
 
 
@@ -244,3 +245,103 @@ async def test_warm_up_prepares_tables_and_survives_a_failure():
     await ConversationSessionSeedService(storage).warm_up()
 
     storage.prepare_tables.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_private_source_reads_only_two_scoped_queries_and_keeps_complete_order(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    from google.adk.events import Event
+    from google.genai import types
+    from sqlalchemy import event as sa_event
+    from src.smart_rag.infrastructure.monitoring.responses_history import STATE_KEY
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'source.db').as_posix()}")
+    await storage.create_session(app_name=APP_NAME, user_id='owner', session_id='source', state={
+        STATE_KEY: {'response_id': 'private-id', 'items': [{'encrypted_content': 'opaque'}]},
+        'app:global': 'not-needed', 'user:personal': 'not-needed',
+    })
+    service = ConversationSessionSeedService(storage)
+    source = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='source')
+    for role, text in [('user', 'Question'), ('model', 'Answer')]:
+        await storage.append_event(source, Event(author=role, content=types.Content(role=role, parts=[types.Part(text=text)])))
+    statements = []
+    sa_event.listen(storage.db_engine.sync_engine, 'before_cursor_execute',
+                    lambda conn, cursor, statement, parameters, context, many: statements.append(statement))
+    narrow = await service._load_private_source('owner', 'source')
+    assert len(statements) == 2
+    assert [event.content.parts[0].text for event in narrow.events] == ['Question', 'Answer']
+    assert narrow.state[STATE_KEY]['items'][0]['encrypted_content'] == 'opaque'
+    assert 'app:global' not in narrow.state and 'user:personal' not in narrow.state
+    assert await service._load_private_source('other-user', 'source') is None
+    assert await service._load_private_source('owner', 'missing') is None
+    await storage.create_session(app_name='another-app', user_id='owner', session_id='other-source')
+    assert await service._load_private_source('owner', 'other-source') is None
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_seed_insert_does_not_select_newly_created_target(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy import event as sa_event
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'target.db').as_posix()}")
+    session = await storage.create_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    statements = []
+    sa_event.listen(storage.db_engine.sync_engine, 'before_cursor_execute',
+                    lambda conn, cursor, statement, parameters, context, many: statements.append(statement))
+    await ConversationSessionSeedService(storage)._append_history(session, [('user', 'Question'), ('assistant', 'Answer')])
+    assert not any(statement.lstrip().upper().startswith('SELECT') for statement in statements)
+    assert any(statement.lstrip().upper().startswith('UPDATE') for statement in statements)
+    loaded = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert [event.content.parts[0].text for event in loaded.events] == ['Question', 'Answer']
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_private_source_keeps_custom_service_ownership_guard(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    class GuardedService(DatabaseSessionService):
+        async def get_session(self, **kwargs):
+            assert kwargs == {'app_name': APP_NAME, 'user_id': 'owner', 'session_id': 'source'}
+            raise PermissionError('ownership guard')
+    storage = GuardedService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'guard.db').as_posix()}")
+    with pytest.raises(PermissionError, match='ownership guard'):
+        await ConversationSessionSeedService(storage)._load_private_source('owner', 'source')
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_lookup_avoids_event_sql_but_runner_full_read_keeps_history(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    from google.adk.sessions.base_session_service import GetSessionConfig
+    from sqlalchemy import event as sa_event
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'lookup.db').as_posix()}")
+    await ConversationSessionSeedService(storage).seed(user_id='owner', session_id='target',
+        idempotency_key='seed', history=[('user', 'Question'), ('assistant', 'Answer')])
+    statements = []
+    sa_event.listen(storage.db_engine.sync_engine, 'before_cursor_execute',
+                    lambda conn, cursor, statement, parameters, context, many: statements.append(statement))
+    metadata = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target',
+                                         config=GetSessionConfig(num_recent_events=0))
+    assert len(statements) == 3
+    assert not any('FROM events' in statement for statement in statements)
+    assert metadata.events == [] and metadata.state[SEED_KEY_STATE] == 'seed'
+    statements.clear()
+    full = await storage.get_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    assert len(statements) == 4
+    assert [event.content.parts[0].text for event in full.events] == ['Question', 'Answer']
+    assert full.state == metadata.state
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_seed_target_disappearing_rolls_back_history(tmp_path):
+    from google.adk.sessions import DatabaseSessionService
+    from sqlalchemy import select, func
+    storage = DatabaseSessionService(db_url=f"sqlite+aiosqlite:///{(tmp_path / 'gone.db').as_posix()}")
+    session = await storage.create_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    await storage.delete_session(app_name=APP_NAME, user_id='owner', session_id='target')
+    with pytest.raises(SessionSeedConflictError, match='disappeared'):
+        await ConversationSessionSeedService(storage)._append_history(session, [('user', 'Question')])
+    schema = storage._get_schema_classes()
+    async with storage._rollback_on_exception_session(read_only=True) as transaction:
+        assert (await transaction.execute(select(func.count()).select_from(schema.StorageEvent))).scalar_one() == 0
+    await storage.close()

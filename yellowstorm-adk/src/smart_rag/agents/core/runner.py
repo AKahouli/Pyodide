@@ -16,6 +16,7 @@ from typing import Optional, Tuple, Any, List, Dict
 from google.adk import Agent
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.base_session_service import GetSessionConfig
 from src.temporary_child_summary import record_temporary_child_tool_call
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
@@ -280,6 +281,9 @@ class AgentRunner:
                         app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
+                        # Runner performs the authoritative full history read.
+                        # This lookup needs only state/existence unless resuming.
+                        **({} if resuming else {'config': GetSessionConfig(num_recent_events=0)}),
                     )
                 _mark_session_stage("mark_session_lookup_end")
                 if session is None:

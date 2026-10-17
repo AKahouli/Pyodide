@@ -10,6 +10,14 @@ path (correct, but seeding cost grows by ~200 ms per message again).
 Automatic guard: `conda run -n meta pytest yellowstorm-adk/tests/test_conversation_session_seed.py -q`
 must pass after every bump of `google-adk` in `requirements.txt`.
 
+Also verify source-history loading: ordinary database sessions read only their
+same-app/user/session state and timestamp/ID-ordered events; custom/fenced session
+services must use their public guarded lookup. The seed-target update must remain
+in the event-insertion transaction and affect exactly one scoped target row.
+The metadata-only bootstrap lookup uses public `GetSessionConfig(num_recent_events=0)`;
+confirm it skips event SQL while the Runner's full lookup and resume retain all
+history. Query-count and ownership regressions cover these assumptions.
+
 ## Prompt to paste into an agent after each upgrade
 
 ```
