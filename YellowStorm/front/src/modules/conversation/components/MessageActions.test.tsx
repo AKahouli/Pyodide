@@ -330,6 +330,47 @@ describe('MessageActions', () => {
     await waitFor(() => expect(openHandoffMock).toHaveBeenCalledWith(handoff));
   });
 
+  it('shows the actual inference model when an explicitly tagged agent differs from the composer model', () => {
+    render(
+      <MessageActions
+        message={
+          {
+            id: 'ai-tagged',
+            conversationType: 'ai',
+            components: [],
+            modelId: 'model-1',
+            modelRequestTelemetry: { model: 'gpt-6-luna', usedTokens: 100, contextWindow: 1000 },
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
+        isLastAiMessage={false}
+        conversationId="conv-1"
+      />,
+    );
+
+    expect(screen.getByText('gpt-6-luna')).toBeInTheDocument();
+    expect(screen.queryByText('Model One')).not.toBeInTheDocument();
+  });
+
+  it('resolves the catalog name for the reported inference model', () => {
+    render(
+      <MessageActions
+        message={
+          {
+            id: 'ai-tagged-known', conversationType: 'ai', components: [], modelId: 'other-composer-model',
+            modelRequestTelemetry: { model: 'model-1', usedTokens: 100, contextWindow: 1000 },
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
+        isLastAiMessage={false}
+        conversationId="conv-1"
+      />,
+    );
+
+    expect(screen.getByText('Model One')).toBeInTheDocument();
+    expect(screen.queryByText('other-composer-model')).not.toBeInTheDocument();
+  });
+
   it('falls back safely when generation metadata cannot be resolved', () => {
     modelMock.value = undefined;
     const { rerender } = render(
@@ -624,7 +665,8 @@ describe('MessageActions', () => {
 
   it.each([['messageActions.exportAgentDocx', 'DOCX'], ['messageActions.exportEditablePptx', 'PPTX']])('submits %s only on explicit click with exact saved sources and all citation mappings', async (action, format) => {
     document.body.innerHTML = '<div id="message-ai-export"><img src="blob:temporary-preview" /></div>';
-    render(<MessageActions message={agentExportMessage as never} isLastAiMessage={false} conversationId="conv-1" />);
+    const message = { ...agentExportMessage, modelRequestTelemetry: { model: 'gpt-6-luna', usedTokens: 100, contextWindow: 1000 } };
+    render(<MessageActions message={message as never} isLastAiMessage={false} conversationId="conv-1" />);
     expect(sendMessageMock).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: action }));
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));

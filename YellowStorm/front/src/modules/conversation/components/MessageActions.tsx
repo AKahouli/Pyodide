@@ -77,6 +77,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const citations = useMemo(() => collectMessageCitations(message.components), [message.components]);
   const generationModelId = message.modelId || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
   const model = useModelById(generationModelId || '');
+  const reportedModel = useModelById(message.modelRequestTelemetry?.model || '');
   const navigate = useNavigate();
   const canBranch = !!currentConversation && message.isComplete && !message.isStreaming && !isGroup && currentConversation?.runtimeMode !== 'governed';
   const canExportViaAgent = currentConversationId === conversationId && message.isComplete && !message.isStreaming
@@ -104,7 +105,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
         dateStyle: 'medium',
         timeStyle: 'medium',
       }).format(createdAt);
-  const modelName = model?.name || generationModelId || t('messageActions.modelUnavailable');
+  const modelName = reportedModel?.name || message.modelRequestTelemetry?.model || model?.name || generationModelId || t('messageActions.modelUnavailable');
   const visibleUsage = isLastAiMessage ? conversationUsage : null;
   const formattedCost = formatUsd(visibleUsage?.cost.usd ?? null, language);
   const formattedCarbon = formatCarbon(visibleUsage?.carbon.gramsCo2e ?? null, language);

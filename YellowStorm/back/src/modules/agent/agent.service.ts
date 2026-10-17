@@ -610,7 +610,7 @@ export class AgentService {
     groupMembers?: any[],
     selectedConnectorId?: string,
     semanticModel?: { id: string; name: string },
-    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
+    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean; implicitRoot?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
     webConnectorAccessEnabled = true,
@@ -760,10 +760,12 @@ export class AgentService {
       ? (await this.modelsService.getDefaultModel())?.id || ''
       : '';
 
-    // A chat-level model selection applies directly to untagged mono-agent
-    // requests. Explicitly routed agents inherit the Admin Models default.
+    // A bound root is an implicit conversation route, not an @ mention. Its
+    // model/effort follow the composer just like an untagged mono-agent turn.
+    // Explicitly routed agents retain their configured model or Admin default.
+    const useSelectedModel = pingedAgents.length === 0 || runtimeContext?.implicitRoot === true;
     const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
-      pingedAgents.length === 0
+      useSelectedModel
         ? fallbackModelId || agent.model || inheritedDefaultModelId
         : agent.model || inheritedDefaultModelId || fallbackModelId || '';
 
@@ -875,7 +877,7 @@ export class AgentService {
       const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
-      const requestedReasoningEffort = reasoningEffort && pingedAgents.length === 0
+      const requestedReasoningEffort = reasoningEffort && useSelectedModel
         ? reasoningEffort
         : agent.reasoningEffort;
       const effectiveReasoningEffort = requestedReasoningEffort

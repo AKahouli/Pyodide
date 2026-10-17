@@ -40,6 +40,15 @@ These are implemented entry points, not a guarantee that every deployment enable
 
 ## Ownership and request flow
 
+For an ordinary untagged standard turn, the composer model overrides the answering
+agent's configured model, including a Root bound implicitly by the conversation.
+Explicit `@` selections of one or multiple agents retain each agent's configured
+model (or the Admin default when unset); their existing sticky routing is unchanged.
+The effective model also determines model-specific prompts, supported reasoning
+effort and the configured Conversation API. StreamService marks implicit root
+routing separately from explicit agent IDs before AgentService resolves the model.
+Answer footers prefer the recorded inference model so explicit agent replies display their actual model. Regression coverage: `agent.service.spec.ts`, `stream.service.spec.ts` and `MessageActions.test.tsx`.
+
 Single-agent conversation parents use the explicit **Conversation API** choice
 configured per model in **Admin > Models**. Chat Completions is the default for
 existing/new models; Responses opts into native ADK Responses through the existing

@@ -1232,6 +1232,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 conversationId,
                 correlationId: runtimeCorrelationId,
                 playbookHandoffAttached: Boolean(request.playbookHandoffId),
+                implicitRoot: Boolean(boundRootId && request.agentIds.length === 0),
               },
               request.reasoningEffort,
               compaction,

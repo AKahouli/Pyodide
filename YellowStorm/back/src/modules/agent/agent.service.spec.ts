@@ -742,7 +742,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_type).toBe('mono-agent');
   });
 
-  it('uses the selected model for an untagged mono-agent request', async () => {
+  it.each([false, true])('uses the selected model for an untagged conversation (implicit root: %s)', async (implicitRoot) => {
     const { service, modelsService, agentTypeService } = createService();
     const monoAgent: IAgentForStream = {
       id: 'mono-agent', name: 'Mono Agent', agentTypeName: 'Mono Agent', agentTypeSlug: 'mono-agent',
@@ -751,11 +751,13 @@ describe('AgentService connector skill inheritance', () => {
       connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
       enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
     };
-    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue(implicitRoot ? [monoAgent] : []);
     jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
     modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
 
-    const result = await service.buildAgentsForStream(userId, 'selected-model');
+    const result = await service.buildAgentsForStream(userId, 'selected-model',
+      implicitRoot ? [monoAgent.id] : undefined, undefined, undefined, undefined, undefined,
+      { conversationId: 'conversation-1', correlationId: 'request-1', implicitRoot });
 
     expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
       { agentTypeId: 'type-mono', modelId: 'selected-model' },
@@ -781,7 +783,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].prompt.includes(OPENUI_OUTPUT_FORMAT_PROMPT)).toBe(appended);
   });
 
-  it('prefers a supported request reasoning effort for an untagged agent', async () => {
+  it.each([false, true])('prefers a supported request reasoning effort for an untagged conversation (implicit root: %s)', async (implicitRoot) => {
     const { service, modelsService } = createService();
     const monoAgent: IAgentForStream = {
       id: 'mono-agent', name: 'Mono Agent', agentTypeName: 'Mono Agent', agentTypeSlug: 'mono-agent',
@@ -791,7 +793,7 @@ describe('AgentService connector skill inheritance', () => {
       disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false,
       max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
     };
-    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue(implicitRoot ? [monoAgent] : []);
     jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
     modelsService.findById.mockResolvedValue({
       id: 'selected-model', omitTemperature: false, conversationApi: 'responses', inputModalities: ['text'], maxInputTokens: null,
@@ -802,12 +804,12 @@ describe('AgentService connector skill inheritance', () => {
     const result = await service.buildAgentsForStream(
       userId,
       'selected-model',
+      implicitRoot ? [monoAgent.id] : undefined,
       undefined,
       undefined,
       undefined,
       undefined,
-      undefined,
-      undefined,
+      { conversationId: 'conversation-1', correlationId: 'request-1', implicitRoot },
       'high',
     );
 
@@ -815,7 +817,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params.conversation_api).toBe('responses');
   });
 
-  it('preserves a tagged agent\'s native model over the selected model', async () => {
+  it.each([1, 2])('preserves configured models when explicitly tagging %s agents', async (count) => {
     const { service, modelsService, agentTypeService } = createService();
     const taggedAgent: IAgentForStream = {
       id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
@@ -824,15 +826,18 @@ describe('AgentService connector skill inheritance', () => {
       connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
       enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
     };
-    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    const taggedAgents = Array.from({ length: count }, (_, index) => ({
+      ...taggedAgent, id: `tagged-agent-${index}`, model: `native-model-${index}`,
+    }));
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue(taggedAgents);
     modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
 
-    const result = await service.buildAgentsForStream(userId, 'selected-model', ['tagged-agent']);
+    const result = await service.buildAgentsForStream(userId, 'selected-model', taggedAgents.map((agent) => agent.id));
 
-    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
-      { agentTypeId: 'type-worker', modelId: 'native-model' },
-    ]);
-    expect(result[0].chatbot.model).toBe('native-model');
+    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith(taggedAgents.map((agent) => (
+      { agentTypeId: 'type-worker', modelId: agent.model }
+    )));
+    expect(result.map((agent) => agent.chatbot.model)).toEqual(taggedAgents.map((agent) => agent.model));
   });
 
   it('uses the admin default model for a tagged agent with no model override', async () => {

@@ -598,6 +598,51 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(buildAgentsForStream.mock.calls[0][6]).toEqual({ id: 'model-1', name: 'Contracts' });
   });
 
+  it.each([
+    ['implicit bound root', [], true],
+    ['explicitly tagged bound root', ['507f1f77bcf86cd799439011'], false],
+    ['explicitly tagged other agent', ['507f1f77bcf86cd799439012'], false],
+    ['multiple explicitly tagged agents', ['507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012'], false],
+  ])('preserves composer model precedence for %s', async (_route, agentIds, implicitRoot) => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const rootAgentId = '507f1f77bcf86cd799439011';
+    const buildAgentsForStream = jest.fn().mockResolvedValue([{ id: rootAgentId, tools: [], brain_context: [] }]);
+    Object.assign(service as object, {
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({
+          isGroup: false, systemWorkspaceId: 'system-1', groupTaggedAgentIds: [],
+          runtimePurpose: 'chat', rootAgentId,
+        }),
+      },
+      conversationSettings: {
+        getSettings: jest.fn().mockResolvedValue({ compaction: { enabled: false } }),
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
+      },
+      agentService: { buildAgentsForStream },
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
+      buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
+      skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
+      probeRootBackgroundReadiness: jest.fn().mockResolvedValue(undefined),
+      buildRootDelegationContext: jest.fn().mockResolvedValue(undefined),
+      agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+    });
+
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello', attachedFileIds: [], agentIds, skillIds: [],
+      modelId: 'composer-model', reasoningEffort: 'medium',
+    } as any);
+
+    expect(buildAgentsForStream).toHaveBeenCalledTimes(1);
+    const args = buildAgentsForStream.mock.calls[0];
+    expect(args[1]).toBe('composer-model');
+    expect(args[2]).toEqual(agentIds.length ? agentIds : [rootAgentId]);
+    expect(args[7]).toEqual(expect.objectContaining({ conversationId: 'conversation-1', implicitRoot }));
+    expect(args[8]).toBe('medium');
+  });
+
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const executeGrpcStream = jest.fn();

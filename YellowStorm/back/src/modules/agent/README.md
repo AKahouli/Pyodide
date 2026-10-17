@@ -339,6 +339,13 @@ Final format sent to the AI streaming service via gRPC:
 
 ## Stream Integration
 
+For standard conversation turns without agent tags, the composer-selected model
+overrides the answering agent's configured model, including an implicitly bound
+Root. Model-specific prompts, supported reasoning effort and the Conversation API
+setting are resolved from that effective model. Explicit `@` agent selections
+(one or multiple), and their existing sticky routing, retain each agent's model
+or the Admin default when unset. Team/governed routing is unchanged.
+
 `buildAgentsForStream()` assembles the complete agent payload for the AI service:
 
 ```
