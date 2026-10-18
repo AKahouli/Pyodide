@@ -79,6 +79,31 @@ remains as recorded in earlier phases; it is not represented as a fresh rerun.
 Repository observability policy check fails on eight existing print-diagnostic
 sites in Outlook/SharePoint/Team MCP files outside this phase's changed paths.
 
+### Final review and single-tab follow-up
+
+Independent final source/documentation review of `6cb32c0a7` accepted the changes
+with no critical or major findings. The ADR-0029 qualification wording is corrected
+separately; architectural status remains proposed. The user clarified that local
+conversation QA must reuse/refresh the first existing session, one app tab per
+account profile, because this localhost SSE setup does not support multiple tabs.
+This is now recorded in the QA fixture guidance. No route-based stream restriction
+or background-run cancellation is introduced.
+
+Follow-up live check reused existing tabs `817986904` and `817986823`, one per
+account profile. Both agents prepared their retained Phase4 PPTX and read actual
+slide text/native chart values through `code-interpreort-aga`. Navigation to Home
+and a full Home reload occurred while both runs were active. Both Home activity
+and recent-file lists loaded, excluding deleted DOCX. Returning showed the same
+running replies, then completion after 1m31s/1m30s (seven tool calls each):
+Orchid/417/ALPHA-417 and Juniper/683/BETA-683, with matching native chart values.
+No output was regenerated. Notification lifecycle tests passed again (11/11),
+and the live access/quota check again passed all 24 deleted-reference denials.
+Another full conversation reload restored both completed replies with the same
+message IDs and no active rerun. Fresh downloads matched original SHA-256 hashes.
+Original user pages, two selected filenames and the second user's unsent composer
+text were restored; no extra app tab was opened. This follow-up changes only QA
+guidance/evidence and the stale ADR qualification wording, not runtime behavior.
+
 ## Phase 3 implementation checkpoint (2026-10-18)
 
 User authorized deletion implementation/testing and separately confirmed permanent

@@ -18,7 +18,14 @@ record IDs/names, and cleanup action. The primary agent prepares routine data;
 frontend QA returns missing access or state as an actionable blocker. Keep
 context/page IDs in the current task for resume.
 
-Every QA task creates its own named isolated browser context and routes calls
+For localhost conversation QA, reuse and refresh the first existing application
+tab/session for each test account. Do not create additional localhost tabs or
+windows: the local SSE setup does not support multi-tab qualification. Two-user
+checks use the already signed-in, separate account profiles, one app tab each.
+Navigate within those tabs to test background runs; preserve unsent user drafts
+and restore the original page afterward. Record the reused page IDs in the task.
+
+Other QA tasks use their own named isolated browser context and route calls
 by owned page ID. Independent OpenCode processes also use temporary profiles.
 New private contexts may need sign-in. Never import another session's cookies,
 tokens, storage, or authentication file to avoid that step.

@@ -1,6 +1,6 @@
 # ADR-0029: in-memory access-token handoff after refresh
 
-Status: proposed; implemented as the phase 4 reload regression fix, pending final qualification.
+Status: proposed; implemented and qualified as the phase 4 reload regression fix. Architectural acceptance remains proposed.
 Date: 2026-10-18
 
 ## Context
