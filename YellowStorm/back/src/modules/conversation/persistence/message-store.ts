@@ -117,6 +117,7 @@ export interface MessageStore {
   recordConversationUsageEvents(events: ConversationUsageEventInput[]): Promise<void>;
   getConversationUsage(conversationId: string): Promise<ConversationUsageMetrics>;
   findById(id: string): Promise<MessageRecord | null>;
+  findByIdInConversation(conversationId: string, id: string): Promise<MessageRecord | null>;
   listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }>;
   listCursor(input: MessageCursorInput): Promise<{
     records: MessageRecord[];
@@ -125,7 +126,7 @@ export interface MessageStore {
   }>;
   listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]>;
   findTurnByRequestId(conversationId: string, senderId: string, requestId: string): Promise<{ user: MessageRecord; aiId?: string } | null>;
-  updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date): Promise<MessageRecord | null>;
+  updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date, conversationId?: string): Promise<MessageRecord | null>;
   updateReliability(id: string, evaluation: ReliabilityEvaluation): Promise<MessageRecord | null>;
   claimStream(id: string, leaseId: string, now: Date, expiresAt: Date): Promise<boolean>;
   renewStream(id: string, leaseId: string, expiresAt: Date, components?: MessageComponent[]): Promise<boolean>;
@@ -163,9 +164,9 @@ export interface MessageStore {
    */
   updateFrontendLatency(messageId: string, requestId: string, patch: FrontendLatencyPatch): Promise<MessageRecord | null>;
   cleanupStaleStreams(cutoff: Date): Promise<number>;
-  updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null>;
+  updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }, scope?: { conversationId: string; senderId: string }): Promise<MessageRecord | null>;
   deleteByConversation(conversationId: string): Promise<number>;
-  findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]>;
+  findBranchesByQuestion(questionMessageId: string, conversationId?: string): Promise<MessageRecord[]>;
   findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>>;
   findAiComponents(conversationId: string, messageId: string): Promise<AiMessageComponentsRecord | null>;
   listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]>;

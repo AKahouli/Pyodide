@@ -263,13 +263,11 @@ export class MessageService {
       userResponse.attachedFiles = fileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
     }
 
+    const placeholderResponse = this.mapToResponse(placeholder);
     void this.broadcastMessage(data.conversationId, {
       type: 'message_created',
       data: { conversationId: data.conversationId, message: userResponse },
-    });
-
-    const placeholderResponse = this.mapToResponse(placeholder);
-    void this.broadcastMessage(data.conversationId, {
+    }, {
       type: 'message_created',
       data: { conversationId: data.conversationId, message: placeholderResponse },
     });
@@ -544,8 +542,14 @@ export class MessageService {
     };
   }
 
-  async findById(messageId: string): Promise<MessageResponse> {
-    const [message, redactSensitiveText] = await Promise.all([this.messageStore.findById(messageId), this.resolveRedactSensitiveText()]);
+  findByIdInConversation(conversationId: string, messageId: string): Promise<MessageResponse> {
+    return this.findById(messageId, conversationId);
+  }
+
+  async findById(messageId: string, conversationId?: string): Promise<MessageResponse> {
+    const [message, redactSensitiveText] = await Promise.all([
+      conversationId === undefined ? this.messageStore.findById(messageId) : this.messageStore.findByIdInConversation(conversationId, messageId),
+      this.resolveRedactSensitiveText()]);
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -592,8 +596,8 @@ export class MessageService {
     return { resultJson };
   }
 
-  async updateFeedback(messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
-    const existing = await this.messageStore.findById(messageId);
+  async updateFeedback(conversationId: string, messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
+    const existing = await this.messageStore.findByIdInConversation(conversationId, messageId);
 
     if (!existing) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -607,7 +611,7 @@ export class MessageService {
       });
     }
 
-    const message = await this.messageStore.updateFeedback(messageId, feedback, new Date());
+    const message = await this.messageStore.updateFeedback(messageId, feedback, new Date(), conversationId);
     if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
 
     this.logger.log('Message feedback updated', {
@@ -816,8 +820,9 @@ export class MessageService {
     await this.messageStore.touchPendingReliability(messageIds, new Date());
   }
 
-  async getMessageDocument(messageId: string): Promise<MessageRecord> {
-    const message = await this.messageStore.findById(messageId);
+  async getMessageDocument(messageId: string, conversationId?: string): Promise<MessageRecord> {
+    const message = await (conversationId === undefined ? this.messageStore.findById(messageId)
+      : this.messageStore.findByIdInConversation(conversationId, messageId));
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -857,10 +862,10 @@ export class MessageService {
     return this.messageStore.cleanupStaleStreams(cutoff);
   }
 
-  async updateUserMessage(messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
-    const existing = await this.messageStore.findById(messageId);
+  async updateUserMessage(conversationId: string, senderId: string, messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
+    const existing = await this.messageStore.findByIdInConversation(conversationId, messageId);
 
-    if (!existing) {
+    if (!existing || existing.senderId !== senderId) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
@@ -877,7 +882,7 @@ export class MessageService {
       agentIds,
       memberIds,
       editedAt: new Date(),
-    });
+    }, { conversationId, senderId });
     if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     if (agentIds?.length) await this.conversationService.updateTaggedAgents(message.conversationId, agentIds);
 
@@ -902,8 +907,10 @@ export class MessageService {
     return this.messageStore.deleteByConversation(conversationId);
   }
 
-  async findBranchesByQuestion(questionMessageId: string): Promise<MessageResponse[]> {
-    const messages = await this.messageStore.findBranchesByQuestion(questionMessageId);
+  async findBranchesByQuestion(conversationId: string, questionMessageId: string): Promise<MessageResponse[]> {
+    const question = await this.getMessageDocument(questionMessageId, conversationId);
+    if (question.conversationType !== 'user') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    const messages = await this.messageStore.findBranchesByQuestion(questionMessageId, conversationId);
 
     return messages.map((m) => this.mapToResponse(m));
   }
@@ -1058,7 +1065,7 @@ export class MessageService {
     return undefined;
   }
 
-  private async broadcastMessage(conversationId: string, event: StreamEvent): Promise<void> {
+  private async broadcastMessage(conversationId: string, ...events: StreamEvent[]): Promise<void> {
     try {
       const conversation = await this.conversationService.findById(conversationId);
       const userIds: string[] = [conversation.createdBy];
@@ -1071,7 +1078,7 @@ export class MessageService {
         });
       }
 
-      await this.streamGateway.broadcastToConversation(userIds, event);
+      for (const event of events) await this.streamGateway.broadcastToConversation(userIds, event);
     } catch (err) {
       this.logger.warn('Failed to broadcast message event', {
         conversationId,

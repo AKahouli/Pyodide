@@ -18,6 +18,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     markStreamFailed: jest.Mock;
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
+    findByIdInConversation: jest.Mock;
     getOpenUiAppState: jest.Mock;
     findById: jest.Mock;
     findToolActivityResult: jest.Mock;
@@ -91,6 +92,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       getMessageDocument: jest.fn(),
       getOpenUiAppState: jest.fn().mockResolvedValue({programDigest: 'd'.repeat(64),stateRevision: 2}),
       findById: jest.fn(),
+      findByIdInConversation: jest.fn(),
       findToolActivityResult: jest.fn(),
       reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     };
@@ -109,7 +111,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       resolvePlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
       findPlatformCopilotAgentId: jest.fn().mockResolvedValue(null),
     };
-    modelsService = { validateModelActive: jest.fn() };
+    modelsService = { validateModelActive: jest.fn().mockResolvedValue({ valid: true }) };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
@@ -148,6 +150,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       playbookHandoffService as any,
       conversationSettings as any,
       attachmentResolver as any,
+      { findUserAgentBootstrap: jest.fn().mockResolvedValue({}) } as any,
     );
   });
 
@@ -822,11 +825,27 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
   });
 
+  it('rejects a foreign regeneration before a placeholder, ADK call or broadcast', async () => {
+    messageService.getMessageDocument.mockRejectedValue(new Error('Message not found'));
+    await expect(controller.regenerate(user, conversationId, 'foreign')).rejects.toThrow('Message not found');
+    expect(messageService.getMessageDocument).toHaveBeenCalledWith('foreign', conversationId);
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed regeneration parent before creating a turn', async () => {
+    messageService.getMessageDocument.mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: 'parent' })
+      .mockResolvedValueOnce({ conversationType: 'ai' });
+    await expect(controller.regenerate(user, conversationId, 'answer')).rejects.toThrow('Message not found');
+    expect(messageService.getMessageDocument).toHaveBeenCalledWith('parent', conversationId);
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+  });
+
   it('regenerates a platform copilot turn without a conversation-level playbook permission gate', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
-      .mockResolvedValueOnce({ content: 'original question' });
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'user', content: 'original question' });
     conversationService.getConversationDocument.mockResolvedValue({
       runtimePurpose: 'platform_copilot',
       pinnedAgentId: new Types.ObjectId(stickyAgentId),
@@ -874,8 +893,8 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves model reasoning metadata on regenerated placeholders', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
-      .mockResolvedValueOnce({ content: 'original question', modelId: 'model-1', reasoningEffort: 'high' });
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'user', content: 'original question', modelId: 'model-1', reasoningEffort: 'high' });
     conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
 
     await controller.regenerate(user, conversationId, 'ai-1');
@@ -890,9 +909,9 @@ describe('MessageController.sendMessage sticky routing', () => {
     const questionId = new Types.ObjectId();
     const currentAgentId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
       .mockResolvedValueOnce({
-        content: 'edited question',
+        conversationType: 'user', content: 'edited question',
         modelId: 'model-current',
         reasoningEffort: 'high',
         agentIds: [currentAgentId],
@@ -932,9 +951,9 @@ describe('MessageController.sendMessage sticky routing', () => {
   it('preserves a replay task summary when the prompt was not edited', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
-      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ conversationType: 'ai', questionMessageId: questionId })
       .mockResolvedValueOnce({
-        content: 'choose option b',
+        conversationType: 'user', content: 'choose option b',
         replayContext: {
           content: 'choose option b',
           taskSummary: 'The user selected option B',

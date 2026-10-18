@@ -342,6 +342,12 @@ export class PostgresMessageStore implements MessageStore {
     return row ? mapPostgresMessage(row) : null;
   }
 
+  async findByIdInConversation(conversationId: string, id: string): Promise<MessageRecord | null> {
+    const [row] = await this.db.select().from(schema.messages)
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationId, conversationId))).limit(1);
+    return row ? mapPostgresMessage(row) : null;
+  }
+
   async listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }> {
     const where = input.conversationType ? and(eq(schema.messages.conversationId, input.conversationId), eq(schema.messages.conversationType, input.conversationType)) : eq(schema.messages.conversationId, input.conversationId);
     const [rows, count] = await Promise.all([
@@ -422,8 +428,11 @@ export class PostgresMessageStore implements MessageStore {
     return { user: mapPostgresMessage(turn.user), aiId: turn.aiId?.trim() };
   }
 
-  async updateFeedback(id: string, feedback: MessageRecord['feedback'], feedbackAt: Date) {
-    return this.update(id, { feedback, feedbackAt });
+  async updateFeedback(id: string, feedback: MessageRecord['feedback'], feedbackAt: Date, conversationId?: string) {
+    const [row] = await this.db.update(schema.messages).set({ feedback, feedbackAt, updatedAt: feedbackAt })
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'ai'),
+        conversationId === undefined ? undefined : eq(schema.messages.conversationId, conversationId))).returning();
+    return row ? mapPostgresMessage(row) : null;
   }
 
   async updateReliability(id: string, evaluation: NonNullable<MessageRecord['reliabilityEvaluation']>) {
@@ -756,7 +765,7 @@ export class PostgresMessageStore implements MessageStore {
     return result.rowCount ?? 0;
   }
 
-  async updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null> {
+  async updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }, scope?: { conversationId: string; senderId: string }): Promise<MessageRecord | null> {
     const [row] = await this.db
       .update(schema.messages)
       .set({
@@ -767,7 +776,9 @@ export class PostgresMessageStore implements MessageStore {
         ...(input.memberIds !== undefined ? { memberIds: input.memberIds } : {}),
         updatedAt: input.editedAt,
       })
-      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'user')))
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'user'),
+        scope ? eq(schema.messages.conversationId, scope.conversationId) : undefined,
+        scope ? eq(schema.messages.senderId, scope.senderId) : undefined))
       .returning();
     return row ? mapPostgresMessage(row) : null;
   }
@@ -776,12 +787,13 @@ export class PostgresMessageStore implements MessageStore {
     return (await this.db.delete(schema.messages).where(eq(schema.messages.conversationId, conversationId)).returning({ id: schema.messages.id })).length;
   }
 
-  async findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]> {
+  async findBranchesByQuestion(questionMessageId: string, conversationId?: string): Promise<MessageRecord[]> {
     return (
       await this.db
         .select()
         .from(schema.messages)
-        .where(and(eq(schema.messages.questionMessageId, questionMessageId), eq(schema.messages.conversationType, 'ai')))
+        .where(and(eq(schema.messages.questionMessageId, questionMessageId), eq(schema.messages.conversationType, 'ai'),
+          conversationId === undefined ? undefined : eq(schema.messages.conversationId, conversationId)))
         .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
     ).map(mapPostgresMessage);
   }

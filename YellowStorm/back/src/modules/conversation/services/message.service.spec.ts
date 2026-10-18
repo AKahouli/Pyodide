@@ -56,6 +56,7 @@ describe('MessageService store lifecycle', () => {
       updateUser: jest.fn(),
       deleteByConversation: jest.fn(),
       findBranchesByQuestion: jest.fn(),
+      findByIdInConversation: jest.fn(),
       findAiComponents: jest.fn(),
       findReportMessageById: jest.fn(),
       recordConversationUsageEvents: jest.fn().mockResolvedValue(undefined),
@@ -94,6 +95,38 @@ describe('MessageService store lifecycle', () => {
     };
     service = new MessageService(messageStore as never, conversationService as never, streamGateway as never, {} as never, configService as never, logger as never, {} as never, conversationSettings as never);
     jest.spyOn(service as any, 'extractAndNotifyMentions').mockResolvedValue(undefined);
+  });
+
+  it('rejects foreign message reads, feedback, edits and branch lookup before writes or broadcasts', async () => {
+    messageStore.findByIdInConversation.mockResolvedValue(null);
+    await expect(service.findByIdInConversation(conversationId, 'foreign')).rejects.toThrow('Message not found');
+    await expect(service.updateFeedback(conversationId, 'foreign', 'like')).rejects.toThrow('Message not found');
+    await expect(service.updateUserMessage(conversationId, senderId, 'foreign', 'changed')).rejects.toThrow('Message not found');
+    await expect(service.findBranchesByQuestion(conversationId, 'foreign')).rejects.toThrow('Message not found');
+    expect(messageStore.updateUser).not.toHaveBeenCalled();
+    expect(messageStore.updateFeedback).not.toHaveBeenCalled();
+    expect(messageStore.findBranchesByQuestion).not.toHaveBeenCalled();
+    expect(streamGateway.broadcastToConversation).not.toHaveBeenCalled();
+  });
+
+  it('does not let a group member edit another sender message', async () => {
+    messageStore.findByIdInConversation.mockResolvedValue(record({ senderId: 'other', conversationType: 'user' }));
+    await expect(service.updateUserMessage(conversationId, senderId, 'message', 'changed')).rejects.toThrow('Message not found');
+    expect(messageStore.updateUser).not.toHaveBeenCalled();
+  });
+
+  it('resolves turn recipients once and broadcasts user before placeholder despite delayed lookup', async () => {
+    const user = record(), placeholder = record({ conversationType: 'ai' });
+    messageStore.createUserWithAiPlaceholder = jest.fn().mockResolvedValue({ user, placeholder });
+    let resolveMembers!: (value: { createdBy: string }) => void;
+    conversationService.findById.mockImplementation(() => new Promise((resolve) => { resolveMembers = resolve; }));
+    await service.createUserMessageWithAiPlaceholder({ conversationId, senderId, content: 'hello',
+      placeholder: { conversationId, senderId } });
+    expect(conversationService.findById).toHaveBeenCalledTimes(1);
+    expect(streamGateway.broadcastToConversation).not.toHaveBeenCalled();
+    resolveMembers({ createdBy: senderId });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(streamGateway.broadcastToConversation.mock.calls.map((call) => call[1].data.message.id)).toEqual([user.id, placeholder.id]);
   });
 
   it('persists neutral agent IDs through the store', async () => {

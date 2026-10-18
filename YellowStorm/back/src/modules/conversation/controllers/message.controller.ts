@@ -55,6 +55,7 @@ import { ExportSlideImageDto } from '../dto/export-slide-image.dto';
 import { PutOpenUiAppStateDto, type OpenUiAppStateResponse } from '../dto/openui-app-state.dto';
 import { ConversationAttachmentResolverService } from '../services/conversation-attachment-resolver.service';
 import { RateLimit } from '../../rate-limiter';
+import { AgentService } from '../../agent/agent.service';
 
 /**
  * Surfacing a concurrently fetched read at its decision point: rejections are
@@ -101,6 +102,7 @@ export class MessageController {
     private readonly playbookHandoffService: ConversationPlaybookHandoffService,
     private readonly conversationSettings: ConversationSettingsService,
     private readonly attachmentResolver: ConversationAttachmentResolverService,
+    private readonly agentService: AgentService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -315,7 +317,7 @@ export class MessageController {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'OpenUI submissions require an idle standard conversation');
       }
       let source: Awaited<ReturnType<MessageService['getMessageDocument']>> | undefined;
-      try { source = await this.messageService.getMessageDocument(submission.sourceMessageId); }
+      try { source = await this.messageService.getMessageDocument(submission.sourceMessageId, conversationId); }
       catch { throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid OpenUI source'); }
       const component = source?.components?.find(item => item.id === submission.componentId && item.type === 'text');
       if (!source || source.conversationId !== conversationId || source.conversationType !== 'ai'
@@ -779,7 +781,7 @@ export class MessageController {
       throw new ConflictException(ErrorCode.CONFLICT, 'The platform copilot response could not be recovered');
     }
     if (!shouldStart) {
-      const response = await this.messageService.getMessageDocument(aiMessageId);
+      const response = await this.messageService.getMessageDocument(aiMessageId, conversationId);
       shouldStart = !response.isComplete;
     }
     if (shouldStart && !this.streamService.isConversationStreaming(user._id.toString(), conversationId)) {
@@ -864,8 +866,8 @@ export class MessageController {
   }
 
   @Get(':messageId')
-  async findOne(@Param('messageId') messageId: string) {
-    return this.messageService.findById(messageId);
+  async findOne(@Param('conversationId') conversationId: string, @Param('messageId') messageId: string) {
+    return this.messageService.findByIdInConversation(conversationId, messageId);
   }
 
   /** On-demand payload for one tool activity; message responses omit tool results. */
@@ -880,10 +882,11 @@ export class MessageController {
 
   @Patch(':messageId/feedback')
   async updateFeedback(
+    @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Body() dto: MessageFeedbackDto,
   ) {
-    return this.messageService.updateFeedback(messageId, dto.feedback);
+    return this.messageService.updateFeedback(conversationId, messageId, dto.feedback);
   }
 
   /**
@@ -912,15 +915,17 @@ export class MessageController {
 
   @Patch(':messageId')
   async updateMessage(
+    @CurrentUser() user: AuthUser,
+    @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Body() dto: UpdateMessageDto,
   ) {
-    return this.messageService.updateUserMessage(messageId, dto.content, dto.agentIds, dto.memberIds);
+    return this.messageService.updateUserMessage(conversationId, user._id.toString(), messageId, dto.content, dto.agentIds, dto.memberIds);
   }
 
   @Get(':messageId/branches')
-  async getBranches(@Param('messageId') messageId: string) {
-    return this.messageService.findBranchesByQuestion(messageId);
+  async getBranches(@Param('conversationId') conversationId: string, @Param('messageId') messageId: string) {
+    return this.messageService.findBranchesByQuestion(conversationId, messageId);
   }
 
   @Post(':messageId/stop')
@@ -976,6 +981,16 @@ export class MessageController {
       messageId,
     });
 
+    const aiMessage = await this.messageService.getMessageDocument(messageId, conversationId);
+    const questionId = aiMessage.questionMessageId?.toString();
+    if (aiMessage.conversationType !== 'ai' || !questionId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+    const userMessage = await this.messageService.getMessageDocument(questionId, conversationId);
+    if (userMessage.conversationType !== 'user') {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+
     // Fail fast if AI service is unavailable
     if (!this.streamService.isAvailable()) {
       this.logger.warn('AI service unavailable for regenerate', { conversationId, messageId });
@@ -985,21 +1000,45 @@ export class MessageController {
       );
     }
 
-    // Get the original user message that prompted this AI response
-    const aiMessage = await this.messageService.getMessageDocument(messageId);
-    const questionId = aiMessage.questionMessageId?.toString();
-
-    if (!questionId) {
-      this.logger.warn('No question message found for regenerate', { messageId });
-      return this.messageService.findById(messageId);
-    }
-
-    const userMessage = await this.messageService.getMessageDocument(questionId);
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
     const pinnedAgentId = platformCopilot
       ? await this.conversationService.resolvePlatformCopilotAgent(conversation)
       : undefined;
+
+    await this.attachmentResolver.resolve(conversation.systemWorkspaceId?.toString() ?? '',
+      [...new Set([...(userMessage.attachedFileIds?.map(String) ?? []), ...(userMessage.replayContext?.attachedFileIds ?? [])])]);
+    const replay = userMessage.replayContext;
+    const governedRuntime = conversation.runtimeMode === 'governed'
+      ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), {
+          runtimeMode: 'governed', createdBy: conversation.createdBy.toString(),
+          memberIds: conversation.members.map((member) => member.userId.toString()),
+          governanceContext: conversation.governanceContext ? {
+            programId: conversation.governanceContext.programId.toString(), scopeId: conversation.governanceContext.scopeId.toString(),
+            deploymentId: conversation.governanceContext.deploymentId.toString(), revisionId: conversation.governanceContext.revisionId.toString(),
+            revisionNumber: conversation.governanceContext.revisionNumber, runtimeDefinition: conversation.governanceContext.runtimeDefinition,
+          } : undefined,
+        }) : undefined;
+    if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, {
+      ...replay, content: userMessage.content ?? '', agentIds: userMessage.agentIds?.map(String), modelId: userMessage.modelId,
+    });
+    else if (userMessage.modelId && !platformCopilot) {
+      const validation = await this.modelsService.validateModelActive(userMessage.modelId, 'chat');
+      if (!validation?.valid) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Selected model is unavailable for chat');
+    }
+    if (replay?.semanticModelId && !governedRuntime) await this.semanticModelService.resolveChatModel(user._id.toString(), replay.semanticModelId);
+    const effectiveAgentIds = pinnedAgentId ? [pinnedAgentId] : governedRuntime
+      ? this.governedRuntimeService.resolveEffectiveAgents(governedRuntime, userMessage.agentIds?.map(String))
+      : userMessage.agentIds?.map(String) ?? [];
+    for (const agentId of governedRuntime ? [] : effectiveAgentIds) {
+      await this.agentService.findUserAgentBootstrap(user._id.toString(), agentId);
+    }
+    const governanceOverride = governedRuntime ? {
+      runtimeMode: 'governed' as const,
+      rootBound: Boolean(governedRuntime.rootWork && effectiveAgentIds.length === 1 && effectiveAgentIds[0] === conversation.rootAgentId),
+      primaryAgentId: governedRuntime.primaryAgentId, allowedAgentIds: governedRuntime.allowedAgentIds,
+      workspaceIds: governedRuntime.workspaceIds, revisionId: governedRuntime.revisionId, scopeId: governedRuntime.scopeId,
+    } : undefined;
 
     // Create new AI placeholder
     const newAiMessage = await this.messageService.createAIPlaceholder({
@@ -1032,7 +1071,7 @@ export class MessageController {
           ...(!replayContentMatches ? { taskSummary: undefined } : {}),
           modelId: userMessage.modelId,
           reasoningEffort: userMessage.reasoningEffort,
-          agentIds: userMessage.agentIds?.map((id) => id.toString()) ?? [],
+          agentIds: effectiveAgentIds,
           ...(pinnedAgentId ? {
             agentIds: [pinnedAgentId],
             modelId: undefined,
@@ -1047,13 +1086,13 @@ export class MessageController {
           deepSearchEnabled: false,
           modelId: userMessage.modelId,
           reasoningEffort: userMessage.reasoningEffort,
-          agentIds: pinnedAgentId ? [pinnedAgentId] : userMessage.agentIds?.map((id) => id.toString()) ?? [],
+          agentIds: effectiveAgentIds,
           skillIds: [],
         },
         requestId,
         undefined,
         this.resolveDisplayName(user),
-        userMessage.replayContext?.governanceOverride,
+        governanceOverride,
         {
           schemaVersion: 1,
           requestId,
