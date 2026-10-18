@@ -787,6 +787,7 @@ def create_search_agent_with_tools(
                         session_id=config.session_id,
                         agent_id=agent_config.get("id"),
                         user_id=config.user_id,
+                        platform_api_url=str((agent_config.get("agent_params") or {}).get("platform_api_url", "")),
                         platform_api_token=str(
                             (agent_config.get("agent_params") or {}).get(
                                 "platform_api_token", ""
@@ -924,6 +925,7 @@ def create_standard_agent_with_tools(
             _get_connector_repo(config),
         ),
         platform_api_token=str(agent_params.get("platform_api_token", "")),
+        platform_api_url=str(agent_params.get("platform_api_url", "")),
         document_tree_injection_enabled=document_tree_injection_enabled(agent_config),
     )
 

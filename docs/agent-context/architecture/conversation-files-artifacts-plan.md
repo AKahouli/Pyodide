@@ -1,6 +1,6 @@
 # Conversation Files & artifacts implementation plan
 
-Status: **phase 1 implemented and reviewed; qualification limits below; phases 2–4 proposed**. Assessed
+Status: **phases 1–2 implemented and qualified; phases 3–4 proposed**. Assessed
 2026-10-18 for the classic conversation route. User requested a scoped plan with
 agent access, deletion, reload, two-user tests and separate implementation commits.
 
@@ -67,6 +67,104 @@ policy reports eight violations in unrelated MCP files, none in this asset scope
 do not mark that repository-wide gate passed.
 
 ## Existing owners and verified reuse
+
+### Phase 2 implementation checkpoint (2026-10-18)
+
+The user authorized interpreter reuse/output registration and separate commit.
+ADR-0017/0018 require trusted invocation identity and current access; ADR-0025
+keeps drafts private. Existing ConversationModule, workspace document writer/store
+and ADK connector wrappers remain the owners; no new table, service or runtime.
+
+`prepare_conversation_asset` calls internal `assets/prepare` with the trusted actor,
+conversation and invocation. The backend resolves the exact ref, rechecks current
+access and readiness, reads bounded bytes and returns their SHA-256 plus a
+content-addressed sandbox path. It rejects programs and evidence bytes. Paths
+deduplicate the same source version within the actor/conversation; each invocation
+must obtain its own receipt before sandbox creation. The existing mount guard
+injects those exact keys for `code-interpreter`/`code-interpreort-aga`, with no path
+discovery or filename substitution. If the coordinator omits an exact input, an
+authorized binary-upload action can transfer freshly reauthorized bytes to that
+same path. A private internal prepare option supplies at most 10 MiB; payloads
+never become model tool results or logs. The runtime checks the receipt digest,
+transfers only selected bytes, verifies the sandbox hash, then rechecks the mount
+guard. Unsupported/failed transfers remain explicit failures. Staged input cache cleanup remains phase 3;
+repeated turns do not create a copy per invocation.
+
+The interpreter's successful `send_file_to_user` receipt is registered through
+internal `assets/register`, never exposed as a model-controlled raw-path tool.
+The backend validates source scope, reads actual stored bytes, and uses the
+existing workspace tree transaction lock/direct upload owner for quota, immutable
+storage and retry deduplication. Provenance and ready state commit together;
+metadata failure rolls back rows/quota and removes the newly allocated blob.
+Both streaming consumers accept only the interpreter wrapper's trusted canonical
+receipt. Canonical document IDs suppress duplicate message/list entries. A new
+content version is a separate file; ordinary downloads remain transient.
+
+Current direct registration uses the existing small-file upload limit (default
+10 MiB); larger outputs fail explicitly rather than being marked ready. The
+bounded source read ceiling is 50 MiB, not a higher publication allowance. Browser
+export Save to conversation and structured composer chips are deferred; the
+existing readable exact-reference selection is sufficient for interpreter reuse.
+No automatic draft publishing, arbitrary workspace sharing or deletion is added.
+
+Focused checks: 19 backend unit tests, 4 real PostgreSQL integration tests and
+the WorkspaceModule export regression PASS in focused runs; backend typecheck
+and production build PASS. Integration proves concurrent registration uses one
+document/PUT/quota charge, metadata failure rolls back and retry succeeds, and
+quota failure creates no ready output. Friendly filename search retains escaped
+literal matching and workspace boundaries across all existing listing variants.
+ADK assets/connector/artifact checks (57) and image/hydration callback checks (43)
+PASS, as does compilation. The full mount-guard suite has four existing failures
+from its missing `src.flow_engine.mcp.call_mcp_tool` monkeypatch target; its new
+hydration callback regression passes. Independent
+security/correctness and feature/README review ACCEPT. Live simultaneous prepare
+checks for both users PASS: different same-name bytes/hashes, stable retry paths,
+and denied cross-user preparation. Live Office generation, registration and the
+four original downloads PASS; further saved-output reuse is recorded below.
+
+Live qualification found an adapter identity mismatch: isolated root execution
+uses an ephemeral ADK turn/session ID, while native asset preparation uses the
+durable conversation ID. Sandbox headers, storage prefixes and output capture
+must use the trusted canonical conversation context; ADK session/event identity
+remains separate. Equal-ID fixtures did not expose this. A distinct-ID regression
+and a repeated live sandbox run qualify the correction. A direct diagnostic
+through the same configured connector confirmed the coordinator received the
+correct key but mounted an empty input directory, while storage HEAD verified
+625 bytes. The existing binary-upload action successfully hydrated only the exact
+receipt path. This motivates the bounded transport fallback, rather than guessed
+alternative paths or ignoring missing inputs.
+The live transfer also exposed that this sandbox offers `python3` without a
+`python` alias; private remote hash verification now uses `python3`, with a focused
+command regression. No package installation or sandbox security change is needed.
+The MCP repeats shell output in both `result` and `text`; the digest check accepts
+repeated identical hashes and rejects empty or conflicting hashes.
+
+Live phase 2 QA uses two private conversations (`c66d50ba8780ea080b2c52d5` and
+`c25a12c654d6130d30139547`) with different synthetic `same.pdf` bytes: Orchid/173
+and Juniper/289. No real private source content or credentials enter this record.
+
+| Check | Outcome / decisive evidence |
+| --- | --- |
+| Existing configured interpreter, uploaded PDF → Office | PASS: both actors discovered/prepared their own exact PDF and created DOCX plus editable PPTX through the configured MCP. |
+| Canonical registration and reload | PASS: four original outputs appear once as ready documents in their respective Files panels after full reload. |
+| Downloads / Office content | PASS: Orchid DOCX 36,971 B and PPTX 35,156 B; Juniper DOCX 37,057 B and PPTX 37,302 B. ZIP/XML inspection verifies each project/budget, editable paragraphs/text, native chart values and embedded editable workbooks; no other user's project. |
+| Current output permissions | PASS: 18 cross-user inspect/read/prepare attempts against all six outputs return 404; foreign outputs absent from listings. Both actors can prepare their own saved Office outputs in a fresh invocation. |
+| Saved DOCX → new editable PPTX after reload | PASS for both users through actual agent discovery/preparation/read/generation/registration. The reused decks survive another full reload and download: Orchid 37,223 B, Juniper 36,197 B. Each has two slides, editable text, a native chart with the actual budget and an embedded workbook. |
+| Retry/concurrent safety | PASS: live simultaneous source preparation has distinct bytes/hashes and stable retry paths. Real PostgreSQL tests prove one canonical registration/PUT/quota charge per receipt and rollback on failed metadata/quota. |
+
+Browser QA also exposed unnecessary v2 SSE pipes on classic tabs. A separate
+existing-owner lifecycle correction retains current/background v2 runs, connects
+unused v2 only on Studio/legacy v2 routes, and prevents token refresh opening an
+unused pipe. Its 36 focused frontend tests and typecheck PASS; review ACCEPT.
+Both users' fresh requests and the previously stalled PowerPoint download passed
+after reload. Multi-tab connection pressure is source-confirmed; the earlier
+single-tab stall's complete cause is not established. See the frontend realtime
+contract for the scoped lifecycle behavior.
+The QA conversations retain a phantom running placeholder from earlier interrupted
+test executions. Saved answers/files remain complete and no inference is triggered
+by reload; interrupted-work reconciliation is a separate remaining issue. Live
+MCP calls were occasionally slow, but the final six Office files were delivered
+and verified; no input/mount/hash check was bypassed to obtain those results.
 
 | Owner | Existing implementation | Planned reuse / gap |
 | --- | --- | --- |

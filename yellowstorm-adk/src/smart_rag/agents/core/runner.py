@@ -36,6 +36,7 @@ from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
 from src.smart_rag.infrastructure.compaction import make_chat_runner
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import current_conversation_id
 from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
 from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
@@ -895,7 +896,8 @@ class AgentRunner:
                                 artifacts = build_run_code_artifacts(response_payload, agent_config, tool_component_id) if func_name == "run_code" else build_tool_result_artifacts(
                                     response_payload,
                                     tool_component_id,
-                                    run_workspace_path(user_id, session_id),
+                                    run_workspace_path(user_id, current_conversation_id() or session_id),
+                                    require_receipt=True, producer_tool_name=func_name,
                                 )
                                 for artifact in artifacts:
                                     await q.put(self.streaming_formatter.format_component_event(

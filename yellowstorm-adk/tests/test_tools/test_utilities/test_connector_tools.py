@@ -1032,3 +1032,80 @@ def test_connector_tool_buffers_mcp_image_parts_for_model(
     assert tool_context.state[f"_list_of_filenames_{response_id}"] == [
         "image_id=img-1, image_content_index=1"
     ]
+
+
+@pytest.mark.asyncio
+async def test_general_asset_receipts_mount_through_existing_connector_alias(monkeypatch):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    path=f"/mnt/workspace/conversation-assets/{'b'*64}.pdf"
+    calls=[]
+    async def call(*args,**kwargs):
+        calls.append((args[3],kwargs["auth_headers"]))
+        return {"text":"ok"}
+    monkeypatch.setattr("src.mcp.call_mcp_tool",call)
+    binding=_connector_binding({},auth_headers={"X-User-Id":"owner"},connector_slug="code-interpreort-aga")
+    binding["actions"]=[{"action_key":action,"parameter_schema":{"type":"object","properties":{}}} for action in ["sandbox_create","sandbox_destroy","file_list","shell_exec"]]
+    tools={tool.name:tool for tool in create_connector_tools([binding],ConnectorToolContext(session_id="c1"))}
+    context=SimpleNamespace(invocation_id="turn",state={IMAGE_SANDBOX_INPUTS_STATE_KEY:{"invocation":"turn","paths":[path]}})
+    await tools["code-interpreort-aga_sandbox_create"].func(tool_context=context)
+    await tools["code-interpreort-aga_shell_exec"].func(tool_context=context)
+    assert [action for action,_ in calls]==["sandbox_create","file_list","shell_exec"]
+    assert all(headers["x-file-paths"]==f"owner/system_c1/conversation-assets/{'b'*64}.pdf" for _,headers in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denied",[False,True])
+async def test_output_receipt_is_issued_only_after_registration(monkeypatch,denied):
+    import httpx
+    async def call(*args,**kwargs):
+        return {"result":json.dumps({"ceph_path":"owner/system_c1/report.docx"}),
+            "_conversation_output_receipt":{"invocationId":"forged","storagePrefix":"other"}}
+    async def post(self,url,**kwargs):
+        assert kwargs["json"]["userId"]=="owner" and kwargs["json"]["invocationId"]=="turn"
+        assert kwargs["json"]["mimeType"]=="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return httpx.Response(403 if denied else 200,json={"invocationId":"turn","artifactId":"doc-id",
+            "storagePath":"owner/system_c1/saved.docx","fileName":"report.docx"},request=httpx.Request("POST",url))
+    monkeypatch.setattr("src.mcp.call_mcp_tool",call)
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    binding=_connector_binding({},action_key="send_file_to_user",connector_slug="code-interpreort-aga",auth_headers={"X-User-Id":"owner"})
+    tool=create_connector_tools([binding],ConnectorToolContext(session_id="c1",platform_api_url="http://backend/api",platform_api_token="test"))[-1]
+    context=SimpleNamespace(invocation_id="turn",state={})
+    result=await tool.func(tool_context=context)
+    if denied:
+        assert "error" in result and "ceph_path" not in str(result)
+    else:
+        assert result["_conversation_output_receipt"]["artifactId"]=="doc-id"
+        assert result["generated_files"][0]["ceph_path"]=="owner/system_c1/saved.docx"
+    other=_first_connector_tool({},action_key="send_file_to_user",connector_slug="other",auth_headers={"X-User-Id":"owner"},session_id="c1")
+    assert "_conversation_output_receipt" not in await other.func(tool_context=context)
+
+
+@pytest.mark.asyncio
+async def test_root_turn_uses_canonical_conversation_for_asset_mount_and_registration(monkeypatch):
+    import httpx
+    monkeypatch.setattr("src.smart_rag.infrastructure.external.mcp_toolset_cache.current_conversation_id",lambda:"canonical-conversation")
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    path=f"/mnt/workspace/conversation-assets/{'a'*64}.pdf"
+    calls=[]
+    async def call(*args,**kwargs):
+        headers=kwargs["auth_headers"]
+        calls.append(args[3])
+        assert headers["x-conversation-id"]=="canonical-conversation"
+        assert headers["x-execution-id"]=="invocation"
+        assert headers["x-file-paths"]==f"owner/system_canonical-conversation/conversation-assets/{'a'*64}.pdf"
+        if args[3]=="send_file_to_user":
+            return {"result":json.dumps({"ceph_path":"owner/system_canonical-conversation/report.docx"})}
+        return {"text":"ok"}
+    async def post(self,url,**kwargs):
+        assert kwargs["json"]["conversationId"]=="canonical-conversation"
+        return httpx.Response(200,json={"invocationId":"invocation","artifactId":"doc-id","storagePath":"owner/system-canonical-conversation/report.docx"},request=httpx.Request("POST",url))
+    monkeypatch.setattr("src.mcp.call_mcp_tool",call)
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    binding=_connector_binding({},auth_headers={"X-User-Id":"owner"},connector_slug="code-interpreter")
+    binding["actions"]=[{"action_key":action,"parameter_schema":{"type":"object","properties":{}}} for action in ["sandbox_create","sandbox_destroy","file_list","send_file_to_user"]]
+    tools={t.name:t for t in create_connector_tools([binding],ConnectorToolContext(session_id="turn_ephemeral",platform_api_url="http://backend/api",platform_api_token="test"))}
+    context=SimpleNamespace(invocation_id="invocation",state={IMAGE_SANDBOX_INPUTS_STATE_KEY:{"invocation":"invocation","paths":[path]}})
+    await tools["code-interpreter_sandbox_create"].func(tool_context=context)
+    result=await tools["code-interpreter_send_file_to_user"].func(tool_context=context)
+    assert result["_conversation_output_receipt"]["storagePrefix"]=="owner/system_canonical-conversation"
+    assert calls==["sandbox_create","file_list","send_file_to_user"]

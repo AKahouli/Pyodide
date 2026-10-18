@@ -175,7 +175,8 @@ export class PgDocumentStore implements DocumentStore {
     else if (parentId !== undefined) conditions.push(eq(DOCUMENTS.parentId, parentId));
     if (search) {
       const pattern = `%${escapeLike(search)}%`;
-      conditions.push(or(ilike(DOCUMENTS.originalName, pattern), ilike(DOCUMENTS.folderName, pattern))!);
+      conditions.push(or(ilike(DOCUMENTS.originalName, pattern), ilike(DOCUMENTS.folderName, pattern),
+        ilike(sql`${DOCUMENTS.metadata}->>'assetDisplayName'`, pattern))!);
     }
     const where = and(...conditions);
     const [rows, countRows] = await Promise.all([
@@ -199,9 +200,8 @@ export class PgDocumentStore implements DocumentStore {
     if (search) {
       const pattern = `%${escapeLike(search)}%`;
       conditions.push(
-        searchFilename
-          ? or(ilike(DOCUMENTS.originalName, pattern), ilike(DOCUMENTS.filename, pattern))!
-          : ilike(DOCUMENTS.originalName, pattern),
+        or(ilike(DOCUMENTS.originalName, pattern), ilike(sql`${DOCUMENTS.metadata}->>'assetDisplayName'`, pattern),
+          ...(searchFilename ? [ilike(DOCUMENTS.filename, pattern)] : []))!,
       );
     }
     const where = and(...conditions);
@@ -230,7 +230,8 @@ export class PgDocumentStore implements DocumentStore {
     ];
     if (search) {
       const pattern = `%${escapeLike(search)}%`;
-      conditions.push(or(ilike(DOCUMENTS.originalName, pattern), ilike(DOCUMENTS.folderName, pattern))!);
+      conditions.push(or(ilike(DOCUMENTS.originalName, pattern), ilike(DOCUMENTS.folderName, pattern),
+        ilike(sql`${DOCUMENTS.metadata}->>'assetDisplayName'`, pattern))!);
     }
     const where = and(...conditions);
     const [rows, countRows] = await Promise.all([

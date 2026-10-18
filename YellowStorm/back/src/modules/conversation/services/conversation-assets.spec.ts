@@ -1,15 +1,19 @@
 import { ServiceUnavailableException, ForbiddenException } from '@nestjs/common';
 import { ConversationArtifactService } from './conversation-artifact.service';
+import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 
 describe('conversation assets', () => {
   const doc = { id: 'd', workspaceId: 'private', originalName: 'same.pdf', mimeType: 'application/pdf', size: 42, status: 'completed', path: 'secret/blob', isFolder: false };
   const conversations = { requireCurrentParticipant: jest.fn(), getUploadedDocuments: jest.fn(), getWorkspaceDocuments: jest.fn(), getConversationDocument: jest.fn(), filterAccessibleWorkspaceIds: jest.fn() };
   const messages = { listAssetMessages: jest.fn(), getMessageDocument: jest.fn() };
-  const documents = { findById: jest.fn(), getDownloadUrl: jest.fn() };
+  const documents = { findById: jest.fn(), getDownloadUrl: jest.fn(), uploadSmallFile: jest.fn(), mergeMetadata: jest.fn() };
   const settings = { isAttachmentIntelligenceEnabled: jest.fn(), getSettings: jest.fn() };
   const attachments = { readAuthorizedText: jest.fn() };
-  const service = new ConversationArtifactService(messages as never, {} as never, conversations as never, documents as never,
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, settings as never, attachments as never);
+  const storage = { openReadStream: jest.fn(), upload: jest.fn(), delete: jest.fn() };
+  const assetDocuments = { withWorkspaceTreeLock: jest.fn(), findFileByName: jest.fn(), findByIdsInWorkspace: jest.fn() };
+  const service = new ConversationArtifactService(messages as never, storage as never, conversations as never, documents as never,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, settings as never, attachments as never, assetDocuments as never);
   beforeEach(() => {
     jest.resetAllMocks();
     conversations.getConversationDocument.mockResolvedValue({ createdBy: 'a', systemWorkspaceId: 'private', workspaces: ['shared'] });
@@ -29,6 +33,10 @@ describe('conversation assets', () => {
     settings.getSettings.mockResolvedValue({ attachmentIntelligence: { maxIndexedTabularRows: 100 } });
     attachments.readAuthorizedText.mockResolvedValue({ content: 'PDF body', extraction: { truncated: false } });
     messages.listAssetMessages.mockResolvedValue({ records: [], hasMore: false, nextCursor: null });
+    storage.openReadStream.mockImplementation(async () => ({ body: Readable.from([Buffer.from('selected bytes')]) }));
+    assetDocuments.withWorkspaceTreeLock.mockImplementation(async (_workspace, action) => action());
+    assetDocuments.findByIdsInWorkspace.mockResolvedValue([]);
+    documents.uploadSmallFile.mockResolvedValue({ ...doc, id: 'registered', path: 'a/system-c/saved.docx' });
   });
   it('persists canonical refs across reload without exposing storage paths and bounds PDF text', async () => {
     const first = await service.listAssets('c', 'a');
@@ -117,6 +125,118 @@ describe('conversation assets', () => {
     ] });
     await expect(service.readAsset('c', 'a', ref)).rejects.toThrow('Artifact not found');
     expect(attachments.readAuthorizedText).not.toHaveBeenCalled();
+  });
+
+  it('prepares exact bytes under actor/run/invocation scope and binds deterministic receipts to the content version', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    const first = await service.prepareAsset('c', 'a', ref, 'turn-1');
+    const retry = await service.prepareAsset('c', 'a', ref, 'turn-1');
+    const nextTurn = await service.prepareAsset('c', 'a', ref, 'turn-2');
+    expect(first.sha256).toBe(createHash('sha256').update('selected bytes').digest('hex'));
+    expect(retry).toEqual(first);
+    expect(nextTurn.sandboxPath).toBe(first.sandboxPath);
+    expect(first.sandboxPath).toMatch(/^\/mnt\/workspace\/conversation-assets\/[a-f0-9]{64}\.pdf$/);
+    expect(storage.upload).toHaveBeenCalledWith(Buffer.from('selected bytes'), 'same.pdf', 'application/pdf', {
+      folder: `a/system_c/${first.sandboxPath.replace('/mnt/workspace/', '').split('/').slice(0, -1).join('/')}`,
+      generateUniqueName: false, customFileName: first.sandboxPath.split('/').at(-1),
+    });
+    storage.openReadStream.mockResolvedValueOnce({ body: Readable.from([Buffer.from('new version')]) });
+    expect((await service.prepareAsset('c', 'a', ref, 'turn-1')).sandboxPath).not.toBe(first.sandboxPath);
+  });
+
+  it('denies cross-user, malformed and revoked references before staging bytes', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    await expect(service.prepareAsset('c', 'b', ref, 'turn')).rejects.toThrow('current membership');
+    await expect(service.prepareAsset('c', 'a', 'not-a-ref', 'turn')).rejects.toThrow('Asset not found');
+    await expect(service.prepareAsset('c', 'a', ref, '../turn')).rejects.toThrow('Invalid asset invocation');
+    const revoked = Buffer.from(JSON.stringify(['document', 'revoked', 'd'])).toString('base64url');
+    await expect(service.prepareAsset('c', 'a', revoked, 'turn')).rejects.toThrow('Asset not found');
+    expect(storage.openReadStream).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it('rejects pending files, apps, evidence paths and oversized actual bytes without publishing a receipt', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    documents.findById.mockResolvedValueOnce({ ...doc, status: 'processing' });
+    await expect(service.prepareAsset('c', 'a', ref, 'turn')).rejects.toThrow('Only ready files');
+    messages.getMessageDocument.mockResolvedValue({ conversationId: 'c', isComplete: true, components: [
+      { id: 'ui', type: 'text', data: { content: 'root = Card("Saved")' } },
+      { id: 'f', type: 'artifact', data: { artifactId: 'out', storagePath: 'wrong', evidenceId: 'e', executionId: 'x' } },
+    ] });
+    await expect(service.prepareAsset('c', 'a', Buffer.from(JSON.stringify(['app', 'm', 'ui'])).toString('base64url'), 'turn')).rejects.toThrow('Only ready files');
+    await expect(service.prepareAsset('c', 'a', Buffer.from(JSON.stringify(['artifact', 'm', 'out'])).toString('base64url'), 'turn')).rejects.toThrow('Artifact not found');
+    storage.openReadStream.mockResolvedValueOnce({ body: Readable.from([Buffer.alloc(50 * 1024 * 1024 + 1)]) });
+    await expect(service.prepareAsset('c', 'a', ref, 'turn')).rejects.toThrow('size limit');
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it('propagates storage limit failures and never returns a prepared receipt', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    storage.upload.mockRejectedValueOnce(new ForbiddenException('upload limit'));
+    await expect(service.prepareAsset('c', 'a', ref, 'turn')).rejects.toThrow('upload limit');
+  });
+
+  it('returns bounded bytes only to explicit internal transfer requests with the same version receipt', async () => {
+    const ref = (await service.listAssets('c', 'a')).assets[0].ref;
+    const ordinary = await service.prepareAsset('c', 'a', ref, 'turn');
+    const transfer = await service.prepareAsset('c', 'a', ref, 'turn', true);
+    expect(ordinary).not.toHaveProperty('contentBase64');
+    expect(transfer).toEqual({ ...ordinary, contentBase64: Buffer.from('selected bytes').toString('base64') });
+    await expect(service.prepareAsset('c', 'b', ref, 'turn', true)).rejects.toThrow('current membership');
+    storage.upload.mockClear();
+    storage.openReadStream.mockResolvedValueOnce({ body: Readable.from([Buffer.alloc(10 * 1024 * 1024 + 1)]) });
+    await expect(service.prepareAsset('c', 'a', ref, 'turn', true)).rejects.toThrow('direct transfer size limit');
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  const output = { userId: 'a', conversationId: 'c', invocationId: 'turn-1', sourcePath: 'a/system_c/outputs/report.docx', fileName: 'report.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+  it('registers exact output bytes through the existing quota owner and restores its canonical receipt on retry', async () => {
+    const first = await service.registerAsset(output);
+    expect(first).toMatchObject({ documentId: 'registered', artifactId: 'registered', storagePath: 'a/system-c/saved.docx', invocationId: 'turn-1' });
+    expect(first.asset).toMatchObject({ origin: 'generated', name: 'report.docx' });
+    expect(documents.uploadSmallFile).toHaveBeenCalledWith('private', 'a', Buffer.from('selected bytes'), expect.stringMatching(/^generated-[a-f0-9]{64}\.docx$/), output.mimeType, undefined, false, false);
+    const receipt = documents.mergeMetadata.mock.calls[0][2];
+    assetDocuments.findFileByName.mockResolvedValue({ ...doc, id: 'registered', metadata: receipt });
+    documents.findById.mockResolvedValue({ ...doc, id: 'registered', path: first.storagePath, metadata: receipt });
+    const retry = await service.registerAsset(output);
+    expect(retry.asset.ref).toBe(first.asset.ref);
+    expect(documents.uploadSmallFile).toHaveBeenCalledTimes(1);
+    expect(assetDocuments.withWorkspaceTreeLock).toHaveBeenCalledTimes(2);
+  });
+
+  it('denies another actor, traversal and input receipts before reading output storage', async () => {
+    await expect(service.registerAsset({ ...output, userId: 'b' })).rejects.toThrow('current membership');
+    for (const sourcePath of ['b/system_c/out.docx', 'a/system_other/out.docx', 'a/system_c/../out.docx', 'a/system_c/conversation-assets/input.docx']) {
+      await expect(service.registerAsset({ ...output, sourcePath })).rejects.toThrow('outside the current run');
+    }
+    expect(storage.openReadStream).not.toHaveBeenCalled();
+    expect(documents.uploadSmallFile).not.toHaveBeenCalled();
+  });
+
+  it('publishes no ready receipt when workspace quota or storage fails', async () => {
+    documents.uploadSmallFile.mockRejectedValueOnce(new ForbiddenException('quota exceeded'));
+    await expect(service.registerAsset(output)).rejects.toThrow('quota exceeded');
+    expect(documents.mergeMetadata).not.toHaveBeenCalled();
+    storage.openReadStream.mockRejectedValueOnce(new Error('blob unavailable'));
+    await expect(service.registerAsset(output)).rejects.toThrow('blob unavailable');
+    expect(documents.uploadSmallFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans only the newly allocated blob on metadata failure and rejects publication', async () => {
+    documents.mergeMetadata.mockRejectedValueOnce(new Error('metadata unavailable'));
+    await expect(service.registerAsset(output)).rejects.toThrow('metadata unavailable');
+    expect(storage.delete).toHaveBeenCalledWith('a/system-c/saved.docx');
+    expect(storage.delete).not.toHaveBeenCalledWith(output.sourcePath);
+  });
+
+  it('lists a registered output only as its canonical document, not again as a message artifact', async () => {
+    const id = 'a'.repeat(24);
+    assetDocuments.findByIdsInWorkspace.mockResolvedValue([{ id, metadata: { assetOrigin: 'generated' } }]);
+    messages.listAssetMessages.mockResolvedValue({ records: [{ id: 'm', isComplete: true, components: [
+      { id: 'f', type: 'artifact', data: { artifactId: id, storagePath: 'a/system_c/file' } },
+    ] }], hasMore: false });
+    const cursor = Buffer.from(JSON.stringify({ group: 'message', page: 1 })).toString('base64url');
+    expect((await service.listAssets('c', 'a', { cursor })).assets).toEqual([]);
   });
 
 });

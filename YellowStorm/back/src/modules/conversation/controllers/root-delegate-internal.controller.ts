@@ -19,7 +19,7 @@ import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 import { RootJobResultDto } from '../dto/root-work-public.dto';
 import { RootConversationReplyService } from '../root-work/root-conversation-reply.service';
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
-import { InternalConversationAssetDto } from '../dto/conversation-asset.dto';
+import { InternalConversationAssetDto, PrepareConversationAssetDto, RegisterConversationAssetDto } from '../dto/conversation-asset.dto';
 import { GenerateConversationImageDto } from '../dto/generate-conversation-image.dto';
 import { RateLimit } from '../../rate-limiter/decorators/rate-limit.decorator';
 
@@ -49,6 +49,18 @@ export class RootDelegateInternalController {
   @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'conversation-asset-read' })
   readAsset(@Body() request: InternalConversationAssetDto) {
     return this.artifacts.readAsset(request.conversationId, request.userId, request.ref ?? '', request.maxChars);
+  }
+
+  @Post('assets/prepare')
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'conversation-asset-prepare' })
+  prepareAsset(@Body() request: PrepareConversationAssetDto) {
+    return this.artifacts.prepareAsset(request.conversationId, request.userId, request.ref, request.invocationId, request.includeBytes);
+  }
+
+  @Post('assets/register')
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'conversation-asset-register' })
+  registerAsset(@Body() request: RegisterConversationAssetDto) {
+    return this.artifacts.registerAsset(request);
   }
 
   @Post('images/generate')

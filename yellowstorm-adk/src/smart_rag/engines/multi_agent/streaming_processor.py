@@ -30,6 +30,7 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
+from src.smart_rag.infrastructure.external.mcp_toolset_cache import current_conversation_id
 from src.smart_rag.run_code_artifacts import build_tool_result_artifacts
 from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
@@ -613,7 +614,8 @@ class StreamingEventProcessor:
                         for artifact in build_tool_result_artifacts(
                             response_payload,
                             tool_component_id,
-                            run_workspace_path(self.config.user_id, run_id or ""),
+                            run_workspace_path(self.config.user_id, current_conversation_id() or run_id or ""),
+                            require_receipt=True, producer_tool_name=func_name,
                         ):
                             await q.put(self.streaming_formatter.format_component_event(
                                 agent_id=manager_id,

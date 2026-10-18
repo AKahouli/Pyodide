@@ -5,13 +5,16 @@ AI-powered multi-agent backend API built on [Google's Agent Development Kit (ADK
 ## Conversation asset tools
 
 With trusted platform/user/conversation runtime context, the existing native-tool
-assembly includes `list_conversation_assets`, `inspect_conversation_asset` and
-`read_conversation_asset`. They discover persisted uploads, generated outputs and
+assembly includes `list_conversation_assets`, `inspect_conversation_asset`,
+`read_conversation_asset` and `prepare_conversation_asset`. They discover persisted uploads, generated outputs and
 accessible workspace sources by stable reference, including after reload. Read is
 bounded text/program content or an image through the existing multimodal buffer;
 it never grants access from a filename, path, URL or model-provided actor ID.
 Backend membership/workspace/evidence checks remain authoritative. File contents
-are untrusted data. MCP staging and deletion are separate phases. Focused tests:
+are untrusted data. Prepare all selected refs before `sandbox_create`, then use
+the returned paths verbatim; mount validation and receipts are invocation-scoped.
+Only the existing interpreter's successful output delivery registers durable
+files through workspace storage/quota checks. Deletion is a separate phase. Focused tests:
 `src/smart_rag/tools/tests/test_conversation_assets.py`.
 
 ## Architecture Overview 

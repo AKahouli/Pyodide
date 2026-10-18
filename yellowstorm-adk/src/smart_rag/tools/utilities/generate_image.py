@@ -134,6 +134,7 @@ def create_generate_image_tool(runtime_context: dict[str, Any] | None = None):
                         return {"status": "error", "detail": "Too many image inputs in one turn; use at most 32."}
                     tool_context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY] = {
                         "invocation": invocation, "paths": paths,
+                        "assets": previous.get("assets", {}) if isinstance(previous, dict) and previous.get("invocation") == invocation else {},
                     }
             return receipt
         except httpx.HTTPStatusError as error:

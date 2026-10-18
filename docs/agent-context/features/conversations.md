@@ -1,6 +1,6 @@
 # Conversations
 
-## Files & artifacts panel and read-only agent access
+## Files & artifacts panel and agent reuse
 
 The classic conversation header opens Files & artifacts in the existing responsive
 context panel. Uploads, generated files/images, saved OpenUI programs and accessible
@@ -16,9 +16,15 @@ extracted text, image input, saved program source or an explicit unsupported res
 Evidence authorization is preserved; private drafts never become shared content.
 Model-supplied filenames, paths and URLs do not grant access.
 
-Use in prompt inserts a readable exact selector without sending. Phase 1 adds no
-MCP staging, output registration, deletion or publishing. Existing workspace
-storage/quotas remain authoritative. See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
+Use in prompt inserts a readable exact selector without sending. The agent can
+call `prepare_conversation_asset` for selected ready files before creating the
+existing code-interpreter sandbox. Preparation rechecks access and returns an
+exact content-addressed input path; receipts belong to the current invocation.
+Saved programs/private drafts and governed evidence bytes are not staged.
+Successful interpreter output publication passes through existing workspace
+storage/quota registration before becoming a ready asset. Retry identity is
+server-owned; ordinary downloads do not save extra copies. Deletion remains a
+separate phase. See the [plan and live qualification](../architecture/conversation-files-artifacts-plan.md).
 Sources: conversation artifact/controller/attachment services,
 `ConversationFilesPanel`, `AssetPromptBridge` and ADK native-tool registry.
 

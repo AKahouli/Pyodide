@@ -16,10 +16,10 @@ RECEIPT = {"imageSource": "generated-image:" + "a" * 24, "fileName": "japan.png"
 
 
 def test_image_tool_requires_assignment_and_trusted_context():
-    assert resolve_native_tools([], CONTEXT) == []
-    assert resolve_native_tools([{"name": "generate_image", "enabled": False}], CONTEXT) == []
+    assert not any(t.__name__ == "generate_image" for t in resolve_native_tools([], CONTEXT))
+    assert not any(t.__name__ == "generate_image" for t in resolve_native_tools([{"name": "generate_image", "enabled": False}], CONTEXT))
     for key in CONTEXT:
-        assert resolve_native_tools(["generate_image"], {k: v for k, v in CONTEXT.items() if k != key}) == []
+        assert not any(t.__name__ == "generate_image" for t in resolve_native_tools(["generate_image"], {k: v for k, v in CONTEXT.items() if k != key}))
     tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
     assert set(inspect.signature(tool).parameters) == {"prompt", "aspectRatio", "sourceImage", "reuseImage", "sourcePage", "tool_context"}
     schema = FunctionTool(tool)._get_declaration().parameters_json_schema
@@ -40,7 +40,7 @@ def test_legacy_tool_config_preserves_model_and_routes_as_native():
         {"name": "generate_image", "model": "catalog-image-model"}])
     assert configs[0].tool_type == "custom"
     assert configs[0].custom_params["model"] == "catalog-image-model"
-    assert len(resolve_native_tools(configs, CONTEXT)) == 1
+    assert sum(t.__name__ == "generate_image" for t in resolve_native_tools(configs, CONTEXT)) == 1
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_image_paths_are_recorded_privately_only_for_current_turn():
         tool = resolve_native_tools(["generate_image"], CONTEXT)[0]
         await tool(reuseImage=RECEIPT["imageSource"], tool_context=context)
         await tool(reuseImage=RECEIPT["imageSource"], tool_context=context)
-    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY] == {"invocation": "current-turn", "paths": [path]}
+    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY] == {"invocation": "current-turn", "paths": [path], "assets": {}}
 
 
 @pytest.mark.asyncio

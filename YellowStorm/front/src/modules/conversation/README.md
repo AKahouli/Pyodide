@@ -12,7 +12,10 @@ or load the saved answer with original component identity. Reload does not infer
 `AssetPromptBridge` inserts a stable selector into the draft without submitting,
 staging or changing permissions; the backend rechecks access at use time. Upload
 confirmation and message/stream updates refresh the list. Errors remain visible
-without removing unrelated rows. Deletion/output registration remain later phases.
+without removing unrelated rows. Agents can prepare exact refs for the existing
+code interpreter; registered generated outputs return through this same listing
+and renewable download path. Downloads themselves do not register another copy.
+Deletion remains a later phase.
 Tests: `ConversationFilesPanel.test.tsx`, `AssetPromptBridge.test.tsx`,
 `assets-api.test.ts`, context-pane/UI-state tests and backend
 `conversation-assets.spec.ts`. The architecture plan records live qualification.

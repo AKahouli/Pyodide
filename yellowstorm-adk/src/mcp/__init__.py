@@ -52,7 +52,7 @@ def _redact_log_payload(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: Dict[str, Any] = {}
         for key, nested in value.items():
-            if key == "image_base64" and isinstance(nested, str):
+            if key in {"image_base64", "content_base64", "contentBase64"} and isinstance(nested, str):
                 redacted[key] = f"[redacted base64 length={len(nested)}]"
             elif key == "data" and value.get("type") == "image" and isinstance(nested, str):
                 redacted[key] = f"[redacted image base64 length={len(nested)}]"

@@ -136,7 +136,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
     GuardedUrlDownloaderService,
     // guards directly (e.g. IndexingModule provides WorkspaceOwnerGuard) can
     // resolve the guards' dependencies.
-    PgWorkspaceStore, PgShareStore,
+    PgWorkspaceStore, PgShareStore, DOCUMENT_STORE,
     PgWorkspaceReadAdapter, PgWorkspaceDocumentReadAdapter, PgWorkspaceDocumentWriteAdapter, PgWorkspaceShareReadAdapter, PgWorkspaceSettingReadAdapter],
 })
 export class WorkspaceModule {}

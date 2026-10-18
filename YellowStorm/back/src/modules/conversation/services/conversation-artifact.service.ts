@@ -21,7 +21,8 @@ import { DocumentStatus } from '../../workspace/interfaces/document-status.enum'
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { ConversationAttachmentService } from './conversation-attachment.service';
 import type { DocumentResponse } from '../../workspace/interfaces/workspace-document.interface';
-import type { ConversationAsset, ConversationAssetQueryDto } from '../dto/conversation-asset.dto';
+import type { ConversationAsset, ConversationAssetQueryDto, RegisterConversationAssetDto } from '../dto/conversation-asset.dto';
+import { DOCUMENT_STORE, type DocumentStore } from '../../workspace/stores/document-store';
 
 type ImageReceipt = { imageSource: string; fileName: string; mimeType: string; generated: boolean;
   sandboxPath: string; originalImageSource?: string };
@@ -45,6 +46,7 @@ export class ConversationArtifactService {
     @Optional() private readonly tools?: ToolService,
     @Optional() private readonly assetSettings?: ConversationSettingsService,
     @Optional() private readonly attachments?: ConversationAttachmentService,
+    @Optional() @Inject(DOCUMENT_STORE) private readonly assetDocuments?: DocumentStore,
   ) {}
 
   private assetRef(parts: string[]): string { return Buffer.from(JSON.stringify(parts)).toString('base64url'); }
@@ -70,7 +72,7 @@ export class ConversationArtifactService {
     const ready = document.status === DocumentStatus.COMPLETED;
     return { ref: this.assetRef(['document', document.workspaceId, document.id]),
       origin: document.workspaceId === systemWorkspaceId ? (generated ? 'generated' : 'upload') : 'workspace',
-      kind: document.mimeType.startsWith('image/') ? 'image' : 'file', name: document.originalName,
+      kind: document.mimeType.startsWith('image/') ? 'image' : 'file', name: document.metadata?.assetDisplayName ?? document.originalName,
       mimeType: document.mimeType, size: document.size, status: ready ? 'ready' : document.status,
       documentId: document.id, workspaceId: document.workspaceId,
       actions: { view: ready, download: ready, read: ready } };
@@ -119,7 +121,12 @@ export class ConversationArtifactService {
       const result = await this.messageService.listAssetMessages(conversationId, messageCursor, 50);
       const candidates = result.records.filter(m => m.isComplete && !m.isStreaming).flatMap(m => (m.components ?? [])
         .map(c => this.componentAsset(m.id, c)).filter((a): a is ConversationAsset => !!a));
-      const matches = candidates.filter(a => (!query.kind || a.kind === query.kind)
+      // Registered outputs already appear as canonical workspace documents, not a second message entry.
+      const canonicalIds = conversation.systemWorkspaceId && this.assetDocuments
+        ? new Set((await this.assetDocuments.findByIdsInWorkspace(conversation.systemWorkspaceId,
+          candidates.filter(a => a.kind === 'file').map(a => this.parseAssetRef(a.ref)[2]).filter(id => /^[a-f0-9]{24}$/.test(id))))
+          .filter(d => d.metadata?.assetOrigin === 'generated').map(d => d.id)) : new Set<string>();
+      const matches = candidates.filter(a => !canonicalIds.has(this.parseAssetRef(a.ref)[2])).filter(a => (!query.kind || a.kind === query.kind)
         && (!query.search || a.name.toLowerCase().includes(query.search.toLowerCase())));
       assets = matches.slice(offset, offset + limit);
       next = offset + limit < matches.length ? { group, page: 1, after: messageCursor, offset: offset + limit }
@@ -159,6 +166,119 @@ export class ConversationArtifactService {
 
   async inspectAsset(conversationId: string, userId: string, ref: string): Promise<ConversationAsset> {
     return (await this.resolveAsset(conversationId, userId, ref)).asset;
+  }
+
+  async prepareAsset(conversationId: string, userId: string, ref: string, invocationId: string, includeBytes = false): Promise<{
+    asset: ConversationAsset; invocationId: string; sandboxPath: string; fileName: string;
+    mimeType: string; size: number; sha256: string; contentBase64?: string;
+  }> {
+    const { asset, document, component } = await this.resolveAsset(conversationId, userId, ref);
+    if (!/^[a-zA-Z0-9_-]{1,200}$/.test(invocationId)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid asset invocation');
+    }
+    if (asset.status !== 'ready' || asset.kind === 'app') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only ready files can be prepared');
+    }
+    if (component?.data.evidenceId || component?.data.executionId) {
+      // Evidence authority cannot be replaced with a legacy raw storage key.
+      await this.resolveDownloadUrl(conversationId, asset.messageId!, String(component.data.artifactId), userId);
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Evidence file preparation is not supported');
+    }
+    const source = document?.path ?? component?.data.storagePath;
+    if (typeof source !== 'string' || !source) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Asset file unavailable');
+    const maxBytes = 50 * 1024 * 1024;
+    if (asset.size !== undefined && asset.size > maxBytes) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset exceeds preparation size limit');
+    const bytes = await this.readAssetBytes(source);
+    const size = bytes.length;
+    if (includeBytes && size > 10 * 1024 * 1024) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset exceeds direct transfer size limit');
+    }
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const identity = createHash('sha256').update(`${ref}\n${sha256}`).digest('hex');
+    const extension = asset.name.match(/\.([a-zA-Z0-9]{1,10})$/)?.[1].toLowerCase() ?? 'bin';
+    const relativePath = `conversation-assets/${identity}.${extension}`;
+    const mimeType = asset.mimeType ?? 'application/octet-stream';
+    // Reuse the existing MCP run mount. This is a transient input, not a workspace document.
+    // Exact bytes and deterministic names make retries version-bound without mutable receipts.
+    await this.documentService.upload(bytes, asset.name, mimeType, {
+      folder: `${userId}/system_${conversationId}/conversation-assets`,
+      generateUniqueName: false, customFileName: `${identity}.${extension}`,
+    });
+    return { asset, invocationId, sandboxPath: `/mnt/workspace/${relativePath}`, fileName: asset.name, mimeType, size, sha256,
+      ...(includeBytes ? { contentBase64: bytes.toString('base64') } : {}) };
+  }
+
+  async registerAsset(request: RegisterConversationAssetDto): Promise<{
+    asset: ConversationAsset; documentId: string; artifactId: string; storagePath: string;
+    invocationId: string; fileName: string; mimeType: string; size: number; sha256: string;
+  }> {
+    const { userId, conversationId, invocationId, sourcePath, fileName, mimeType } = request;
+    const conversation = await this.assetScope(conversationId, userId);
+    if (!/^[a-zA-Z0-9_-]{1,200}$/.test(invocationId) || !fileName || fileName.length > 200
+      || /[/\\\x00-\x1f\x7f]/.test(fileName) || !/^[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+$/.test(mimeType)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid output receipt');
+    }
+    const prefix = `${userId}/system_${conversationId}/`;
+    if (!sourcePath.startsWith(prefix) || /[\\\x00-\x1f\x7f]/.test(sourcePath)
+      || sourcePath.split('/').some(p => !p || p === '.' || p === '..')
+      || /^(conversation-assets|generated-images)\//.test(sourcePath.slice(prefix.length))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Output receipt is outside the current run');
+    }
+    if (!this.assetDocuments) throw new ServiceUnavailableException(undefined, 'Output registration unavailable');
+    const bytes = await this.readAssetBytes(sourcePath);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const receipt = createHash('sha256').update(JSON.stringify([userId, conversationId, invocationId, sourcePath, sha256])).digest('hex');
+    const extension = fileName.match(/\.([a-zA-Z0-9]{1,10})$/)?.[1].toLowerCase() ?? 'bin';
+    const storedName = `generated-${receipt}.${extension}`;
+    const workspaceId = conversation.systemWorkspaceId ?? await this.conversationService.ensureSystemWorkspace(conversation.createdBy, conversationId);
+    // Existing per-workspace PostgreSQL transaction lock serializes retries across replicas.
+    // The existing direct-upload owner enforces limits/quota before a ready document exists.
+    return this.assetDocuments.withWorkspaceTreeLock(workspaceId, async () => {
+      const previous = await this.assetDocuments!.findFileByName(workspaceId, storedName);
+      let document: DocumentResponse;
+      if (previous) {
+        if (previous.status !== DocumentStatus.COMPLETED || previous.metadata?.assetReceipt !== receipt) {
+          throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Output registration is incomplete');
+        }
+        document = await this.workspaceDocumentService.findById(workspaceId, previous.id);
+      } else {
+        document = await this.workspaceDocumentService.uploadSmallFile(workspaceId, userId, bytes, storedName, mimeType, undefined, false, false);
+        try {
+          await this.workspaceDocumentService.mergeMetadata(workspaceId, document.id, {
+            assetOrigin: 'generated', assetDisplayName: fileName, assetReceipt: receipt, assetContentSha256: sha256,
+          });
+        } catch (error) {
+          // The ambient transaction rolls back the row/quota/events. Remove only this new blob.
+          if (document.path) {
+            try { await this.documentService.delete(document.path); }
+            catch { throw new ServiceUnavailableException(undefined, 'Output registration failed; storage cleanup is required'); }
+          }
+          throw error;
+        }
+        document = { ...document, metadata: { ...document.metadata, assetOrigin: 'generated', assetDisplayName: fileName } };
+      }
+      if (!document.path || document.status !== DocumentStatus.COMPLETED) throw new ServiceUnavailableException(undefined, 'Output is not ready');
+      return { asset: this.documentAsset(document, workspaceId), documentId: document.id, artifactId: document.id,
+        storagePath: document.path, invocationId, fileName: document.metadata?.assetDisplayName ?? fileName,
+        mimeType: document.mimeType, size: document.size, sha256 };
+    });
+  }
+
+  private async readAssetBytes(path: string): Promise<Buffer> {
+    const stream = await this.documentService.openReadStream(path);
+    const timeout = setTimeout(() => stream.body.destroy(new Error('Asset storage read timed out')), 30_000);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of stream.body) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += bytes.length;
+        if (size > 50 * 1024 * 1024) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset exceeds preparation size limit');
+        chunks.push(bytes);
+      }
+    } finally { clearTimeout(timeout); stream.body.destroy(); }
+    if (!size) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Asset file is empty');
+    return Buffer.concat(chunks);
   }
 
   async assetUrl(conversationId: string, userId: string, ref: string): Promise<{ viewUrl: string; downloadUrl: string }> {

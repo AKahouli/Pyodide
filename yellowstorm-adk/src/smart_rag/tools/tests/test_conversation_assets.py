@@ -66,11 +66,11 @@ def test_default_agent_tools_without_catalog_opt_in():
     from src.smart_rag.tools.native_tool_registry import resolve_native_tools
     resolved=resolve_native_tools([],CTX)
     assert {t.__name__ for t in resolved} == set(tools())
-    assert all(t.metadata["safety"] == "read" for t in resolved)
+    assert all(t.metadata["safety"] == ("write" if t.__name__ == "prepare_conversation_asset" else "read") for t in resolved)
     assert resolve_native_tools([],{}) == []
     configured = resolve_native_tools(["read_conversation_asset"],CTX)
-    assert len(configured) == 3
-    assert all(t.metadata["safety"] == "read" for t in configured)
+    assert len(configured) == 4
+    assert all(t.metadata["safety"] == ("write" if t.__name__ == "prepare_conversation_asset" else "read") for t in configured)
 
 @pytest.mark.asyncio
 async def test_concurrent_actors_keep_separate_authority(monkeypatch):
@@ -86,3 +86,78 @@ async def test_concurrent_actors_keep_separate_authority(monkeypatch):
     results=await asyncio.gather(alice(),bob())
     assert [r["assets"][0]["ref"] for r in results] == ["actor-a","actor-b"]
     assert {(c["userId"],c["conversationId"]) for c in calls} == {("actor-a","conversation-a"),("actor-b","conversation-b")}
+
+@pytest.mark.asyncio
+async def test_prepare_receipts_are_invocation_bound_and_private(monkeypatch):
+    import hashlib
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    calls=[]
+    async def post(self,url,**kwargs):
+        payload=kwargs["json"]
+        calls.append(payload)
+        invocation=payload["invocationId"]
+        return httpx.Response(200,json={"invocationId":invocation,
+            "sandboxPath":f"/mnt/workspace/conversation-assets/{'a'*64}.pdf",
+            "fileName":"same.pdf", "sha256":"b"*64, "storagePath":"private storage key"},request=httpx.Request("POST",url))
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    context=SimpleNamespace(invocation_id="turn-a",state={})
+    prepare=tools()["prepare_conversation_asset"]
+    first=await prepare("ref",tool_context=context)
+    assert "storagePath" not in first
+    await prepare("ref",tool_context=context)
+    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY]["paths"] == [first["sandboxPath"]]
+    assert calls[0]["userId"] == "actor-a" and calls[0]["invocationId"] == "turn-a"
+    context.invocation_id="turn-b"
+    second=await prepare("ref",tool_context=context)
+    assert second["sandboxPath"] == first["sandboxPath"]
+    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY]["invocation"] == "turn-b"
+    assert context.state[IMAGE_SANDBOX_INPUTS_STATE_KEY]["paths"] == [second["sandboxPath"]]
+    assert (await prepare("ref"))["status"] == "error"
+
+@pytest.mark.asyncio
+async def test_prepare_rejects_wrong_invocation_or_denied_receipt(monkeypatch):
+    from src.smart_rag.tools.utilities.generate_image import IMAGE_SANDBOX_INPUTS_STATE_KEY
+    async def post(self,url,**kwargs):
+        return httpx.Response(200,json={"invocationId":"other", "sandboxPath":"/mnt/workspace/private.pdf"},request=httpx.Request("POST",url))
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    context=SimpleNamespace(invocation_id="turn",state={})
+    assert (await tools()["prepare_conversation_asset"]("ref",tool_context=context))["status"] == "error"
+    assert IMAGE_SANDBOX_INPUTS_STATE_KEY not in context.state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid",["", "invocation", "digest", "bytes", "remote"])
+async def test_private_hydration_reauthorizes_and_hash_checks(monkeypatch,invalid):
+    import hashlib
+    from src.smart_rag.tools.utilities.conversation_assets import hydrate_prepared_assets
+    from src.flow_engine.tools.sandbox_mount_guard import SandboxMountValidationError
+    raw=b"private PDF bytes"
+    digest=hashlib.sha256(raw).hexdigest()
+    path=f"/mnt/workspace/conversation-assets/{'a'*64}.pdf"
+    async def post(self,url,**kwargs):
+        assert kwargs["json"]=={"userId":"actor-a","conversationId":"conversation-a","invocationId":"turn","ref":"ref","includeBytes":True}
+        return httpx.Response(200,json={"invocationId":"other" if invalid=="invocation" else "turn", "sandboxPath":path,
+            "sha256":"f"*64 if invalid=="digest" else digest,
+            "contentBase64":base64.b64encode(b"other" if invalid=="bytes" else raw).decode()},request=httpx.Request("POST",url))
+    monkeypatch.setattr(httpx.AsyncClient,"post",post)
+    calls=[]
+    async def call(action,params):
+        calls.append((action,params))
+        if action=="shell_exec":
+            assert params["command"].startswith("python3 -c ")
+            return {"result":"f"*64 if invalid=="remote" else digest, "text":digest}
+        assert params=={"path":path,"content_base64":base64.b64encode(raw).decode()}
+        return {"result":"ok"}
+    context=SimpleNamespace(platform_api_url="http://backend/api",platform_api_token="test",user_id="actor-a")
+    coro=hydrate_prepared_assets(context,"conversation-a","turn",{path:{"ref":"ref","path":path,"sha256":digest}},[path.rsplit("/",1)[-1]],call)
+    if invalid:
+        with pytest.raises(SandboxMountValidationError):
+            await coro
+        if invalid != "remote": assert calls==[]
+    else:
+        assert await coro is None
+        assert [a for a,_ in calls]==["file_upload_base64","shell_exec"]
+
+def test_private_base64_logs_are_redacted():
+    from src.mcp import _redact_log_payload
+    assert "private" not in str(_redact_log_payload({"content_base64":"private","nested":{"contentBase64":"private"}}))

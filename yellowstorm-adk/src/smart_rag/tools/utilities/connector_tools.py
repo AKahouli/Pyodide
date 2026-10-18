@@ -1,5 +1,6 @@
 import inspect
 import json
+import mimetypes
 import re
 import uuid
 from dataclasses import dataclass
@@ -125,6 +126,7 @@ class ConnectorToolContext:
     agent_id: Optional[str] = None
     user_id: Optional[str] = None
     platform_api_token: Optional[str] = None
+    platform_api_url: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -138,7 +140,7 @@ def _redact_log_payload(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: Dict[str, Any] = {}
         for key, nested in value.items():
-            if key == "image_base64" and isinstance(nested, str):
+            if key in {"image_base64", "content_base64", "contentBase64"} and isinstance(nested, str):
                 redacted[key] = f"[redacted base64 length={len(nested)}]"
             else:
                 redacted[key] = _redact_log_payload(nested)
@@ -1120,6 +1122,8 @@ def create_connector_tools(
     from src.flow_engine.tools.sandbox_mount_guard import SandboxMountGuard, SandboxMountValidationError
 
     context = context or ConnectorToolContext()
+    from src.smart_rag.infrastructure.external.mcp_toolset_cache import current_conversation_id
+    conversation_scope = current_conversation_id() or context.session_id
     tools: List[Any] = []
     effective_workspace_names = (
         context.workspace_names
@@ -1253,7 +1257,7 @@ def create_connector_tools(
                 _parameter_schema: Dict[str, Any] = effective_parameter_schema,
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
-                _session_id: Optional[str] = context.session_id,
+                _session_id: Optional[str] = conversation_scope,
                 _agent_id: Optional[str] = context.agent_id,
                 _has_reserved_purpose: bool = has_reserved_purpose,
                 _is_logical_search: bool = is_logical_search,
@@ -1341,11 +1345,12 @@ def create_connector_tools(
                 if invocation_id:
                     effective_auth_headers["x-execution-id"] = invocation_id
                 context_state = getattr(tool_context, "state", {})
-                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug == "code-interpreter" else {}
+                image_state = context_state.get(IMAGE_SANDBOX_INPUTS_STATE_KEY, {}) if _connector_slug in {"code-interpreter", "code-interpreort-aga"} else {}
                 image_paths = image_state.get("paths", []) if isinstance(image_state, dict) and image_state.get("invocation") == invocation_id else []
-                # Paths originate only from validated platform image receipts for this turn.
+                # Paths originate only from validated platform asset/image receipts for this turn.
                 image_paths = sorted(set(path for path in image_paths if isinstance(path, str)
-                    and re.fullmatch(r"/mnt/workspace/generated-images/[a-f0-9]{24}\.(png|jpg|webp)", path)))
+                    and (re.fullmatch(r"/mnt/workspace/generated-images/[a-f0-9]{24}\.(png|jpg|webp)", path)
+                        or re.fullmatch(r"/mnt/workspace/conversation-assets/[a-f0-9]{64}\.[a-z0-9]{1,10}", path))))
                 if len(image_paths) > MAX_IMAGE_SANDBOX_INPUTS:
                     return {"error": "Too many image inputs for bounded sandbox validation."}
                 current_connector_context = _connector_context
@@ -1391,17 +1396,24 @@ def create_connector_tools(
                     return await call_mcp_tool(_transport_type, _server_url, effective_server_config,
                         action, params, auth_headers=effective_auth_headers, auth_env=_auth_env)
 
-                if _connector_slug == "code-interpreter" and image_paths and _action_key != "sandbox_destroy":
+                if _connector_slug in {"code-interpreter", "code-interpreort-aga"} and image_paths and _action_key != "sandbox_destroy":
                     guard = _image_mount_guards.get(invocation_id)
                     try:
                         if _action_key == "sandbox_create":
                             if guard is None:
-                                guard = SandboxMountGuard([{"path": path, "kind": "file"} for path in image_paths], _available_actions)
+                                async def hydrate_missing(missing):
+                                    if not {"file_upload_base64", "shell_exec"}.issubset(_available_actions):
+                                        return
+                                    from src.smart_rag.tools.utilities.conversation_assets import hydrate_prepared_assets
+                                    receipts = image_state.get("assets", {}) if isinstance(image_state, dict) else {}
+                                    await hydrate_prepared_assets(context, _session_id, invocation_id, receipts, missing, call_action)
+                                guard = SandboxMountGuard([{"path": path, "kind": "file"} for path in image_paths], _available_actions,
+                                    hydrate=hydrate_missing if isinstance(image_state, dict) and image_state.get("assets") else None)
                                 _image_mount_guards[invocation_id] = guard
                             response = await guard.create_validated(call_action, merged_params)
                         else:
                             if guard is None or guard.authoritative_paths != image_paths:
-                                return {"error": "Create and validate the sandbox after preparing all image inputs."}
+                                return {"error": "Create and validate the sandbox after preparing all asset/image inputs."}
                             await guard.wait_until_ready()
                             response = await call_action(_action_key, merged_params)
                     except SandboxMountValidationError:
@@ -1431,6 +1443,54 @@ def create_connector_tools(
                     citation_mode=_citation_mode,
                     source_context=context,
                 )
+                if isinstance(registered_response, dict):
+                    registered_response.pop("_conversation_output_receipt", None)
+                if (_connector_slug in {"code-interpreter", "code-interpreort-aga"}
+                        and _action_key == "send_file_to_user"):
+                    # A coordinator copy receipt alone is not a registered conversation file.
+                    # Verify bytes/quota through the platform before emitting any ready artifact.
+                    try:
+                        import httpx
+                        publication = registered_response
+                        if not isinstance(publication, dict) or any(publication.get(key) for key in ("error", "isError")) or publication.get("status") == "error":
+                            raise ValueError("Failed publication")
+                        if not publication.get("ceph_path"):
+                            nested = publication.get("result")
+                            publication = json.loads(nested) if isinstance(nested, str) else nested
+                        if not isinstance(publication, dict) or any(publication.get(key) for key in ("error", "isError")) or publication.get("status") == "error":
+                            raise ValueError("Failed nested publication")
+                        owner = _header_user_id(effective_auth_headers)
+                        api_url = str(context.platform_api_url or "").rstrip("/")
+                        if not all((owner, _session_id, invocation_id, api_url, context.platform_api_token)):
+                            raise ValueError("Missing trusted publication context")
+                        source = publication.get("ceph_path") if isinstance(publication, dict) else None
+                        if not isinstance(source, str) or not source.startswith(f"{owner}/system_{_session_id}/"):
+                            raise ValueError("Unscoped publication")
+                        if api_url.endswith("/api"):
+                            api_url += "/v1"
+                        elif not api_url.endswith("/api/v1"):
+                            api_url += "/api/v1"
+                        file_name = publication.get("filename") or str(publication.get("path") or source).replace("\\", "/").rsplit("/", 1)[-1]
+                        async with httpx.AsyncClient(timeout=90.0) as client:
+                            response = await client.post(f"{api_url}/internal/root-work/assets/register",
+                                headers={"X-Internal-Token": context.platform_api_token},
+                                json={"userId": owner, "conversationId": _session_id, "invocationId": invocation_id,
+                                    "sourcePath": source, "fileName": file_name,
+                                    "mimeType": publication.get("mime_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"})
+                            response.raise_for_status()
+                            body = response.json()
+                            data = body.get("data", body) if isinstance(body, dict) else None
+                        if (not isinstance(data, dict) or data.get("invocationId") != invocation_id
+                                or not isinstance(data.get("storagePath"), str) or not data.get("artifactId")):
+                            raise ValueError("Invalid registration")
+                        registered_response = {"generated_files": [{"ceph_path": data["storagePath"],
+                            "filename": data.get("fileName"), "mime_type": data.get("mimeType"), "size_bytes": data.get("size",0)}],
+                            "asset": data.get("asset"),
+                            "_conversation_output_receipt": {"invocationId": invocation_id,
+                                "storagePrefix": f"{owner}/system_{_session_id}", "artifactId": data["artifactId"],
+                                "storagePath": data["storagePath"]}}
+                    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+                        return {"error": "Output could not be registered or saved within the conversation quota. No ready output was published."}
                 if _result_kind in {"web_search", "web_fetch"}:
                     from src.web_citations.bounded_response import bound_web_response
                     return bound_web_response(registered_response)
