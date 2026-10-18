@@ -46,6 +46,48 @@ See the [plan and live qualification](../architecture/conversation-files-artifac
 Sources: conversation artifact/controller/attachment services,
 `ConversationFilesPanel`, `AssetPromptBridge` and ADK native-tool registry.
 
+### Refinement, saved versions and message navigation
+
+Refine selects the exact listed asset and appends a localized starter to the
+existing composer draft without sending or changing the source. Its transient
+chip carries the source message ID when available. Only the latest Refine source
+supplies the existing `parentMessageId`; earlier selections remain ordinary file
+context. An explicit Reply overrides that refinement parent. Ordinary Use adds
+no parent. Both backend user-message creation paths reject missing or foreign
+parents before writing. This is a link to an existing message, not a new artifact
+lineage database. Private mini-app drafts and saved results are not copied.
+
+Existing answer branches offer a keyboard-accessible version selector with dates
+and the current version. Selection and previous/next controls update the active
+saved answer and `?message=<answerId>` on the same conversation route. Reload
+restores that target through authorized message loading without agent inference.
+Exports use the selected saved answer and its own saved state.
+
+The outline panel's conversation search queries server-side readable message text,
+separately from the loaded-heading filter. Search is literal, bounded to 200 query
+characters and 20 results with 240-character snippets. Raw OpenUI programs, tool
+payloads, private drafts and deleted text are excluded. Redacted sessions return
+no search matches. Search and around-target routes retain conversation access
+checks; targets and paired prompts must belong to that conversation. Around loads
+at most 100 nearby messages plus their bounded paired prompt context. Client
+account/conversation/request guards ignore obsolete responses, merge missing
+messages without replacing existing live content, and preserve cursor pagination,
+background runs and drafts. An unavailable scroll target produces an explicit
+error after a bounded wait.
+
+Focused evidence: 38 refinement tests, four branch-navigation tests and 30 saved
+document-export tests passed; navigation has 106 frontend tests and 26 prior
+backend tests, with 50 tests in the combined parent-validation/backend run.
+Live qualification: both users searched their own conversation and were denied
+the other's private route. An older result outside the loaded window reopened
+after reload. A selected historical answer survived reload and exported its own
+content. Explicit Refine read the exact source, persisted its existing parent
+link and completed across reload; the original remained unchanged. The new trip
+draft and afternoon selection restored and exported without agent rerun.
+Unrelated answer history remains available while another answer streams (20
+focused content/history tests passed); stream merging and actor races are also
+covered by the focused store/API tests.
+
 ## HtmlView artifacts and administrator execution policy
 
 Admin → Conversation → Generative UI selects `generativeUi.htmlMode`. Strict is
@@ -62,8 +104,15 @@ binding. Inside MiniApp, typed controls use the existing private draft lifecycle
 including revision conflicts and reload without inference. The opaque srcdoc frame loads a trusted external bootstrap under the unchanged
 application CSP; strict mode denies eval, while interactive mode evaluates inert
 generated scripts only after initial state arrives. Source, expand, stop and restart are host-owned; restarting
-retains draft values. HtmlView visual export fails explicitly until the capture
-phase, while existing native exports retain their saved-view path.
+retains draft values. HtmlView exports require its open, ready saved preview;
+the validated channel captures its current DOM without rerunning scripts.
+Static HTML/PDF/DOCX contain editable text/tables and labelled visual snapshots.
+Exact scoped form values override variable defaults as in the live renderer;
+actor, source and revision changes reject capture. MCP image snapshots use exact
+uploaded bytes and returned private asset IDs. Live HTML/DOCX and a three-page PDF
+passed after reload; real editable PPTX remains blocked by sandbox image input
+verification after upload acknowledgement (the remote traceback is truncated).
+See the rich-artifacts plan for evidence and limits.
 
 ## Scope and evidence
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileText, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { usePromptInputController } from '@/components/ai-elements/prompt-input';
 import { useAuth } from '@/modules/auth/useAuth';
 import { useModuleTranslation } from '@/modules/localization';
 import { MAX_SELECTED_CONVERSATION_ASSETS, useConversationUiStore } from '../uiStore';
@@ -9,6 +10,7 @@ import { MAX_SELECTED_CONVERSATION_ASSETS, useConversationUiStore } from '../uiS
 export function AssetPromptBridge({ conversationId }: { conversationId: string }) {
   const { user } = useAuth();
   const { t } = useModuleTranslation('conversation');
+  const { textInput } = usePromptInputController();
   const [limitReached, setLimitReached] = useState(false);
   const request = useConversationUiStore(state => state.assetPromptRequest);
   const selection = useConversationUiStore(state => state.selectedAssets);
@@ -20,10 +22,14 @@ export function AssetPromptBridge({ conversationId }: { conversationId: string }
   }, [actorId, conversationId]);
   useEffect(() => {
     if (!request || request.conversationId !== conversationId || request.actorId !== actorId) return;
-    const accepted = useConversationUiStore.getState().addAssetSelection(actorId, conversationId, request.ref, request.name);
+    const accepted = useConversationUiStore.getState().addAssetSelection(actorId, conversationId, request.ref, request.name, request.intent === 'refine' ? request.sourceMessageId : undefined);
     setLimitReached(!accepted);
+    if (accepted && request.intent === 'refine') {
+      const prompt = t('assets.refinePrompt');
+      if (!textInput.value.endsWith(prompt)) textInput.setInput(`${textInput.value}${textInput.value ? '\n\n' : ''}${prompt}`);
+    }
     useConversationUiStore.getState().consumeAssetPrompt();
-  }, [request, conversationId, actorId]);
+  }, [request, conversationId, actorId, textInput, t]);
   if (!items.length && !limitReached) return null;
   return <div className='px-3 pb-2' role='group' aria-label={t('assets.selectedFiles')}>
     <div className='flex flex-wrap gap-1.5'>

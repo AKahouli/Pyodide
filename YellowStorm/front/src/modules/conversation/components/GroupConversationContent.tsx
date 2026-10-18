@@ -109,7 +109,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   // Branch nav for AI messages
   const branches = message.questionMessageId ? branchCache.get(message.questionMessageId) : undefined;
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
-  const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
+  const showBranchNav = message.isStreaming !== true && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
   const hasPersistedContent = (message.components?.length || 0) > 0;
 
   if (!isUser && !hasPersistedContent) return null;

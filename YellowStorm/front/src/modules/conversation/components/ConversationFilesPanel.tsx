@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AgentInterface } from '@openuidev/react-ui';
 import ReactMarkdown from 'react-markdown';
-import { Download, FileText, ImageIcon, LayoutDashboard, Loader2, MessageSquare, Plus, RefreshCw, Search, Trash2, ExternalLink } from 'lucide-react';
+import { Download, FileText, ImageIcon, LayoutDashboard, Loader2, MessageSquare, Plus, RefreshCw, Search, Trash2, ExternalLink, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -154,6 +154,7 @@ function ScopedFilesPanel({ conversationId, actorId }: { conversationId: string;
                   {asset.actions.view && <Button variant='outline' size='sm' className='h-8 text-xs' disabled={busy} aria-label={`${t('assets.view')} ${asset.name}`} onClick={() => void open(asset)}>{busy ? <Loader2 className='size-3 animate-spin' /> : null}{t('assets.view')}</Button>}
                   {asset.actions.download && <Button variant='ghost' size='icon' className='size-8' disabled={busy} aria-label={`${t('assets.download')} ${asset.name}`} onClick={() => void downloadFile(asset)}><Download className='size-3.5' /></Button>}
                   {asset.actions.read && <Button variant='ghost' size='sm' className='h-8 text-xs' onClick={() => useConversationUiStore.getState().requestAssetPrompt(actorId, conversationId, asset.ref, asset.name)}><Plus className='size-3' />{t('assets.useInPrompt')}</Button>}
+                  {asset.actions.read && asset.status === 'ready' && (asset.origin === 'generated' || asset.kind === 'image') && <Button variant='ghost' size='sm' className='h-8 text-xs' aria-label={`${t('assets.refine')} ${asset.name}`} onClick={() => useConversationUiStore.getState().requestAssetPrompt(actorId, conversationId, asset.ref, asset.name, 'refine', asset.messageId)}><Wand2 className='size-3' />{t('assets.refine')}</Button>}
                   {asset.origin === 'workspace' && asset.workspaceId && <Button variant='ghost' size='sm' className='h-8 text-xs' asChild><a href={`#/workspace/${encodeURIComponent(asset.workspaceId)}`}><ExternalLink className='size-3' />{t('assets.openWorkspace')}</a></Button>}
                   {asset.actions.delete && asset.origin !== 'workspace' && <Button variant='ghost' size='icon' className='size-8 text-destructive' disabled={busy} aria-label={`${t('assets.delete')} ${asset.name}`} onClick={() => setDeleteTarget(asset)}><Trash2 className='size-3.5' /></Button>}
                   {asset.messageId && <Button variant='ghost' size='icon' className='size-8' aria-label={`${t('assets.source')} ${asset.name}`} onClick={() => void open({ ...asset, kind: 'app' })}><MessageSquare className='size-3.5' /></Button>}

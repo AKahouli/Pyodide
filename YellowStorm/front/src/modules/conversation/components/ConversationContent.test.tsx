@@ -49,7 +49,8 @@ const storeState = {
   messagesLoading: false,
   currentConversationId: 'conv-1',
   fetchBranches: vi.fn(),
-  branchCache: new Map(),
+  branchCache: new Map<string, Message[]>(),
+  activeBranches: new Map<string, string>(),
   messages: [] as Message[],
   liveAnswers: {} as Record<string, LiveAnswer>,
 };
@@ -68,8 +69,8 @@ vi.mock('../store', () => ({
   useAwaitingConversationId: () => storeState.awaitingConversationId,
   useMessagesHasMore: () => false,
   useMessagesLoadingOlder: () => false,
-  useBranchCache: () => new Map(),
-  useActiveBranches: () => new Map(),
+  useBranchCache: () => storeState.branchCache,
+  useActiveBranches: () => storeState.activeBranches,
   useEditingMessageId: () => null,
 }));
 
@@ -84,6 +85,8 @@ describe('ConversationContent', () => {
     storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
     storeState.messages = [];
+    storeState.branchCache = new Map();
+    storeState.activeBranches = new Map();
     storeState.liveAnswers = {};
     storeState.currentConversationId = 'conv-1';
     useConversationUiStore.setState({ autoReliabilityEnabled: false });
@@ -193,6 +196,18 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('keeps saved answer history visible while an unrelated new turn streams', () => {
+    const old = { id: 'old-answer', questionMessageId: 'old-question', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z', components: [{ type: 'text', data: { content: 'Saved' } }] } as Message;
+    displayMessages = [old];
+    storeState.branchCache.set('old-question', [old, { ...old, id: 'old-version' }]);
+    storeState.activeBranches.set('old-question', old.id);
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'new-answer';
+    render(<ConversationContent />);
+    expect(screen.getByText('branch-nav')).toBeInTheDocument();
   });
 
   it('places user actions in the message metadata footer', () => {

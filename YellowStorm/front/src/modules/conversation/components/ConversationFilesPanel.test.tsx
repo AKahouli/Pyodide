@@ -31,6 +31,17 @@ beforeEach(() => {
 });
 
 describe('Files & artifacts', () => {
+  it('offers refinement for generated artifacts and images using their exact source refs', async () => {
+    mocks.list.mockResolvedValue({ assets: [file({ ref: 'saved-app', name: 'Dashboard', origin: 'generated', kind: 'app', messageId: 'answer-1', componentId: 'program-1' }),
+      file({ ref: 'saved-slides', name: 'Slides.pptx', origin: 'generated' }), file({ ref: 'uploaded-image', name: 'Image.png', kind: 'image' })], nextCursor: null });
+    render(<ConversationFilesPanel conversationId='c1' />);
+    fireEvent.click(await screen.findByRole('button', { name: 'assets.refine Dashboard' }));
+    expect(useConversationUiStore.getState().assetPromptRequest).toMatchObject({ actorId: 'alice', conversationId: 'c1', ref: 'saved-app', name: 'Dashboard', intent: 'refine', sourceMessageId: 'answer-1' });
+    expect(screen.getByRole('button', { name: 'assets.refine Slides.pptx' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'assets.refine Image.png' })).toBeInTheDocument();
+    expect(mocks.message).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
   it('keeps the panel focused on search and file actions', async () => {
     render(<ConversationFilesPanel conversationId='c1' />);
     await screen.findByText('example.pdf');

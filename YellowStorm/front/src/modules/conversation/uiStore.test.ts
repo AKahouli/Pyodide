@@ -59,3 +59,16 @@ describe('conversation asset selection', () => {
     expect(store.getState().selectedAssets).toMatchObject({ actorId: 'bob', conversationId: 'c2', items: [{ ref: 'bob-ref' }] });
   });
 });
+
+it('keeps only the latest refinement source and renews its submission nonce', async () => {
+  const { useConversationUiStore: store, initialConversationUiState } = await import('./uiStore');
+  store.setState(initialConversationUiState);
+  store.getState().addAssetSelection('alice', 'c1', 'first', 'First', 'answer-1');
+  const firstNonce = store.getState().selectedAssets!.items[0].nonce;
+  store.getState().addAssetSelection('alice', 'c1', 'second', 'Second', 'answer-2');
+  expect(store.getState().selectedAssets!.items.map(item => item.sourceMessageId)).toEqual([undefined, 'answer-2']);
+  store.getState().addAssetSelection('alice', 'c1', 'first', 'First', 'answer-1');
+  store.getState().clearSubmittedAssets('alice', 'c1', [firstNonce]);
+  expect(store.getState().selectedAssets!.items).toHaveLength(2);
+  expect(store.getState().selectedAssets!.items.filter(item => item.sourceMessageId)).toMatchObject([{ ref: 'first', sourceMessageId: 'answer-1' }]);
+});

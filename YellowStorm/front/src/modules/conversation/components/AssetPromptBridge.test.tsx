@@ -3,9 +3,27 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { AssetPromptBridge } from './AssetPromptBridge';
 import { initialConversationUiState, useConversationUiStore } from '../uiStore';
 const auth = vi.hoisted(() => ({ actor: 'alice' }));
+const draft = vi.hoisted(() => ({ value: '', setInput: vi.fn() }));
+vi.mock('@/components/ai-elements/prompt-input', () => ({ usePromptInputController: () => ({ textInput: draft }) }));
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: { id: auth.actor } }) }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string, params?: { name?: string }) => params?.name ? `${key} ${params.name}` : key }) }));
-beforeEach(() => { vi.clearAllMocks(); auth.actor = 'alice'; useConversationUiStore.setState(initialConversationUiState); });
+beforeEach(() => { vi.clearAllMocks(); auth.actor = 'alice'; draft.value = ''; useConversationUiStore.setState(initialConversationUiState); });
+it('refines an exact source by preserving the current draft and adding a selected chip without submitting', () => {
+  draft.value = 'Keep my existing request';
+  render(<AssetPromptBridge conversationId='c1' />);
+  act(() => useConversationUiStore.getState().requestAssetPrompt('alice', 'c1', 'exact-source', 'Dashboard', 'refine', 'answer-1'));
+  expect(draft.setInput).toHaveBeenCalledWith('Keep my existing request\n\nassets.refinePrompt');
+  expect(useConversationUiStore.getState().selectedAssets?.items[0]).toMatchObject({ ref: 'exact-source', name: 'Dashboard', sourceMessageId: 'answer-1' });
+  expect(screen.queryByText('exact-source')).toBeNull();
+});
+it('does not alter the draft for a foreign refine request or a selection beyond the limit', () => {
+  render(<AssetPromptBridge conversationId='c1' />);
+  act(() => useConversationUiStore.getState().requestAssetPrompt('bob', 'c1', 'foreign', 'Foreign', 'refine'));
+  expect(draft.setInput).not.toHaveBeenCalled();
+  act(() => { for (let i = 0; i < 8; i++) useConversationUiStore.getState().addAssetSelection('alice', 'c1', `ref-${i}`, 'same.pdf'); });
+  act(() => useConversationUiStore.getState().requestAssetPrompt('alice', 'c1', 'ninth', 'Extra', 'refine'));
+  expect(draft.setInput).not.toHaveBeenCalled();
+});
 it('shows a readable removable chip while keeping its exact ref out of the draft UI', () => {
   render(<AssetPromptBridge conversationId='c1' />);
   act(() => useConversationUiStore.getState().requestAssetPrompt('alice', 'c1', 'opaque-private-ref', 'chart.png'));

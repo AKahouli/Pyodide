@@ -220,6 +220,13 @@ describe('ConversationInput', () => {
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith('conv-1', expect.objectContaining({ content: 'hello\n\nreport.pdf [exact-ref]' })));
     expect(useConversationUiStore.getState().selectedAssets?.items).toEqual([]);
+    expect(sendMessageMock.mock.calls[0][1].parentMessageId).toBeUndefined();
+  });
+  it('sets the parent only for an explicit refinement source', async () => {
+    useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'exact-ref', 'Dashboard', 'source-answer');
+    render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith('conv-1', expect.objectContaining({ parentMessageId: 'source-answer' })));
   });
   it('preserves selections on failed send and never submits foreign selectors', async () => {
     useConversationUiStore.getState().addAssetSelection('user-1', 'conv-1', 'exact-ref', 'report.pdf');

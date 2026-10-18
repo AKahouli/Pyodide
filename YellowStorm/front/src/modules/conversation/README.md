@@ -147,6 +147,17 @@ messages without replacing live replies, draft state or the pagination cursor.
 Actor/conversation/request guards discard late responses; an unavailable anchor
 reports an error. No additional SSE connection or virtualization was introduced.
 
+### Refinement and immutable answer history
+
+Files & artifacts offers Refine for supported ready artifacts. It selects the
+exact asset and appends a localized instruction to the existing unsent draft;
+it never sends automatically. Explicit refinement carries the source answer in
+the existing parentMessageId, validated in the authorized conversation before
+writes. An explicit Reply keeps precedence. Ordinary Use does not create lineage.
+Saved answer versions remain immutable, with a keyboard-accessible history menu
+and reloadable message target. Private draft state and task results are not copied
+between versions. History stays usable during unrelated background generation.
+
 Generative UI agents can answer a request for slides with a short `root = Card(...)` program followed
 by a separate `root = Presentation({title: "Deck title"}, [s1, s2])` program. Each item is
 `Slide("unique-id", content)` using the installed OpenUI presentation library. Title, photo, metric,

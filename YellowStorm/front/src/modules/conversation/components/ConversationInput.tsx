@@ -207,7 +207,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         ...(!runtimeManaged && !hasStickyTaggedAgents && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
-        parentMessageId: replyingToMessage?.id,
+        parentMessageId: submittedReplyId ?? submittedAssets.find(asset => asset.sourceMessageId)?.sourceMessageId,
         connectorRepo: runtimeManaged ? undefined : submittedConnector,
         skillIds: !runtimeManaged && submittedSkillIds.length
           ? submittedSkillIds
